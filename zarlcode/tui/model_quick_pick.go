@@ -1,0 +1,302 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
+)
+
+// modelQuickPick is a centered modal with a provider tab bar and a scrollable
+// model list for the selected provider. ctrl+e toggles it. tab/←→ switch
+// providers; ↑↓/j/k navigate models; enter selects; esc/q dismiss. Typing any
+// other key drops into free-text fallback for the current provider.
+type modelQuickPick struct {
+	providers []string
+	provCur   int
+	// models caches fetched model lists per provider name.
+	models  map[string][]string
+	loading map[string]bool
+	current string // currently active model (pre-selected)
+	onPick  func(provider, model string)
+	// model list cursor (within the selected provider's model list).
+	cursor int
+	// free-text fallback.
+	fallback      bool
+	fallbackValue []rune
+	fallbackCur   int
+}
+
+func newModelQuickPick(providers []string, models map[string][]string, activeProvider, activeModel string, onPick func(provider, model string)) *modelQuickPick {
+	if models == nil {
+		models = make(map[string][]string)
+	}
+	mp := &modelQuickPick{
+		providers: providers,
+		models:    models,
+		loading:   make(map[string]bool),
+		current:   activeModel,
+		onPick:    onPick,
+	}
+	for i, p := range providers {
+		if p == activeProvider {
+			mp.provCur = i
+			break
+		}
+	}
+	// Pre-seed cursor to current model if it's in the list.
+	if ml, ok := models[activeProvider]; ok {
+		for i, m := range ml {
+			if m == activeModel {
+				mp.cursor = i
+				break
+			}
+		}
+		mp.loading[activeProvider] = false
+	} else if activeProvider != "" {
+		mp.loading[activeProvider] = true
+	}
+	return mp
+}
+
+// setModels populates the model list for a provider. Called by handleModelsMsg.
+func (p *modelQuickPick) setModels(provider string, models []string) {
+	p.models[provider] = models
+	p.loading[provider] = false
+}
+
+func (p *modelQuickPick) activeProvider() string {
+	if p.provCur < 0 || p.provCur >= len(p.providers) {
+		return ""
+	}
+	return p.providers[p.provCur]
+}
+
+func (p *modelQuickPick) activeModels() []string {
+	return p.models[p.activeProvider()]
+}
+
+func (p *modelQuickPick) isLoading() bool {
+	return p.loading[p.activeProvider()]
+}
+
+func (p *modelQuickPick) handleKey(msg tea.KeyPressMsg) action {
+	if p.fallback {
+		return p.handleFallbackKey(msg)
+	}
+	switch msg.String() {
+	case "esc", "ctrl+e", "q":
+		return actionClose{}
+	// Provider switching.
+	case "tab", "right", "l":
+		if len(p.providers) > 1 {
+			p.provCur = (p.provCur + 1) % len(p.providers)
+			p.cursor = 0
+			if _, ok := p.models[p.activeProvider()]; !ok {
+				p.loading[p.activeProvider()] = true
+				return actionFetchModels{provider: p.activeProvider()}
+			}
+		}
+		return actionNone{}
+	case "left", "h":
+		if len(p.providers) > 1 {
+			p.provCur--
+			if p.provCur < 0 {
+				p.provCur = len(p.providers) - 1
+			}
+			p.cursor = 0
+			if _, ok := p.models[p.activeProvider()]; !ok {
+				p.loading[p.activeProvider()] = true
+				return actionFetchModels{provider: p.activeProvider()}
+			}
+		}
+		return actionNone{}
+	}
+	// Model list navigation.
+	models := p.activeModels()
+	if len(models) > 0 && !p.isLoading() {
+		switch msg.String() {
+		case "up", "k":
+			if p.cursor > 0 {
+				p.cursor--
+			}
+		case "down", "j":
+			if p.cursor < len(models)-1 {
+				p.cursor++
+			}
+		case "enter", "space", " ":
+			if p.cursor >= 0 && p.cursor < len(models) && p.onPick != nil {
+				p.onPick(p.activeProvider(), models[p.cursor])
+			}
+			return actionClose{}
+		}
+		if msg.Text != "" || msg.Code == tea.KeyBackspace {
+			p.fallback = true
+			p.fallbackValue = []rune(p.current)
+			p.fallbackCur = len(p.fallbackValue)
+			return p.handleKey(msg)
+		}
+		return actionNone{}
+	}
+	// No models yet (loading or empty): enter free-text on any key.
+	if msg.Text != "" || msg.Code == tea.KeyBackspace {
+		p.fallback = true
+		p.fallbackValue = []rune(p.current)
+		p.fallbackCur = len(p.fallbackValue)
+		return p.handleKey(msg)
+	}
+	return actionNone{}
+}
+
+func (p *modelQuickPick) handleFallbackKey(msg tea.KeyPressMsg) action {
+	switch msg.String() {
+	case "esc", "ctrl+e", "q":
+		return actionClose{}
+	case "enter":
+		name := strings.TrimSpace(string(p.fallbackValue))
+		if name != "" && p.onPick != nil {
+			p.onPick(p.activeProvider(), name)
+		}
+		return actionClose{}
+	case "left":
+		if p.fallbackCur > 0 {
+			p.fallbackCur--
+		}
+	case "right":
+		if p.fallbackCur < len(p.fallbackValue) {
+			p.fallbackCur++
+		}
+	case "backspace":
+		if p.fallbackCur > 0 {
+			p.fallbackValue = append(p.fallbackValue[:p.fallbackCur-1], p.fallbackValue[p.fallbackCur:]...)
+			p.fallbackCur--
+		}
+	default:
+		if msg.Text != "" {
+			rs := []rune(msg.Text)
+			out := make([]rune, 0, len(p.fallbackValue)+len(rs))
+			out = append(out, p.fallbackValue[:p.fallbackCur]...)
+			out = append(out, rs...)
+			out = append(out, p.fallbackValue[p.fallbackCur:]...)
+			p.fallbackValue = out
+			p.fallbackCur += len(rs)
+		}
+	}
+	return actionNone{}
+}
+
+func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
+	w, h := area.Dx(), area.Dy()
+	if w < 30 || h < 8 {
+		return
+	}
+	boxW := modelQuickPickMinWidth
+	if tabW := p.providerTabsWidth() + 4; tabW > boxW {
+		boxW = tabW
+	}
+	if maxW := w - 4; boxW > maxW {
+		boxW = maxW
+	}
+	boxH := min(20, h-2)
+
+	lay, ok := drawDialogPane(scr, area, "model", boxW, boxH, palette.Border, palette.Primary)
+	if !ok {
+		return
+	}
+	innerW, innerX := lay.Body.Dx(), lay.Body.Min.X
+	bodyY := lay.Body.Min.Y
+
+	// Provider tabs.
+	p.drawTabs(scr, innerX, lay.Context.Min.Y, innerW)
+
+	// Free-text fallback.
+	if p.fallback {
+		p.drawFallback(scr, lay.Body)
+		return
+	}
+
+	models := p.activeModels()
+	if p.isLoading() {
+		line := "  " + palette.Muted.On("fetching models from "+p.activeProvider()+"...")
+		drawPaddedLine(scr, uv.Rect(innerX, bodyY, innerW, 1), line)
+		return
+	}
+
+	if len(models) == 0 {
+		label := palette.Muted.On("  no models — type to enter a model name")
+		drawPaddedLine(scr, uv.Rect(innerX, bodyY, innerW, 1), label)
+		return
+	}
+
+	// Scrollable model list — reserve indicator rows so the selected model stays
+	// visible instead of being scrolled onto the footer (same fix as themepicker).
+	start, end, up, down := listWindow(p.cursor, len(models), lay.Body.Dy())
+	y := bodyY
+	if up {
+		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Muted.On("  ↑ more"))
+		y++
+	}
+	for i := start; i < end; i++ {
+		var line string
+		if i == p.cursor {
+			line = palette.Primary.On("▸ " + models[i])
+		} else {
+			line = "  " + palette.Subtle.On(models[i])
+		}
+		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), line)
+		y++
+	}
+	if down {
+		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Muted.On("  ↓ more"))
+	}
+
+	// Footer.
+	hint := keyLegend(keyHint{"↑↓", "navigate"}, keyHint{"enter", "select"},
+		keyHint{"tab", "provider"}, keyHint{"esc", "close"})
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Footer.Min.Y, innerW, 1), hint)
+}
+
+func (p *modelQuickPick) drawTabs(scr uv.Screen, x, y, width int) {
+	if len(p.providers) == 0 {
+		return
+	}
+	var parts []string
+	for i, name := range p.providers {
+		label := " " + name + " "
+		if i == p.provCur {
+			label = palette.Primary.On(label)
+		} else {
+			label = palette.Muted.On(label)
+		}
+		parts = append(parts, label)
+	}
+	drawPaddedLine(scr, uv.Rect(x, y, width, 1), strings.Join(parts, ""))
+}
+
+const modelQuickPickMinWidth = 60
+
+func (p *modelQuickPick) providerTabsWidth() int {
+	if len(p.providers) == 0 {
+		return 0
+	}
+	w := 0
+	for _, name := range p.providers {
+		w += ansi.StringWidth(" " + name + " ")
+	}
+	return w
+}
+
+func (p *modelQuickPick) drawFallback(scr uv.Screen, area uv.Rectangle) {
+	w := area.Dx()
+	prov := p.activeProvider()
+	label := palette.Muted.On(fmt.Sprintf(" provider: %s  (type model name)", prov))
+	drawPaddedLine(scr, uv.Rect(area.Min.X, area.Min.Y, w, 1), label)
+
+	display := string(p.fallbackValue[:p.fallbackCur]) + palette.Primary.On("▏") + string(p.fallbackValue[p.fallbackCur:])
+	drawPaddedLine(scr, uv.Rect(area.Min.X, area.Min.Y+1, w, 1), " "+display)
+
+	hint := keyLegend(keyHint{"enter", "apply"}, keyHint{"esc", "cancel"})
+	drawPaddedLine(scr, uv.Rect(area.Min.X, area.Min.Y+2, w, 1), hint)
+}

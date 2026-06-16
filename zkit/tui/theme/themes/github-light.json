@@ -1,0 +1,23 @@
+{
+  "name":        "github-light",
+  "bg":          "#ffffff",
+  "fg":          "#24292f",
+  "subtle":      "#57606a",
+  "muted":       "#8c959f",
+  "primary":     "#0969da",
+  "secondary":   "#8250df",
+  "success":     "#1a7f37",
+  "warning":     "#9a6700",
+  "error":       "#cf222e",
+  "info":        "#0969da",
+  "user":        "#bc4c00",
+  "assistant":   "#1a7f37",
+  "tool":        "#0969da",
+  "system":      "#8250df",
+  "border":      "#d0d7de",
+  "borderFocus": "#0969da",
+  "highlight":   "#fff8c5",
+  "selection":   "#ddf4ff",
+  "planMode":    "#bf3989"
+}
+

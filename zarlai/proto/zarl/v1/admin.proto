@@ -1,0 +1,744 @@
+syntax = "proto3";
+
+package zarl.v1;
+
+option go_package = "github.com/zarldev/zarlmono/zarlai/transport/grpc/gen/zarl/v1;zarlv1";
+
+import "google/protobuf/timestamp.proto";
+
+service AdminService {
+  rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
+  rpc CreatePrompt(CreatePromptRequest) returns (CreatePromptResponse);
+  rpc UpdatePrompt(UpdatePromptRequest) returns (UpdatePromptResponse);
+  rpc SetActivePrompt(SetActivePromptRequest) returns (SetActivePromptResponse);
+  rpc DeletePrompt(DeletePromptRequest) returns (DeletePromptResponse);
+
+  rpc ListPersons(ListPersonsRequest) returns (ListPersonsResponse);
+  rpc UpdatePerson(UpdatePersonRequest) returns (UpdatePersonResponse);
+  rpc DeletePerson(DeletePersonRequest) returns (DeletePersonResponse);
+  rpc ListPersonMemories(ListPersonMemoriesRequest) returns (ListPersonMemoriesResponse);
+  rpc DeletePersonMemory(DeletePersonMemoryRequest) returns (DeletePersonMemoryResponse);
+
+  // Tool providers
+  rpc ListToolProviders(ListToolProvidersRequest) returns (ListToolProvidersResponse);
+  rpc ListRegisteredTools(ListRegisteredToolsRequest) returns (ListRegisteredToolsResponse);
+  rpc UpdateToolDescription(UpdateToolDescriptionRequest) returns (UpdateToolDescriptionResponse);
+  rpc ResetToolDescription(ResetToolDescriptionRequest) returns (ResetToolDescriptionResponse);
+  rpc PreviewGesture(PreviewGestureRequest) returns (PreviewGestureResponse);
+
+  // Skills — versioned capability guides injected into the LLM prompt
+  // per turn. Storage lives in Dolt; the admin surface lets operators
+  // curate them and review LLM-authored proposals.
+  rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
+  rpc CreateSkill(CreateSkillRequest) returns (CreateSkillResponse);
+  rpc UpdateSkill(UpdateSkillRequest) returns (UpdateSkillResponse);
+  rpc DeleteSkill(DeleteSkillRequest) returns (DeleteSkillResponse);
+  rpc ListSkillProposals(ListSkillProposalsRequest) returns (ListSkillProposalsResponse);
+  rpc ReviewSkillProposal(ReviewSkillProposalRequest) returns (ReviewSkillProposalResponse);
+
+  // Prompt templates — operator-editable Go-code-default content
+  // strings used for report frontmatter, report header, report
+  // footer, and future handler prompts.
+  rpc ListPromptTemplates(ListPromptTemplatesRequest) returns (ListPromptTemplatesResponse);
+  rpc UpdatePromptTemplate(UpdatePromptTemplateRequest) returns (UpdatePromptTemplateResponse);
+  rpc ResetPromptTemplate(ResetPromptTemplateRequest) returns (ResetPromptTemplateResponse);
+  rpc UpdateToolProvider(UpdateToolProviderRequest) returns (UpdateToolProviderResponse);
+  rpc CreateToolProvider(CreateToolProviderRequest) returns (CreateToolProviderResponse);
+  rpc DeleteToolProvider(DeleteToolProviderRequest) returns (DeleteToolProviderResponse);
+
+  // Tool call history
+  rpc ListToolCalls(ListToolCallsRequest) returns (ListToolCallsResponse);
+  rpc GetToolCallStats(GetToolCallStatsRequest) returns (GetToolCallStatsResponse);
+
+  // Voice settings
+  rpc GetVoiceSettings(GetVoiceSettingsRequest) returns (GetVoiceSettingsResponse);
+  rpc SetVoiceSettings(SetVoiceSettingsRequest) returns (SetVoiceSettingsResponse);
+  rpc PreviewVoice(PreviewVoiceRequest) returns (PreviewVoiceResponse);
+
+  // Agent name — the spoken name the agent uses for itself. Injected into
+  // the active prompt as {{agent_name}} so TTS pronunciation stays stable.
+  rpc GetAgentName(GetAgentNameRequest) returns (GetAgentNameResponse);
+  rpc SetAgentName(SetAgentNameRequest) returns (SetAgentNameResponse);
+
+  // Agent avatar — the GLB model used on the immersive conversation screen.
+  rpc GetAgentAvatar(GetAgentAvatarRequest) returns (GetAgentAvatarResponse);
+  rpc SetAgentAvatar(SetAgentAvatarRequest) returns (SetAgentAvatarResponse);
+
+  // Tasks
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
+
+  // Task provider settings
+  rpc GetTaskProviderSettings(GetTaskProviderSettingsRequest) returns (GetTaskProviderSettingsResponse);
+  rpc UpdateTaskProviderSettings(UpdateTaskProviderSettingsRequest) returns (UpdateTaskProviderSettingsResponse);
+
+  // Conversation LLM settings
+  rpc GetConversationLLMSettings(GetConversationLLMSettingsRequest) returns (GetConversationLLMSettingsResponse);
+  rpc UpdateConversationLLMSettings(UpdateConversationLLMSettingsRequest) returns (UpdateConversationLLMSettingsResponse);
+  rpc ListAvailableModels(ListAvailableModelsRequest) returns (ListAvailableModelsResponse);
+
+  // Prompt history (Dolt)
+  rpc ListPromptHistory(ListPromptHistoryRequest) returns (ListPromptHistoryResponse);
+  rpc DiffPrompt(DiffPromptRequest) returns (DiffPromptResponse);
+  rpc RevertPrompt(RevertPromptRequest) returns (RevertPromptResponse);
+
+  // Tool proposals
+  rpc ListToolProposals(ListToolProposalsRequest) returns (ListToolProposalsResponse);
+  rpc ReviewToolProposal(ReviewToolProposalRequest) returns (ReviewToolProposalResponse);
+
+  // Prompt proposals
+  rpc ListPromptProposals(ListPromptProposalsRequest) returns (ListPromptProposalsResponse);
+  rpc ReviewPromptProposal(ReviewPromptProposalRequest) returns (ReviewPromptProposalResponse);
+
+  // Subagent profiles
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+  rpc GetProfileOverride(GetProfileOverrideRequest) returns (GetProfileOverrideResponse);
+  rpc UpsertProfileOverride(UpsertProfileOverrideRequest) returns (UpsertProfileOverrideResponse);
+  rpc DeleteProfileOverride(DeleteProfileOverrideRequest) returns (DeleteProfileOverrideResponse);
+
+  // Coder workspaces
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc UpsertWorkspace(UpsertWorkspaceRequest) returns (UpsertWorkspaceResponse);
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
+
+  // Chat history (post-session summaries, one per (person, session)).
+  rpc ListConversationSummaries(ListConversationSummariesRequest) returns (ListConversationSummariesResponse);
+
+  // Sensor proposals
+  rpc ListSensorProposals(ListSensorProposalsRequest) returns (ListSensorProposalsResponse);
+  rpc ReviewSensorProposal(ReviewSensorProposalRequest) returns (ReviewSensorProposalResponse);
+
+  // Reset agent state — destructive: wipes persons, conversation summaries,
+  // tool call log, and the Qdrant memories + task_findings collections.
+  // Keeps skills, tools, providers, prompts, and settings.
+  rpc ResetAgentState(ResetAgentStateRequest) returns (ResetAgentStateResponse);
+
+  // Atomic Finish for the /onboard wizard. Enrols a person with multi-pose
+  // embeddings, sets agent name + voice + model, writes seeded memories.
+  rpc CompleteOnboarding(CompleteOnboardingRequest) returns (CompleteOnboardingResponse);
+
+  // Set just the conversation LLM model — narrower than UpdateConversationLLMSettings,
+  // for the onboarding wizard's model picker. Keeps provider/baseURL/apiKey/reasoning.
+  rpc SetConversationModel(SetConversationModelRequest) returns (SetConversationModelResponse);
+
+  // Embed a face from a JPEG. Used by the onboarding wizard to capture
+  // each pose embedding. Returns the 128-dim descriptor of the largest
+  // detected face plus the cropped photo.
+  rpc EmbedFace(EmbedFaceRequest) returns (EmbedFaceResponse);
+}
+
+message PromptMsg {
+  string id = 1;
+  string name = 2;
+  string content = 3;
+  bool active = 4;
+}
+
+message PersonMsg {
+  string id = 1;
+  string name = 2;
+  string notes = 3;
+  string photo = 4;
+}
+
+message ListPromptsRequest {}
+message ListPromptsResponse { repeated PromptMsg prompts = 1; }
+
+message CreatePromptRequest { string name = 1; string content = 2; }
+message CreatePromptResponse { PromptMsg prompt = 1; }
+
+message UpdatePromptRequest { string id = 1; string content = 2; }
+message UpdatePromptResponse {}
+
+message SetActivePromptRequest { string id = 1; }
+message SetActivePromptResponse {}
+
+message DeletePromptRequest { string id = 1; }
+message DeletePromptResponse {}
+
+message ListPersonsRequest {}
+message ListPersonsResponse { repeated PersonMsg persons = 1; }
+
+message UpdatePersonRequest { string id = 1; string name = 2; string notes = 3; }
+message UpdatePersonResponse {}
+
+message DeletePersonRequest { string id = 1; }
+message DeletePersonResponse {}
+
+message PersonMemoryMsg {
+  string id = 1;
+  string fact = 2;
+  string created_at = 3;
+}
+
+message ListPersonMemoriesRequest { string person_name = 1; }
+message ListPersonMemoriesResponse { repeated PersonMemoryMsg memories = 1; }
+message DeletePersonMemoryRequest { string id = 1; }
+message DeletePersonMemoryResponse {}
+
+message ToolProviderMsg {
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  bool enabled = 4;
+  string config = 5;
+  int32 tool_count = 6;
+}
+
+message ListToolProvidersRequest {}
+message ListToolProvidersResponse { repeated ToolProviderMsg providers = 1; }
+
+message UpdateToolProviderRequest {
+  string id = 1;
+  bool enabled = 2;
+  string config = 3;
+}
+message UpdateToolProviderResponse {}
+
+message CreateToolProviderRequest {
+  string name = 1;
+  string type = 2;
+  string config = 3;
+}
+message CreateToolProviderResponse { ToolProviderMsg provider = 1; }
+
+message DeleteToolProviderRequest { string id = 1; }
+message DeleteToolProviderResponse {}
+
+message ToolParameterMsg {
+  string name = 1;
+  string type = 2;
+  string description = 3;
+  bool required = 4;
+  repeated string enum_values = 5;
+}
+
+message RegisteredToolMsg {
+  string name = 1;
+  // Effective description the LLM actually sees — the admin override if
+  // one exists, otherwise the code default. Use default_description
+  // alongside this to detect when the operator has customised the tool.
+  string description = 2;
+  // Provider is the provider-name the tool was registered under, or empty for
+  // native built-in tools that live outside the tool_providers table.
+  string provider = 3;
+  repeated ToolParameterMsg parameters = 4;
+  // Source code default — the description returned by the tool's
+  // Definition() method before any override is applied. Lets the admin
+  // UI show a "reset to default" affordance and diff against edits.
+  string default_description = 5;
+  // True when a human override is active. Equivalent to
+  // (description != default_description) but surfaced explicitly so the
+  // UI doesn't have to string-compare to detect override state.
+  bool has_override = 6;
+  // "registry" for tools registered via service.Registry (native +
+  // provider-backed MCP tools), "action" for taskrunner action tools
+  // that live outside the registry. Purely informational — helps the
+  // admin UI group related tools together.
+  string category = 7;
+}
+
+message ListRegisteredToolsRequest {}
+message ListRegisteredToolsResponse { repeated RegisteredToolMsg tools = 1; }
+
+message UpdateToolDescriptionRequest {
+  string name = 1;
+  string description = 2;
+}
+message UpdateToolDescriptionResponse {}
+
+message ResetToolDescriptionRequest { string name = 1; }
+message ResetToolDescriptionResponse {}
+
+// PreviewGesture fires a gesture/mood cue on every active session's
+// talking-head without the LLM being involved. Intended for the admin
+// UI's gesture playground — pops open the main UI in another tab, hit
+// buttons here, and see how each template reads.
+message PreviewGestureRequest {
+  string gesture = 1;
+  string mood = 2;
+}
+message PreviewGestureResponse {}
+
+message SkillMsg {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string markdown = 4;
+  // Empty string = global (applies to every profile). Otherwise a
+  // literal profile name — "default" / "researcher" / "coder".
+  string profile_binding = 5;
+  bool enabled = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message ListSkillsRequest {}
+message ListSkillsResponse { repeated SkillMsg skills = 1; }
+
+message CreateSkillRequest {
+  string name = 1;
+  string description = 2;
+  string markdown = 3;
+  string profile_binding = 4;
+  bool enabled = 5;
+}
+message CreateSkillResponse { SkillMsg skill = 1; }
+
+message UpdateSkillRequest {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string markdown = 4;
+  string profile_binding = 5;
+  bool enabled = 6;
+}
+message UpdateSkillResponse {}
+
+message DeleteSkillRequest { string id = 1; }
+message DeleteSkillResponse {}
+
+message SkillProposalMsg {
+  string id = 1;
+  string target_skill_id = 2;
+  string proposed_name = 3;
+  string proposed_description = 4;
+  string proposed_markdown = 5;
+  string proposed_binding = 6;
+  string rationale = 7;
+  string status = 8; // pending | approved | rejected
+  string created_at = 9;
+  string reviewed_at = 10;
+}
+
+message ListSkillProposalsRequest {}
+message ListSkillProposalsResponse { repeated SkillProposalMsg proposals = 1; }
+
+message ReviewSkillProposalRequest {
+  string id = 1;
+  bool approve = 2;
+}
+message ReviewSkillProposalResponse {}
+
+message PromptTemplateMsg {
+  // Stable identifier code uses for lookup (e.g. "research_report.header").
+  string key = 1;
+  // Effective content — override if present, else code default.
+  string content = 2;
+  // Code default, useful for diff + reset-to-default UI affordances.
+  string default_content = 3;
+  // True when an operator-authored override is active (i.e. content
+  // != default_content).
+  bool has_override = 4;
+  string updated_at = 5;
+}
+
+message ListPromptTemplatesRequest {}
+message ListPromptTemplatesResponse { repeated PromptTemplateMsg templates = 1; }
+
+message UpdatePromptTemplateRequest {
+  string key = 1;
+  string content = 2;
+}
+message UpdatePromptTemplateResponse {}
+
+message ResetPromptTemplateRequest { string key = 1; }
+message ResetPromptTemplateResponse {}
+
+message ToolCallMsg {
+  string id = 1;
+  string session_id = 2;
+  string tool_name = 3;
+  string provider = 4;
+  string args = 5;
+  string result = 6;
+  string error = 7;
+  int32 duration_ms = 8;
+  string created_at = 9;
+}
+
+message ToolCallStatMsg {
+  string tool_name = 1;
+  string provider = 2;
+  int32 total_calls = 3;
+  float avg_duration_ms = 4;
+  int32 error_count = 5;
+}
+
+message ListToolCallsRequest { int32 limit = 1; int32 offset = 2; }
+message ListToolCallsResponse {
+  repeated ToolCallMsg calls = 1;
+  int32 total = 2;
+}
+
+message GetToolCallStatsRequest {}
+message GetToolCallStatsResponse { repeated ToolCallStatMsg stats = 1; }
+
+message GetVoiceSettingsRequest {}
+message GetVoiceSettingsResponse {
+  int32 speaker = 1;
+  float speed = 2;
+  int32 num_speakers = 3;
+  // Active TTS engine name, e.g. "kokoro" or "supertonic".
+  string engine = 4;
+  // All engines that loaded successfully and can be selected.
+  repeated string available_engines = 5;
+}
+
+message SetVoiceSettingsRequest {
+  int32 speaker = 1;
+  float speed = 2;
+  // Optional. If non-empty, switches the active engine before applying
+  // speaker/speed. Empty = leave engine untouched.
+  string engine = 3;
+}
+message SetVoiceSettingsResponse {}
+
+message PreviewVoiceRequest {
+  int32 speaker = 1;
+  float speed = 2;
+  string text = 3;
+}
+message PreviewVoiceResponse {
+  bytes pcm = 1;
+  int32 sample_rate = 2;
+}
+
+message GetAgentNameRequest {}
+message GetAgentNameResponse {
+  string display_name = 1;
+  string spoken_name  = 2;
+}
+message SetAgentNameRequest {
+  string display_name = 1;
+  string spoken_name  = 2;
+}
+message SetAgentNameResponse {}
+
+message GetAgentAvatarRequest {}
+message GetAgentAvatarResponse { string avatar_id = 1; }
+message SetAgentAvatarRequest  { string avatar_id = 1; }
+message SetAgentAvatarResponse {}
+
+message TaskMsg {
+  string id = 1;
+  string prompt = 2;
+  string status = 3;
+  string summary = 4;
+  int32 iterations = 5;
+  int32 max_iterations = 6;
+  string person_name = 7;
+  string schedule = 8;
+  string created_at = 9;
+  string profile_name = 10;
+  string workspace_name = 11;
+}
+
+message ListTasksRequest { int32 limit = 1; int32 offset = 2; }
+message ListTasksResponse { repeated TaskMsg tasks = 1; int32 total = 2; }
+
+message CancelTaskRequest { string id = 1; }
+message CancelTaskResponse {}
+
+message DeleteTaskRequest { string id = 1; }
+message DeleteTaskResponse {}
+
+message GetTaskProviderSettingsRequest {}
+message GetTaskProviderSettingsResponse {
+  string provider = 1;
+  string model = 2;
+  string base_url = 3;
+  string api_key_masked = 4;
+  int32 context_budget = 5;
+}
+
+message UpdateTaskProviderSettingsRequest {
+  string provider = 1;
+  string model = 2;
+  string base_url = 3;
+  string api_key = 4;
+  int32 context_budget = 5;
+}
+message UpdateTaskProviderSettingsResponse {}
+
+message GetConversationLLMSettingsRequest {}
+message GetConversationLLMSettingsResponse {
+  string provider = 1;
+  string model = 2;
+  string base_url = 3;
+  string api_key_masked = 4;
+  // When true, the server prepends the Gemma-4 <|think|> sentinel to the
+  // system message so the model emits its reasoning channel. The client's
+  // SplitThinking parser routes that reasoning into ChatResult.Thinking
+  // so it never reaches TTS or session history.
+  bool reasoning_enabled = 5;
+}
+
+message UpdateConversationLLMSettingsRequest {
+  string provider = 1;
+  string model = 2;
+  string base_url = 3;
+  string api_key = 4;
+  bool reasoning_enabled = 5;
+}
+message UpdateConversationLLMSettingsResponse {}
+
+message AvailableModelMsg {
+  string name = 1;      // the string used to reference the model (e.g. "gemma4:26b")
+  string provider = 2;  // "ollama" or "llamacpp"
+  string size = 3;      // e.g. "25.8B" — empty string if unknown
+}
+message ListAvailableModelsRequest {}
+message ListAvailableModelsResponse {
+  repeated AvailableModelMsg models = 1;
+}
+
+message DoltCommitMsg {
+  string hash = 1;
+  string committer = 2;
+  string message = 3;
+  string date = 4;
+}
+
+message ListPromptHistoryRequest {}
+message ListPromptHistoryResponse {
+  repeated DoltCommitMsg commits = 1;
+}
+
+message DiffPromptRequest {
+  string from_hash = 1;
+  string to_hash = 2;
+}
+message DiffPromptResponse {
+  repeated PromptDiffMsg diffs = 1;
+}
+message PromptDiffMsg {
+  string diff_type = 1;
+  string from_content = 2;
+  string to_content = 3;
+}
+
+message RevertPromptRequest {
+  string commit_hash = 1;
+  string prompt_id = 2;
+}
+message RevertPromptResponse {
+  string content = 1;
+}
+
+message ToolProposalMsg {
+  string id = 1;
+  string tool_name = 2;
+  string description = 3;
+  string mcp_url = 4;
+  string rationale = 5;
+  string status = 6;
+  string created_at = 7;
+}
+
+message ListToolProposalsRequest {}
+message ListToolProposalsResponse {
+  repeated ToolProposalMsg proposals = 1;
+}
+
+message ReviewToolProposalRequest {
+  string id = 1;
+  bool approve = 2;
+}
+message ReviewToolProposalResponse {
+  string status = 1;
+}
+
+message PromptProposalMsg {
+  string id = 1;
+  string current_prompt_id = 2;
+  string proposed_content = 3;
+  string rationale = 4;
+  string status = 5;
+  string created_at = 6;
+}
+
+message ListPromptProposalsRequest {}
+message ListPromptProposalsResponse {
+  repeated PromptProposalMsg proposals = 1;
+}
+
+message ReviewPromptProposalRequest {
+  string id = 1;
+  bool approve = 2;
+}
+message ReviewPromptProposalResponse {
+  string status = 1;
+}
+
+message ProfileInfo {
+  string name = 1;
+  repeated string tool_names = 2;
+  string default_model = 3;
+  string default_prompt_prefix = 4;
+  int32 default_max_iterations = 5;
+  ProfileOverride override = 6;
+}
+
+message ProfileOverride {
+  optional string model = 1;
+  optional string prompt_prefix = 2;
+  optional int32 max_iterations = 3;
+  repeated string tool_names = 4;
+}
+
+message ListProfilesRequest {}
+message ListProfilesResponse {
+  repeated ProfileInfo profiles = 1;
+}
+
+message GetProfileOverrideRequest {
+  string profile_name = 1;
+}
+message GetProfileOverrideResponse {
+  ProfileOverride override = 1;
+}
+
+message UpsertProfileOverrideRequest {
+  string profile_name = 1;
+  ProfileOverride override = 2;
+}
+message UpsertProfileOverrideResponse {
+  ProfileInfo profile = 1;
+}
+
+message DeleteProfileOverrideRequest {
+  string profile_name = 1;
+}
+message DeleteProfileOverrideResponse {}
+
+// ── Coder workspaces ──
+message WorkspaceInfo {
+  string name = 1;
+  string root = 2;
+  string default_branch = 3;
+  string description = 4;
+  bool root_exists = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message ListWorkspacesRequest {}
+message ListWorkspacesResponse {
+  repeated WorkspaceInfo workspaces = 1;
+}
+
+message UpsertWorkspaceRequest {
+  string name = 1;
+  string root = 2;
+  string default_branch = 3;
+  string description = 4;
+}
+message UpsertWorkspaceResponse {
+  WorkspaceInfo workspace = 1;
+}
+
+message DeleteWorkspaceRequest { string name = 1; }
+message DeleteWorkspaceResponse {}
+
+// ── Chat history ──
+message ConversationSummaryMsg {
+  string id = 1;
+  string person_name = 2;
+  string session_id = 3;
+  string summary = 4;
+  string created_at = 5;
+}
+
+message ListConversationSummariesRequest {
+  string person_name = 1; // optional filter
+  int32 limit = 2;         // default 50
+  int32 offset = 3;
+}
+message ListConversationSummariesResponse {
+  repeated ConversationSummaryMsg summaries = 1;
+  int32 total = 2;
+}
+
+// ── Sensor proposals ──
+message SensorProposalMsg {
+  string id = 1;
+  string tool_name = 2;           // poll kind; also repurposed as mcp_provider for mcp_notification
+  string tool_args_json = 3;      // poll kind only; marshalled JSON object
+  int32 interval_seconds = 4;     // poll kind only
+  string rationale = 5;
+  string status = 6;
+  string created_at = 7;
+  // kind discriminates runtime class. Currently one of "poll", "hass_state",
+  // "mcp_notification". New kinds extend this enum at the string level.
+  string kind = 8;
+  // entity_id is populated for reactive kinds. For hass_state it's the HA
+  // entity; for mcp_notification it's the JSON-RPC notification method.
+  // Admin UIs should label it contextually based on `kind`.
+  string entity_id = 9;
+}
+
+message ListSensorProposalsRequest {}
+message ListSensorProposalsResponse {
+  repeated SensorProposalMsg proposals = 1;
+}
+
+message ReviewSensorProposalRequest {
+  string id = 1;
+  bool approve = 2;
+}
+message ReviewSensorProposalResponse {
+  string status = 1;
+}
+
+message ResetAgentStateRequest {}
+message ResetAgentStateResponse {
+  int64 persons_deleted = 1;
+  int64 conversation_summaries_deleted = 2;
+  int64 tool_calls_deleted = 3;
+  int64 memories_deleted = 4;
+  int64 task_findings_deleted = 5;
+}
+
+// FaceEmbedding is a single 128-dim face descriptor. Encoded as a repeated
+// float field so frontend doesn't have to byte-pack.
+message FaceEmbedding {
+  repeated float values = 1;
+}
+
+message OnboardingFamilyMember {
+  string name = 1;
+  string relationship = 2;  // "partner" | "son" | "daughter" | "child"
+  string dob = 3;            // YYYY-MM-DD, optional
+}
+
+message CompleteOnboardingRequest {
+  string agent_name = 1;
+  int32 voice_speaker = 2;
+  float voice_speed = 3;
+  string llm_model = 4;
+  string person_name = 5;
+  string person_pronouns = 6;
+  string person_dob = 7;          // YYYY-MM-DD, optional
+  string person_address = 8;       // optional
+  string person_currency = 9;       // ISO code, e.g. "GBP"
+  repeated OnboardingFamilyMember family = 10;
+  repeated string free_form_facts = 11;
+  repeated FaceEmbedding face_embeddings = 12;
+  string face_photo_jpeg_base64 = 13;
+}
+message CompleteOnboardingResponse {
+  string person_id = 1;
+  int64 memories_written = 2;
+}
+
+message SetConversationModelRequest {
+  string model = 1;
+}
+message SetConversationModelResponse {}
+
+message EmbedFaceRequest { bytes jpeg = 1; }
+message EmbedFaceResponse {
+  FaceEmbedding embedding = 1;
+  string photo_jpeg_base64 = 2;
+}

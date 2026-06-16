@@ -1,0 +1,136 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# This is a go.work multi-module repo. `./...` only expands within the
+# *current* module, so a single root `go build ./...` silently covers
+# only whatever packages live in the root module. Every job below therefore
+# runs per module via a matrix. The root module is tooling-only; examples live
+# in their own module.
+#
+# zarlai has its own job (not in the pure-Go matrix): it needs CGO plus
+# system libs for go-face (dlib + BLAS/CBLAS/LAPACK/JPEG). The sherpa-onnx
+# shared libs ship inside its go module (rpath-linked), so they need no apt.
+
+jobs:
+  build-test:
+    name: build vet test (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ["examples", "zkit", "zarlcode", "swebench-eval"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: setup go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+      - name: vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: test
+        working-directory: ${{ matrix.module }}
+        run: go test -count=1 ./...
+
+  race-test:
+    name: race test (zkit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: setup go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # zkit holds the concurrent core (agent, messagebus, zsync, mcp). Race
+      # the whole module rather than a hand-curated subtree list that silently
+      # loses coverage every time a new concurrent package is added.
+      - name: race test
+        working-directory: zkit
+        run: go test -race -count=1 ./...
+
+  lint:
+    name: golangci-lint (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ["examples", "zkit", "zarlcode", "swebench-eval"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: setup go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          working-directory: ${{ matrix.module }}
+
+  zarlai:
+    name: build vet test lint (zarlai, cgo)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      # go-face links dlib + BLAS/CBLAS/LAPACK/JPEG. sherpa-onnx ships its
+      # shared libs in-module (rpath-linked), so it needs no system package.
+      - name: system deps (dlib for go-face)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdlib-dev libatlas-base-dev libblas-dev liblapack-dev libjpeg-dev
+
+      - name: setup go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        working-directory: zarlai
+        run: go build ./...
+
+      - name: vet
+        working-directory: zarlai
+        run: go vet ./...
+
+      # Only the infra-free packages run here: repository/transport/cmd and
+      # the integration tests need a live Dolt + Qdrant (`task up`) and are
+      # exercised locally, not in CI. build + vet above still compile every
+      # package (incl. their test files), so compile regressions are caught.
+      - name: test (infra-free packages)
+        working-directory: zarlai
+        run: go test -count=1 -timeout=120s ./service/... ./tools/... ./taskrunner/... ./sensor/... ./subscribers/...
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          working-directory: zarlai

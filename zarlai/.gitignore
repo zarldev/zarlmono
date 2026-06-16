@@ -1,0 +1,49 @@
+# Go binaries
+tmp/
+/zarl
+/spotify-auth
+/memory-cleanup
+/wiki-ingest
+/doctor
+
+# Go test/build artefacts
+coverage.out
+*.test
+*.prof
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Large data assets (downloaded / generated at setup time).
+# Legacy ./models/ paths are honoured for operators who haven't
+# migrated to the deploy/ layout yet.
+deploy/models/
+models/
+data/
+
+# Local ONNX/VAD assets (downloaded at setup time)
+frontend/public/onnx/
+frontend/public/vad/
+frontend/public/models/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+.task/
+*.tsbuildinfo
+.env
+
+# Superpowers brainstorm mockups
+.superpowers/
+
+# Isolated worktrees for subagent-driven development
+.worktrees/
+
+# agent/tool scratch
+.cache/
+
+# Claude Code per-project state
+.claude/

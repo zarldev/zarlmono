@@ -1,0 +1,22 @@
+{
+  "name":        "moonlight",
+  "bg":          "#1e2030",
+  "fg":          "#c8d3f5",
+  "subtle":      "#a9b8e8",
+  "muted":       "#636da6",
+  "primary":     "#82aaff",
+  "secondary":   "#c099ff",
+  "success":     "#c3e88d",
+  "warning":     "#ffcb6b",
+  "error":       "#ff5370",
+  "info":        "#89ddff",
+  "user":        "#f78c6c",
+  "assistant":   "#c3e88d",
+  "tool":        "#89ddff",
+  "system":      "#c099ff",
+  "border":      "#3a3d5c",
+  "borderFocus": "#82aaff",
+  "highlight":   "#2f334f",
+  "selection":   "#252844",
+  "planMode":    "#ff9668"
+}

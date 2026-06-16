@@ -1,0 +1,23 @@
+{
+  "name":        "midnight",
+  "default":     "dark",
+  "bg":          "#0f172a",
+  "fg":          "#f8fafc",
+  "subtle":      "#94a3b8",
+  "muted":       "#64748b",
+  "primary":     "#22d3ee",
+  "secondary":   "#c084fc",
+  "success":     "#34d399",
+  "warning":     "#fbbf24",
+  "error":       "#f87171",
+  "info":        "#60a5fa",
+  "user":        "#fcd34d",
+  "assistant":   "#67e8f9",
+  "tool":        "#86efac",
+  "system":      "#a78bfa",
+  "border":      "#334155",
+  "borderFocus": "#22d3ee",
+  "highlight":   "#713f12",
+  "selection":   "#075985",
+  "planMode":    "#a78bfa"
+}

@@ -1,0 +1,23 @@
+{
+  "name":        "quiet-light",
+  "bg":          "#fafafa",
+  "fg":          "#333333",
+  "subtle":      "#666666",
+  "muted":       "#9aa0a6",
+  "primary":     "#0b63ce",
+  "secondary":   "#6f42c1",
+  "success":     "#22863a",
+  "warning":     "#b08800",
+  "error":       "#d73a49",
+  "info":        "#0366d6",
+  "user":        "#b45309",
+  "assistant":   "#047857",
+  "tool":        "#0f766e",
+  "system":      "#6d28d9",
+  "border":      "#e1e4e8",
+  "borderFocus": "#0b63ce",
+  "highlight":   "#fff5b1",
+  "selection":   "#e7f3ff",
+  "planMode":    "#b83280"
+}
+

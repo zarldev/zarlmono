@@ -1,0 +1,23 @@
+{
+  "name":        "gruvbox-dark",
+  "bg":          "#282828",
+  "fg":          "#ebdbb2",
+  "subtle":      "#d5c4a1",
+  "muted":       "#928374",
+  "primary":     "#83a598",
+  "secondary":   "#d3869b",
+  "success":     "#b8bb26",
+  "warning":     "#fabd2f",
+  "error":       "#fb4934",
+  "info":        "#8ec07c",
+  "user":        "#fe8019",
+  "assistant":   "#8ec07c",
+  "tool":        "#b8bb26",
+  "system":      "#d3869b",
+  "border":      "#504945",
+  "borderFocus": "#83a598",
+  "highlight":   "#665c54",
+  "selection":   "#3c3836",
+  "planMode":    "#d3869b"
+}
+

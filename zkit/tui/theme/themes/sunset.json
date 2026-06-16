@@ -1,0 +1,23 @@
+{
+  "name":        "sunset",
+  "bg":          "#21161b",
+  "fg":          "#ffe8d6",
+  "subtle":      "#f7b267",
+  "muted":       "#8f6675",
+  "primary":     "#ff7a59",
+  "secondary":   "#c77dff",
+  "success":     "#80ed99",
+  "warning":     "#ffd166",
+  "error":       "#ef476f",
+  "info":        "#4cc9f0",
+  "user":        "#f8961e",
+  "assistant":   "#06d6a0",
+  "tool":        "#90be6d",
+  "system":      "#b5179e",
+  "border":      "#5a2a3c",
+  "borderFocus": "#ff7a59",
+  "highlight":   "#6d2e46",
+  "selection":   "#3a1f2b",
+  "planMode":    "#ffb703"
+}
+

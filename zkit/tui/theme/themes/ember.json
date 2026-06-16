@@ -1,0 +1,22 @@
+{
+  "name":        "ember",
+  "bg":          "#1f1311",
+  "fg":          "#e8d5c8",
+  "subtle":      "#c4a894",
+  "muted":       "#8c6b5e",
+  "primary":     "#f4773a",
+  "secondary":   "#e85d3a",
+  "success":     "#8bc270",
+  "warning":     "#f4c542",
+  "error":       "#e04040",
+  "info":        "#d4845a",
+  "user":        "#f4c542",
+  "assistant":   "#8bc270",
+  "tool":        "#d4845a",
+  "system":      "#e85d3a",
+  "border":      "#4a2820",
+  "borderFocus": "#f4773a",
+  "highlight":   "#3d1e18",
+  "selection":   "#2d1510",
+  "planMode":    "#ff8c42"
+}

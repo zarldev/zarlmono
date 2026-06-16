@@ -1,0 +1,23 @@
+{
+  "name":        "kanagawa-wave",
+  "bg":          "#1f1f28",
+  "fg":          "#dcd7ba",
+  "subtle":      "#c8c093",
+  "muted":       "#727169",
+  "primary":     "#7e9cd8",
+  "secondary":   "#957fb8",
+  "success":     "#76946a",
+  "warning":     "#c0a36e",
+  "error":       "#c34043",
+  "info":        "#6a9589",
+  "user":        "#ffa066",
+  "assistant":   "#98bb6c",
+  "tool":        "#7aa89f",
+  "system":      "#938aa9",
+  "border":      "#54546d",
+  "borderFocus": "#7e9cd8",
+  "highlight":   "#363646",
+  "selection":   "#2d4f67",
+  "planMode":    "#d27e99"
+}
+

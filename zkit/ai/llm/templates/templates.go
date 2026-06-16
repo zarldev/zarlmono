@@ -1,0 +1,90 @@
+// Package templates provides per-model chat-template helpers for local-LLM
+// servers (llama.cpp, Ollama via /v1/) where the wire-format reasoning
+// negotiation differs by model family.
+//
+// Two concerns live here:
+//
+//  1. Pre-flight message shaping. Some model families (Gemma-4) require an
+//     inline "thinking" sentinel injected into the system message before
+//     the request hits the wire. Others (Qwen3) leave messages untouched
+//     and toggle reasoning purely via chat_template_kwargs.
+//
+//  2. The chat_template_kwargs payload. llama.cpp's Jinja templates inspect
+//     this to decide whether to enable thinking. TemplateKwargs is the
+//     typed form, kept off map[string]any at the edge.
+//
+// SplitThinking (in thinking.go) handles the inverse direction: extracting
+// inline reasoning from a model's response when the wire format embeds it.
+package templates
+
+import (
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
+)
+
+// ChatTemplate captures the per-model quirks a local-LLM client needs to
+// negotiate. Implementations are value types — pass by copy, no shared
+// state.
+type ChatTemplate interface {
+	// ShapeMessages returns a transformed messages slice ready for the
+	// wire. The input slice is never mutated. When reasoning is true the
+	// template is free to inject model-specific sentinels or system
+	// entries; when false it must leave the logical prompt intact.
+	ShapeMessages(msgs []llm.Message, reasoning bool) []llm.Message
+
+	// ThinkingKwargs returns the chat_template_kwargs payload for the
+	// request. The EnableThinking field maps to llama.cpp's Jinja
+	// template variable of the same name.
+	ThinkingKwargs(reasoning bool) Kwargs
+}
+
+// Kwargs is the typed payload serialized into the chat_template_kwargs
+// request extension. Kept as a concrete type so callers don't reach for
+// map[string]any at the edge.
+//
+// Field semantics (Qwen-team naming, llama.cpp Jinja consumes them):
+//   - EnableThinking: tells the template to allow `<think>` blocks.
+//     The model still chooses whether to use them; this just opens
+//     the gate.
+//   - PreserveThinking: when true, the template keeps `<think>` blocks
+//     visible from prior assistant turns when re-shaping the message
+//     history. Qwen-team explicitly recommends this for agentic loops
+//     so the model sees its own reasoning across iterations.
+type Kwargs struct {
+	EnableThinking   bool `json:"enable_thinking"`
+	PreserveThinking bool `json:"preserve_thinking,omitempty"`
+}
+
+// AsMap renders Kwargs as a generic map for transports that pass
+// chat_template_kwargs through as JSON without a typed view (the
+// OpenAI SDK is one — it accepts arbitrary extra fields via
+// option.WithJSONSet). Returns nil when no fields are set so we
+// don't bloat requests on providers that ignore them.
+func (k Kwargs) AsMap() map[string]any {
+	if !k.EnableThinking && !k.PreserveThinking {
+		return nil
+	}
+	out := map[string]any{"enable_thinking": k.EnableThinking}
+	if k.PreserveThinking {
+		out["preserve_thinking"] = true
+	}
+	return out
+}
+
+// prependSystemSentinel returns a copy of messages with sentinel
+// prepended to the first system message's content. When no system
+// message exists, one is inserted at the head. Unexported — callers go
+// through a template, not this helper directly.
+func prependSystemSentinel(msgs []llm.Message, sentinel string) []llm.Message {
+	if sentinel == "" {
+		return msgs
+	}
+	out := make([]llm.Message, len(msgs))
+	copy(out, msgs)
+	for i := range out {
+		if out[i].Role == "system" {
+			out[i].Content = sentinel + "\n" + out[i].Content
+			return out
+		}
+	}
+	return append([]llm.Message{{Role: "system", Content: sentinel}}, out...)
+}

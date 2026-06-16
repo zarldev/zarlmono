@@ -1,0 +1,22 @@
+{
+  "name":        "retro-amber",
+  "bg":          "#1a1200",
+  "fg":          "#ffb000",
+  "subtle":      "#ffc940",
+  "muted":       "#8b6914",
+  "primary":     "#ff8c00",
+  "secondary":   "#ff6600",
+  "success":     "#ffb000",
+  "warning":     "#ff6d00",
+  "error":       "#ff3300",
+  "info":        "#ffaa00",
+  "user":        "#ff7b00",
+  "assistant":   "#ffcc00",
+  "tool":        "#ff9900",
+  "system":      "#ffaa00",
+  "border":      "#523a00",
+  "borderFocus": "#ff8c00",
+  "highlight":   "#332200",
+  "selection":   "#261800",
+  "planMode":    "#ff6600"
+}

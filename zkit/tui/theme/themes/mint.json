@@ -1,0 +1,22 @@
+{
+  "name":        "mint",
+  "bg":          "#0d1a18",
+  "fg":          "#c4e8d8",
+  "subtle":      "#8cc8aa",
+  "muted":       "#4a8870",
+  "primary":     "#33dba0",
+  "secondary":   "#66eebb",
+  "success":     "#44cc77",
+  "warning":     "#ccbb44",
+  "error":       "#e05555",
+  "info":        "#55bbcc",
+  "user":        "#dd9944",
+  "assistant":   "#44cc77",
+  "tool":        "#33dba0",
+  "system":      "#66eebb",
+  "border":      "#1a3d30",
+  "borderFocus": "#33dba0",
+  "highlight":   "#163328",
+  "selection":   "#112820",
+  "planMode":    "#44ddbb"
+}

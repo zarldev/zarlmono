@@ -1,0 +1,23 @@
+{
+  "name":        "terminal-green",
+  "bg":          "#001b0f",
+  "fg":          "#b7ffbf",
+  "subtle":      "#72d572",
+  "muted":       "#3f7f4f",
+  "primary":     "#00ff66",
+  "secondary":   "#00c2ff",
+  "success":     "#39ff14",
+  "warning":     "#d7ff00",
+  "error":       "#ff3355",
+  "info":        "#00ffaa",
+  "user":        "#ccff66",
+  "assistant":   "#66ff99",
+  "tool":        "#00ffcc",
+  "system":      "#99ff00",
+  "border":      "#165c36",
+  "borderFocus": "#00ff66",
+  "highlight":   "#184d2e",
+  "selection":   "#063b22",
+  "planMode":    "#00ffaa"
+}
+

@@ -1,0 +1,118 @@
+# Dependencies
+node_modules/
+vendor/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build outputs
+dist/
+build/
+out/
+target/
+*.o
+*.so
+*.dylib
+*.exe
+*.dll
+
+# Stray go-build output at the repo root, e.g. `go build ./zarlcode/cmd` → ./cmd
+# and `go build ./examples/hnupvote` → ./hnupvote. The real install target is
+# ~/.local/bin (see Taskfile.yml); these root copies are accidental.
+/cmd
+/hnupvote
+# Likewise `cd zarlcode && go build ./cmd` → ./zarlcode/zarlcode.
+/zarlcode/zarlcode
+# `go build -o bin/zarlcode` → a ~68MB binary; never track build artifacts.
+/bin/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.coverage
+*.cover
+.pytest_cache/
+.phpunit.result.cache
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.cache
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Ansible
+*.retry
+
+# Docker
+.dockerignore
+
+# Secrets
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# Personal workspace files
+.notes/
+.todo/
+workspace/
+
+# AI Agents
+.claude
+.superpowers/
+
+# zarlcode runtime state (workspace dir + askpass socket + materialised binaries)
+.zarlcode/
+/session.json
+/manifest.json
+/agent-demo
+
+# Docs site build artifacts
+site/.astro/
+
+/agent-self-build
+/wallpaper.png
+
+/wordlists/
+
+dist
+
+
+# Astro's generated content-collection cache (site builds)
+.astro/
+
+# zarlcode's own workspace state when run inside this repo
+.zarlcode/

@@ -1,0 +1,22 @@
+{
+  "name":        "rose-pine-moon",
+  "bg":          "#232136",
+  "fg":          "#e0def4",
+  "subtle":      "#908caa",
+  "muted":       "#6e6a86",
+  "primary":     "#c4a7e7",
+  "secondary":   "#ebbcba",
+  "success":     "#9ccfd8",
+  "warning":     "#f6c177",
+  "error":       "#eb6f92",
+  "info":        "#3e8fb0",
+  "user":        "#f6c177",
+  "assistant":   "#9ccfd8",
+  "tool":        "#95b1ac",
+  "system":      "#c4a7e7",
+  "border":      "#393552",
+  "borderFocus": "#c4a7e7",
+  "highlight":   "#44415a",
+  "selection":   "#312e46",
+  "planMode":    "#ea9a97"
+}

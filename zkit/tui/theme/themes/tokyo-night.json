@@ -1,0 +1,23 @@
+{
+  "name":        "tokyo-night",
+  "bg":          "#1a1b26",
+  "fg":          "#c0caf5",
+  "subtle":      "#a9b1d6",
+  "muted":       "#565f89",
+  "primary":     "#7aa2f7",
+  "secondary":   "#bb9af7",
+  "success":     "#9ece6a",
+  "warning":     "#e0af68",
+  "error":       "#f7768e",
+  "info":        "#7dcfff",
+  "user":        "#ff9e64",
+  "assistant":   "#73daca",
+  "tool":        "#9ece6a",
+  "system":      "#bb9af7",
+  "border":      "#414868",
+  "borderFocus": "#7aa2f7",
+  "highlight":   "#3d2e4f",
+  "selection":   "#283457",
+  "planMode":    "#ff79c6"
+}
+

@@ -1,0 +1,23 @@
+{
+  "name":        "vesper",
+  "bg":          "#101010",
+  "fg":          "#ffffff",
+  "subtle":      "#a0a0a0",
+  "muted":       "#626262",
+  "primary":     "#ffc799",
+  "secondary":   "#99ffe4",
+  "success":     "#99ffe4",
+  "warning":     "#ffc799",
+  "error":       "#ff8080",
+  "info":        "#88c0ff",
+  "user":        "#ffb066",
+  "assistant":   "#99ffe4",
+  "tool":        "#aaff99",
+  "system":      "#c099ff",
+  "border":      "#333333",
+  "borderFocus": "#ffc799",
+  "highlight":   "#2a241f",
+  "selection":   "#1f2a27",
+  "planMode":    "#ffb3d1"
+}
+

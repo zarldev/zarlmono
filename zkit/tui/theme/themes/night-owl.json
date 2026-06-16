@@ -1,0 +1,22 @@
+{
+  "name":        "night-owl",
+  "bg":          "#011627",
+  "fg":          "#d6deeb",
+  "subtle":      "#a7b5ca",
+  "muted":       "#5f7e97",
+  "primary":     "#82aaff",
+  "secondary":   "#c792ea",
+  "success":     "#addb67",
+  "warning":     "#ffcb8b",
+  "error":       "#ff5874",
+  "info":        "#5ca7e4",
+  "user":        "#f78c6c",
+  "assistant":   "#addb67",
+  "tool":        "#5ca7e4",
+  "system":      "#c792ea",
+  "border":      "#1d3b53",
+  "borderFocus": "#82aaff",
+  "highlight":   "#163047",
+  "selection":   "#0f2335",
+  "planMode":    "#c792ea"
+}

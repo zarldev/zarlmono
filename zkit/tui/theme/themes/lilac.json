@@ -1,0 +1,22 @@
+{
+  "name":        "lilac",
+  "bg":          "#1a1a2e",
+  "fg":          "#e8e0f0",
+  "subtle":      "#c0b0d8",
+  "muted":       "#7a6a99",
+  "primary":     "#b39bff",
+  "secondary":   "#ff9bc0",
+  "success":     "#8bdfa0",
+  "warning":     "#ffcc80",
+  "error":       "#ff7090",
+  "info":        "#99c8ff",
+  "user":        "#ffaa70",
+  "assistant":   "#8bdfa0",
+  "tool":        "#99c8ff",
+  "system":      "#b39bff",
+  "border":      "#3d3055",
+  "borderFocus": "#b39bff",
+  "highlight":   "#2f2545",
+  "selection":   "#251d3a",
+  "planMode":    "#ff9bc0"
+}

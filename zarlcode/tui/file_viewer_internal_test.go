@@ -1,0 +1,196 @@
+package tui
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+)
+
+func TestFileViewer_RenderedContentUsesCodeBlockRenderer(t *testing.T) {
+	root := t.TempDir()
+	v := &fileViewer{
+		workspaceDir: root,
+		viewingFile:  filepath.Join(root, "main.go"),
+		fileContent:  "package main\n\nfunc main() {}",
+	}
+
+	out := ansi.Strip(strings.Join(v.renderedContentLines(80), "\n"))
+	if strings.Contains(out, "```") {
+		t.Fatalf("file viewer should render code blocks, not raw fences:\n%s", out)
+	}
+	if !strings.Contains(out, "package main") || !strings.Contains(out, "func main") {
+		t.Fatalf("file viewer rendered output lost source content:\n%s", out)
+	}
+	// With lineNumbers enabled, each source line gets a gutter.
+	if !strings.Contains(out, "1 │") || !strings.Contains(out, "2 │") {
+		t.Fatalf("file viewer should show line-number gutter:\n%s", out)
+	}
+}
+
+func TestInferSyntaxFromHint(t *testing.T) {
+	cases := []struct {
+		hint string
+		want string
+	}{
+		{"main.go", "go"},
+		{"src/app.tsx", "tsx"},
+		{"config.yaml", "yaml"},
+		{"README.md", "markdown"},
+		{"$ go test ./...", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.hint, func(t *testing.T) {
+			if got := inferSyntaxFromHint(c.hint); got != c.want {
+				t.Fatalf("inferSyntaxFromHint(%q) = %q, want %q", c.hint, got, c.want)
+			}
+		})
+	}
+}
+
+func TestFileViewerPreviewCapsLargeFiles(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "large.txt")
+	data := bytes.Repeat([]byte("a"), fileViewerMaxPreviewBytes+17)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write large file: %v", err)
+	}
+
+	got, truncated, size, err := readFileViewerPreview(path)
+	if err != nil {
+		t.Fatalf("read preview: %v", err)
+	}
+	if !truncated {
+		t.Fatal("large file preview should report truncation")
+	}
+	if size != int64(len(data)) {
+		t.Fatalf("size = %d, want %d", size, len(data))
+	}
+	if len(got) != fileViewerMaxPreviewBytes {
+		t.Fatalf("preview length = %d, want %d", len(got), fileViewerMaxPreviewBytes)
+	}
+}
+
+func TestFileViewerTruncatesLongLines(t *testing.T) {
+	content := strings.Repeat("x", fileViewerMaxLineRunes+10) + "\nshort"
+
+	got, truncated := truncateFileViewerLongLines(content)
+	if !truncated {
+		t.Fatal("long line should report truncation")
+	}
+	if !strings.Contains(got, "[line truncated]") {
+		t.Fatalf("truncated content = %q, want line truncated marker", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", fileViewerMaxLineRunes+1)) {
+		t.Fatalf("truncated content still contains an over-limit line")
+	}
+	if !strings.Contains(got, "\nshort") {
+		t.Fatalf("truncated content lost later lines: %q", got)
+	}
+}
+
+func TestFileViewerPreviewRejectsNonRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	_, _, _, err := readFileViewerPreview(dir)
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("read preview error = %v, want not regular file", err)
+	}
+}
+
+func TestFileViewerSkipsBinaryPreview(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "blob.bin")
+	if err := os.WriteFile(path, []byte{'a', 0, 'b'}, 0o644); err != nil {
+		t.Fatalf("write binary file: %v", err)
+	}
+
+	v := newFileViewer(root)
+	if !strings.Contains(v.fileContent, "binary file preview skipped") {
+		t.Fatalf("file content = %q, want binary preview skip notice", v.fileContent)
+	}
+}
+
+func TestFileViewerDirectoryPreviewIsBounded(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sub")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for i := range fileViewerDirPreviewLimit + 5 {
+		path := filepath.Join(dir, fmt.Sprintf("file-%02d.txt", i))
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write preview entry: %v", err)
+		}
+	}
+
+	v := newFileViewer(root)
+	if v.dirPreview.path != dir {
+		t.Fatalf("dir preview path = %q, want %q", v.dirPreview.path, dir)
+	}
+	if len(v.dirPreview.entries) != fileViewerDirPreviewLimit {
+		t.Fatalf("dir preview entries = %d, want %d", len(v.dirPreview.entries), fileViewerDirPreviewLimit)
+	}
+	if !v.dirPreview.truncated {
+		t.Fatal("directory preview should report truncation")
+	}
+}
+
+func TestFileViewerEditKeyReturnsSelectedFileAction(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "edit-me.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	v := newFileViewer(root)
+	a := v.handleKey(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	edit, ok := a.(actionEditFile)
+	if !ok {
+		t.Fatalf("action = %T, want actionEditFile", a)
+	}
+	if edit.path != path {
+		t.Fatalf("edit path = %q, want %q", edit.path, path)
+	}
+}
+
+func TestFileViewerEditKeyIgnoresDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	v := newFileViewer(root)
+	if a := v.handleKey(tea.KeyPressMsg{Code: 'e', Text: "e"}); a != (actionNone{}) {
+		t.Fatalf("action = %T, want actionNone", a)
+	}
+}
+
+func TestFileViewerRefreshEditedPathReloadsPreview(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "edit-me.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	v := newFileViewer(root)
+	if !strings.Contains(v.fileContent, "before") {
+		t.Fatalf("initial preview = %q, want before", v.fileContent)
+	}
+	if err := os.WriteFile(path, []byte("after"), 0o644); err != nil {
+		t.Fatalf("rewrite file: %v", err)
+	}
+	v.refreshEditedPath(path)
+	if !strings.Contains(v.fileContent, "after") {
+		t.Fatalf("refreshed preview = %q, want after", v.fileContent)
+	}
+}

@@ -1,0 +1,23 @@
+{
+  "name":        "material-ocean",
+  "bg":          "#0f111a",
+  "fg":          "#a6accd",
+  "subtle":      "#c3e88d",
+  "muted":       "#676e95",
+  "primary":     "#82aaff",
+  "secondary":   "#c792ea",
+  "success":     "#c3e88d",
+  "warning":     "#ffcb6b",
+  "error":       "#f07178",
+  "info":        "#89ddff",
+  "user":        "#f78c6c",
+  "assistant":   "#80cbc4",
+  "tool":        "#c3e88d",
+  "system":      "#c792ea",
+  "border":      "#292d3e",
+  "borderFocus": "#82aaff",
+  "highlight":   "#3b3f51",
+  "selection":   "#1f2233",
+  "planMode":    "#ff5370"
+}
+

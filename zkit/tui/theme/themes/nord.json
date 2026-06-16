@@ -1,0 +1,23 @@
+{
+  "name":        "nord",
+  "bg":          "#2e3440",
+  "fg":          "#eceff4",
+  "subtle":      "#d8dee9",
+  "muted":       "#81a1c1",
+  "primary":     "#88c0d0",
+  "secondary":   "#b48ead",
+  "success":     "#a3be8c",
+  "warning":     "#ebcb8b",
+  "error":       "#bf616a",
+  "info":        "#5e81ac",
+  "user":        "#d08770",
+  "assistant":   "#8fbcbb",
+  "tool":        "#a3be8c",
+  "system":      "#b48ead",
+  "border":      "#4c566a",
+  "borderFocus": "#88c0d0",
+  "highlight":   "#434c5e",
+  "selection":   "#3b4252",
+  "planMode":    "#d08770"
+}
+

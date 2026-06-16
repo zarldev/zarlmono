@@ -1,0 +1,22 @@
+{
+  "name":        "atom-one-light",
+  "bg":          "#fafafa",
+  "fg":          "#383a42",
+  "subtle":      "#6c6f77",
+  "muted":       "#a0a1a7",
+  "primary":     "#4078f2",
+  "secondary":   "#a626a4",
+  "success":     "#50a14f",
+  "warning":     "#c18401",
+  "error":       "#e45649",
+  "info":        "#0184bc",
+  "user":        "#986801",
+  "assistant":   "#50a14f",
+  "tool":        "#0184bc",
+  "system":      "#a626a4",
+  "border":      "#e5e5e6",
+  "borderFocus": "#4078f2",
+  "highlight":   "#ffffcc",
+  "selection":   "#e5e5ff",
+  "planMode":    "#a626a4"
+}

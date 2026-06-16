@@ -1,0 +1,2 @@
+USE zarl;
+ALTER TABLE persons ADD COLUMN photo TEXT NOT NULL DEFAULT '';

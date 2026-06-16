@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package zarl.v1;
+
+option go_package = "github.com/zarldev/zarlmono/zarlai/transport/grpc/gen/zarl/v1;zarlv1";
+
+service ZarlService {
+  // Server-streaming conversation turn.
+  // Client sends one input, server streams back transcription, text, and audio.
+  // Each call is one conversational turn. Session state is tracked by session_id.
+  rpc Converse(ConverseRequest) returns (stream ConverseResponse);
+
+  // Server-streaming notification channel.
+  // Client subscribes after session creation. Server pushes notifications
+  // (e.g. timer completions) as they arrive.
+  rpc SubscribeNotifications(SubscribeNotificationsRequest) returns (stream SubscribeNotificationsResponse);
+}
+
+message ConverseRequest {
+  // Session ID for conversation continuity. Empty = new session.
+  string session_id = 1;
+
+  oneof input {
+    AudioInput audio_input = 2;
+    TextInput text_input = 3;
+  }
+
+  // Optional user location (from browser geolocation)
+  double latitude = 4;
+  double longitude = 5;
+}
+
+message AudioInput {
+  bytes wav = 1;
+  bytes image_jpeg = 2;
+}
+
+message TextInput {
+  string text = 1;
+  bytes image_jpeg = 2;
+}
+
+message ConverseResponse {
+  oneof payload {
+    SessionCreated session_created = 1;
+    Transcription transcription = 2;
+    TextResponse text = 3;
+    AudioStart audio_start = 4;
+    AudioChunk audio_chunk = 5;
+    AudioEnd audio_end = 6;
+    ToolStatus tool_status = 7;
+    // Incremental content delta streamed from the LLM. Each chunk carries
+    // a fragment of the final reply text. Consumers that want the full
+    // response should concatenate all TextChunks until the terminal
+    // TextResponse arrives (which also carries the full aggregate).
+    TextChunk text_chunk = 8;
+    // Incremental reasoning delta from a thinking-mode LLM. Never spoken
+    // by TTS, never added to session history — purely a UI affordance so
+    // long turns feel productive instead of silent.
+    ReasoningChunk reasoning_chunk = 9;
+  }
+}
+
+message ToolStatus {
+  string tool_name = 1;
+  string status = 2;
+  string summary = 3;
+}
+
+message SessionCreated {
+  string session_id = 1;
+}
+
+message Transcription {
+  string text = 1;
+  float duration_sec = 2;
+}
+
+message TextResponse {
+  string text = 1;
+  float duration_sec = 2;
+}
+
+message TextChunk {
+  string text = 1;
+}
+
+message ReasoningChunk {
+  string text = 1;
+}
+
+message AudioStart {
+  int32 sample_rate = 1;
+  int32 sentence_count = 2;
+}
+
+message AudioChunk {
+  bytes pcm = 1;
+  int32 index = 2;
+}
+
+message AudioEnd {
+  float duration_sec = 1;
+}
+
+message SubscribeNotificationsRequest {
+  string session_id = 1;
+}
+
+message SubscribeNotificationsResponse {
+  string tool_name = 1;
+  string content = 2;
+}

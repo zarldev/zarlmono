@@ -1,0 +1,129 @@
+version: '3'
+
+vars:
+  BINARY: zarl
+
+dotenv: ['.env']
+
+tasks:
+  setup:
+    desc: First-time bootstrap (frontend deps + protobuf code)
+    cmds:
+      - task: frontend:install
+      - task: proto
+
+  doctor:
+    desc: Preflight checks (toolchain, .env, models, services)
+    cmds:
+      - go run ./cmd/doctor
+
+  proto:
+    desc: Lint and generate protobuf code (Go + TypeScript)
+    cmds:
+      - buf lint
+      - buf generate
+
+  # --- docker compose ---
+
+  up:
+    desc: Start infrastructure (dolt, qdrant, searxng)
+    dir: deploy
+    cmds:
+      - docker compose up -d dolt qdrant searxng
+
+  up:llm:
+    desc: Start infrastructure + llama-server (GPU required, llm profile)
+    dir: deploy
+    cmds:
+      - docker compose --profile llm up -d
+
+  down:
+    desc: Stop all compose services
+    dir: deploy
+    cmds:
+      - docker compose down
+
+  ps:
+    desc: Show compose service status
+    dir: deploy
+    cmds:
+      - docker compose ps
+
+  logs:
+    desc: Tail compose logs (pass service name via CLI_ARGS, e.g. task logs -- llama-server)
+    dir: deploy
+    cmds:
+      - docker compose logs -f {{.CLI_ARGS}}
+
+  # --- frontend ---
+
+  frontend:install:
+    desc: Install frontend dependencies
+    dir: frontend
+    cmds:
+      - npm install
+    sources:
+      - frontend/package.json
+    generates:
+      - frontend/node_modules/.package-lock.json
+
+  frontend:dev:
+    desc: Start Vite dev server on :5173 (proxies RPC to :8080)
+    dir: frontend
+    cmds:
+      - npm run dev
+
+  frontend:build:
+    desc: Build frontend for production into frontend/dist
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - npm run build
+    sources:
+      - frontend/src/**/*
+      - frontend/index.html
+      - frontend/vite.config.ts
+    generates:
+      - frontend/dist/index.html
+
+  # --- models ---
+
+  models:supertonic:
+    desc: Download the Supertonic int8 TTS bundle into $MODELS_DIR/supertonic
+    vars:
+      BUNDLE: sherpa-onnx-supertonic-tts-int8-2026-03-06
+      URL: https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2
+      MODELS_DIR: '{{.MODELS_DIR | default "./deploy/models"}}'
+      DEST: '{{.MODELS_DIR}}/supertonic'
+    cmds:
+      - mkdir -p {{.MODELS_DIR}}
+      - test ! -d {{.DEST}} || { echo "{{.DEST}} already exists, skipping"; exit 0; }
+      - curl -L -o /tmp/{{.BUNDLE}}.tar.bz2 {{.URL}}
+      - tar -xjf /tmp/{{.BUNDLE}}.tar.bz2 -C {{.MODELS_DIR}}/
+      - mv {{.MODELS_DIR}}/{{.BUNDLE}} {{.DEST}}
+      - rm -f /tmp/{{.BUNDLE}}.tar.bz2
+
+  # --- backend ---
+
+  build:
+    desc: Build the single Go binary with embedded frontend
+    deps: [frontend:build]
+    cmds:
+      - go build -o {{.BINARY}} ./cmd/zarl
+
+  run:
+    desc: Run the existing zarl binary (loads .env, does NOT rebuild)
+    cmds:
+      - ./{{.BINARY}}
+
+  test:
+    desc: Run Go tests with race detector
+    cmds:
+      - go test -race -count=1 ./...
+
+  clean:
+    desc: Remove build artifacts (binary + frontend dist/node_modules)
+    cmds:
+      - rm -f {{.BINARY}}
+      - rm -rf frontend/dist
+      - rm -rf frontend/node_modules

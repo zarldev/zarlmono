@@ -1,0 +1,22 @@
+{
+  "name":        "shades-of-purple",
+  "bg":          "#2d2b55",
+  "fg":          "#ffffff",
+  "subtle":      "#a599e9",
+  "muted":       "#6c6a9e",
+  "primary":     "#fad000",
+  "secondary":   "#ff628c",
+  "success":     "#a5ff90",
+  "warning":     "#ff9d00",
+  "error":       "#ff2a2a",
+  "info":        "#9effff",
+  "user":        "#ff7200",
+  "assistant":   "#a5ff90",
+  "tool":        "#9effff",
+  "system":      "#fad000",
+  "border":      "#4a478a",
+  "borderFocus": "#fad000",
+  "highlight":   "#3c3970",
+  "selection":   "#353263",
+  "planMode":    "#ff628c"
+}

@@ -1,0 +1,22 @@
+{
+  "name":        "arc-dark",
+  "bg":          "#2b313c",
+  "fg":          "#d3dae3",
+  "subtle":      "#a9b1c0",
+  "muted":       "#5c6578",
+  "primary":     "#5294e2",
+  "secondary":   "#a37acc",
+  "success":     "#8ebd6b",
+  "warning":     "#de935f",
+  "error":       "#e55561",
+  "info":        "#5294e2",
+  "user":        "#de935f",
+  "assistant":   "#8ebd6b",
+  "tool":        "#5294e2",
+  "system":      "#a37acc",
+  "border":      "#3f4652",
+  "borderFocus": "#5294e2",
+  "highlight":   "#353b49",
+  "selection":   "#363c4a",
+  "planMode":    "#c061cb"
+}

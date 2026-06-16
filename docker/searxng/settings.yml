@@ -1,0 +1,19 @@
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: "google"
+
+server:
+  bind_address: "127.0.0.1"
+  secret_key: "zarl-dev"
+  limiter: false
+
+general:
+  debug: false
+  instance_name: "SearXNG"
+  enable_metrics: true
+  open_metrics: ''

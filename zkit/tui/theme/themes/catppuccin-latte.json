@@ -1,0 +1,22 @@
+{
+  "name":        "catppuccin-latte",
+  "bg":          "#eff1f5",
+  "fg":          "#4c4f69",
+  "subtle":      "#5c5f77",
+  "muted":       "#9ca0b0",
+  "primary":     "#1e66f5",
+  "secondary":   "#8839ef",
+  "success":     "#40a02b",
+  "warning":     "#df8e1d",
+  "error":       "#d20f39",
+  "info":        "#04a5e5",
+  "user":        "#fe640b",
+  "assistant":   "#40a02b",
+  "tool":        "#04a5e5",
+  "system":      "#8839ef",
+  "border":      "#dce0e8",
+  "borderFocus": "#1e66f5",
+  "highlight":   "#f9e2af",
+  "selection":   "#ccd0da",
+  "planMode":    "#ea76cb"
+}

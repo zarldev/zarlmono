@@ -1,0 +1,22 @@
+{
+  "name":        "papercolor",
+  "bg":          "#eeeeee",
+  "fg":          "#444444",
+  "subtle":      "#666666",
+  "muted":       "#979797",
+  "primary":     "#005f87",
+  "secondary":   "#8700af",
+  "success":     "#008700",
+  "warning":     "#af5f00",
+  "error":       "#af0000",
+  "info":        "#005f87",
+  "user":        "#d75f00",
+  "assistant":   "#008700",
+  "tool":        "#005f87",
+  "system":      "#8700af",
+  "border":      "#d0d0d0",
+  "borderFocus": "#005f87",
+  "highlight":   "#ffffaf",
+  "selection":   "#d0d0ff",
+  "planMode":    "#d7005f"
+}

@@ -1,0 +1,22 @@
+{
+  "name":        "horizon",
+  "bg":          "#1c1e26",
+  "fg":          "#d5d8da",
+  "subtle":      "#b4b9c0",
+  "muted":       "#676a74",
+  "primary":     "#e95678",
+  "secondary":   "#f09483",
+  "success":     "#29d398",
+  "warning":     "#fab795",
+  "error":       "#e95678",
+  "info":        "#26bbd9",
+  "user":        "#fab795",
+  "assistant":   "#59e3b5",
+  "tool":        "#26bbd9",
+  "system":      "#b877db",
+  "border":      "#2f3340",
+  "borderFocus": "#e95678",
+  "highlight":   "#3d2940",
+  "selection":   "#2a2538",
+  "planMode":    "#b877db"
+}

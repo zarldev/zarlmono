@@ -1,0 +1,386 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #050509;
+  --color-surface: rgba(255, 255, 255, 0.04);
+  --color-text: #c8cad0;
+  --color-text-dim: #5a5d66;
+  --color-text-bright: #eef0f4;
+
+  --color-user: #93c5fd;
+  --color-user-dim: rgba(147, 197, 253, 0.12);
+  --color-ai: #f59e0b;
+  --color-ai-dim: rgba(245, 158, 11, 0.12);
+  --color-process: #a78bfa;
+  --color-process-dim: rgba(167, 139, 250, 0.12);
+  --color-loading: #3a3d46;
+  --color-loading-dim: rgba(58, 61, 70, 0.12);
+
+  --font-body: 'Instrument Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ── Dynamic glow (set by JS) ── */
+:root {
+  --glow: var(--color-loading);
+  --glow-dim: var(--color-loading-dim);
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Background radial glow */
+body::before {
+  content: '';
+  position: fixed;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 800px;
+  height: 600px;
+  background: radial-gradient(ellipse, var(--glow-dim) 0%, transparent 70%);
+  pointer-events: none;
+  transition: background 0.6s ease;
+  z-index: 0;
+}
+
+/* ── Status pill states ── */
+.status-pill.listening { color: var(--color-user); background: var(--color-user-dim); }
+.status-pill.listening .dot { background: var(--color-user); animation: dot-pulse 2s ease-in-out infinite; }
+.status-pill.processing { color: var(--color-process); background: var(--color-process-dim); }
+.status-pill.processing .dot { background: var(--color-process); animation: dot-pulse 0.6s ease-in-out infinite; }
+.status-pill.speaking { color: var(--color-ai); background: var(--color-ai-dim); }
+.status-pill.speaking .dot { background: var(--color-ai); animation: dot-pulse 1s ease-in-out infinite; }
+.status-pill.loading .dot { background: var(--color-loading); animation: dot-pulse 2.5s ease-in-out infinite; }
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ── Panel frames ── */
+.panel-frame.user {
+  background: linear-gradient(135deg, #0e1420, #0a1018);
+  border: 1.5px solid rgba(147, 197, 253, 0.15);
+  box-shadow: 0 0 30px rgba(147, 197, 253, 0.05);
+}
+
+.panel-frame.ai {
+  background: linear-gradient(135deg, #14100a, #100c08);
+  border: 1.5px solid rgba(245, 158, 11, 0.15);
+  box-shadow: 0 0 30px rgba(245, 158, 11, 0.05);
+}
+
+/* ── AI Orb ── */
+.orb {
+  transition: transform 0.1s ease-out;
+}
+
+.orb-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  transition: border-color 0.4s, opacity 0.4s;
+}
+
+.orb-ring-1 { inset: -2px; border-width: 2px; }
+.orb-ring-2 { inset: -12px; }
+.orb-ring-3 { inset: -22px; }
+.orb-ring-4 { inset: -32px; }
+
+.orb.loading { animation: orb-breathe 5s ease-in-out infinite; }
+.orb.loading .orb-core { background: var(--color-loading); box-shadow: 0 0 10px rgba(58, 61, 70, 0.3); }
+.orb.loading .orb-ring { border-color: rgba(58, 61, 70, 0.08); opacity: 0.3; }
+
+.orb.listening { animation: orb-breathe 3s ease-in-out infinite; }
+.orb.listening .orb-core { background: var(--color-ai); box-shadow: 0 0 20px rgba(245, 158, 11, 0.5); }
+.orb.listening .orb-ring-1 { border-color: rgba(245, 158, 11, 0.25); opacity: 0.7; }
+.orb.listening .orb-ring-2 { border-color: rgba(245, 158, 11, 0.12); opacity: 0.5; animation: ring-breathe 3s ease-in-out infinite 0.3s; }
+.orb.listening .orb-ring-3 { border-color: rgba(245, 158, 11, 0.06); opacity: 0.3; animation: ring-breathe 3s ease-in-out infinite 0.6s; }
+.orb.listening .orb-ring-4 { border-color: rgba(245, 158, 11, 0.03); opacity: 0.2; animation: ring-breathe 3s ease-in-out infinite 0.9s; }
+
+.orb.processing { animation: orb-breathe 0.8s ease-in-out infinite; }
+.orb.processing .orb-core { background: var(--color-process); box-shadow: 0 0 25px rgba(167, 139, 250, 0.6); }
+.orb.processing .orb-ring-1 { border-color: rgba(167, 139, 250, 0.3); opacity: 0.8; }
+.orb.processing .orb-ring-2 { border-color: rgba(167, 139, 250, 0.15); opacity: 0.5; animation: ring-breathe 0.8s ease-in-out infinite 0.1s; }
+.orb.processing .orb-ring-3 { border-color: rgba(167, 139, 250, 0.08); opacity: 0.3; animation: ring-breathe 0.8s ease-in-out infinite 0.2s; }
+.orb.processing .orb-ring-4 { border-color: rgba(167, 139, 250, 0.04); opacity: 0.2; animation: ring-breathe 0.8s ease-in-out infinite 0.3s; }
+
+.orb.speaking { animation: none; }
+.orb.speaking .orb-core { background: var(--color-ai); box-shadow: 0 0 25px rgba(245, 158, 11, 0.6); }
+.orb.speaking .orb-ring-1 { border-color: rgba(245, 158, 11, 0.3); }
+.orb.speaking .orb-ring-2 { border-color: rgba(245, 158, 11, 0.15); }
+.orb.speaking .orb-ring-3 { border-color: rgba(245, 158, 11, 0.08); }
+.orb.speaking .orb-ring-4 { border-color: rgba(245, 158, 11, 0.04); }
+
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+@keyframes ring-breathe {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.03); }
+}
+
+/* ── Waveform canvas sizing ── */
+.waveform-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Message animations ── */
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg-animate { animation: msg-in 0.25s ease-out; }
+
+/* ── Markdown in assistant bubbles ── */
+.markdown-msg p { margin: 0; }
+.markdown-msg p + p { margin-top: 0.5em; }
+.markdown-msg ul,
+.markdown-msg ol { margin: 0.3em 0 0.3em 1.2em; padding: 0; }
+.markdown-msg li { margin: 0.1em 0; }
+.markdown-msg strong { color: #eef0f4; font-weight: 600; }
+.markdown-msg em { font-style: italic; opacity: 0.9; }
+.markdown-msg code { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9em; background: rgba(255,255,255,0.06); padding: 0.1em 0.35em; border-radius: 4px; }
+.markdown-msg pre { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06); padding: 0.6em 0.8em; border-radius: 8px; overflow-x: auto; margin: 0.4em 0; }
+.markdown-msg pre code { background: transparent; padding: 0; font-size: 0.85em; }
+.markdown-msg a { color: #93c5fd; text-decoration: underline; }
+.markdown-msg h1, .markdown-msg h2, .markdown-msg h3 { margin: 0.4em 0 0.2em; font-weight: 600; color: #eef0f4; }
+.markdown-msg h1 { font-size: 1.1em; }
+.markdown-msg h2 { font-size: 1.05em; }
+.markdown-msg h3 { font-size: 1em; }
+.markdown-msg table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.9em; }
+.markdown-msg th, .markdown-msg td { border: 1px solid rgba(255,255,255,0.08); padding: 0.25em 0.5em; text-align: left; }
+.markdown-msg hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 0.5em 0; }
+
+/* ── Loading dots ── */
+.loading-dots span {
+  animation: dot-bounce 1.2s ease-in-out infinite;
+}
+.loading-dots span:nth-child(2) { animation-delay: 0.15s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes dot-bounce {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-4px); }
+}
+
+/* ── Drag-over state ── */
+.input-bar.dragover {
+  border-color: rgba(147, 197, 253, 0.3);
+  background: rgba(147, 197, 253, 0.04);
+}
+
+/* ── Scrollbar ── */
+.transcript-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
+}
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+  .presence-row { flex-direction: column !important; gap: 12px !important; }
+  .panel-divider { display: none !important; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(40px) }
+  to   { opacity: 1; transform: translateY(0) }
+}
+@keyframes slideDown {
+  from { opacity: 1; transform: translateY(0) }
+  to   { opacity: 0; transform: translateY(40px) }
+}
+
+/* ── OPERATOR READOUT ─────────────────────────────────────
+   Tactical-cinematic chrome: corner brackets, hairlines,
+   mono micro-labels, scanlines, 3-bar EQ. Used by NowPlaying,
+   the camera preview, and the Immersive instrumentation row. */
+
+.op-mono       { font-family: var(--font-mono); font-feature-settings: "ss01", "zero"; letter-spacing: 0.04em; }
+.op-mono-tight { font-family: var(--font-mono); font-feature-settings: "ss01", "zero"; letter-spacing: 0.02em; }
+
+/* Four 10x10px amber L-shapes pinned to the corners of the
+   host element. Host must establish a positioning context
+   (fixed/absolute/relative) — `:where()` keeps our default
+   at zero specificity so Tailwind `.fixed`/`.absolute` wins. */
+:where(.op-brackets) { position: relative; }
+.op-brackets::before,
+.op-brackets::after,
+.op-brackets > .op-b-tl,
+.op-brackets > .op-b-tr,
+.op-brackets > .op-b-bl,
+.op-brackets > .op-b-br {
+  content: ''; position: absolute; width: 10px; height: 10px;
+  border: 1px solid var(--color-ai); opacity: 0.7; pointer-events: none;
+}
+.op-brackets > .op-b-tl { top: -2px; left: -2px;  border-right: 0; border-bottom: 0; }
+.op-brackets > .op-b-tr { top: -2px; right: -2px; border-left: 0;  border-bottom: 0; }
+.op-brackets > .op-b-bl { bottom: -2px; left: -2px;  border-right: 0; border-top: 0; }
+.op-brackets > .op-b-br { bottom: -2px; right: -2px; border-left: 0;  border-top: 0; }
+.op-brackets::before,
+.op-brackets::after { display: none; } /* Use explicit spans — see components */
+
+/* Panel body — near-black deep surface with a 1px inner hairline. */
+.op-panel {
+  background:
+    linear-gradient(180deg, rgba(245,158,11,0.025) 0%, transparent 40%),
+    rgba(5, 6, 10, 0.82);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 20px 60px -20px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(245, 158, 11, 0.04);
+}
+
+/* Panel mount animation — "tune-in": brightness blip into place.
+   Uses only opacity + filter so it composes cleanly with Tailwind
+   transforms like `-translate-x-1/2` on the host. */
+.op-tune-in { animation: op-tune-in 340ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes op-tune-in {
+  0%   { opacity: 0; filter: brightness(1.8) contrast(1.3); }
+  45%  { opacity: 1; filter: brightness(1.25) contrast(1.1); }
+  100% { opacity: 1; filter: brightness(1) contrast(1); }
+}
+
+/* CRT-ish scanline overlay for the camera feed. Very subtle. */
+.op-scanlines {
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0) 2px,
+    rgba(255, 255, 255, 0.035) 2px,
+    rgba(255, 255, 255, 0.035) 3px
+  );
+  mix-blend-mode: overlay;
+}
+
+/* Faint amber vignette for the feed window — pulls the eye centre. */
+.op-vignette {
+  background: radial-gradient(
+    120% 80% at 50% 50%,
+    transparent 55%,
+    rgba(245, 158, 11, 0.05) 85%,
+    rgba(0, 0, 0, 0.45) 100%
+  );
+}
+
+/* Crosshair reticle, amber, fades under hover. */
+.op-crosshair {
+  position: absolute; inset: 0; pointer-events: none;
+  transition: opacity 250ms ease;
+}
+.op-crosshair::before,
+.op-crosshair::after {
+  content: ''; position: absolute; background: rgba(245, 158, 11, 0.25);
+}
+.op-crosshair::before { left: 50%; top: calc(50% - 8px); width: 1px; height: 16px; transform: translateX(-0.5px); }
+.op-crosshair::after  { top: 50%; left: calc(50% - 8px); height: 1px; width: 16px; transform: translateY(-0.5px); }
+.op-crosshair-box { position: absolute; inset: 50% auto auto 50%; width: 28px; height: 28px; transform: translate(-50%, -50%); border: 1px solid rgba(245, 158, 11, 0.25); }
+
+/* REC-style blinker dot. */
+.op-blink {
+  animation: op-blink 1.4s steps(2, end) infinite;
+}
+@keyframes op-blink {
+  0%, 50%  { opacity: 1; }
+  51%, 100%{ opacity: 0.25; }
+}
+
+/* 3-bar equalizer — three adjacent bars with staggered phases. */
+.op-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.op-eq > span { display: block; width: 2px; background: var(--color-ai); height: 40%; transform-origin: bottom; }
+.op-eq.is-playing > span { animation: op-eq-bounce 900ms ease-in-out infinite; }
+.op-eq.is-playing > span:nth-child(1) { animation-delay: 0ms;   height: 50%; }
+.op-eq.is-playing > span:nth-child(2) { animation-delay: 180ms; height: 85%; }
+.op-eq.is-playing > span:nth-child(3) { animation-delay: 360ms; height: 60%; }
+.op-eq.is-paused > span { opacity: 0.35; }
+@keyframes op-eq-bounce {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+
+/* Instrumentation-row slot — numeric label above, caption below on hover,
+   amber scan underline when active. */
+.op-slot {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 36px; padding: 0;
+  color: rgba(255, 255, 255, 0.55);
+  transition: color 160ms ease;
+}
+.op-slot:hover { color: rgba(255, 255, 255, 0.95); }
+.op-slot[data-active="true"] { color: var(--color-ai); }
+.op-slot::before {
+  /* slot number */
+  content: attr(data-slot);
+  position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.28);
+}
+.op-slot[data-active="true"]::before { color: var(--color-ai); opacity: 0.9; }
+.op-slot::after {
+  /* active underline */
+  content: ''; position: absolute; left: 50%; bottom: -4px; height: 1px;
+  width: 0; background: var(--color-ai);
+  transform: translateX(-50%);
+  transition: width 180ms ease;
+}
+.op-slot[data-active="true"]::after { width: 22px; }
+.op-slot .op-caption {
+  position: absolute; top: 100%; margin-top: 6px; left: 50%; transform: translateX(-50%) translateY(-2px);
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.55);
+  opacity: 0; pointer-events: none; white-space: nowrap;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+.op-slot:hover .op-caption,
+.op-slot:focus-visible .op-caption { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Instrumentation row — inline icon group with a single hairline under
+   each icon on active. No enclosing box, no head label — the icons
+   speak for themselves. */
+.op-rail {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 2px;
+  height: 28px;
+}
+.op-tick {
+  width: 1px; height: 10px; background: rgba(255, 255, 255, 0.08);
+  align-self: center; margin: 0 3px;
+}
+
+/* State-monitor animations. op-scan drives the "thinking" indicator
+   (a hairline amber/violet line sweeping back and forth across a short
+   track). op-dot-pulse drives the "loading" indicator (three dots
+   gently breathing, staggered by animation-delay). */
+@keyframes op-scan {
+  0%   { left: -10%; opacity: 0.2; }
+  45%  { opacity: 0.9; }
+  100% { left: 110%; opacity: 0.2; }
+}
+@keyframes op-dot-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1); }
+}
+
+/* Marquee for long track names — only kicks in if the text overflows its
+   container (handled inline via max-width + truncate fallback). */
+@keyframes op-marquee {
+  0%   { transform: translateX(0); }
+  90%  { transform: translateX(calc(-100% + 18ch)); }
+  100% { transform: translateX(0); }
+}
+.op-marquee { display: inline-block; animation: op-marquee 14s ease-in-out infinite; }

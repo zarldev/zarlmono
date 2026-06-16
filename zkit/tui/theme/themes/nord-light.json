@@ -1,0 +1,22 @@
+{
+  "name":        "nord-light",
+  "bg":          "#eceff4",
+  "fg":          "#2e3440",
+  "subtle":      "#4c566a",
+  "muted":       "#81a1c1",
+  "primary":     "#5e81ac",
+  "secondary":   "#b48ead",
+  "success":     "#a3be8c",
+  "warning":     "#d08770",
+  "error":       "#bf616a",
+  "info":        "#5e81ac",
+  "user":        "#d08770",
+  "assistant":   "#8fbcbb",
+  "tool":        "#a3be8c",
+  "system":      "#b48ead",
+  "border":      "#d8dee9",
+  "borderFocus": "#5e81ac",
+  "highlight":   "#e5e9f0",
+  "selection":   "#d8dee9",
+  "planMode":    "#b48ead"
+}

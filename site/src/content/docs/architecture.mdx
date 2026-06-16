@@ -1,0 +1,164 @@
+---
+title: Architecture
+description: The layered package map, the dependency direction, and where the seams are.
+---
+
+zkit is the substrate beneath the applications in this repo.
+Everything here runs in real sessions daily; nothing is speculative
+API design. The packages are layered — each one is usable without the
+ones above it, and dependencies only ever point **downward**.
+
+## The stack
+
+<div class="arch-stack" role="img" aria-label="Layered architecture: your application sits on the agent runtime, which sits on the AI primitives, which sit on the foundation packages. Dependencies point downward.">
+
+<div class="arch-layer arch-consumer">
+  <span class="arch-tag">consumer</span>
+  <div class="arch-cells">
+    <a class="arch-cell arch-cell-ghost" href="/zarlmono/#built-with-zkit">your application — TUI · server · eval harness · cron job</a>
+  </div>
+</div>
+
+<div class="arch-flow"><span>uses ↓</span></div>
+
+<div class="arch-layer arch-agent">
+  <span class="arch-tag">zkit/agent — the runtime</span>
+  <div class="arch-cells">
+    <a class="arch-cell arch-cell-key" href="/zarlmono/runner/">runner<small>the loop</small></a>
+    <a class="arch-cell" href="/zarlmono/pursue/">pursue<small>verified completion</small></a>
+    <a class="arch-cell" href="/zarlmono/guardrails/">guardrails<small>dispatch middleware</small></a>
+    <a class="arch-cell" href="/zarlmono/compaction/">compact<small>history shrinking</small></a>
+    <a class="arch-cell" href="/zarlmono/spawn/">tools/spawn<small>sub-agents</small></a>
+    <a class="arch-cell" href="/zarlmono/sandboxing/">sandbox<small>Landlock + netns</small></a>
+    <a class="arch-cell" href="/zarlmono/sandboxing/">shellpolicy<small>command vetting</small></a>
+    <a class="arch-cell" href="/zarlmono/foundation/">profile<small>persona presets</small></a>
+    <a class="arch-cell" href="/zarlmono/foundation/#agent-infrastructure">sensor<small>periodic observers</small></a>
+    <a class="arch-cell" href="/zarlmono/foundation/#agent-infrastructure">diffrecorder<small>per-turn diffs</small></a>
+    <a class="arch-cell" href="/zarlmono/foundation/#agent-infrastructure">sourcechain<small>tool fallback</small></a>
+    <a class="arch-cell" href="/zarlmono/foundation/#agent-infrastructure">taskscope<small>task identity</small></a>
+    <a class="arch-cell" href="/zarlmono/foundation/#agent-infrastructure">scheduler<small>cron tasks</small></a>
+  </div>
+</div>
+
+<div class="arch-flow"><span>uses ↓</span></div>
+
+<div class="arch-layer arch-ai">
+  <span class="arch-tag">zkit/ai — the primitives</span>
+  <div class="arch-cells">
+    <a class="arch-cell" href="/zarlmono/providers/">ai/llm<small>provider abstraction</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/providers/#the-backends-registry">backends<small>name → provider</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/providers/#provider-side-recovery">repair<small>JSON recovery</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/providers/#chat-template-adapters">templates<small>chat formats</small></a>
+    <a class="arch-cell" href="/zarlmono/tools/">ai/tools<small>registry + dispatch</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/code-tools/">code<small>read · edit · bash · …</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/tool-ecosystem/">dynamic<small>authored tools + MCP</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/tool-ecosystem/">toolkit<small>schema gen</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/tool-ecosystem/">fetch<small>web_fetch</small></a>
+    <a class="arch-cell arch-cell-sub" href="/zarlmono/tool-ecosystem/">search<small>web_search</small></a>
+  </div>
+</div>
+
+<div class="arch-flow"><span>uses ↓</span></div>
+
+<div class="arch-layer arch-foundation">
+  <span class="arch-tag"><a href="/zarlmono/foundation/">zkit foundation</a></span>
+  <div class="arch-cells arch-cells-dense">
+    <a class="arch-cell" href="/zarlmono/foundation/">options</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">zenv</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">zsync</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">zhttp</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">znotify</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">messagebus</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">cache</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">filesystem</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">docstore</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">vectorstore</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">mcp</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">db · vault · prefs</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">skills</a>
+    <a class="arch-cell" href="/zarlmono/foundation/">sandbox · shellpolicy</a>
+  </div>
+</div>
+
+</div>
+
+The runner never imports an application; `zkit/ai/*` never imports
+`zkit/agent/*`. Take any horizontal slice and it stands alone — if
+you only want the tool system, take the tool system.
+
+## Putting it together
+
+A production agent is the runner plus whichever layers you opt into.
+Each is one option on `runner.New`:
+
+```go
+import (
+	"time"
+
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
+	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
+	"github.com/zarldev/zarlmono/zkit/agent/pursue"
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+)
+
+provider, _ := anthropic.NewProvider(apiKey)
+
+// the standard coding toolset: read, write, edit, bash, grep, ls, plan
+ws, _ := code.NewWorkspace(root)
+reg := tools.NewRegistry()
+coderunner.RegisterStandardTools(reg, ws, code.NewProcessManager(ws))
+
+// guardrails wrap the registry — a GuardedSource is itself a ToolSource
+guarded := guardrails.NewGuardedSource(reg,
+	guardrails.NewSchemaGuardrail(reg),                                  // repair malformed args
+	guardrails.NewShellGuardrail(code.ToolNameBash),                    // reject destructive shell
+	guardrails.NewFanoutGuardrail(map[tools.ToolName]int{               // cap exploration
+		code.ToolNameRead: 30, code.ToolNameGrep: 30,
+	}),
+)
+
+r := runner.New(runner.ClientFromProvider(provider),
+	runner.WithTools(guarded),
+	runner.WithPromptText(systemPrompt),
+	runner.WithCompactor(compact.NewTiered(ctxWindow)),      // shrink history under pressure
+	runner.WithMaxIterations(40),
+	runner.WithToolTimeout(60*time.Second),
+)
+
+// drive it to a verified outcome instead of trusting "done"
+goal, watcher := pursue.Until(testsPass, "tests still failing — read the output and fix")
+out, _ := pursue.Drive(ctx,
+	pursue.NewRequest(r.Run, runner.TaskSpec{Prompt: task},
+		pursue.WithGoal(goal), pursue.WithWatcher(watcher)),
+	pursue.WithMaxAttempts(4),
+)
+```
+
+Strip any line and it still runs — no guardrails, no compactor, no
+pursue is a valid agent, just a barer one. Each page in this section
+covers one of those layers in depth. For a coding agent specifically,
+`coderunner.GuardedSource` assembles the whole standard chain in one
+call — it's what zarlcode and the eval harness both use, so they
+can't drift.
+
+## Extending it
+
+The toolkit grows through six interfaces. Implement one and the
+runner takes it without changes:
+
+| Interface | Shape | Implement it for |
+|---|---|---|
+| `runner.Client` | one method (`Complete`) | a new LLM transport |
+| `runner.ToolSource` | iterate + execute | tool middleware — guardrails are exactly this |
+| `compact.Compactor` (+ `Prober`) | compact + cheap pre-check | a new compaction strategy |
+| `pursue.Goal` (+ `Watcher`) | decide + early-stop | a new completion oracle |
+| `spawn.AgentResolver` | name → runner | routing sub-agents to different models |
+| `runner.EventSink` | six typed sub-sinks (embed `NopSink`) | a new observability surface |
+
+`EventSink` is compile-time exhaustive: add an event method and every
+implementer fails to build until it handles the new kind, so a UI
+can't silently drop events.

@@ -1,0 +1,22 @@
+{
+  "name":        "forest",
+  "bg":          "#0f1a14",
+  "fg":          "#c8d6c0",
+  "subtle":      "#95b38b",
+  "muted":       "#4a6d47",
+  "primary":     "#6abf52",
+  "secondary":   "#9ccc65",
+  "success":     "#7cb342",
+  "warning":     "#d4a843",
+  "error":       "#e57373",
+  "info":        "#4db6ac",
+  "user":        "#d4a843",
+  "assistant":   "#7cb342",
+  "tool":        "#4db6ac",
+  "system":      "#9ccc65",
+  "border":      "#263d26",
+  "borderFocus": "#6abf52",
+  "highlight":   "#1a331a",
+  "selection":   "#142b14",
+  "planMode":    "#ffa726"
+}

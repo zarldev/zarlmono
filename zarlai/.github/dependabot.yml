@@ -1,0 +1,70 @@
+version: 2
+updates:
+  # Go modules at the repo root
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "go"]
+    commit-message:
+      prefix: "chore(deps): "
+    groups:
+      # Bundle minor + patch bumps into one PR per week to cut noise.
+      # Major bumps still come as individual PRs so the breaking-change
+      # release notes are linked from the PR body.
+      go-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # anthropic-sdk-go >= 1.38 conflicts transitively with
+      # invopop/jsonschema (different ordered-map module). Re-enable when
+      # one side migrates — see chore: refresh dependencies commit
+      # message for context.
+      - dependency-name: "github.com/anthropics/anthropic-sdk-go"
+        versions: [">=1.38.0"]
+
+  # Frontend npm packages
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "frontend"]
+    commit-message:
+      prefix: "chore(deps): "
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions referenced from .github/workflows/
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "chore(deps): "
+    groups:
+      actions-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Docker images in docker-compose.yml. Dependabot for docker-compose is
+  # a recent feature; if it logs that the manifest is unsupported the
+  # block is harmless and can be removed.
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "chore(deps): "

@@ -1,0 +1,22 @@
+{
+  "name":        "oceanic-next",
+  "bg":          "#1b2b34",
+  "fg":          "#cdd3de",
+  "subtle":      "#a7adba",
+  "muted":       "#65737e",
+  "primary":     "#6699cc",
+  "secondary":   "#c594c5",
+  "success":     "#99c794",
+  "warning":     "#fac863",
+  "error":       "#ec5f67",
+  "info":        "#5fb3b3",
+  "user":        "#f99157",
+  "assistant":   "#99c794",
+  "tool":        "#5fb3b3",
+  "system":      "#c594c5",
+  "border":      "#343d46",
+  "borderFocus": "#6699cc",
+  "highlight":   "#2b3a46",
+  "selection":   "#22323d",
+  "planMode":    "#c594c5"
+}

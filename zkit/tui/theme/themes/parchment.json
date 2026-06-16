@@ -1,0 +1,23 @@
+{
+  "name":        "parchment",
+  "default":     "light",
+  "bg":          "#fefce8",
+  "fg":          "#1c1917",
+  "subtle":      "#57534e",
+  "muted":       "#a8a29e",
+  "primary":     "#9a3412",
+  "secondary":   "#854d0e",
+  "success":     "#3f6212",
+  "warning":     "#a16207",
+  "error":       "#991b1b",
+  "info":        "#155e75",
+  "user":        "#7c2d12",
+  "assistant":   "#3f6212",
+  "tool":        "#0e7490",
+  "system":      "#78350f",
+  "border":      "#d6d3d1",
+  "borderFocus": "#9a3412",
+  "highlight":   "#fef08a",
+  "selection":   "#fed7aa",
+  "planMode":    "#5b21b6"
+}

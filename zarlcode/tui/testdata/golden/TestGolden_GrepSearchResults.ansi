@@ -1,0 +1,2 @@
+[38;2;192;132;252mpkg/foo/bar.go[0m:[38;2;100;116;139m42:    fmt.Println("hello")[0m                                      
+[38;2;192;132;252mpkg/foo/baz.go[0m:[38;2;100;116;139m15:    return nil[0m                                                

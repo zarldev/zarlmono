@@ -1,0 +1,22 @@
+{
+  "name":        "cherry",
+  "bg":          "#1a0a14",
+  "fg":          "#f0d5e0",
+  "subtle":      "#daa0b8",
+  "muted":       "#8b5c6e",
+  "primary":     "#ff4d7a",
+  "secondary":   "#ff80ab",
+  "success":     "#8cd98c",
+  "warning":     "#ffcc66",
+  "error":       "#ff2244",
+  "info":        "#e066a0",
+  "user":        "#ff9966",
+  "assistant":   "#8cd98c",
+  "tool":        "#e066a0",
+  "system":      "#ff80ab",
+  "border":      "#4a2040",
+  "borderFocus": "#ff4d7a",
+  "highlight":   "#3d1030",
+  "selection":   "#2d0820",
+  "planMode":    "#ff6699"
+}

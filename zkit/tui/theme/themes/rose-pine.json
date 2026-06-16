@@ -1,0 +1,23 @@
+{
+  "name":        "rose-pine",
+  "bg":          "#191724",
+  "fg":          "#e0def4",
+  "subtle":      "#908caa",
+  "muted":       "#6e6a86",
+  "primary":     "#ebbcba",
+  "secondary":   "#c4a7e7",
+  "success":     "#9ccfd8",
+  "warning":     "#f6c177",
+  "error":       "#eb6f92",
+  "info":        "#31748f",
+  "user":        "#f6c177",
+  "assistant":   "#9ccfd8",
+  "tool":        "#95b1ac",
+  "system":      "#c4a7e7",
+  "border":      "#403d52",
+  "borderFocus": "#ebbcba",
+  "highlight":   "#524f67",
+  "selection":   "#26233a",
+  "planMode":    "#eb6f92"
+}
+

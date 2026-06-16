@@ -1,0 +1,23 @@
+{
+  "name":        "zenburn",
+  "bg":          "#3f3f3f",
+  "fg":          "#dcdccc",
+  "subtle":      "#d0bf8f",
+  "muted":       "#7f9f7f",
+  "primary":     "#8cd0d3",
+  "secondary":   "#dc8cc3",
+  "success":     "#7f9f7f",
+  "warning":     "#f0dfaf",
+  "error":       "#cc9393",
+  "info":        "#93e0e3",
+  "user":        "#dfaf8f",
+  "assistant":   "#bfebbf",
+  "tool":        "#8cd0d3",
+  "system":      "#dc8cc3",
+  "border":      "#5f5f5f",
+  "borderFocus": "#8cd0d3",
+  "highlight":   "#4f4f4f",
+  "selection":   "#4a5a4a",
+  "planMode":    "#efef8f"
+}
+

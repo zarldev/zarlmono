@@ -1,0 +1,23 @@
+{
+  "name":        "monokai",
+  "bg":          "#272822",
+  "fg":          "#f8f8f2",
+  "subtle":      "#cfcfc2",
+  "muted":       "#75715e",
+  "primary":     "#66d9ef",
+  "secondary":   "#ae81ff",
+  "success":     "#a6e22e",
+  "warning":     "#e6db74",
+  "error":       "#f92672",
+  "info":        "#66d9ef",
+  "user":        "#fd971f",
+  "assistant":   "#a6e22e",
+  "tool":        "#66d9ef",
+  "system":      "#ae81ff",
+  "border":      "#49483e",
+  "borderFocus": "#a6e22e",
+  "highlight":   "#3e3d32",
+  "selection":   "#414339",
+  "planMode":    "#f92672"
+}
+

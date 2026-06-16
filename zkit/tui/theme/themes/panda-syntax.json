@@ -1,0 +1,22 @@
+{
+  "name":        "panda-syntax",
+  "bg":          "#292a44",
+  "fg":          "#e6e6e6",
+  "subtle":      "#c2c2d1",
+  "muted":       "#676b8f",
+  "primary":     "#ff2c6d",
+  "secondary":   "#ffcc95",
+  "success":     "#19f9d8",
+  "warning":     "#ffcc95",
+  "error":       "#ff2c6d",
+  "info":        "#45a9f9",
+  "user":        "#ffb86c",
+  "assistant":   "#19f9d8",
+  "tool":        "#45a9f9",
+  "system":      "#c792ea",
+  "border":      "#4a4b75",
+  "borderFocus": "#ff2c6d",
+  "highlight":   "#3c3d5a",
+  "selection":   "#343550",
+  "planMode":    "#6fc1ff"
+}

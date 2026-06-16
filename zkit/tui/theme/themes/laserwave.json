@@ -1,0 +1,22 @@
+{
+  "name":        "laserwave",
+  "bg":          "#27212e",
+  "fg":          "#dadae8",
+  "subtle":      "#b6b5cf",
+  "muted":       "#696185",
+  "primary":     "#eb64b9",
+  "secondary":   "#b381c4",
+  "success":     "#74dfc4",
+  "warning":     "#ffd76c",
+  "error":       "#ff5370",
+  "info":        "#40b4c4",
+  "user":        "#ff9e64",
+  "assistant":   "#74dfc4",
+  "tool":        "#40b4c4",
+  "system":      "#b381c4",
+  "border":      "#3d3652",
+  "borderFocus": "#eb64b9",
+  "highlight":   "#362e47",
+  "selection":   "#302840",
+  "planMode":    "#ff79c6"
+}

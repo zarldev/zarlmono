@@ -1,0 +1,18 @@
+version: "2"
+sql:
+  - engine: "mysql"
+    queries: "queries/"
+    schema: "../migrations/"
+    gen:
+      go:
+        package: "gen"
+        out: "gen"
+        emit_json_tags: true
+        overrides:
+          # tool_args is nullable JSON; json.RawMessage doesn't implement
+          # sql.Scanner, so database/sql can't scan SQL NULL into it.
+          # []byte hits the *[]byte fast-path in convertAssign which accepts NULL.
+          - column: "sensor_proposals.tool_args"
+            go_type:
+              type: "byte"
+              slice: true

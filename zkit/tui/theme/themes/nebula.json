@@ -1,0 +1,22 @@
+{
+  "name":        "nebula",
+  "bg":          "#0d1123",
+  "fg":          "#d5d9f0",
+  "subtle":      "#a0a6cc",
+  "muted":       "#575f8c",
+  "primary":     "#7b8cff",
+  "secondary":   "#c882ff",
+  "success":     "#5feab7",
+  "warning":     "#ffcc66",
+  "error":       "#ff5c8a",
+  "info":        "#66ccff",
+  "user":        "#ff9955",
+  "assistant":   "#5feab7",
+  "tool":        "#66ccff",
+  "system":      "#c882ff",
+  "border":      "#2a2f52",
+  "borderFocus": "#7b8cff",
+  "highlight":   "#25294a",
+  "selection":   "#1a1f3d",
+  "planMode":    "#ff77bb"
+}

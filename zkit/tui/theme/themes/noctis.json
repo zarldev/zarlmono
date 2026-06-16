@@ -1,0 +1,22 @@
+{
+  "name":        "noctis",
+  "bg":          "#1b2b34",
+  "fg":          "#bec5ce",
+  "subtle":      "#8899a8",
+  "muted":       "#5a6b7a",
+  "primary":     "#6796e6",
+  "secondary":   "#df769b",
+  "success":     "#a2be57",
+  "warning":     "#dbb45c",
+  "error":       "#d0676a",
+  "info":        "#5fb3b3",
+  "user":        "#f0a365",
+  "assistant":   "#a2be57",
+  "tool":        "#5fb3b3",
+  "system":      "#df769b",
+  "border":      "#2d404a",
+  "borderFocus": "#6796e6",
+  "highlight":   "#2b3a46",
+  "selection":   "#22323d",
+  "planMode":    "#df769b"
+}

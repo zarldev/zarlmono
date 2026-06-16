@@ -1,0 +1,130 @@
+services:
+  dolt:
+    image: dolthub/dolt-sql-server:latest
+    ports:
+      - "3307:3306"
+    volumes:
+      - dolt-data:/var/lib/dolt
+      - ../migrations:/docker-entrypoint-initdb.d
+    environment:
+      DOLT_ROOT_HOST: "%"
+      DOLT_ROOT_PASSWORD: ""
+    healthcheck:
+      test: ["CMD", "dolt", "version"]
+      interval: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      interval: 5s
+      retries: 5
+
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    profiles: ["llm"]
+    ports:
+      - "8081:8080"
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+    # Qwen3.6-35B-A3B (MoE, 3B active) via unsloth's UD-Q3_K_XL dynamic
+    # quant running with two parallel slots so the live conversation
+    # path and the taskrunner can be scheduled concurrently without
+    # head-of-line blocking. --jinja routes through the GGUF's embedded
+    # Qwen3 chat template, which handles tool-call shaping natively;
+    # --reasoning-format deepseek surfaces reasoning in the structured
+    # `reasoning_content` response field so TTS never speaks the
+    # chain-of-thought (zarl's LlamaCppClient pulls it out).
+    #
+    # Flags follow unsloth's official Qwen3.6 guide:
+    # https://unsloth.ai/docs/models/qwen3.6
+    #   - Sampling is THINKING-MODE per Unsloth's table:
+    #     temp=0.6, top_p=0.95, top_k=20, min_p=0.0, repeat_penalty=1.0.
+    #     presence_penalty=1.0 as a mild anti-repetition nudge
+    #     (Unsloth's remedy range is 0.5–1.5 if loops are observed;
+    #     stacking high presence with high temp in thinking mode
+    #     triggers chain-of-thought loops, which is how we got burned
+    #     at temp=1.0/presence=1.5).
+    #     temp=1.0 is Qwen3-Coder's NON-thinking value and is wrong
+    #     for a conversational thinking agent.
+    #   - --cache-type-k q8_0 / --cache-type-v q8_0 halves KV memory
+    #     so we can give each of the 2 parallel slots 32k context on a
+    #     24 GiB 4090 (bf16 is more numerically stable per Unsloth's
+    #     gibberish remedy; if we see quality regressions on long
+    #     sequences, revert to bf16 and drop -c back to 32768).
+    # --image-max-tokens 1024 caps camera-frame cost so long sessions
+    # don't overflow the 32k per-slot budget from image bloat alone.
+    command:
+      - "-m"
+      - "/models/Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf"
+      - "--mmproj"
+      - "/models/mmproj-F16.gguf"
+      - "--image-max-tokens"
+      - "1024"
+      - "-c"
+      - "98304"
+      - "-np"
+      - "2"
+      - "-ngl"
+      - "999"
+      - "-fa"
+      - "on"
+      - "--cache-type-k"
+      - "q8_0"
+      - "--cache-type-v"
+      - "q8_0"
+      - "--jinja"
+      - "--reasoning-format"
+      - "deepseek"
+      - "--reasoning-budget"
+      - "4096"
+      - "--reasoning-budget-message"
+      - "--temp"
+      - "0.6"
+      - "--top-p"
+      - "0.95"
+      - "--top-k"
+      - "20"
+      - "--min-p"
+      - "0.0"
+      - "--presence-penalty"
+      - "1.0"
+      - "--repeat-penalty"
+      - "1.0"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--alias"
+      - "qwen3.6-35b-a3b"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/v1/models >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+volumes:
+  dolt-data:
+  qdrant-data:

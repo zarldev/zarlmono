@@ -1,0 +1,22 @@
+{
+  "name":        "vscode-dark",
+  "bg":          "#1e1e1e",
+  "fg":          "#d4d4d4",
+  "subtle":      "#ababab",
+  "muted":       "#6a6a6a",
+  "primary":     "#569cd6",
+  "secondary":   "#c586c0",
+  "success":     "#6a9955",
+  "warning":     "#ce9178",
+  "error":       "#f44747",
+  "info":        "#9cdcfe",
+  "user":        "#ce9178",
+  "assistant":   "#6a9955",
+  "tool":        "#9cdcfe",
+  "system":      "#c586c0",
+  "border":      "#3c3c3c",
+  "borderFocus": "#569cd6",
+  "highlight":   "#404040",
+  "selection":   "#264f78",
+  "planMode":    "#c586c0"
+}

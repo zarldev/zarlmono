@@ -1,0 +1,78 @@
+package engine
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/db"
+)
+
+func TestHeadlessRecorder_PersistsLifecycle(t *testing.T) {
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := t.Context()
+	rec := &headlessRecorder{store: store, id: "run-1", workspace: t.TempDir()}
+
+	rec.start(ctx, "fix the bug", "llamacpp", "qwen3.6")
+	got, err := store.GetHeadlessRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("get after start: %v", err)
+	}
+	if got.Prompt != "fix the bug" || got.Provider != "llamacpp" || got.Model != "qwen3.6" {
+		t.Errorf("start row = %+v; want prompt/provider/model populated", got)
+	}
+	if got.EndedAt != nil {
+		t.Error("a freshly started run must have a nil EndedAt")
+	}
+
+	// Progress persists counters WITHOUT completing the run — the
+	// SIGKILL guarantee: a killed process leaves the last progress but no
+	// terminal state.
+	rec.progress(ctx, 3, 7)
+	got, _ = store.GetHeadlessRun(ctx, "run-1")
+	if got.Iterations != 3 || got.ToolCalls != 7 {
+		t.Errorf("after progress: iters=%d tools=%d; want 3/7", got.Iterations, got.ToolCalls)
+	}
+	if got.EndedAt != nil {
+		t.Error("progress must not mark the run ended")
+	}
+
+	in := int64(100)
+	rec.complete(ctx, runner.TaskResult{
+		Reason:       runner.TerminalCompleted,
+		FinalContent: "all done",
+		Iterations:   4,
+		TotalUsage:   &llm.Usage{PromptTokens: 100, CompletionTokens: 50},
+	})
+	got, _ = store.GetHeadlessRun(ctx, "run-1")
+	if got.EndedAt == nil {
+		t.Error("a completed run must have a non-nil EndedAt")
+	}
+	if got.TerminalReason != string(runner.TerminalCompleted) {
+		t.Errorf("terminal reason = %q; want completed", got.TerminalReason)
+	}
+	if got.Iterations != 4 {
+		t.Errorf("completed iterations = %d; want 4", got.Iterations)
+	}
+	if got.FinalContent != "all done" {
+		t.Errorf("final content = %q", got.FinalContent)
+	}
+	if got.TokensIn == nil || *got.TokensIn != in {
+		t.Errorf("tokens in = %v; want %d", got.TokensIn, in)
+	}
+}
+
+func TestHeadlessRecorder_NilIsNoOp(t *testing.T) {
+	var rec *headlessRecorder // no store configured
+	// None of these must panic or touch a store.
+	rec.start(context.Background(), "p", "prov", "model")
+	rec.progress(context.Background(), 1, 2)
+	rec.complete(context.Background(), runner.TaskResult{Reason: runner.TerminalCompleted})
+}

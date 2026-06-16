@@ -1,0 +1,22 @@
+{
+  "name":        "synthwave",
+  "bg":          "#262335",
+  "fg":          "#f6f6f6",
+  "subtle":      "#b6b1c9",
+  "muted":       "#848bbd",
+  "primary":     "#ff7edb",
+  "secondary":   "#b893ce",
+  "success":     "#72f1b8",
+  "warning":     "#fede5d",
+  "error":       "#fe4450",
+  "info":        "#36f9f6",
+  "user":        "#ff8b39",
+  "assistant":   "#36f9f6",
+  "tool":        "#72f1b8",
+  "system":      "#b893ce",
+  "border":      "#463465",
+  "borderFocus": "#ff7edb",
+  "highlight":   "#34294f",
+  "selection":   "#2d2742",
+  "planMode":    "#fede5d"
+}

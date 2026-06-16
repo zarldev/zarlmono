@@ -1,0 +1,22 @@
+{
+  "name":        "andromeda",
+  "bg":          "#23262e",
+  "fg":          "#d5ced9",
+  "subtle":      "#9da1ab",
+  "muted":       "#5d6272",
+  "primary":     "#00e8c6",
+  "secondary":   "#c74ded",
+  "success":     "#96e072",
+  "warning":     "#ffe66d",
+  "error":       "#ff5e5e",
+  "info":        "#00d4ff",
+  "user":        "#f39c12",
+  "assistant":   "#00e8c6",
+  "tool":        "#96e072",
+  "system":      "#c74ded",
+  "border":      "#3a3d4b",
+  "borderFocus": "#00e8c6",
+  "highlight":   "#434758",
+  "selection":   "#2d303e",
+  "planMode":    "#ff69b4"
+}

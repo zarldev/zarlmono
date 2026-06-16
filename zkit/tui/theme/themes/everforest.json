@@ -1,0 +1,23 @@
+{
+  "name":        "everforest",
+  "bg":          "#2d353b",
+  "fg":          "#d3c6aa",
+  "subtle":      "#a7c080",
+  "muted":       "#859289",
+  "primary":     "#7fbbb3",
+  "secondary":   "#d699b6",
+  "success":     "#a7c080",
+  "warning":     "#dbbc7f",
+  "error":       "#e67e80",
+  "info":        "#83c092",
+  "user":        "#e69875",
+  "assistant":   "#83c092",
+  "tool":        "#a7c080",
+  "system":      "#d699b6",
+  "border":      "#475258",
+  "borderFocus": "#7fbbb3",
+  "highlight":   "#3d484d",
+  "selection":   "#343f44",
+  "planMode":    "#d699b6"
+}
+

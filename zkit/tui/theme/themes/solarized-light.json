@@ -1,0 +1,23 @@
+{
+  "name":        "solarized-light",
+  "bg":          "#fdf6e3",
+  "fg":          "#073642",
+  "subtle":      "#586e75",
+  "muted":       "#93a1a1",
+  "primary":     "#268bd2",
+  "secondary":   "#6c71c4",
+  "success":     "#859900",
+  "warning":     "#b58900",
+  "error":       "#dc322f",
+  "info":        "#2aa198",
+  "user":        "#cb4b16",
+  "assistant":   "#2aa198",
+  "tool":        "#859900",
+  "system":      "#6c71c4",
+  "border":      "#eee8d5",
+  "borderFocus": "#268bd2",
+  "highlight":   "#eee8d5",
+  "selection":   "#eee8d5",
+  "planMode":    "#d33682"
+}
+

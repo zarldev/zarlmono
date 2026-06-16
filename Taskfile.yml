@@ -1,0 +1,228 @@
+version: '3'
+
+vars:
+  BIN_DIR:
+    sh: 'printf "%s" "${BIN_DIR:-$HOME/.local/bin}"'
+  ZARLCODE: '{{.BIN_DIR}}/zarlcode'
+  SWEEVAL: '{{.BIN_DIR}}/sweeval'
+  ZARLCODE_VERSION:
+    sh: 'printf "%s+%s" "$(git describe --tags --dirty --always 2>/dev/null || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - go tool task --list
+
+  help:
+    desc: Show available tasks
+    cmds:
+      - go tool task --list
+
+  # --- repo-wide Go workflow (CI-covered modules) ---
+
+  build:
+    desc: Build CI-covered Go modules
+    cmds:
+      - |
+        for m in examples zkit zarlcode swebench-eval; do
+          echo "==> go build ($m)"
+          go build -C "$m" ./...
+        done
+
+  vet:
+    desc: Vet CI-covered Go modules
+    cmds:
+      - |
+        for m in examples zkit zarlcode swebench-eval; do
+          echo "==> go vet ($m)"
+          go vet -C "$m" ./...
+        done
+
+  test:
+    desc: Test CI-covered Go modules
+    cmds:
+      - |
+        for m in examples zkit zarlcode swebench-eval; do
+          echo "==> go test ($m)"
+          go test -C "$m" -count=1 ./...
+        done
+
+  check:
+    desc: Build, vet, and test CI-covered Go modules
+    cmds:
+      - task: build
+      - task: vet
+      - task: test
+
+  lint:
+    desc: Run golangci-lint for CI-covered Go modules
+    cmds:
+      - |
+        for m in examples zkit zarlcode swebench-eval; do
+          echo "==> golangci-lint ($m)"
+          (cd "$m" && golangci-lint run)
+        done
+
+  race:
+    desc: Run zkit race tests
+    cmds:
+      - go test -C zkit -race -count=1 ./...
+
+  # --- foundations / reusable building blocks ---
+
+  foundation:test:
+    desc: Test core zkit building blocks
+    cmds:
+      - go test -C zkit -count=1 ./agent/runner/... ./agent/harness ./agent/coderunner ./agent/guardrails ./ai/tools/...
+
+  runner:test:
+    desc: Test the canonical agent runner
+    cmds:
+      - go test -C zkit -count=1 ./agent/runner/...
+
+  harness:test:
+    desc: Test the deterministic harness and shared coding loop
+    cmds:
+      - go test -C zkit -count=1 ./agent/harness ./agent/coderunner
+
+  llm:test:
+    desc: Test LLM provider packages
+    cmds:
+      - go test -C zkit -count=1 ./ai/llm/...
+
+  tools:test:
+    desc: Test AI tool packages
+    cmds:
+      - go test -C zkit -count=1 ./ai/tools/...
+
+  # --- zarlcode ---
+
+  zarlcode:
+    desc: Build and install the zarlcode TUI
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -trimpath -ldflags='-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version={{.ZARLCODE_VERSION}}' -o {{.ZARLCODE}} ./zarlcode/cmd
+      - echo "installed{{":"}} {{.ZARLCODE}} (version {{.ZARLCODE_VERSION}})"
+
+  zarlcode:install:
+    desc: Alias for zarlcode
+    cmds:
+      - task: zarlcode
+
+  zarlcode:run:
+    desc: Run zarlcode from source
+    cmds:
+      - go run ./zarlcode/cmd
+
+  zarlcode:clean:
+    desc: Remove the installed zarlcode binary
+    cmds:
+      - rm -f {{.ZARLCODE}}
+      - echo "removed{{":"}} {{.ZARLCODE}}"
+
+  # --- SWE-bench eval tool ---
+
+  sweeval:
+    desc: Build and install the SWE-bench eval tool
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -C swebench-eval -trimpath -o {{.SWEEVAL}} ./cmd/eval
+      - echo "installed{{":"}} {{.SWEEVAL}}"
+
+  sweeval:install:
+    desc: Alias for sweeval
+    cmds:
+      - task: sweeval
+
+  swebench-eval:
+    desc: Alias for sweeval
+    cmds:
+      - task: sweeval
+
+  sweeval:test:
+    desc: Test the SWE-bench eval module
+    cmds:
+      - go test -C swebench-eval -count=1 ./...
+
+  sweeval:clean:
+    desc: Remove the installed sweeval binary
+    cmds:
+      - rm -f {{.SWEEVAL}}
+      - echo "removed{{":"}} {{.SWEEVAL}}"
+
+  # --- small deterministic harness examples ---
+
+  examples:build:
+    desc: Build all examples
+    cmds:
+      - go build -C examples ./...
+
+  examples:test:
+    desc: Test all examples
+    cmds:
+      - go test -C examples -count=1 ./...
+
+  example:healthcheck:
+    desc: Run the deterministic healthcheck harness demo
+    cmds:
+      - go run -C examples ./healthcheck -scripted
+
+  example:releasegate:
+    desc: Run the deterministic releasegate harness demo
+    cmds:
+      - go run -C examples ./releasegate -scripted
+
+  example:hnupvote:test:
+    desc: Test the HN upvote harness without live browser/account state
+    cmds:
+      - go test -C examples -count=1 ./hnupvote/
+
+  # --- zarlai delegation ---
+
+  zarlai:setup:
+    desc: Delegate to zarlai Taskfile setup
+    cmds:
+      - go tool task --dir zarlai setup
+
+  zarlai:doctor:
+    desc: Delegate to zarlai doctor preflight
+    cmds:
+      - go tool task --dir zarlai doctor
+
+  zarlai:up:
+    desc: Start zarlai infrastructure services
+    cmds:
+      - go tool task --dir zarlai up
+
+  zarlai:up-llm:
+    desc: Start zarlai infrastructure plus llama-server
+    cmds:
+      - go tool task --dir zarlai up:llm
+
+  zarlai:build:
+    desc: Delegate to zarlai build
+    cmds:
+      - go tool task --dir zarlai build
+
+  zarlai:test:
+    desc: Delegate to zarlai tests
+    cmds:
+      - go tool task --dir zarlai test
+
+  # --- docs site ---
+
+  docs:dev:
+    desc: Start docs site dev server
+    cmds:
+      - npm --prefix site run dev
+
+  docs:build:
+    desc: Build docs site for production
+    cmds:
+      - npm --prefix site run build
+
+  docs:preview:
+    desc: Preview the built docs site
+    cmds:
+      - npm --prefix site run preview

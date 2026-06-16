@@ -1,0 +1,43 @@
+{
+  "name": "zarl-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.0.0",
+    "@connectrpc/connect": "^2.0.0",
+    "@connectrpc/connect-web": "^2.0.0",
+    "@met4citizen/talkinghead": "^1.7.0",
+    "@ricky0123/vad-web": "^0.0.30",
+    "@tailwindcss/vite": "^4.2.2",
+    "@tanstack/react-query": "^5.100.5",
+    "@types/three": "^0.184.0",
+    "meshoptimizer": "^1.1.0",
+    "onnxruntime-web": "^1.24.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4.2.2",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/ui": "^4.1.4",
+    "happy-dom": "^20.9.0",
+    "jsdom": "^29.1.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.4"
+  }
+}

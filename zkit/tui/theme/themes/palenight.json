@@ -1,0 +1,23 @@
+{
+  "name":        "palenight",
+  "bg":          "#292d3e",
+  "fg":          "#d0d0d0",
+  "subtle":      "#a6accd",
+  "muted":       "#676e95",
+  "primary":     "#82aaff",
+  "secondary":   "#c792ea",
+  "success":     "#c3e88d",
+  "warning":     "#ffcb6b",
+  "error":       "#f07178",
+  "info":        "#89ddff",
+  "user":        "#f78c6c",
+  "assistant":   "#80cbc4",
+  "tool":        "#c3e88d",
+  "system":      "#c792ea",
+  "border":      "#444267",
+  "borderFocus": "#82aaff",
+  "highlight":   "#3f4356",
+  "selection":   "#34394f",
+  "planMode":    "#ff5370"
+}
+

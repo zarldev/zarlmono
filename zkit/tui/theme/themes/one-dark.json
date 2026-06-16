@@ -1,0 +1,23 @@
+{
+  "name":        "one-dark",
+  "bg":          "#282c34",
+  "fg":          "#abb2bf",
+  "subtle":      "#c8ccd4",
+  "muted":       "#5c6370",
+  "primary":     "#61afef",
+  "secondary":   "#c678dd",
+  "success":     "#98c379",
+  "warning":     "#e5c07b",
+  "error":       "#e06c75",
+  "info":        "#56b6c2",
+  "user":        "#d19a66",
+  "assistant":   "#98c379",
+  "tool":        "#56b6c2",
+  "system":      "#c678dd",
+  "border":      "#3e4451",
+  "borderFocus": "#61afef",
+  "highlight":   "#3b4048",
+  "selection":   "#2c313c",
+  "planMode":    "#e06c75"
+}
+

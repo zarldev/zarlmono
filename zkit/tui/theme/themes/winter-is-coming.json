@@ -1,0 +1,22 @@
+{
+  "name":        "winter-is-coming",
+  "bg":          "#012439",
+  "fg":          "#a7d3ee",
+  "subtle":      "#7ebdd6",
+  "muted":       "#40708a",
+  "primary":     "#219fd5",
+  "secondary":   "#7ec8e3",
+  "success":     "#4ec9b0",
+  "warning":     "#e7c559",
+  "error":       "#ef5350",
+  "info":        "#82b1ff",
+  "user":        "#ffb74d",
+  "assistant":   "#4ec9b0",
+  "tool":        "#219fd5",
+  "system":      "#c3e88d",
+  "border":      "#053653",
+  "borderFocus": "#219fd5",
+  "highlight":   "#073d5a",
+  "selection":   "#062c42",
+  "planMode":    "#ff80ab"
+}

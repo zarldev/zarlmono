@@ -1,0 +1,22 @@
+{
+  "name":        "copper",
+  "bg":          "#1c1610",
+  "fg":          "#e8dcc8",
+  "subtle":      "#c4a882",
+  "muted":       "#8a6e52",
+  "primary":     "#d4782f",
+  "secondary":   "#e8a848",
+  "success":     "#7a9e5a",
+  "warning":     "#d4a020",
+  "error":       "#c24a3a",
+  "info":        "#c08850",
+  "user":        "#d4a020",
+  "assistant":   "#7a9e5a",
+  "tool":        "#c08850",
+  "system":      "#e8a848",
+  "border":      "#4a3525",
+  "borderFocus": "#d4782f",
+  "highlight":   "#3d2a1a",
+  "selection":   "#2d1d12",
+  "planMode":    "#b86a20"
+}

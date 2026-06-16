@@ -1,0 +1,23 @@
+{
+  "name":        "high-contrast",
+  "bg":          "#000000",
+  "fg":          "#ffffff",
+  "subtle":      "#d0d0d0",
+  "muted":       "#8a8a8a",
+  "primary":     "#00d7ff",
+  "secondary":   "#ff5fff",
+  "success":     "#00ff5f",
+  "warning":     "#ffd700",
+  "error":       "#ff005f",
+  "info":        "#5fafff",
+  "user":        "#ffaf00",
+  "assistant":   "#00ffaf",
+  "tool":        "#87ff00",
+  "system":      "#af87ff",
+  "border":      "#808080",
+  "borderFocus": "#ffffff",
+  "highlight":   "#5f005f",
+  "selection":   "#003f5f",
+  "planMode":    "#ff5fff"
+}
+

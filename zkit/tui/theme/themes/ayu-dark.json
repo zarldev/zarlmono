@@ -1,0 +1,23 @@
+{
+  "name":        "ayu-dark",
+  "bg":          "#0f1419",
+  "fg":          "#e6e1cf",
+  "subtle":      "#b8cfe6",
+  "muted":       "#5c6773",
+  "primary":     "#36a3d9",
+  "secondary":   "#a37acc",
+  "success":     "#aad94c",
+  "warning":     "#ffb454",
+  "error":       "#f07178",
+  "info":        "#59c2ff",
+  "user":        "#ff8f40",
+  "assistant":   "#95e6cb",
+  "tool":        "#aad94c",
+  "system":      "#d2a6ff",
+  "border":      "#253340",
+  "borderFocus": "#36a3d9",
+  "highlight":   "#2d3640",
+  "selection":   "#1f2a33",
+  "planMode":    "#ff77a8"
+}
+

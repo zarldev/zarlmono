@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Newer pushes on the same ref kill any in-flight run for that ref.
+# Saves Actions minutes during rebase loops; main is excluded so a
+# merged commit always finishes its run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Floor only — ratchet upward as tests are added. Goal: 75%.
+  # CI runs ~23.8% (some sherpa/dlib-heavy service tests skip on the
+  # ubuntu runner); keep threshold a couple points below to absorb
+  # noise from new packages landing without tests.
+  COVERAGE_THRESHOLD: "20"
+
+jobs:
+  # === Source-level quality gates (run in parallel, no compilation needed) ===
+
+  format:
+    name: gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: stub frontend/dist for go:embed
+        run: mkdir -p frontend/dist && touch frontend/dist/.placeholder
+      - name: gofmt
+        run: |
+          out=$(gofmt -l $(go list -f '{{.Dir}}' ./...))
+          if [[ -n "$out" ]]; then
+            echo "::error::gofmt would reformat the following files:"
+            echo "$out"
+            exit 1
+          fi
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: install dlib (CGo dep of go-face)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdlib-dev libatlas-base-dev libjpeg-dev
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: stub frontend/dist for go:embed
+        run: mkdir -p frontend/dist && touch frontend/dist/.placeholder
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --timeout=5m
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: install dlib (CGo dep of go-face)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdlib-dev libatlas-base-dev libjpeg-dev
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: stub frontend/dist for go:embed
+        run: mkdir -p frontend/dist && touch frontend/dist/.placeholder
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  # === Test layer — race detector and coverage are separate jobs since
+  #     -race adds runtime overhead that distorts coverage timing/skipping.
+  #     -short skips integration tests that need Dolt/Qdrant/SearXNG. ===
+
+  test-race:
+    name: go test (-race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: install dlib (CGo dep of go-face)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdlib-dev libatlas-base-dev libjpeg-dev
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: stub frontend/dist for go:embed
+        run: mkdir -p frontend/dist && touch frontend/dist/.placeholder
+      - name: go test -race -short
+        run: go test -race -count=1 -short ./...
+
+  test-coverage:
+    name: go test (coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: install dlib (CGo dep of go-face)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdlib-dev libatlas-base-dev libjpeg-dev
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: stub frontend/dist for go:embed
+        run: mkdir -p frontend/dist && touch frontend/dist/.placeholder
+      - name: go test -cover
+        # Exclude generated packages (proto + connectrpc shims) and the
+        # test-helper package — they're 0% by design and only dilute
+        # the meaningful number.
+        run: |
+          PKGS=$(go list ./... | grep -vE '/(gen/|taskrunnertest$)')
+          go test -count=1 -short -coverprofile=coverage.out -covermode=atomic $PKGS
+      - name: enforce coverage threshold
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $NF); print $NF}')
+          echo "Total coverage: ${total}%"
+          awk -v t="$total" -v min="${COVERAGE_THRESHOLD}" 'BEGIN {
+            if (t+0 < min+0) {
+              printf "::error::coverage %s%% < required %s%%\n", t, min
+              exit 1
+            }
+          }'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 7
+
+  # === Frontend gate (independent of Go) ===
+
+  frontend:
+    name: frontend (tsc + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: typecheck
+        run: npx tsc -b
+      - name: build
+        run: npm run build
+
+  # === Build the Go binary — gated on every quality + test job ===
+
+  build:
+    name: go build
+    runs-on: ubuntu-latest
+    needs: [format, lint, vuln, test-race, test-coverage]
+    steps:
+      - uses: actions/checkout@v6
+      - name: install dlib (CGo dep of go-face)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdlib-dev libatlas-base-dev libjpeg-dev
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: stub frontend/dist for go:embed
+        run: mkdir -p frontend/dist && touch frontend/dist/.placeholder
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build -trimpath -ldflags="-s -w" -o zarl ./cmd/zarl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zarl-binary
+          path: zarl
+          retention-days: 7
+
+  # === Final gate: build the Docker image ===
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    needs: [build, frontend]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: docker build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: zarl:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

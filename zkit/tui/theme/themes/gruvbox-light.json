@@ -1,0 +1,22 @@
+{
+  "name":        "gruvbox-light",
+  "bg":          "#fbf1c7",
+  "fg":          "#3c3836",
+  "subtle":      "#504945",
+  "muted":       "#bdae93",
+  "primary":     "#076678",
+  "secondary":   "#8f3f71",
+  "success":     "#79740e",
+  "warning":     "#b57614",
+  "error":       "#9d0006",
+  "info":        "#427b58",
+  "user":        "#af3a03",
+  "assistant":   "#427b58",
+  "tool":        "#79740e",
+  "system":      "#8f3f71",
+  "border":      "#ebdbb2",
+  "borderFocus": "#076678",
+  "highlight":   "#d5c4a1",
+  "selection":   "#ebdbb2",
+  "planMode":    "#b16286"
+}

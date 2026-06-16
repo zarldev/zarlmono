@@ -1,0 +1,22 @@
+{
+  "name":        "ocean",
+  "bg":          "#001a33",
+  "fg":          "#c4d9f0",
+  "subtle":      "#8cb8d9",
+  "muted":       "#4a7a99",
+  "primary":     "#33aadd",
+  "secondary":   "#66d9ef",
+  "success":     "#44dd99",
+  "warning":     "#ffcc33",
+  "error":       "#ff5566",
+  "info":        "#6699ff",
+  "user":        "#ff8844",
+  "assistant":   "#44dd99",
+  "tool":        "#33aadd",
+  "system":      "#66d9ef",
+  "border":      "#003366",
+  "borderFocus": "#33aadd",
+  "highlight":   "#00284a",
+  "selection":   "#002040",
+  "planMode":    "#22ccbb"
+}

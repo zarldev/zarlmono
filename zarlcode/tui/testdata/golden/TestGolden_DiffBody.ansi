@@ -1,0 +1,4 @@
+  [38;2;100;116;139m package foo[0m
+  [38;2;52;211;153m+func New() {}[0m
+  [38;2;248;113;113m-func Old() {}[0m
+  [38;2;100;116;139m context unchanged[0m

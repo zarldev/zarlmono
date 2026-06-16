@@ -1,0 +1,129 @@
+---
+title: zkit
+description: zkit — Go packages for building agents.
+template: splash
+head:
+  - tag: title
+    content: zkit — Go packages for agents
+  - tag: style
+    content: 'main > .content-panel:first-of-type:has(h1#_top) { display: none; }'
+---
+
+<div class="zm-hero">
+
+  <div class="zm-hero-copy">
+    <h1>zkit</h1>
+    <p class="zm-tagline">Go packages for building agents: a streaming loop, tool dispatch, guardrails, compaction, and provider adapters.</p>
+    <div class="zm-actions">
+      <a class="zm-primary" href="/zarlmono/getting-started/">Get started</a>
+      <a href="/zarlmono/architecture/">Architecture</a>
+      <a href="https://github.com/zarldev/zarlmono">GitHub</a>
+    </div>
+  </div>
+
+  <div class="zm-install">
+    <span class="zm-install-label">Install</span>
+    <pre class="zm-prompt"><code>go get github.com/zarldev/zarlmono/zkit</code></pre>
+    <p>Import what you need. Compose the rest.</p>
+  </div>
+
+</div>
+
+## What is zkit?
+
+zkit is a set of small Go packages for building agents. Take the pieces you need
+and ignore the rest. Each package has a narrow interface and no framework
+ceremony.
+
+The **runner** is the streaming, tool-calling agent loop. Around it are tools,
+guardrails, compaction, providers, verified completion, and the foundation
+packages underneath.
+
+```go
+package main
+
+import (
+	"context"
+	"time"
+
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
+)
+
+func main() {
+	provider, _ := anthropic.NewProvider(apiKey)
+
+	r := runner.New(runner.ClientFromProvider(provider),
+		runner.WithPromptText("You are a helpful coding assistant."),
+		runner.WithMaxIterations(20),
+		runner.WithToolTimeout(60*time.Second),
+	)
+
+	_, _ = r.Run(context.Background(), runner.TaskSpec{
+		Prompt: "Refactor the auth package to use context everywhere.",
+	})
+}
+```
+
+<p class="zm-section-label">Core packages</p>
+
+<div class="zm-grid zm-grid-3">
+  <a href="/zarlmono/runner/">
+    <span class="zm-card-kicker">zkit/agent</span>
+    <h3>Runner</h3>
+    <p>Streaming loop with tool calls, steering, compaction hooks, and per-call timeouts.</p>
+  </a>
+  <a href="/zarlmono/tools/">
+    <span class="zm-card-kicker">zkit/ai</span>
+    <h3>Tools</h3>
+    <p>Registry, two-method Tool interface, reflection schemas, JSON repair, MCP.</p>
+  </a>
+  <a href="/zarlmono/guardrails/">
+    <span class="zm-card-kicker">zkit/agent</span>
+    <h3>Guardrails</h3>
+    <p>Middleware around tool dispatch: schema repair, shell policy, repetition detection, verifier feedback.</p>
+  </a>
+  <a href="/zarlmono/compaction/">
+    <span class="zm-card-kicker">zkit/agent</span>
+    <h3>Compaction</h3>
+    <p>History-shrinking strategies behind one interface, with budget-driven triggers.</p>
+  </a>
+  <a href="/zarlmono/providers/">
+    <span class="zm-card-kicker">zkit/ai</span>
+    <h3>Providers</h3>
+    <p>OpenAI, Anthropic, Gemini, DeepSeek, llama.cpp, Ollama, and OAuth backends behind one contract.</p>
+  </a>
+  <a href="/zarlmono/pursue/">
+    <span class="zm-card-kicker">zkit/agent</span>
+    <h3>Verified completion</h3>
+    <p>Re-drive attempts against real-world state — tests passing, files present — not the transcript.</p>
+  </a>
+</div>
+
+<p class="zm-section-label">Built with zkit</p>
+
+These products share the same repo and the same packages.
+
+<div class="zm-grid">
+  <a href="/zarlmono/zarlcode/">
+    <span class="zm-card-kicker">TUI agent</span>
+    <h3>zarlcode</h3>
+    <p>A terminal coding agent: runner, guardrails, sandboxed shell, sub-agents, SQLite sessions.</p>
+  </a>
+  <a href="/zarlmono/zarlai/">
+    <span class="zm-card-kicker">Local assistant</span>
+    <h3>zarlai</h3>
+    <p>A local multimodal assistant: speech, vision, home automation, autonomous tasks.</p>
+  </a>
+  <a href="/zarlmono/swebench-eval/">
+    <span class="zm-card-kicker">Evaluation</span>
+    <h3>swebench-eval</h3>
+    <p>A SWE-bench driver built from the same packages as the TUI.</p>
+  </a>
+</div>
+
+## Where to go next
+
+- <a href="/zarlmono/getting-started/">**Getting started**</a> — install zkit and run your first agent.
+- <a href="/zarlmono/architecture/">**Architecture**</a> — see how the packages layer.
+- <a href="/zarlmono/runner/">**Runner**</a> — understand the loop.
