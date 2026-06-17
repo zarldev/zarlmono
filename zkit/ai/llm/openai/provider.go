@@ -42,6 +42,14 @@ type Provider struct {
 	// Field to Strip semantics. When nil, every assistant message
 	// in Field mode keeps its reasoning_content.
 	reasoningKeepMask func([]llm.Message) []bool
+	// cachePrompt sends the non-standard top-level `cache_prompt: true`
+	// field on every request. It is a llama.cpp server extension (KV-cache
+	// reuse across matching prefixes) and OFF by default: strict
+	// OpenAI-compatible backends — hosted OpenAI, and proxies like LiteLLM
+	// that forward unknown params to the upstream — reject the unknown
+	// field with HTTP 400. Only the llama.cpp construction paths enable it
+	// via [WithCachePrompt].
+	cachePrompt bool
 }
 
 const (
@@ -151,7 +159,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	// inject it as an extra top-level JSON field via WithJSONSet.
 	// Providers that don't recognise the key ignore it.
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params,
-		extraJSONOptions(req)...)
+		p.extraJSONOptions(req)...)
 
 	// OpenAI streams tool calls as deltas keyed by Index — the first
 	// delta for an index carries the ID + Name; subsequent deltas are
@@ -431,7 +439,7 @@ func (p *Provider) nonStreamCompletion(
 
 	// Create completion (see extraJSONOptions for chat_template_kwargs handling).
 	completion, err := p.client.Chat.Completions.New(ctx, params,
-		extraJSONOptions(req)...)
+		p.extraJSONOptions(req)...)
 	if err != nil {
 		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("completion: %w", err))
 		return
@@ -475,19 +483,21 @@ func (p *Provider) nonStreamCompletion(
 // but option.WithJSONSet lets us slip them in via the underlying
 // *bytes.Buffer.
 //
-// Always injects `cache_prompt: true` — llama.cpp's server respects
-// it (reuses the KV-cache for any matching prefix, which is a huge
+// `cache_prompt: true` is injected only when the provider was built
+// with [WithCachePrompt] (the llama.cpp paths). llama.cpp's server
+// respects it — reusing the KV-cache for any matching prefix, a huge
 // win across iterations of a turn AND across turns whose system
-// prompt + early history is unchanged); hosted OpenAI / vLLM /
-// other strict-but-tolerant servers ignore unknown top-level
-// fields. Effectively free for non-llama backends, large saving
-// for llama backends.
+// prompt + early history is unchanged. It is NOT sent otherwise:
+// strict OpenAI-compatible backends, and proxies like LiteLLM that
+// forward unknown params upstream, reject the unrecognised field with
+// HTTP 400.
 //
 // Returns the option slice the callers spread into their
 // NewStreaming/New variadics.
-func extraJSONOptions(req llm.CompletionRequest) []option.RequestOption {
-	opts := []option.RequestOption{
-		option.WithJSONSet("cache_prompt", true),
+func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestOption {
+	var opts []option.RequestOption
+	if p.cachePrompt {
+		opts = append(opts, option.WithJSONSet("cache_prompt", true))
 	}
 	if len(req.ChatTemplateKwargs) > 0 {
 		opts = append(opts, option.WithJSONSet("chat_template_kwargs", req.ChatTemplateKwargs))
@@ -784,6 +794,17 @@ func WithHTTPClient(client *http.Client) options.Option[Provider] {
 			}
 			p.client = openai.NewClient(clientOpts...)
 		}
+	}
+}
+
+// WithCachePrompt enables the non-standard `cache_prompt: true` top-level
+// request field. It is a llama.cpp server extension (KV-cache prefix reuse)
+// and must only be set for llama.cpp-backed providers — strict
+// OpenAI-compatible backends and forwarding proxies (LiteLLM) reject the
+// unknown field with HTTP 400. Off by default.
+func WithCachePrompt(enabled bool) options.Option[Provider] {
+	return func(p *Provider) {
+		p.cachePrompt = enabled
 	}
 }
 

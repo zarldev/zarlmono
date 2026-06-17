@@ -14,6 +14,11 @@ type buildParams struct {
 	model            string
 	reasoningHistory llm.ReasoningHistory
 	options          llm.ModelOptions
+	// cachePrompt requests the llama.cpp-only `cache_prompt` extension on
+	// the built provider. Set only for the llama.cpp built-in; strict
+	// OpenAI-compatible backends and forwarding proxies (LiteLLM) reject
+	// the unknown field with HTTP 400.
+	cachePrompt bool
 }
 
 // adapterDef bundles the constructor for one adapter type.
