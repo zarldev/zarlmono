@@ -221,6 +221,11 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		baseURL:          cfg.BaseURL,
 		model:            cfg.Model,
 		reasoningHistory: def.ReasoningHistory,
+		// cache_prompt is a llama.cpp server extension. Enable it only for
+		// the llama.cpp built-in — hosted OpenAI, Ollama, and custom
+		// DB-backed providers (e.g. a LiteLLM proxy) reject the unknown
+		// field with HTTP 400.
+		cachePrompt: def.Builtin && def.Name == DefaultBuiltinName.String(),
 	}
 
 	// Route through the adapter layer.

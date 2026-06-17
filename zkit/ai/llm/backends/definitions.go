@@ -279,6 +279,9 @@ func init() {
 			if p.model != "" {
 				opts = append(opts, openai.WithModel(p.model))
 			}
+			if p.cachePrompt {
+				opts = append(opts, openai.WithCachePrompt(true))
+			}
 			return openai.NewProvider(p.apiKey, opts...)
 		},
 		noKeyOK: false,

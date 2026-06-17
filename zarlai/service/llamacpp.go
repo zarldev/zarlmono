@@ -78,6 +78,7 @@ func NewLlamaCppClient(baseURL, model string, embedder Embedder, opts ...LlamaCp
 	popts := []options.Option[openai.Provider]{
 		openai.WithBaseURL(baseURL),
 		openai.WithModel(model),
+		openai.WithCachePrompt(true),
 	}
 	if lc.httpClient != nil {
 		popts = append(popts, openai.WithHTTPClient(lc.httpClient))
