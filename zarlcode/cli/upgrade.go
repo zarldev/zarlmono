@@ -135,17 +135,17 @@ func parseUpgradeRunArgs(args []string) (upgradeOptions, error) {
 	var opts upgradeOptions
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "--dry-run":
+		switch arg {
+		case "--dry-run":
 			opts.DryRun = true
 			opts.DryRunOverride = true
-		case arg == "--restart":
+		case "--restart":
 			opts.Restart = true
 			opts.RestartOverride = true
-		case arg == "--no-restart":
+		case "--no-restart":
 			opts.Restart = false
 			opts.RestartOverride = true
-		case arg == "--version":
+		case "--version":
 			if i+1 >= len(args) {
 				return opts, errors.New("--version needs a value")
 			}
@@ -197,7 +197,7 @@ func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (u
 	}
 	// Skip the download when the running build already matches the resolved
 	// release and the caller didn't pin a specific version.
-	if opts.Version == "" && res.Version == version.String() {
+	if (opts.Version == "" || opts.Version == "latest") && res.Version == version.String() {
 		res.UpToDate = true
 		return res, nil
 	}

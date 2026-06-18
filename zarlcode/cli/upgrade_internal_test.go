@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -22,7 +23,7 @@ import (
 
 // makeReleaseArchive builds a tar.gz holding a fake zarlcode binary and returns
 // its name, bytes, and lowercase sha256 — matching the workflow's packaging.
-func makeReleaseArchive(t *testing.T, tag, goos, goarch string) (name string, data []byte, sum string) {
+func makeReleaseArchive(t *testing.T, tag, goos, goarch string) (string, []byte, string) {
 	t.Helper()
 	var tarBuf bytes.Buffer
 	gz := gzip.NewWriter(&tarBuf)
@@ -41,9 +42,9 @@ func makeReleaseArchive(t *testing.T, tag, goos, goarch string) (name string, da
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
-	data = tarBuf.Bytes()
+	data := tarBuf.Bytes()
 	h := sha256.Sum256(data)
-	name = fmt.Sprintf("zarlcode_%s_%s_%s.tar.gz", tag, goos, goarch)
+	name := fmt.Sprintf("zarlcode_%s_%s_%s.tar.gz", tag, goos, goarch)
 	return name, data, hex.EncodeToString(h[:])
 }
 
@@ -51,6 +52,10 @@ func makeReleaseArchive(t *testing.T, tag, goos, goarch string) (name string, da
 // downloads for one release, pointing the package's release client at it. tag is
 // the full submodule tag, e.g. "zarlcode/v1.2.3".
 func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) {
+	newReleaseServerWithTagPath(t, tag, assets, nil)
+}
+
+func newReleaseServerWithTagPath(t *testing.T, tag string, assets map[string][]byte, tagPathSeen *string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		release := func() ghRelease {
@@ -64,8 +69,12 @@ func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) {
 			return rel
 		}
 		switch {
-		case strings.Contains(r.URL.Path, "/releases/tags/"):
-			if path.Base(r.URL.Path) != path.Base(tag) {
+		case strings.Contains(r.URL.EscapedPath(), "/releases/tags/"):
+			gotPath := strings.TrimPrefix(r.URL.EscapedPath(), "/repos/acme/tool/releases/tags/")
+			if tagPathSeen != nil {
+				*tagPathSeen = gotPath
+			}
+			if gotPath != url.PathEscape(tag) {
 				http.NotFound(w, r)
 				return
 			}
@@ -90,10 +99,10 @@ func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) {
 	t.Cleanup(func() { githubAPIBase = oldBase })
 }
 
-func fakePlatform(t *testing.T, goos, goarch string) {
+func fakePlatform(t *testing.T, goarch string) {
 	t.Helper()
 	oldOS, oldArch := currentGOOS, currentGOARCH
-	currentGOOS = func() string { return goos }
+	currentGOOS = func() string { return "linux" }
 	currentGOARCH = func() string { return goarch }
 	t.Cleanup(func() { currentGOOS, currentGOARCH = oldOS, oldArch })
 }
@@ -183,7 +192,7 @@ func TestRunUpgradeDryRunDoesNotDownload(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	fakePlatform(t, "linux", "amd64")
+	fakePlatform(t, "amd64")
 
 	name, data, sum := makeReleaseArchive(t, "v1.2.3", "linux", "amd64")
 	newReleaseServer(t, "zarlcode/v1.2.3", map[string][]byte{
@@ -211,7 +220,7 @@ func TestRunUpgradeInstallsReleaseBinary(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	fakePlatform(t, "linux", "amd64")
+	fakePlatform(t, "amd64")
 
 	name, data, sum := makeReleaseArchive(t, "v2.0.0", "linux", "amd64")
 	// A decoy for another platform must be ignored.
@@ -253,7 +262,7 @@ func TestRunUpgradeRejectsChecksumMismatch(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	fakePlatform(t, "linux", "amd64")
+	fakePlatform(t, "amd64")
 
 	name, data, _ := makeReleaseArchive(t, "v1.0.0", "linux", "amd64")
 	newReleaseServer(t, "zarlcode/v1.0.0", map[string][]byte{
@@ -278,7 +287,7 @@ func TestRunUpgradeErrorsWhenNoAssetForPlatform(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	fakePlatform(t, "linux", "arm64")
+	fakePlatform(t, "arm64")
 
 	name, data, sum := makeReleaseArchive(t, "v1.0.0", "linux", "amd64") // only amd64 published
 	newReleaseServer(t, "zarlcode/v1.0.0", map[string][]byte{
@@ -299,17 +308,17 @@ func TestRunUpgradeInstallsPinnedVersion(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	fakePlatform(t, "linux", "amd64")
+	fakePlatform(t, "amd64")
 
 	name, data, sum := makeReleaseArchive(t, "v1.5.0", "linux", "amd64")
-	newReleaseServer(t, "zarlcode/v1.5.0", map[string][]byte{
+	var tagPathSeen string
+	newReleaseServerWithTagPath(t, "zarlcode/v1.5.0", map[string][]byte{
 		name:           data,
 		checksumsAsset: []byte(sum + "  " + name + "\n"),
-	})
+	}, &tagPathSeen)
 	bin := filepath.Join(t.TempDir(), "zarlcode")
 	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
 	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
-
 	// --version accepts the bare version; the client re-adds the submodule
 	// prefix to resolve the tag zarlcode/v1.5.0.
 	res, err := runUpgrade(ctx, svc, upgradeOptions{Version: "v1.5.0"})
@@ -318,6 +327,9 @@ func TestRunUpgradeInstallsPinnedVersion(t *testing.T) {
 	}
 	if res.Version != "v1.5.0" {
 		t.Fatalf("res.Version = %q, want v1.5.0", res.Version)
+	}
+	if tagPathSeen != url.PathEscape("zarlcode/v1.5.0") {
+		t.Fatalf("tag path = %q, want escaped submodule tag", tagPathSeen)
 	}
 	if _, err := os.Stat(bin); err != nil {
 		t.Fatalf("pinned upgrade did not install: %v", err)
@@ -328,7 +340,7 @@ func TestUpgradeRestartExecsInstalledBinary(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	fakePlatform(t, "linux", "amd64")
+	fakePlatform(t, "amd64")
 
 	name, data, sum := makeReleaseArchive(t, "v3.0.0", "linux", "amd64")
 	newReleaseServer(t, "zarlcode/v3.0.0", map[string][]byte{

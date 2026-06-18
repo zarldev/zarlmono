@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,11 +34,13 @@ var (
 // binaryName is the executable packed inside each release archive — see the
 // release workflow, which builds `zarlcode` (`.exe` on windows).
 func binaryName(goos string) string {
-	if goos == "windows" {
+	if goos == goosWindows {
 		return "zarlcode.exe"
 	}
 	return "zarlcode"
 }
+
+const goosWindows = "windows"
 
 type ghAsset struct {
 	Name string `json:"name"`
@@ -72,7 +75,7 @@ func resolveRelease(ctx context.Context, repo, version, goos, goarch string) (gh
 		if !strings.HasPrefix(tag, releaseTagPrefix) {
 			tag = releaseTagPrefix + tag
 		}
-		rel, err := getRelease(ctx, fmt.Sprintf("%s/repos/%s/releases/tags/%s", githubAPIBase, repo, tag))
+		rel, err := getRelease(ctx, fmt.Sprintf("%s/repos/%s/releases/tags/%s", githubAPIBase, repo, url.PathEscape(tag)))
 		if err != nil {
 			return ghRelease{}, ghAsset{}, ghAsset{}, err
 		}
@@ -147,7 +150,9 @@ func githubAPIGet(ctx context.Context, url string) ([]byte, error) {
 // release. The archive name follows the workflow's contract
 // `zarlcode_<version>_<goos>_<goarch>.{tar.gz,zip}`, so matching on the
 // `_<goos>_<goarch>.` infix needs no os/arch translation table.
-func selectAssets(rel ghRelease, goos, goarch string) (archive, checksums ghAsset, err error) {
+func selectAssets(rel ghRelease, goos, goarch string) (ghAsset, ghAsset, error) {
+	var archive ghAsset
+	var checksums ghAsset
 	infix := fmt.Sprintf("_%s_%s.", goos, goarch)
 	for _, a := range rel.Assets {
 		switch {
@@ -276,10 +281,13 @@ func extractZip(data []byte, goos string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open %s in zip: %w", want, err)
 		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return nil, fmt.Errorf("read %s from zip: %w", want, err)
+		b, readErr := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read %s from zip: %w", want, readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close %s in zip: %w", want, closeErr)
 		}
 		return b, nil
 	}
@@ -288,7 +296,7 @@ func extractZip(data []byte, goos string) ([]byte, error) {
 
 // installBinary atomically replaces the file at binPath. It writes to a temp
 // file in the same directory (so the rename can't cross filesystems) and renames
-// over the target; on windows the running executable is moved aside first since
+// over the target; on windows the current target is moved aside first since
 // it can't be replaced in place.
 func installBinary(binPath string, data []byte, goos string) error {
 	dir := filepath.Dir(binPath)
@@ -299,17 +307,31 @@ func installBinary(binPath string, data []byte, goos string) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			return fmt.Errorf("write temp binary: %w; close temp binary: %w", err, closeErr)
+		}
 		return fmt.Errorf("write temp binary: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp binary: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o755); err != nil {
+	mode := os.FileMode(0o600)
+	if st, err := os.Stat(binPath); err == nil {
+		mode = st.Mode().Perm()
+	} else if goos != goosWindows {
+		mode = 0o755
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
 		return fmt.Errorf("chmod temp binary: %w", err)
 	}
-	if goos == "windows" {
-		_ = os.Rename(binPath, binPath+".old")
+	if goos == goosWindows {
+		oldPath := binPath + ".old"
+		if err := os.Remove(oldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove old binary backup %s: %w", oldPath, err)
+		}
+		if err := os.Rename(binPath, oldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("move current binary to %s: %w", oldPath, err)
+		}
 	}
 	if err := os.Rename(tmpName, binPath); err != nil {
 		return fmt.Errorf("install binary to %s: %w", binPath, err)
