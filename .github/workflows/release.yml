@@ -4,6 +4,11 @@ name: release
 # cross-compiles the pure-Go zarlcode TUI for every supported platform, packages
 # each build with a checksum, and attaches the archives to a GitHub Release.
 #
+# zarlcode is its own Go module (github.com/zarldev/zarlmono/zarlcode), so it is
+# versioned with submodule-prefixed tags `zarlcode/vX.Y.Z` — the form the module
+# proxy needs for `go install .../zarlcode/cmd@vX.Y.Z`. The build strips the
+# `zarlcode/` prefix for the binary version and archive names.
+#
 # The archive name is the contract `zarlcode upgrade` relies on:
 #   zarlcode_<version>_<goos>_<goarch>.tar.gz   (unix)
 #   zarlcode_<version>_<goos>_<goarch>.zip      (windows)
@@ -11,7 +16,7 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["zarlcode/v*"]
 
 concurrency:
   group: release-${{ github.ref }}
@@ -49,9 +54,10 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-          VERSION: ${{ github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          VERSION="${TAG#zarlcode/}"   # zarlcode/v1.2.3 -> v1.2.3
           ldflags="-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version=${VERSION}"
           bin="zarlcode"
           [ "${GOOS}" = "windows" ] && bin="zarlcode.exe"
@@ -102,11 +108,12 @@ jobs:
       - name: publish github release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh release create "${VERSION}" \
+          # The release keeps the full submodule tag; the title is the bare version.
+          gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "${VERSION}" \
+            --title "zarlcode ${TAG#zarlcode/}" \
             --generate-notes \
             artifacts/*

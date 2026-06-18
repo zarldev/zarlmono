@@ -45,40 +45,102 @@ type ghAsset struct {
 }
 
 type ghRelease struct {
-	TagName string    `json:"tag_name"`
-	Assets  []ghAsset `json:"assets"`
+	TagName    string    `json:"tag_name"`
+	Draft      bool      `json:"draft"`
+	Prerelease bool      `json:"prerelease"`
+	Assets     []ghAsset `json:"assets"`
 }
 
-// fetchRelease resolves a release from the GitHub API. An empty or "latest"
-// version returns the newest published release; anything else is treated as a
-// tag name.
-func fetchRelease(ctx context.Context, repo, version string) (ghRelease, error) {
-	url := fmt.Sprintf("%s/repos/%s/releases/latest", githubAPIBase, repo)
+// releaseTagPrefix is the submodule tag namespace zarlcode releases live under
+// (the module lives in ./zarlcode, so Go versions it as `zarlcode/vX.Y.Z`).
+const releaseTagPrefix = "zarlcode/"
+
+// releaseVersion strips the submodule prefix for display and comparison:
+// "zarlcode/v1.2.3" -> "v1.2.3".
+func releaseVersion(tag string) string {
+	return strings.TrimPrefix(tag, releaseTagPrefix)
+}
+
+// resolveRelease finds the release to install and its platform assets. An empty
+// or "latest" version walks the repo's releases (newest first) and returns the
+// first published one that actually carries a zarlcode asset for this platform —
+// so a monorepo that also tags other binaries (e.g. zarlai/vX) is handled
+// correctly. A pinned version resolves the submodule-prefixed tag directly.
+func resolveRelease(ctx context.Context, repo, version, goos, goarch string) (ghRelease, ghAsset, ghAsset, error) {
 	if v := strings.TrimSpace(version); v != "" && v != "latest" {
-		url = fmt.Sprintf("%s/repos/%s/releases/tags/%s", githubAPIBase, repo, v)
+		tag := v
+		if !strings.HasPrefix(tag, releaseTagPrefix) {
+			tag = releaseTagPrefix + tag
+		}
+		rel, err := getRelease(ctx, fmt.Sprintf("%s/repos/%s/releases/tags/%s", githubAPIBase, repo, tag))
+		if err != nil {
+			return ghRelease{}, ghAsset{}, ghAsset{}, err
+		}
+		archive, checksums, err := selectAssets(rel, goos, goarch)
+		return rel, archive, checksums, err
 	}
+	releases, err := listReleases(ctx, repo)
+	if err != nil {
+		return ghRelease{}, ghAsset{}, ghAsset{}, err
+	}
+	for _, rel := range releases {
+		if rel.Draft || rel.Prerelease {
+			continue
+		}
+		if archive, checksums, err := selectAssets(rel, goos, goarch); err == nil {
+			return rel, archive, checksums, nil
+		}
+	}
+	return ghRelease{}, ghAsset{}, ghAsset{}, fmt.Errorf("no installable %s release for %s/%s", repo, goos, goarch)
+}
+
+func getRelease(ctx context.Context, url string) (ghRelease, error) {
+	body, err := githubAPIGet(ctx, url)
+	if err != nil {
+		return ghRelease{}, err
+	}
+	var rel ghRelease
+	if err := json.Unmarshal(body, &rel); err != nil {
+		return ghRelease{}, fmt.Errorf("decode release: %w", err)
+	}
+	if rel.TagName == "" {
+		return ghRelease{}, errors.New("release has no tag")
+	}
+	return rel, nil
+}
+
+func listReleases(ctx context.Context, repo string) ([]ghRelease, error) {
+	body, err := githubAPIGet(ctx, fmt.Sprintf("%s/repos/%s/releases?per_page=100", githubAPIBase, repo))
+	if err != nil {
+		return nil, err
+	}
+	var releases []ghRelease
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return nil, fmt.Errorf("decode releases: %w", err)
+	}
+	return releases, nil
+}
+
+func githubAPIGet(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return ghRelease{}, fmt.Errorf("build release request: %w", err)
+		return nil, fmt.Errorf("build api request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	authorizeGitHub(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return ghRelease{}, fmt.Errorf("fetch release: %w", err)
+		return nil, fmt.Errorf("github api %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ghRelease{}, fmt.Errorf("fetch release %s: github responded %s", repo, resp.Status)
+		return nil, fmt.Errorf("github api %s: responded %s", url, resp.Status)
 	}
-	var rel ghRelease
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return ghRelease{}, fmt.Errorf("decode release: %w", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read api body: %w", err)
 	}
-	if rel.TagName == "" {
-		return ghRelease{}, fmt.Errorf("release for %s has no tag", repo)
-	}
-	return rel, nil
+	return body, nil
 }
 
 // selectAssets finds the platform archive and the checksums manifest in a

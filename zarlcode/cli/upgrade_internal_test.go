@@ -47,14 +47,13 @@ func makeReleaseArchive(t *testing.T, tag, goos, goarch string) (name string, da
 	return name, data, hex.EncodeToString(h[:])
 }
 
-// newReleaseServer serves the GitHub release API and asset downloads for repo,
-// pointing the package's release client at it.
-func newReleaseServer(t *testing.T, repo, tag string, assets map[string][]byte) {
+// newReleaseServer serves the GitHub release API (list + by-tag) and asset
+// downloads for one release, pointing the package's release client at it. tag is
+// the full submodule tag, e.g. "zarlcode/v1.2.3".
+func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/releases/latest"),
-			strings.Contains(r.URL.Path, "/releases/tags/"):
+		release := func() ghRelease {
 			rel := ghRelease{TagName: tag}
 			for name := range assets {
 				rel.Assets = append(rel.Assets, ghAsset{
@@ -62,7 +61,17 @@ func newReleaseServer(t *testing.T, repo, tag string, assets map[string][]byte) 
 					URL:  "http://" + r.Host + "/dl/" + name,
 				})
 			}
-			_ = json.NewEncoder(w).Encode(rel)
+			return rel
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "/releases/tags/"):
+			if path.Base(r.URL.Path) != path.Base(tag) {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(release())
+		case strings.HasSuffix(r.URL.Path, "/releases"):
+			_ = json.NewEncoder(w).Encode([]ghRelease{release()})
 		case strings.HasPrefix(r.URL.Path, "/dl/"):
 			body, ok := assets[path.Base(r.URL.Path)]
 			if !ok {
@@ -177,7 +186,7 @@ func TestRunUpgradeDryRunDoesNotDownload(t *testing.T) {
 	fakePlatform(t, "linux", "amd64")
 
 	name, data, sum := makeReleaseArchive(t, "v1.2.3", "linux", "amd64")
-	newReleaseServer(t, "acme/tool", "v1.2.3", map[string][]byte{
+	newReleaseServer(t, "zarlcode/v1.2.3", map[string][]byte{
 		name:           data,
 		checksumsAsset: []byte(sum + "  " + name + "\n"),
 	})
@@ -207,7 +216,7 @@ func TestRunUpgradeInstallsReleaseBinary(t *testing.T) {
 	name, data, sum := makeReleaseArchive(t, "v2.0.0", "linux", "amd64")
 	// A decoy for another platform must be ignored.
 	otherName, otherData, otherSum := makeReleaseArchive(t, "v2.0.0", "darwin", "arm64")
-	newReleaseServer(t, "acme/tool", "v2.0.0", map[string][]byte{
+	newReleaseServer(t, "zarlcode/v2.0.0", map[string][]byte{
 		name:           data,
 		otherName:      otherData,
 		checksumsAsset: []byte(sum + "  " + name + "\n" + otherSum + "  " + otherName + "\n"),
@@ -247,7 +256,7 @@ func TestRunUpgradeRejectsChecksumMismatch(t *testing.T) {
 	fakePlatform(t, "linux", "amd64")
 
 	name, data, _ := makeReleaseArchive(t, "v1.0.0", "linux", "amd64")
-	newReleaseServer(t, "acme/tool", "v1.0.0", map[string][]byte{
+	newReleaseServer(t, "zarlcode/v1.0.0", map[string][]byte{
 		name:           data,
 		checksumsAsset: []byte(strings.Repeat("0", 64) + "  " + name + "\n"),
 	})
@@ -272,7 +281,7 @@ func TestRunUpgradeErrorsWhenNoAssetForPlatform(t *testing.T) {
 	fakePlatform(t, "linux", "arm64")
 
 	name, data, sum := makeReleaseArchive(t, "v1.0.0", "linux", "amd64") // only amd64 published
-	newReleaseServer(t, "acme/tool", "v1.0.0", map[string][]byte{
+	newReleaseServer(t, "zarlcode/v1.0.0", map[string][]byte{
 		name:           data,
 		checksumsAsset: []byte(sum + "  " + name + "\n"),
 	})
@@ -281,8 +290,37 @@ func TestRunUpgradeErrorsWhenNoAssetForPlatform(t *testing.T) {
 	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
 
 	if _, err := runUpgrade(ctx, svc, upgradeOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "no zarlcode asset for linux/arm64") {
+		!strings.Contains(err.Error(), "no installable acme/tool release for linux/arm64") {
 		t.Fatalf("err = %v, want missing-asset error", err)
+	}
+}
+
+func TestRunUpgradeInstallsPinnedVersion(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	svc := prefs.NewService(store, nil, "")
+	fakePlatform(t, "linux", "amd64")
+
+	name, data, sum := makeReleaseArchive(t, "v1.5.0", "linux", "amd64")
+	newReleaseServer(t, "zarlcode/v1.5.0", map[string][]byte{
+		name:           data,
+		checksumsAsset: []byte(sum + "  " + name + "\n"),
+	})
+	bin := filepath.Join(t.TempDir(), "zarlcode")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
+
+	// --version accepts the bare version; the client re-adds the submodule
+	// prefix to resolve the tag zarlcode/v1.5.0.
+	res, err := runUpgrade(ctx, svc, upgradeOptions{Version: "v1.5.0"})
+	if err != nil {
+		t.Fatalf("runUpgrade pinned: %v", err)
+	}
+	if res.Version != "v1.5.0" {
+		t.Fatalf("res.Version = %q, want v1.5.0", res.Version)
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatalf("pinned upgrade did not install: %v", err)
 	}
 }
 
@@ -293,7 +331,7 @@ func TestUpgradeRestartExecsInstalledBinary(t *testing.T) {
 	fakePlatform(t, "linux", "amd64")
 
 	name, data, sum := makeReleaseArchive(t, "v3.0.0", "linux", "amd64")
-	newReleaseServer(t, "acme/tool", "v3.0.0", map[string][]byte{
+	newReleaseServer(t, "zarlcode/v3.0.0", map[string][]byte{
 		name:           data,
 		checksumsAsset: []byte(sum + "  " + name + "\n"),
 	})

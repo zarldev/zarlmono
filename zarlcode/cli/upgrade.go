@@ -179,17 +179,13 @@ func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (u
 	}
 
 	goos, goarch := currentGOOS(), currentGOARCH()
-	rel, err := fetchRelease(ctx, repo, opts.Version)
-	if err != nil {
-		return upgradeResult{}, err
-	}
-	archive, checksums, err := selectAssets(rel, goos, goarch)
+	rel, archive, checksums, err := resolveRelease(ctx, repo, opts.Version, goos, goarch)
 	if err != nil {
 		return upgradeResult{}, err
 	}
 	res := upgradeResult{
 		Repo:      repo,
-		Version:   rel.TagName,
+		Version:   releaseVersion(rel.TagName),
 		AssetName: archive.Name,
 		AssetURL:  archive.URL,
 		BinPath:   binPath,
@@ -201,7 +197,7 @@ func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (u
 	}
 	// Skip the download when the running build already matches the resolved
 	// release and the caller didn't pin a specific version.
-	if opts.Version == "" && rel.TagName == version.String() {
+	if opts.Version == "" && res.Version == version.String() {
 		res.UpToDate = true
 		return res, nil
 	}
