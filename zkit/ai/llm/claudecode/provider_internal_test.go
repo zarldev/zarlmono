@@ -139,6 +139,82 @@ func TestParseToolProtocol(t *testing.T) {
 	}
 }
 
+// TestParseToolProtocolAssistantToolCallsBlock locks parsing of the inline
+// <assistant_tool_calls> framing the model copies from the prompt's rendered
+// history instead of the documented {"tool_calls":...} protocol — these used to
+// leak into the transcript as prose.
+func TestParseToolProtocolAssistantToolCallsBlock(t *testing.T) {
+	calls := parseToolProtocol(
+		`<assistant_tool_calls>[{"id":"call_r2","type":"function","function":{"name":"read","arguments":"{\"path\":\"VOICE.md\"}"}}] </assistant_tool_calls>`,
+	)
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1: %#v", len(calls), calls)
+	}
+	if calls[0].ID != "call_r2" || calls[0].Function.Name != "read" ||
+		calls[0].Function.Arguments != `{"path":"VOICE.md"}` {
+		t.Fatalf("unexpected call: %#v", calls[0])
+	}
+}
+
+// TestParseToolProtocolAssistantToolCallsWithPreamble covers the model wrapping
+// the block in prose, which is the common leak shape.
+func TestParseToolProtocolAssistantToolCallsWithPreamble(t *testing.T) {
+	calls := parseToolProtocol(strings.Join([]string{
+		"Sure, let me look at that file.",
+		`<assistant_tool_calls>[{"id":"call_r2","type":"function","function":{"name":"read","arguments":"{\"path\":\"VOICE.md\"}"}}]</assistant_tool_calls>`,
+	}, "\n"))
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1: %#v", len(calls), calls)
+	}
+	if calls[0].Function.Arguments != `{"path":"VOICE.md"}` {
+		t.Fatalf("arguments = %q", calls[0].Function.Arguments)
+	}
+}
+
+// TestParseToolProtocolBareArray covers the OpenAI-style array emitted without
+// the wrapping tags.
+func TestParseToolProtocolBareArray(t *testing.T) {
+	calls := parseToolProtocol(
+		`[{"id":"call_1","type":"function","function":{"name":"grep","arguments":"{\"pattern\":\"TODO\"}"}}]`,
+	)
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1: %#v", len(calls), calls)
+	}
+	if calls[0].ID != "call_1" || calls[0].Function.Name != "grep" ||
+		calls[0].Function.Arguments != `{"pattern":"TODO"}` {
+		t.Fatalf("unexpected call: %#v", calls[0])
+	}
+}
+
+// TestParseStreamCatchesInlineAssistantToolCalls is the end-to-end guard: when
+// tools are present, the model's inline <assistant_tool_calls> text must surface
+// as a tool call rather than transcript content.
+func TestParseStreamCatchesInlineAssistantToolCalls(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"<assistant_tool_calls>[{\"id\":\"call_r2\",\"type\":\"function\","}}}`,
+		`{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"VOICE.md\\\"}\"}}]</assistant_tool_calls>"}}}`,
+	}, "\n")
+	var chunks []llm.CompletionChunk
+	yield := func(c llm.CompletionChunk, _ error) bool {
+		chunks = append(chunks, c)
+		return true
+	}
+	if _, _, err := parseStream(strings.NewReader(stream), yield, newToolCallState(), true); err != nil {
+		t.Fatalf("parseStream: %v", err)
+	}
+	var calls []llm.ToolCall
+	for _, c := range chunks {
+		if c.Content != "" {
+			t.Fatalf("inline tool call leaked as content: %q", c.Content)
+		}
+		calls = append(calls, c.ToolCalls...)
+	}
+	if len(calls) != 1 || calls[0].Function.Name != "read" ||
+		calls[0].Function.Arguments != `{"path":"VOICE.md"}` {
+		t.Fatalf("unexpected calls: %#v", calls)
+	}
+}
+
 func TestParseToolProtocolWithPreamble(t *testing.T) {
 	calls := parseToolProtocol(strings.Join([]string{
 		"Let me read the relevant files.",

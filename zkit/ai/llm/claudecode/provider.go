@@ -23,6 +23,15 @@ const jsonNull = "null"
 // provider stamps on every emitted tool call.
 const toolCallTypeFunction = "function"
 
+// assistantToolCalls{Open,Close} bracket the tool-call block buildPrompt
+// renders for prior assistant turns. The model frequently copies this framing
+// back instead of the documented {"tool_calls":...} protocol, so the inline
+// parser has to recognize it.
+const (
+	assistantToolCallsOpen  = "<assistant_tool_calls>"
+	assistantToolCallsClose = "</assistant_tool_calls>"
+)
+
 const (
 	defaultModel   = "sonnet"
 	defaultTimeout = 10 * time.Minute
@@ -431,6 +440,13 @@ func parseToolProtocol(text string) []llm.ToolCall {
 	if text == "" {
 		return nil
 	}
+	// The model often mimics the <assistant_tool_calls> few-shot framing from
+	// the prompt's rendered history (see buildPrompt) instead of the documented
+	// {"tool_calls":...} protocol. Honor that tagged, OpenAI-array shape first so
+	// it is caught rather than leaking into the transcript as prose.
+	if calls := parseAssistantToolCallsBlocks(text); len(calls) > 0 {
+		return calls
+	}
 	if calls := parseToolProtocolObject(stripJSONFence(text)); len(calls) > 0 {
 		return calls
 	}
@@ -443,7 +459,94 @@ func parseToolProtocol(text string) []llm.ToolCall {
 			return calls
 		}
 	}
+	// Last resort: a bare OpenAI-style array emitted without the wrapping tags.
+	if calls := parseToolCallArray(stripJSONFence(text)); len(calls) > 0 {
+		return calls
+	}
 	return nil
+}
+
+// parseAssistantToolCallsBlocks extracts every tool call the model emitted
+// inside <assistant_tool_calls>...</assistant_tool_calls> tags. The payload is
+// the OpenAI-style array json.Marshal(m.ToolCalls) produces in buildPrompt —
+// objects with a nested "function" whose "arguments" is a JSON-encoded string.
+func parseAssistantToolCallsBlocks(text string) []llm.ToolCall {
+	var calls []llm.ToolCall
+	for {
+		start := strings.Index(text, assistantToolCallsOpen)
+		if start < 0 {
+			break
+		}
+		rest := text[start+len(assistantToolCallsOpen):]
+		end := strings.Index(rest, assistantToolCallsClose)
+		if end < 0 {
+			break
+		}
+		calls = append(calls, parseToolCallArray(stripJSONFence(rest[:end]))...)
+		text = rest[end+len(assistantToolCallsClose):]
+	}
+	return calls
+}
+
+// parseToolCallArray parses the OpenAI-style tool-call array
+// [{"id":...,"type":"function","function":{"name":...,"arguments":"<json>"}}].
+// arguments is normally the JSON-encoded string the wire format uses; an object
+// form is tolerated for models that nest it directly.
+func parseToolCallArray(text string) []llm.ToolCall {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "[") {
+		return nil
+	}
+	var raw []struct {
+		ID       string `json:"id"`
+		Function struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal([]byte(text), &raw); err != nil || len(raw) == 0 {
+		return nil
+	}
+	out := make([]llm.ToolCall, 0, len(raw))
+	for i, c := range raw {
+		if c.Function.Name == "" {
+			continue
+		}
+		id := c.ID
+		if id == "" {
+			id = fmt.Sprintf("call_%d", i)
+		}
+		out = append(out, llm.ToolCall{
+			ID:   id,
+			Type: toolCallTypeFunction,
+			Function: llm.ToolCallFunction{
+				Name:      c.Function.Name,
+				Arguments: normalizeToolArguments(c.Function.Arguments),
+			},
+		})
+	}
+	return out
+}
+
+// normalizeToolArguments returns the call arguments as a JSON object string.
+// The OpenAI wire form encodes arguments as a JSON-encoded string
+// ("{\"k\":1}"); some models nest the object directly ({"k":1}). Handle both,
+// defaulting empty or null to "{}".
+func normalizeToolArguments(raw json.RawMessage) string {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == jsonNull {
+		return "{}"
+	}
+	if strings.HasPrefix(s, `"`) {
+		var unquoted string
+		if json.Unmarshal(raw, &unquoted) == nil {
+			if unquoted = strings.TrimSpace(unquoted); unquoted != "" && unquoted != jsonNull {
+				return unquoted
+			}
+			return "{}"
+		}
+	}
+	return s
 }
 
 func stripJSONFence(text string) string {
