@@ -1,0 +1,112 @@
+name: release
+
+# Publishes versioned zarlcode binaries. Push a tag like `v1.2.3` and this
+# cross-compiles the pure-Go zarlcode TUI for every supported platform, packages
+# each build with a checksum, and attaches the archives to a GitHub Release.
+#
+# The archive name is the contract `zarlcode upgrade` relies on:
+#   zarlcode_<version>_<goos>_<goarch>.tar.gz   (unix)
+#   zarlcode_<version>_<goos>_<goarch>.zip      (windows)
+# using raw GOOS/GOARCH so the client matcher needs no os/arch translation.
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: setup go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # zarlcode is pure Go (it lives in the non-CGO CI matrix), so every target
+      # cross-compiles from this one linux runner with CGO disabled.
+      - name: build and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ldflags="-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version=${VERSION}"
+          bin="zarlcode"
+          [ "${GOOS}" = "windows" ] && bin="zarlcode.exe"
+          go build -trimpath -ldflags "${ldflags}" -o "${bin}" ./zarlcode/cmd
+
+          base="zarlcode_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p dist
+          if [ "${GOOS}" = "windows" ]; then
+            archive="${base}.zip"
+            zip -q "dist/${archive}" "${bin}"
+          else
+            archive="${base}.tar.gz"
+            tar -czf "dist/${archive}" "${bin}"
+          fi
+          ( cd dist && sha256sum "${archive}" > "${archive}.sha256" )
+          echo "packaged dist/${archive}"
+
+      - name: upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zarlcode-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # Aggregate the per-target sha256 lines into a single checksums.txt that
+      # the upgrade client downloads to verify whichever archive it pulled.
+      - name: assemble checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          cat *.sha256 > checksums.txt
+          rm -f *.sha256
+          echo "release assets:"
+          ls -1
+
+      - name: publish github release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "${VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${VERSION}" \
+            --generate-notes \
+            artifacts/*
