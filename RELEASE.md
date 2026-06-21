@@ -18,63 +18,9 @@ Use the GitHub Actions **release-dispatch** workflow as the operator-facing rele
 
 Inputs:
 - `version`: `vX.Y.Z`
-- `scope`: `zarlcode`, `all`, or `custom`
+- `scope`: direct choices for `zkit`, `zarlcode`, `zarlai`, `swebench-eval`, `examples`, plus `all` and `custom`
 - `custom_modules`: comma-separated list for `scope=custom`
-- `dry_run`: validate and print the tag plan without pushing tags
+- `mode`: `dry-run` or `publish`
 
-The workflow validates the version, checks that `CHANGELOG.md` contains the target release, verifies tags do not already exist, runs module build preflights, and either prints the plan or creates/pushes the tags.
-
-Pushing `zarlcode/vX.Y.Z` still triggers the existing tag-driven publish workflow for binaries, checksums, and Homebrew tap updates.
-
-## Tagging (direct/manual path)
-
-Use this only when you intentionally want to bypass the release-dispatch workflow.
-
-### zkit (shared library) — required
-
-```bash
-git tag -a zkit/vX.Y.Z -m "zkit vX.Y.Z — <summary>"
-git push origin zkit/vX.Y.Z
-```
-
-### zarlcode (TUI product) — required
-
-```bash
-go tool task zarlcode:release VERSION=vX.Y.Z
-```
-
-This creates `zarlcode/vX.Y.Z`, validates the version format, checks for a clean tree, and pushes the tag. The Taskfile task is a direct/manual path; the GitHub Actions `release-dispatch` workflow is the canonical operator path.
-
-### swebench-eval (eval tool) — optional but recommended
-
-```bash
-git tag -a swebench-eval/vX.Y.Z -m "swebench-eval vX.Y.Z — <summary>"
-git push origin swebench-eval/vX.Y.Z
-```
-
-### zarlai (assistant app) — defer until stable
-`zarlai` is excluded from standard CI and has CGO system dependencies. No release pipeline exists yet. Tag when:
-- CI job for `zarlai` is added (or the exclusion is justified)
-- A `task zarlai:release` is added to `Taskfile.yml`
-- The binary builds reliably in CI environments
-
-## Post-release
-
-- [ ] Push CHANGELOG.md
-- [ ] Verify tags on GitHub: `git tag -l | sort`
-- [ ] Update GitHub Releases page with the release body (copy from CHANGELOG)
-- [ ] If `HOMEBREW_APP_ID` and `HOMEBREW_APP_PRIVATE_KEY` are configured in GitHub Actions, verify `zarldev/homebrew-tap` updated with the new `Formula/zarlcode.rb`
-- [ ] Announce in relevant channels (Discord, etc.)
-## Versioning rules
-
-- **Pre-v1**: APIs may evolve. Stable-tier packages should avoid breaking changes.
-- **Tag format**: `module/vX.Y.Z` — the module name is the prefix, not the repo name.
-- **Go module consumers** use `go get github.com/zarldev/zarlmono/zkit@v0.1.2` to pin.
-- **zarlcode** consumers use `go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2` or `zarlcode upgrade`.
-
-## Next release (v0.2.0)
-When v0.2.0 is ready:
-1. Bump version in CHANGELOG.md
-2. Run the checklist above
-3. Consider whether any beta packages have matured to shared/stable tier
+The workflow validates the version, checks that `CHANGELOG.md` contains the target release, verifies tags do not already exist, runs module build preflights, and either prints the plan (`dry-run`) or creates/pushes the tags (`publish`).3. Consider whether any beta packages have matured to shared/stable tier
 4. Consider adding `zarlai` to the standard CI matrix if CGO deps are resolved

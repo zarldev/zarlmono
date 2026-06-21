@@ -23,19 +23,25 @@ on:
         type: choice
         default: zarlcode
         options:
+          - zkit
           - zarlcode
+          - zarlai
+          - swebench-eval
+          - examples
           - all
           - custom
       custom_modules:
         description: Comma-separated modules for scope=custom (zkit,zarlcode,zarlai,swebench-eval,examples)
         required: false
         type: string
-      dry_run:
-        description: Validate and print the tag plan without pushing tags
+      mode:
+        description: Release mode
         required: true
-        type: boolean
-        default: true
-
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - publish
 concurrency:
   group: release-dispatch-${{ github.ref }}
   cancel-in-progress: false
@@ -64,7 +70,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           SCOPE: ${{ inputs.scope }}
           CUSTOM_MODULES: ${{ inputs.custom_modules }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          MODE: ${{ inputs.mode }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -72,6 +78,11 @@ jobs:
           case "$VERSION" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "version must look like vX.Y.Z (got '$VERSION')" >&2; exit 2 ;;
+          esac
+
+          case "$MODE" in
+            dry-run|publish) ;;
+            *) echo "mode must be dry-run or publish (got '$MODE')" >&2; exit 2 ;;
           esac
 
           if [ "$REF_NAME" != "main" ]; then
@@ -91,8 +102,8 @@ jobs:
 
           resolve_modules() {
             case "$SCOPE" in
-              zarlcode)
-                printf '%s\n' zarlcode
+              zkit|zarlcode|zarlai|swebench-eval|examples)
+                printf '%s\n' "$SCOPE"
                 ;;
               all)
                 printf '%s\n' zkit zarlcode zarlai swebench-eval examples
@@ -160,7 +171,7 @@ jobs:
             echo
             echo "- Version: \\`$VERSION\\`"
             echo "- Scope: \\`$SCOPE\\`"
-            echo "- Dry run: \\`$DRY_RUN\\`"
+            echo "- Mode: \\`$MODE\\`"
             echo "- Modules: \\`${modules[*]}\\`"
             echo
             echo "### Tags"
@@ -176,6 +187,7 @@ jobs:
 
           {
             printf 'version=%s\n' "$VERSION"
+            printf 'mode=%s\n' "$MODE"
             printf 'modules=%s\n' "$(IFS=,; echo "${modules[*]}")"
             printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")"
           } >> "$GITHUB_OUTPUT"
@@ -207,11 +219,11 @@ jobs:
           done
 
       - name: stop after dry-run
-        if: ${{ inputs.dry_run }}
+        if: ${{ inputs.mode == 'dry-run' }}
         run: echo "dry-run complete; no tags were created"
 
       - name: create and push tags
-        if: ${{ !inputs.dry_run }}
+        if: ${{ inputs.mode == 'publish' }}
         env:
           TAGS: ${{ steps.plan.outputs.tags }}
           VERSION: ${{ steps.plan.outputs.version }}
