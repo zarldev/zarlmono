@@ -1,11 +1,19 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
-	"errors"
-	"io"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,53 +21,116 @@ import (
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
-func makeUpgradeSource(t *testing.T) string {
+// makeReleaseArchive builds a tar.gz holding a fake zarlcode binary and returns
+// its name, bytes, and lowercase sha256 — matching the workflow's packaging.
+func makeReleaseArchive(t *testing.T, tag, goos, goarch string) (string, []byte, string) {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "zarlcode", "cmd"), 0o755); err != nil {
+	var tarBuf bytes.Buffer
+	gz := gzip.NewWriter(&tarBuf)
+	tw := tar.NewWriter(gz)
+	body := []byte("fake-zarlcode-" + tag + "-" + goos + "-" + goarch)
+	bin := binaryName(goos)
+	if err := tw.WriteHeader(&tar.Header{Name: bin, Mode: 0o755, Size: int64(len(body))}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "zarlcode", "cmd", "main.go"), []byte("package main\n"), 0o644); err != nil {
+	if _, err := tw.Write(body); err != nil {
 		t.Fatal(err)
 	}
-	taskfile := "version: '3'\n\ntasks:\n  zarlcode:\n    cmds:\n      - echo installed\n"
-	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte(taskfile), 0o644); err != nil {
+	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return dir
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data := tarBuf.Bytes()
+	h := sha256.Sum256(data)
+	name := fmt.Sprintf("zarlcode_%s_%s_%s.tar.gz", tag, goos, goarch)
+	return name, data, hex.EncodeToString(h[:])
+}
+
+// newReleaseServer serves the GitHub release API (list + by-tag) and asset
+// downloads for one release, pointing the package's release client at it. tag is
+// the full submodule tag, e.g. "zarlcode/v1.2.3".
+func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) {
+	newReleaseServerWithTagPath(t, tag, assets, nil)
+}
+
+func newReleaseServerWithTagPath(t *testing.T, tag string, assets map[string][]byte, tagPathSeen *string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		release := func() ghRelease {
+			rel := ghRelease{TagName: tag}
+			for name := range assets {
+				rel.Assets = append(rel.Assets, ghAsset{
+					Name: name,
+					URL:  "http://" + r.Host + "/dl/" + name,
+				})
+			}
+			return rel
+		}
+		switch {
+		case strings.Contains(r.URL.EscapedPath(), "/releases/tags/"):
+			gotPath := strings.TrimPrefix(r.URL.EscapedPath(), "/repos/acme/tool/releases/tags/")
+			if tagPathSeen != nil {
+				*tagPathSeen = gotPath
+			}
+			if gotPath != url.PathEscape(tag) {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(release())
+		case strings.HasSuffix(r.URL.Path, "/releases"):
+			_ = json.NewEncoder(w).Encode([]ghRelease{release()})
+		case strings.HasPrefix(r.URL.Path, "/dl/"):
+			body, ok := assets[path.Base(r.URL.Path)]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	oldBase := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = oldBase })
+}
+
+func fakePlatform(t *testing.T, goarch string) {
+	t.Helper()
+	oldOS, oldArch := currentGOOS, currentGOARCH
+	currentGOOS = func() string { return "linux" }
+	currentGOARCH = func() string { return goarch }
+	t.Cleanup(func() { currentGOOS, currentGOARCH = oldOS, oldArch })
 }
 
 func TestValidateUpgradeSource(t *testing.T) {
-	good := makeUpgradeSource(t)
-	if err := validateUpgradeSource(good); err != nil {
-		t.Fatalf("valid source rejected: %v", err)
+	for _, ok := range []string{"zarldev/zarlmono", "acme/tool-1", "a.b/c_d"} {
+		if err := validateUpgradeSource(ok); err != nil {
+			t.Errorf("validateUpgradeSource(%q) = %v, want nil", ok, err)
+		}
 	}
+	for _, bad := range []string{"", "noslash", "/leading/extra", "owner/repo/extra", "owner /repo"} {
+		if err := validateUpgradeSource(bad); err == nil {
+			t.Errorf("validateUpgradeSource(%q) = nil, want error", bad)
+		}
+	}
+}
 
-	missingTaskfile := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(missingTaskfile, "zarlcode", "cmd"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(missingTaskfile, "zarlcode", "cmd", "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateUpgradeSource(missingTaskfile); err == nil {
-		t.Fatal("missing Taskfile accepted")
-	}
-
-	missingTarget := makeUpgradeSource(t)
-	if err := os.WriteFile(filepath.Join(missingTarget, "Taskfile.yml"), []byte("version: '3'\n\ntasks:\n  test:\n    cmds:\n      - go test ./...\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateUpgradeSource(missingTarget); err == nil {
-		t.Fatal("Taskfile without zarlcode task accepted")
-	}
-
-	missingMain := makeUpgradeSource(t)
-	if err := os.Remove(filepath.Join(missingMain, "zarlcode", "cmd", "main.go")); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateUpgradeSource(missingMain); err == nil {
-		t.Fatal("source without zarlcode/cmd/main.go accepted")
+func TestNormalizeUpgradeSource(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"zarldev/zarlmono", "zarldev/zarlmono"},
+		{"https://github.com/zarldev/zarlmono", "zarldev/zarlmono"},
+		{"https://github.com/zarldev/zarlmono.git", "zarldev/zarlmono"},
+		{"github.com/acme/tool/", "acme/tool"},
+	} {
+		got, err := normalizeUpgradeSource(tc.in)
+		if err != nil || got != tc.want {
+			t.Errorf("normalizeUpgradeSource(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
 	}
 }
 
@@ -67,16 +138,15 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	source := makeUpgradeSource(t)
 	bin := filepath.Join(t.TempDir(), "zarlcode")
 	var out, errOut bytes.Buffer
 
-	if code := runUpgradeWithService(ctx, svc, []string{"source", "set", source}, &out, &errOut, false); code != 0 {
+	if code := runUpgradeWithService(ctx, svc, []string{"source", "set", "acme/tool"}, &out, &errOut, false); code != 0 {
 		t.Fatalf("source set exit %d stderr=%q", code, errOut.String())
 	}
 	got, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource)
-	if err != nil || !ok || got.Value != source {
-		t.Fatalf("upgrade_source = %+v ok=%v err=%v, want %q", got, ok, err, source)
+	if err != nil || !ok || got.Value != "acme/tool" {
+		t.Fatalf("upgrade_source = %+v ok=%v err=%v, want %q", got, ok, err, "acme/tool")
 	}
 
 	out.Reset()
@@ -118,82 +188,168 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 	}
 }
 
-func TestRunUpgradeDryRunDoesNotExecuteTask(t *testing.T) {
+func TestRunUpgradeDryRunDoesNotDownload(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	source := makeUpgradeSource(t)
-	bin := filepath.Join(t.TempDir(), "zarlcode")
-	if err := svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, source); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin); err != nil {
-		t.Fatal(err)
-	}
+	fakePlatform(t, "amd64")
 
-	called := false
-	oldRunner := runUpgradeCommand
-	runUpgradeCommand = func(context.Context, string, io.Writer, io.Writer) (string, error) {
-		called = true
-		return "", nil
-	}
-	t.Cleanup(func() { runUpgradeCommand = oldRunner })
+	name, data, sum := makeReleaseArchive(t, "v1.2.3", "linux", "amd64")
+	newReleaseServer(t, "zarlcode/v1.2.3", map[string][]byte{
+		name:           data,
+		checksumsAsset: []byte(sum + "  " + name + "\n"),
+	})
+
+	bin := filepath.Join(t.TempDir(), "zarlcode")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
 
 	res, err := runUpgrade(ctx, svc, upgradeOptions{DryRun: true, DryRunOverride: true})
 	if err != nil {
 		t.Fatalf("runUpgrade dry-run: %v", err)
 	}
-	if called {
-		t.Fatal("dry-run executed task")
-	}
-	if !res.DryRun || res.Source != source || res.BinPath != bin || strings.Join(res.Command, " ") != "go tool task zarlcode" {
+	if !res.DryRun || res.Version != "v1.2.3" || res.AssetName != name || res.Repo != "acme/tool" {
 		t.Fatalf("unexpected dry-run result: %+v", res)
+	}
+	if _, err := os.Stat(bin); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote a binary (stat err=%v)", err)
 	}
 }
 
-func TestRunUpgradeExecutesTaskInConfiguredSource(t *testing.T) {
+func TestRunUpgradeInstallsReleaseBinary(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	source := makeUpgradeSource(t)
+	fakePlatform(t, "amd64")
+
+	name, data, sum := makeReleaseArchive(t, "v2.0.0", "linux", "amd64")
+	// A decoy for another platform must be ignored.
+	otherName, otherData, otherSum := makeReleaseArchive(t, "v2.0.0", "darwin", "arm64")
+	newReleaseServer(t, "zarlcode/v2.0.0", map[string][]byte{
+		name:           data,
+		otherName:      otherData,
+		checksumsAsset: []byte(sum + "  " + name + "\n" + otherSum + "  " + otherName + "\n"),
+	})
+
 	bin := filepath.Join(t.TempDir(), "zarlcode")
-	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, source)
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
 	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
 
-	oldRunner := runUpgradeCommand
-	var gotDir string
-	runUpgradeCommand = func(_ context.Context, dir string, stdout, stderr io.Writer) (string, error) {
-		gotDir = dir
-		_, _ = stdout.Write([]byte("built\n"))
-		return "built\n", nil
-	}
-	t.Cleanup(func() { runUpgradeCommand = oldRunner })
-
-	var out bytes.Buffer
-	res, err := runUpgrade(ctx, svc, upgradeOptions{Stdout: &out})
+	res, err := runUpgrade(ctx, svc, upgradeOptions{})
 	if err != nil {
 		t.Fatalf("runUpgrade: %v", err)
 	}
-	if gotDir != source {
-		t.Fatalf("task dir = %q, want %q", gotDir, source)
+	if res.Version != "v2.0.0" || res.UpToDate {
+		t.Fatalf("unexpected result: %+v", res)
 	}
-	if res.Output != "built\n" || out.String() != "built\n" {
-		t.Fatalf("output result=%q stdout=%q", res.Output, out.String())
+	installed, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatalf("read installed binary: %v", err)
+	}
+	if string(installed) != "fake-zarlcode-v2.0.0-linux-amd64" {
+		t.Fatalf("installed wrong binary: %q", installed)
+	}
+	info, err := os.Stat(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("installed binary not executable: %v", info.Mode())
 	}
 }
 
-func TestUpgradeRestartExecsPersistedBinary(t *testing.T) {
+func TestRunUpgradeRejectsChecksumMismatch(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
-	source := makeUpgradeSource(t)
+	fakePlatform(t, "amd64")
+
+	name, data, _ := makeReleaseArchive(t, "v1.0.0", "linux", "amd64")
+	newReleaseServer(t, "zarlcode/v1.0.0", map[string][]byte{
+		name:           data,
+		checksumsAsset: []byte(strings.Repeat("0", 64) + "  " + name + "\n"),
+	})
+
 	bin := filepath.Join(t.TempDir(), "zarlcode")
-	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, source)
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
 	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
 
-	oldRunner := runUpgradeCommand
-	runUpgradeCommand = func(context.Context, string, io.Writer, io.Writer) (string, error) { return "", nil }
-	t.Cleanup(func() { runUpgradeCommand = oldRunner })
+	if _, err := runUpgrade(ctx, svc, upgradeOptions{}); err == nil ||
+		!strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("err = %v, want checksum mismatch", err)
+	}
+	if _, err := os.Stat(bin); !os.IsNotExist(err) {
+		t.Fatalf("mismatch still installed a binary (stat err=%v)", err)
+	}
+}
+
+func TestRunUpgradeErrorsWhenNoAssetForPlatform(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	svc := prefs.NewService(store, nil, "")
+	fakePlatform(t, "arm64")
+
+	name, data, sum := makeReleaseArchive(t, "v1.0.0", "linux", "amd64") // only amd64 published
+	newReleaseServer(t, "zarlcode/v1.0.0", map[string][]byte{
+		name:           data,
+		checksumsAsset: []byte(sum + "  " + name + "\n"),
+	})
+	bin := filepath.Join(t.TempDir(), "zarlcode")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
+
+	if _, err := runUpgrade(ctx, svc, upgradeOptions{}); err == nil ||
+		!strings.Contains(err.Error(), "no installable acme/tool release for linux/arm64") {
+		t.Fatalf("err = %v, want missing-asset error", err)
+	}
+}
+
+func TestRunUpgradeInstallsPinnedVersion(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	svc := prefs.NewService(store, nil, "")
+	fakePlatform(t, "amd64")
+
+	name, data, sum := makeReleaseArchive(t, "v1.5.0", "linux", "amd64")
+	var tagPathSeen string
+	newReleaseServerWithTagPath(t, "zarlcode/v1.5.0", map[string][]byte{
+		name:           data,
+		checksumsAsset: []byte(sum + "  " + name + "\n"),
+	}, &tagPathSeen)
+	bin := filepath.Join(t.TempDir(), "zarlcode")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
+	// --version accepts the bare version; the client re-adds the submodule
+	// prefix to resolve the tag zarlcode/v1.5.0.
+	res, err := runUpgrade(ctx, svc, upgradeOptions{Version: "v1.5.0"})
+	if err != nil {
+		t.Fatalf("runUpgrade pinned: %v", err)
+	}
+	if res.Version != "v1.5.0" {
+		t.Fatalf("res.Version = %q, want v1.5.0", res.Version)
+	}
+	if tagPathSeen != url.PathEscape("zarlcode/v1.5.0") {
+		t.Fatalf("tag path = %q, want escaped submodule tag", tagPathSeen)
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatalf("pinned upgrade did not install: %v", err)
+	}
+}
+
+func TestUpgradeRestartExecsInstalledBinary(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	svc := prefs.NewService(store, nil, "")
+	fakePlatform(t, "amd64")
+
+	name, data, sum := makeReleaseArchive(t, "v3.0.0", "linux", "amd64")
+	newReleaseServer(t, "zarlcode/v3.0.0", map[string][]byte{
+		name:           data,
+		checksumsAsset: []byte(sum + "  " + name + "\n"),
+	})
+	bin := filepath.Join(t.TempDir(), "zarlcode")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, "acme/tool")
+	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
 
 	oldExec := execUpgradeBinary
 	var execPath string
@@ -204,36 +360,11 @@ func TestUpgradeRestartExecsPersistedBinary(t *testing.T) {
 	t.Cleanup(func() { execUpgradeBinary = oldExec })
 
 	var out, errOut bytes.Buffer
-	code := runUpgradeWithService(ctx, svc, []string{"--restart"}, &out, &errOut, true)
-	if code != 0 {
+	if code := runUpgradeWithService(ctx, svc, []string{"--restart"}, &out, &errOut, true); code != 0 {
 		t.Fatalf("upgrade --restart exit %d stderr=%q", code, errOut.String())
 	}
 	if execPath != bin {
 		t.Fatalf("exec path = %q, want %q", execPath, bin)
-	}
-}
-
-func TestRunUpgradeReturnsTaskErrorWithOutput(t *testing.T) {
-	ctx := context.Background()
-	store := openTestStore(t)
-	svc := prefs.NewService(store, nil, "")
-	source := makeUpgradeSource(t)
-	bin := filepath.Join(t.TempDir(), "zarlcode")
-	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, source)
-	_ = svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath, bin)
-
-	oldRunner := runUpgradeCommand
-	runUpgradeCommand = func(context.Context, string, io.Writer, io.Writer) (string, error) {
-		return "boom\n", errors.New("task failed")
-	}
-	t.Cleanup(func() { runUpgradeCommand = oldRunner })
-
-	res, err := runUpgrade(ctx, svc, upgradeOptions{})
-	if err == nil {
-		t.Fatal("expected task error")
-	}
-	if res.Output != "boom\n" {
-		t.Fatalf("output = %q, want boom", res.Output)
 	}
 }
 

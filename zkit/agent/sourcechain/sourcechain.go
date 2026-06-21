@@ -94,6 +94,14 @@ func New(wrapped tools.Source, deps guardrails.Deps, opts ...Option) (*Chain, er
 	}
 
 	guards := []guardrails.Guardrail{guardrails.NewSchemaGuardrail(wrapped)}
+	// Plan-first gates on each tool's ChangesWorkspace capability, so it needs
+	// the same spec Iterable schema uses — compose it here, right after schema,
+	// rather than in PostSchemaGuardrails (which has only deps). It runs before
+	// the policy guardrails so a changing call is refused for "no plan" ahead of
+	// any scope/fan-out advice.
+	if deps.PlanFirst && deps.PlanTool != "" {
+		guards = append(guards, guardrails.NewPlanGuardrail(wrapped, deps.PlanTool))
+	}
 	guards = append(guards, guardrails.PostSchemaGuardrails(deps)...)
 	guards = append(guards, cfg.extra...)
 

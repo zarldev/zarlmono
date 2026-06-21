@@ -73,6 +73,17 @@ const (
 	// which would surface the same error, but blocking early gives
 	// the model a clearer message.
 	ReasonSyntaxError ReasonCode = "syntax_error"
+
+	// ReasonOpaqueInterpreter indicates a language interpreter (python,
+	// node, ruby, perl, sh…) is being fed code through a channel static
+	// analysis can't inspect: a here-document (`python3 <<EOF … EOF`) or
+	// stdin from a pipe (`echo … | python3`). Unlike `-c "…"`, whose
+	// payload WriteTargets/InterpreterInlineCode can scan, this code is
+	// invisible — a free bypass of the write/edit tools and of the
+	// test-edit and verify-mode protections. Blocked: the model must use
+	// the edit/write tools to change files, or `python3 -c` for inline
+	// compute the analyzer can see.
+	ReasonOpaqueInterpreter ReasonCode = "opaque_interpreter"
 )
 
 // ParsedIR is the compact, JSON-safe intermediate representation

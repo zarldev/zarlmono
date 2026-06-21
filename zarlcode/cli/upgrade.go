@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -15,9 +13,14 @@ import (
 	"syscall"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zarlcode/version"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
+
+// defaultUpgradeRepo is the GitHub repository zarlcode pulls release binaries
+// from when no source override is configured.
+const defaultUpgradeRepo = "zarldev/zarlmono"
 
 const (
 	settingKeyUpgradeSource  = prefs.KeyUpgradeSource
@@ -27,6 +30,7 @@ const (
 )
 
 type upgradeOptions struct {
+	Version         string
 	DryRun          bool
 	DryRunOverride  bool
 	Restart         bool
@@ -36,23 +40,23 @@ type upgradeOptions struct {
 }
 
 type upgradeResult struct {
-	Source  string
-	BinPath string
-	Command []string
-	Output  string
-	DryRun  bool
-	Restart bool
+	Repo      string
+	Version   string
+	AssetName string
+	AssetURL  string
+	BinPath   string
+	DryRun    bool
+	Restart   bool
+	UpToDate  bool
 }
 
-type upgradeCommandRunner func(ctx context.Context, dir string, stdout, stderr io.Writer) (string, error)
 type upgradeExecFunc func(path string, argv, env []string) error
 
-var (
-	runUpgradeCommand upgradeCommandRunner = runTaskZarlcode
-	execUpgradeBinary upgradeExecFunc      = syscall.Exec
-)
+var execUpgradeBinary upgradeExecFunc = syscall.Exec
 
-var taskZarlcodeTargetRE = regexp.MustCompile(`(?m)^[ \t]+['"]?zarlcode['"]?\s*:`)
+// repoSlugRE matches a GitHub "owner/repo" slug. The upgrade source setting
+// holds this rather than a local checkout — releases are the upgrade channel.
+var repoSlugRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 func RunUpgrade(args []string, stdout io.Writer) int {
 	ctx := context.Background()
@@ -79,9 +83,9 @@ func runUpgradeWithService(ctx context.Context, svc *prefs.Service, args []strin
 		case cmdStatus:
 			return upgradeStatus(ctx, svc, stdout, stderr)
 		case flagSource:
-			return upgradePathSetting(ctx, svc, args[1:], settingKeyUpgradeSource, flagSource, stdout, stderr, validateUpgradeSource)
+			return upgradeValueSetting(ctx, svc, args[1:], settingKeyUpgradeSource, flagSource, stdout, stderr, normalizeUpgradeSource)
 		case "bin-path":
-			return upgradePathSetting(ctx, svc, args[1:], settingKeyUpgradeBinPath, "bin-path", stdout, stderr, validateUpgradeBinPath)
+			return upgradeValueSetting(ctx, svc, args[1:], settingKeyUpgradeBinPath, "bin-path", stdout, stderr, normalizeUpgradeBinPath)
 		case flagRestart:
 			return upgradeBoolSetting(ctx, svc, args[1:], settingKeyUpgradeRestart, flagRestart, stdout, stderr)
 		case flagDryRun:
@@ -102,12 +106,17 @@ func runUpgradeWithService(ctx context.Context, svc *prefs.Service, args []strin
 		return 1
 	}
 	if res.DryRun {
-		fmt.Fprintf(stdout, "source: %s\n", res.Source)
+		fmt.Fprintf(stdout, "repo: %s\n", res.Repo)
+		fmt.Fprintf(stdout, "version: %s\n", res.Version)
+		fmt.Fprintf(stdout, "asset: %s\n", res.AssetName)
 		fmt.Fprintf(stdout, "binary: %s\n", res.BinPath)
-		fmt.Fprintf(stdout, "command: %s\n", strings.Join(res.Command, " "))
 		return 0
 	}
-	fmt.Fprintf(stdout, "upgrade complete: installed %s\n", res.BinPath)
+	if res.UpToDate {
+		fmt.Fprintf(stdout, "already up to date: %s (%s)\n", res.Version, res.BinPath)
+		return 0
+	}
+	fmt.Fprintf(stdout, "upgrade complete: installed %s to %s\n", res.Version, res.BinPath)
 	if res.Restart {
 		fmt.Fprintf(stdout, "restarting: %s\n", res.BinPath)
 		if allowExec {
@@ -124,7 +133,8 @@ func runUpgradeWithService(ctx context.Context, svc *prefs.Service, args []strin
 
 func parseUpgradeRunArgs(args []string) (upgradeOptions, error) {
 	var opts upgradeOptions
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "--dry-run":
 			opts.DryRun = true
@@ -135,7 +145,17 @@ func parseUpgradeRunArgs(args []string) (upgradeOptions, error) {
 		case "--no-restart":
 			opts.Restart = false
 			opts.RestartOverride = true
+		case "--version":
+			if i+1 >= len(args) {
+				return opts, errors.New("--version needs a value")
+			}
+			i++
+			opts.Version = strings.TrimSpace(args[i])
 		default:
+			if v, ok := strings.CutPrefix(arg, "--version="); ok {
+				opts.Version = strings.TrimSpace(v)
+				continue
+			}
 			return opts, fmt.Errorf("unknown upgrade argument %q", arg)
 		}
 	}
@@ -143,7 +163,7 @@ func parseUpgradeRunArgs(args []string) (upgradeOptions, error) {
 }
 
 func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (upgradeResult, error) {
-	source, err := resolveUpgradeSource(ctx, svc)
+	repo, err := resolveUpgradeRepo(ctx, svc)
 	if err != nil {
 		return upgradeResult{}, err
 	}
@@ -157,64 +177,63 @@ func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (u
 	if !opts.RestartOverride {
 		opts.Restart = boolSetting(ctx, svc, settingKeyUpgradeRestart, false)
 	}
+
+	goos, goarch := currentGOOS(), currentGOARCH()
+	rel, archive, checksums, err := resolveRelease(ctx, repo, opts.Version, goos, goarch)
+	if err != nil {
+		return upgradeResult{}, err
+	}
 	res := upgradeResult{
-		Source:  source,
-		BinPath: binPath,
-		Command: []string{"go", "tool", "task", "zarlcode"},
-		DryRun:  opts.DryRun,
-		Restart: opts.Restart,
+		Repo:      repo,
+		Version:   releaseVersion(rel.TagName),
+		AssetName: archive.Name,
+		AssetURL:  archive.URL,
+		BinPath:   binPath,
+		DryRun:    opts.DryRun,
+		Restart:   opts.Restart,
 	}
 	if opts.DryRun {
 		return res, nil
 	}
-	stdout := opts.Stdout
-	if stdout == nil {
-		stdout = io.Discard
+	// Skip the download when the running build already matches the resolved
+	// release and the caller didn't pin a specific version.
+	if (opts.Version == "" || opts.Version == "latest") && res.Version == version.String() {
+		res.UpToDate = true
+		return res, nil
 	}
-	stderr := opts.Stderr
-	if stderr == nil {
-		stderr = io.Discard
-	}
-	out, err := runUpgradeCommand(ctx, source, stdout, stderr)
-	res.Output = out
+
+	archiveData, err := downloadBytes(ctx, archive.URL)
 	if err != nil {
+		return res, err
+	}
+	manifest, err := downloadBytes(ctx, checksums.URL)
+	if err != nil {
+		return res, err
+	}
+	if err := verifyChecksum(archive.Name, archiveData, manifest); err != nil {
+		return res, err
+	}
+	binData, err := extractBinary(archive.Name, archiveData, goos)
+	if err != nil {
+		return res, err
+	}
+	if err := installBinary(binPath, binData, goos); err != nil {
 		return res, err
 	}
 	return res, nil
 }
 
-func runTaskZarlcode(ctx context.Context, dir string, stdout, stderr io.Writer) (string, error) {
-	cmd := exec.CommandContext(ctx, "go", "tool", "task", "zarlcode")
-	cmd.Dir = dir
-	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(stdout, &buf)
-	cmd.Stderr = io.MultiWriter(stderr, &buf)
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		return buf.String(), err
-	}
-	return buf.String(), nil
-}
-
-func resolveUpgradeSource(ctx context.Context, svc *prefs.Service) (string, error) {
+func resolveUpgradeRepo(ctx context.Context, svc *prefs.Service) (string, error) {
 	if v, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource); err != nil {
 		return "", err
 	} else if ok && strings.TrimSpace(v.Value) != "" {
-		path := strings.TrimSpace(v.Value)
-		if err := validateUpgradeSource(path); err != nil {
-			return "", fmt.Errorf("configured source %q: %w", path, err)
+		repo := strings.TrimSpace(v.Value)
+		if err := validateUpgradeSource(repo); err != nil {
+			return "", fmt.Errorf("configured source %q: %w", repo, err)
 		}
-		return path, nil
+		return repo, nil
 	}
-	cwd, err := os.Getwd()
-	if err == nil && validateUpgradeSource(cwd) == nil {
-		abs, _ := filepath.Abs(cwd)
-		if err := svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, abs); err != nil {
-			return "", fmt.Errorf("save detected upgrade source: %w", err)
-		}
-		return abs, nil
-	}
-	return "", errors.New("source checkout not configured; run: zarlcode upgrade source set /path/to/monorepo")
+	return defaultUpgradeRepo, nil
 }
 
 func resolveUpgradeBinPath(ctx context.Context, svc *prefs.Service) (string, error) {
@@ -249,37 +268,43 @@ func resolveUpgradeBinPath(ctx context.Context, svc *prefs.Service) (string, err
 	return path, nil
 }
 
-func validateUpgradeSource(dir string) error {
-	if strings.TrimSpace(dir) == "" {
-		return errors.New("empty source path")
+// validateUpgradeSource checks that the configured source is a GitHub
+// "owner/repo" slug — the release channel zarlcode pulls binaries from.
+func validateUpgradeSource(repo string) error {
+	if strings.TrimSpace(repo) == "" {
+		return errors.New("empty repository")
 	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return err
-	}
-	st, err := os.Stat(abs)
-	if err != nil {
-		return err
-	}
-	if !st.IsDir() {
-		return errors.New("not a directory")
-	}
-	taskfile := filepath.Join(abs, "Taskfile.yml")
-	data, err := os.ReadFile(taskfile)
-	if errors.Is(err, os.ErrNotExist) {
-		taskfile = filepath.Join(abs, "Taskfile.yaml")
-		data, err = os.ReadFile(taskfile)
-	}
-	if err != nil {
-		return fmt.Errorf("read Taskfile: %w", err)
-	}
-	if !taskZarlcodeTargetRE.Match(data) {
-		return errors.New("no zarlcode task defined in Taskfile")
-	}
-	if _, err := os.Stat(filepath.Join(abs, "zarlcode", "cmd", "main.go")); err != nil {
-		return fmt.Errorf("zarlcode/cmd/main.go: %w", err)
+	if !repoSlugRE.MatchString(strings.TrimSpace(repo)) {
+		return errors.New(`want a GitHub repository slug "owner/repo"`)
 	}
 	return nil
+}
+
+// normalizeUpgradeSource canonicalizes a repo slug, also accepting a full
+// github.com URL for convenience.
+func normalizeUpgradeSource(raw string) (string, error) {
+	repo := strings.TrimSpace(raw)
+	repo = strings.TrimPrefix(repo, "https://github.com/")
+	repo = strings.TrimPrefix(repo, "github.com/")
+	repo = strings.TrimSuffix(repo, ".git")
+	repo = strings.Trim(repo, "/")
+	if err := validateUpgradeSource(repo); err != nil {
+		return "", err
+	}
+	return repo, nil
+}
+
+// normalizeUpgradeBinPath resolves the install path to an absolute path and
+// validates its parent directory exists.
+func normalizeUpgradeBinPath(raw string) (string, error) {
+	abs, err := filepath.Abs(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	if err := validateUpgradeBinPath(abs); err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func validateUpgradeBinPath(path string) error {
@@ -301,7 +326,7 @@ func validateUpgradeBinPath(path string) error {
 	return nil
 }
 
-func upgradePathSetting(ctx context.Context, svc *prefs.Service, args []string, key, label string, stdout, stderr io.Writer, validate func(string) error) int {
+func upgradeValueSetting(ctx context.Context, svc *prefs.Service, args []string, key, label string, stdout, stderr io.Writer, normalize func(string) (string, error)) int {
 	if len(args) == 0 || args[0] == "show" {
 		v, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, key)
 		if err != nil {
@@ -318,23 +343,19 @@ func upgradePathSetting(ctx context.Context, svc *prefs.Service, args []string, 
 	switch args[0] {
 	case subcmdSet:
 		if len(args) < 2 {
-			fmt.Fprintf(stderr, "usage: zarlcode upgrade %s set <path>\n", label)
+			fmt.Fprintf(stderr, "usage: zarlcode upgrade %s set <value>\n", label)
 			return 2
 		}
-		path, err := filepath.Abs(strings.Join(args[1:], " "))
+		value, err := normalize(strings.Join(args[1:], " "))
 		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		if err := validate(path); err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", label, err)
 			return 1
 		}
-		if err := svc.SetSetting(ctx, prefs.ScopeGlobal, key, path); err != nil {
+		if err := svc.SetSetting(ctx, prefs.ScopeGlobal, key, value); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "%s: %s\n", label, path)
+		fmt.Fprintf(stdout, "%s: %s\n", label, value)
 		return 0
 	case subcmdClear, subcmdDelete, "rm":
 		if err := svc.DeleteSetting(ctx, prefs.ScopeGlobal, key); err != nil {
@@ -412,6 +433,11 @@ func upgradeStatus(ctx context.Context, svc *prefs.Service, stdout, stderr io.Wr
 			return 1
 		}
 		if !ok || v.Value == "" {
+			// source defaults to the canonical release repo when unset.
+			if row.key == settingKeyUpgradeSource {
+				fmt.Fprintf(stdout, "%s: %s (default)\n", row.label, defaultUpgradeRepo)
+				continue
+			}
 			fmt.Fprintf(stdout, "%s: (unset)\n", row.label)
 			continue
 		}
@@ -421,15 +447,18 @@ func upgradeStatus(ctx context.Context, svc *prefs.Service, stdout, stderr io.Wr
 }
 
 func printUpgradeHelp(w io.Writer) {
-	fmt.Fprintln(w, `usage: zarlcode upgrade [--dry-run] [--restart|--no-restart]
+	fmt.Fprintln(w, `usage: zarlcode upgrade [--dry-run] [--restart|--no-restart] [--version vX.Y.Z]
        zarlcode upgrade status
-       zarlcode upgrade source set <path>
+       zarlcode upgrade source set <owner/repo>
        zarlcode upgrade source clear
        zarlcode upgrade bin-path set <path>
        zarlcode upgrade bin-path clear
        zarlcode upgrade restart set <true|false>
        zarlcode upgrade dry-run set <true|false>
 
-Rebuilds zarlcode by running `+"`go tool task zarlcode`"+` in the configured source checkout.
-Upgrade preferences are stored globally in zarlcode's SQLite settings.`)
+Downloads the published zarlcode release binary for this OS/arch from the
+GitHub `+"`source`"+` repository (default `+defaultUpgradeRepo+`), verifies its sha256
+against the release checksums, and installs it to `+"`bin-path`"+`. Without
+--version the latest release is used. Upgrade preferences are stored globally
+in zarlcode's SQLite settings.`)
 }

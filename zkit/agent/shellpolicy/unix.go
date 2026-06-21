@@ -53,6 +53,13 @@ func (p *UnixParser) Parse(command string) (ParsedIR, error) {
 		case *syntax.BinaryCmd:
 			addOperator(&ir, seenOp, n.Op.String())
 			addRisk(&ir, seenRisk, ReasonOperator)
+			if isPipe(n.Op) && stmtFeedsStdinInterpreter(n.Y) {
+				addRisk(&ir, seenRisk, ReasonOpaqueInterpreter)
+			}
+		case *syntax.Stmt:
+			if stmtHasHeredoc(n) && stmtIsStdinInterpreter(n) {
+				addRisk(&ir, seenRisk, ReasonOpaqueInterpreter)
+			}
 		case *syntax.Redirect:
 			if isUnsafeRedirect(n) {
 				addRisk(&ir, seenRisk, ReasonRedirect)
@@ -218,6 +225,87 @@ func isUnsafeRedirect(r *syntax.Redirect) bool {
 	switch target {
 	case "/dev/null", "/dev/stdout", "/dev/stderr":
 		return false
+	}
+	return true
+}
+
+// isPipe reports whether a binary-command operator pipes stdout of the
+// left stage into stdin of the right (`|` or `|&`).
+func isPipe(op syntax.BinCmdOperator) bool {
+	return op == syntax.Pipe || op == syntax.PipeAll
+}
+
+// stmtHasHeredoc reports whether stmt carries a here-document redirect
+// (`<<EOF` / `<<-EOF`) — a code/data channel static analysis can't follow.
+func stmtHasHeredoc(stmt *syntax.Stmt) bool {
+	if stmt == nil {
+		return false
+	}
+	for _, r := range stmt.Redirs {
+		if r != nil && (r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc) {
+			return true
+		}
+	}
+	return false
+}
+
+// stmtFeedsStdinInterpreter reports whether stmt (the consumer side of a
+// pipe) is an interpreter reading its program from stdin — `echo … | python3`,
+// `cat <<EOF | sh`. The piped-in bytes are the code, invisible to static
+// analysis.
+func stmtFeedsStdinInterpreter(stmt *syntax.Stmt) bool {
+	return stmtIsStdinInterpreter(stmt)
+}
+
+// stmtIsStdinInterpreter reports whether stmt's command is a language
+// interpreter that takes its program from stdin (no `-c`/`-e` inline code and
+// no script/module operand). Transparent wrappers (`env python3`) are
+// unwrapped first.
+func stmtIsStdinInterpreter(stmt *syntax.Stmt) bool {
+	if stmt == nil {
+		return false
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return false
+	}
+	return interpreterReadsStdin(call.Args, 0)
+}
+
+// interpreterReadsStdin reports whether args invoke an interpreter that reads
+// its program from stdin. It returns false for the inspectable `-c "…"` form
+// (handled by InterpreterInlineCode) and for invocations naming a script or
+// module operand (those run a named file, not piped/heredoc'd code).
+func interpreterReadsStdin(args []*syntax.Word, depth int) bool {
+	if depth > maxWrapperDepth || len(args) == 0 {
+		return false
+	}
+	name, ok := resolveWord(args[0])
+	if !ok || name == "" {
+		return false
+	}
+	name = commandBase(name)
+	if transparentWrappers[name] {
+		eff := wrapperEffectiveArgs(name, args[1:])
+		return interpreterReadsStdin(eff, depth+1)
+	}
+	if !interpreters[name] {
+		return false
+	}
+	for _, a := range args[1:] {
+		w, ok := resolveWord(a)
+		if !ok {
+			continue
+		}
+		if inlineCodeFlags[w] {
+			return false // `-c`/`-e`: payload is inspectable elsewhere
+		}
+		// A bare operand is a script path or, after `-m`, a module name —
+		// either way the interpreter runs that, not stdin. An explicit `-`
+		// means "read stdin", so it does not disqualify.
+		if w != "-" && !strings.HasPrefix(w, "-") {
+			return false
+		}
 	}
 	return true
 }

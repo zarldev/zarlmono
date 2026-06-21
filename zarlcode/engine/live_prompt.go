@@ -86,13 +86,9 @@ func RenderLivePrompt(name, body, wsRoot string, skills []catalog.Skill, agents 
 	data := prompts.Data{
 		WorkspaceRoot:   wsRoot,
 		Tools:           toolInfo,
-		Skills:          promptSkills(skills),
 		InstructionDocs: promptInstructionDocs(instructionDocs),
 		SelfMod:         prompts.HasTool(toolInfo, "new_tool") || prompts.HasTool(toolInfo, "register_tool"),
 		Planning:        prompts.HasTool(toolInfo, "update_plan"),
-	}
-	if prompts.HasTool(toolInfo, "spawn_agent") {
-		data.Agents = promptAgents(agents)
 	}
 	return prompts.Render(name, body, data)
 }
@@ -125,27 +121,6 @@ func (l *LiveRunner) catalogSnapshotHooks() []catalog.Hook {
 		return nil
 	}
 	return l.catalog.Hooks()
-}
-
-func promptSkills(skills []catalog.Skill) []prompts.ToolInfo {
-	out := make([]prompts.ToolInfo, 0, len(skills))
-	for _, s := range skills {
-		out = append(out, prompts.ToolInfo{Name: s.Name, Description: s.Description})
-	}
-	return out
-}
-
-func promptAgents(agents []catalog.Agent) []prompts.AgentInfo {
-	out := make([]prompts.AgentInfo, 0, len(agents))
-	for _, a := range agents {
-		out = append(out, prompts.AgentInfo{
-			Name:        a.Name,
-			Description: a.Description,
-			Provider:    a.Provider,
-			Model:       a.Model,
-		})
-	}
-	return out
 }
 
 func promptInstructionDocs(docs []instructions.Document) []prompts.InstructionDoc {

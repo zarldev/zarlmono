@@ -121,6 +121,31 @@ tasks:
       - rm -f {{.ZARLCODE}}
       - echo "removed{{":"}} {{.ZARLCODE}}"
 
+  zarlcode:release:
+    desc: Tag and push a zarlcode release (VERSION=vX.Y.Z)
+    cmds:
+      - |
+        set -euo pipefail
+        version="{{.VERSION}}"
+        case "$version" in
+          v[0-9]*.[0-9]*.[0-9]*) ;;
+          *) echo "VERSION must look like vX.Y.Z (got '$version')" >&2; exit 2 ;;
+        esac
+        tag="zarlcode/$version"
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+          echo "working tree has uncommitted changes; commit or stash before releasing" >&2
+          exit 1
+        fi
+        if git rev-parse "$tag" >/dev/null 2>&1; then
+          echo "tag already exists: $tag" >&2
+          exit 1
+        fi
+        git tag -a "$tag" -m "zarlcode $version"
+        git push origin "$tag"
+        echo "pushed release tag: $tag"
+    requires:
+      vars: [VERSION]
+
   # --- SWE-bench eval tool ---
 
   sweeval:

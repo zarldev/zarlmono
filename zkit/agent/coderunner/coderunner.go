@@ -39,13 +39,19 @@ import (
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
-// RegisterStandardTools registers the standard workspace code-tool set
-// onto reg: the file-mutating tools (write, write_append, edit), the
-// read/search tools (read, grep, ls, glob), the bash + process-management
-// tools, and the plan-artifact tools (save_plan, save_plan_append). The labelled variants are the default, matching
-// the TUI; JSON siblings (the format-switch) and the interactive-only
-// tools (update_plan with its UI hook, list_skills/list_agents,
-// dynamic + MCP + home tools, web search) stay a caller concern.
+// RegisterStandardTools registers the standard workspace code-tool set onto
+// reg: the file tools (write, edit), the read/search tools (read, grep, ls,
+// glob), and the bash + process-management tools. The set is kept lean — one
+// tool per job, no competing variants. Deliberately NOT registered:
+// write_append (write + edit cover authoring; >256KB single files are rare),
+// and save_plan / save_plan_append (update_plan is the single planning
+// surface — the markdown archive was a second, competing plan system).
+// Re-add at the call site if a consumer genuinely needs them.
+//
+// The labelled variants are the default, matching the TUI; JSON siblings (the
+// format-switch) and the interactive-only tools (update_plan with its UI hook,
+// list_skills/list_agents, dynamic + MCP + home tools, web search) stay a
+// caller concern.
 //
 // pm may be nil; the bash tool is then registered without a process
 // manager (background-process tools degrade to "no manager" errors).
@@ -80,13 +86,10 @@ func RegisterStandardTools(reg *tools.Registry, ws code.Workspace, pm *code.Proc
 	}
 	reg.Register(code.NewReadFileHLTool(ws))
 	reg.Register(code.NewWriteTool(ws))
-	reg.Register(code.NewWriteAppendTool(ws))
 	reg.Register(code.NewEditFileHLTool(ws))
 	reg.Register(code.NewGrepTool(ws))
 	reg.Register(code.NewLsTool(ws))
 	reg.Register(code.NewGlobTool(ws))
-	reg.Register(code.NewSavePlanTool(ws))
-	reg.Register(code.NewSavePlanAppendTool(ws))
 }
 
 // toolsConfig collects RegisterStandardTools options.
@@ -152,11 +155,12 @@ func RegisterSpawnTool(reg *tools.Registry, parent *runner.Runner, maxDepth, spa
 //   - verify:  may run tests/builds via bash, but not edit files.
 //   - implement (and any unset/unknown mode): the full tool surface.
 //
-// Mutation is read from each tool's self-declared ToolSpec.Mutates, so the
+// Mutation is read from each tool's self-declared capability flags, so the
 // classification lives with the tool (no hardcoded name list to drift) and
 // a runtime-registered mutating tool that declares the flag is gated too.
-// bash stays a name special-case: it's a shell that can mutate but mustn't
-// be blocked in verify, where it runs the tests.
+// explore blocks anything that can touch the workspace (ChangesWorkspace —
+// file edits AND bash); verify gates only on Mutates (a file edit), so bash
+// stays callable there to run the tests without any name special-case.
 //
 // External tools are conservative by default: MCP-discovered tools are
 // wrapped by tools.NewRemoteTool, which hardcodes Mutates:true (MCP's
@@ -178,7 +182,7 @@ func SpawnModePolicy() func(spawn.SpawnMode, tools.ToolSpec) bool {
 	return func(mode spawn.SpawnMode, spec tools.ToolSpec) bool {
 		switch mode {
 		case spawn.SpawnModeExplore:
-			return !spec.Mutates && spec.Name != code.ToolNameBash
+			return !spec.ChangesWorkspace()
 		case spawn.SpawnModeVerify:
 			return !spec.Mutates
 		default: // implement, "", or anything unexpected → no restriction
@@ -406,15 +410,16 @@ func StandardFanoutLimits() map[tools.ToolName]int {
 }
 
 // StandardGuardrailDeps returns the guardrail dependencies every consumer
-// shares — the Go verifier and the fan-out caps — rooted at root with the
-// given test-edit policy (advisory for an interactive session, strict for a
-// headless run or the eval grader). The consumer fills its own SkillLookup /
-// DecomposeJudge on the returned value; centralising the invariant here is
-// why a fan-out cap can't drift between the TUI and the eval.
+// shares — the fan-out caps — rooted at root with the given test-edit policy
+// (advisory for an interactive session, strict for a headless run or the eval
+// grader). No language verifier is wired by default: runtime checks should
+// reflect explicit user/workspace config, not baked-in language assumptions.
+// A consumer that wants one fills Verifiers (along with its own SkillLookup /
+// DecomposeJudge) on the returned value; centralising the fan-out invariant
+// here is why a cap can't drift between the TUI and the eval.
 func StandardGuardrailDeps(root string, testEdit guardrails.Guardrail) guardrails.Deps {
 	return guardrails.Deps{
 		WorkspaceRoot: root,
-		Verifiers:     []guardrails.Verifier{&guardrails.GoVerifier{}},
 		FanoutLimits:  StandardFanoutLimits(),
 		TestEdit:      testEdit,
 	}

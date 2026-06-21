@@ -348,15 +348,30 @@ type ToolSpec struct {
 	// minimum/maximum) so they reach the LLM without a lossy round-trip.
 	// The zero Schema means the tool takes no arguments.
 	Parameters llm.Schema `json:"parameters"`
-	// Mutates declares that executing the tool changes durable state —
-	// writing or editing files, applying a patch. Self-declared so policy
-	// (e.g. spawn's read-only explore mode) can gate by capability rather
-	// than by a hardcoded tool-name list. Tools that only read leave it
-	// false; a shell tool like bash that can do either leaves it false and
-	// is gated by name where stricter isolation is needed. External
-	// (MCP / dynamic) tools default to false — mark a mutating one true to
-	// have it honoured by capability-based policy.
+	// Mutates declares that a successful call produces a durable FILE edit —
+	// write / edit / write_append / apply_patch, or a meta-tool that rewrites
+	// the registry. This is the narrow "would show up in a diff / counts as
+	// work" signal: the completion gate's empty-patch guard and spawn's verify
+	// mode gate on it. A shell tool like bash leaves this false — running a
+	// build or test is not a file edit — and declares AffectsWorkspace instead.
 	Mutates bool `json:"mutates,omitempty"`
+	// AffectsWorkspace declares that executing the tool can change durable
+	// state by some means OTHER than a tracked file edit — the canonical case
+	// is bash, whose command may write files, mutate git state, or touch the
+	// environment. It is the broad "treat conservatively" signal: cache
+	// invalidation, plan-first gating, and read-only explore blocking gate on
+	// ChangesWorkspace (Mutates OR this), so a file edit need only set Mutates
+	// and is still caught. Pure-read tools leave both false.
+	AffectsWorkspace bool `json:"affects_workspace,omitempty"`
+}
+
+// ChangesWorkspace reports whether a successful call could alter durable
+// state by any means — a tracked file edit (Mutates) or a side effect like a
+// shell command (AffectsWorkspace). It is the conservative superset every
+// "did this touch the workspace?" consumer should use, so a new mutating tool
+// that declares only Mutates is gated without a hardcoded name list.
+func (s ToolSpec) ChangesWorkspace() bool {
+	return s.Mutates || s.AffectsWorkspace
 }
 
 // ToolPreference captures hints about a tool — enabled, weight for selection,

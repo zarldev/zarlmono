@@ -77,6 +77,10 @@ type UI struct {
 	// the sudo_askpass setting is off.
 	askpass *askpassServer
 
+	// prRefreshPending marks that a git/gh tool ran during the live turn, so the
+	// PR card is re-fetched when the turn ends rather than per tool call.
+	prRefreshPending bool
+
 	// Panes — imperative rendering regions driven by the shell.
 	headerPane *headerPane
 	statusPane *statusPane
@@ -274,7 +278,7 @@ func New() *UI {
 // Init implements tea.Model. bubbletea sends an initial WindowSizeMsg on
 // start; the TUI has nothing else to schedule until then.
 func (m *UI) Init() tea.Cmd {
-	return nil
+	return m.fetchPRCmd()
 }
 
 // Update implements tea.Model. Resize recomputes the layout rects; esc stops
@@ -334,6 +338,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.toastExpiryCmd()
 	}
 	if m.handleModelsMsg(msg) {
+		return m, nil
+	}
+	if m.handlePRMsg(msg) {
 		return m, nil
 	}
 	if m.handleMouse(msg) { // wheel scroll + scrollbar click on the transcript

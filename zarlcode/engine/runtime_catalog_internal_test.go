@@ -10,7 +10,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
-func TestRuntimeCatalogToolsAndPrompt(t *testing.T) {
+func TestRuntimeCatalogToolsDoNotInlineIntoPrompt(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "edit.md"), `---
 name: edit
@@ -50,22 +50,23 @@ You review code changes.
 	for tool := range src.Tools(t.Context()) {
 		seen[tool.Definition().Name] = true
 	}
-	for _, name := range []tools.ToolName{ToolNameLoadSkill, ToolNameListSkills, ToolNameListAgents} {
+	for _, name := range []tools.ToolName{ToolNameLoadSkill, ToolNameListAgents} {
 		if !seen[name] {
 			t.Fatalf("tool %s not registered; saw %#v", name, seen)
 		}
 	}
 
-	prompt, err := RenderLivePrompt("test", `{{ range .Skills }}skill={{ .Name }} {{ end }}{{ range .Agents }}agent={{ .Name }} {{ .Model }}{{ end }}`,
+	prompt, err := RenderLivePrompt("test", LiveSystemPromptTemplate,
 		root, l.catalog.Skills(), l.catalog.Agents(), nil, []promptTool{{Name: "spawn_agent"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prompt, "skill=edit") || !strings.Contains(prompt, "agent=reviewer tiny-reviewer") {
-		t.Fatalf("prompt missing catalog entries: %q", prompt)
+	for _, leak := range []string{"skill=edit", "recover from edit failures", "agent=reviewer", "tiny-reviewer"} {
+		if strings.Contains(prompt, leak) {
+			t.Fatalf("prompt should not inline catalog entry %q:\n%s", leak, prompt)
+		}
 	}
 }
-
 func TestLoadSkillTool(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "go.md"), `---

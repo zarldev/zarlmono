@@ -449,44 +449,90 @@ linters:
       - path: '^zkit/agent/diffrecorder/diffrecorder_test\.go'
         text: 'result 1 \(error\) is always nil'
         linters: [ unparam ]
-      - path: '^zkit/zrpc/h2c\.go'
+      - path: '(?:^|/monorepo/)zkit/zrpc/h2c\.go'
         text: 'SA1019:'
         linters: [ staticcheck ]
+      # Doctor checks run version commands from a safe, known-good list;
+      # the arguments are not user-controlled.
+      - path: '^zarlai/cmd/doctor/main\.go'
+        text: 'G204:'
+        linters: [ gosec ]
       # TUI keybind, navigation, and display labels are UI constants more readable as literals.
       - path: '^zarlcode/tui/.*\.go'
         linters: [ goconst ]
       - path: '^zkit/agent/tools/spawn/spawn_planner\.go'
         linters: [ goconst ]
       # Provider/theme/model registration uses init() as the canonical wire-up mechanism (see AGENTS.md).
-      - path: '(^zkit/ai/llm/backends/definitions\.go|^zkit/ai/llm/openaicodex/models\.go|^zkit/tui/theme/builtins\.go)'
-        linters: [ gochecknoinits ]
-      # Command execution is the feature: bash tool, process manager, CLI serve, binary builder, external editor.
-      - text: 'G204: Subprocess launched with a potential tainted input or cmd arguments'
-        linters: [ gosec ]
-      - text: 'G702: Command injection via taint analysis'
-        linters: [ gosec ]
-      # Debug SSE file path is gated behind an env var (CODEX_DEBUG_SSE); not user-controlled at runtime.
-      - path: '^zkit/ai/llm/openaicodex/debug_sse\.go'
-        text: 'G703:'
-        linters: [ gosec ]
-      # G101 false positives: env var names (HN_USER, CODEX_REASONING_EFFORT), OAuth client IDs, askpass socket.
-      - text: 'G101: Potential hardcoded credentials'
-        linters: [ gosec ]
-      # Cookie security attributes (Secure/SameSite) are set at runtime via CookieManager constructor; linter cannot see runtime config.
-      - path: '^zkit/zhttp/auth/cookie\.go'
+      - path: '^zkit/agent/tools/spawn/spawn_planner\.go'
         text: 'G124:'
         linters: [ gosec ]
+      # Provider/theme/model registration uses init() as the canonical wire-up mechanism (see AGENTS.md).
+      - path: '^zkit/agent/tools/spawn/spawn_planner\.go'
+        linters: [ gochecknoinits ]
+      - path: '^zkit/ai/llm/backends/definitions\.go'
+        linters: [ gochecknoinits ]
+      - path: '^zkit/ai/llm/openaicodex/models\.go'
+        linters: [ gochecknoinits ]
+      - path: '^zkit/tui/theme/builtins\.go'
+        linters: [ gochecknoinits ]
       - path: '^zarlcode/tui/composer\.go'
         text: 'handleGlobalShortcut - result 0'
         linters: [ unparam ]
       - path: '^zkit/zrpc/middleware/recovery\.go'
         text: 'named return .* found'
         linters: [ nonamedreturns ]
+      - path: '^zarlcode/engine/mode\.go'
+        linters: [ goconst ]
+      # init() in catalog_tools.go is intentional tool registration.
+      - path: '^zarlcode/engine/catalog_tools\.go'
+        linters: [ gochecknoinits ]
+      # gosec: subprocess calls with controlled arguments.
+      - path: '^zarlcode/cli/serve\.go'
+        text: 'G702:'
+        linters: [ gosec ]
+      - path: '^zarlcode/hooks/hooks\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zarlcode/tui/catalog_edit\.go'
+        text: 'G204:'
+        linters: [ gosec ]
       - path: 'zkit/zlog/.*\.go'
         text: "import 'log' is not allowed"
         linters: [ depguard ]
       - path: 'zkit/zhttp/client\.go'
         text: 'G404: Use of weak random number generator'
+        linters: [ gosec ]
+      # gosec: subprocess calls with controlled arguments, cookie config, and
+      # credential-like strings that are actually URLs/keys/env-var names.
+      - path: '^zkit/agent/coderunner/probe\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/llm/claudecode/provider\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/llm/openaicodex/debug_sse\.go'
+        text: 'G703:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/llm/openaicodex/oauth\.go'
+        text: 'G101:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/tools/code/bash\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/tools/code/processmgr\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/tools/dynamic/binary\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/prefs/keys\.go'
+        text: 'G101:'
+        linters: [ gosec ]
+      - path: '^zkit/vault/vault\.go'
+        text: 'G101:'
+        linters: [ gosec ]
+      - path: '^zkit/zhttp/auth/cookie\.go'
+        text: 'G124:'
         linters: [ gosec ]
 
       # --- examples: demonstration programs — fmt.Print*, repeated JSON-schema
@@ -496,11 +542,16 @@ linters:
           - forbidigo     # fmt.Print* in demo programs is the point
           - goconst       # repeated strings in tool-schema maps are clearer inline
       - path: '^examples/'
-        text: 'G(301|306):'
+        text: 'G(101|301|306):'
         linters: [ gosec ]
       - path: '^examples/'
         text: 'S1005:'
         linters: [ staticcheck ]
+      # Doctor checks run version commands from a safe, known-good list;
+      # the arguments are not user-controlled.
+      - path: '^zarlai/cmd/doctor/main\.go'
+        text: 'G204:'
+        linters: [ gosec ]
       # Example harness entrypoints that reserve params for future use.
       - path: '^examples/spawn_worker/scripted\.go'
         text: 'NewScriptedClient - fs is unused'
@@ -508,6 +559,14 @@ linters:
       - path: '^examples/stuck_recovery/guardrails\.go'
         text: 'BuildGuardrails'
         linters: [ unparam ]
+      # --- swebench-eval: harness and runner subprocess calls are controlled.
+      - path: '^swebench-eval/harness/zarlcode\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^swebench-eval/runner/score\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+
 
       # --- zarlai: large assistant app migrated onto zkit. Its bespoke
       #     .golangci.yml was removed in favour of this scoped carve-out — the
@@ -556,4 +615,9 @@ linters:
       - path: '^zarlai/service/tts_controller\.go'
         text: 'ST1020:'
         linters: [ staticcheck ]
+      # Doctor checks run version commands from a safe, known-good list;
+      # the arguments are not user-controlled.
+      - path: '^zarlai/cmd/doctor/main\.go'
+        text: 'G204:'
+        linters: [ gosec ]
 

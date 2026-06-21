@@ -47,7 +47,8 @@ func (i *recoveryInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFun
 				resp = nil
 			}
 		}()
-		return next(ctx, req)
+		resp, err = next(ctx, req)
+		return resp, err
 	}
 }
 
@@ -63,7 +64,8 @@ func (i *recoveryInterceptor) WrapStreamingHandler(next connect.StreamingHandler
 				err = i.handlePanic(ctx, conn.Spec().Procedure, r)
 			}
 		}()
-		return next(ctx, conn)
+		err = next(ctx, conn)
+		return err
 	}
 }
 

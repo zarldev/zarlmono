@@ -197,6 +197,18 @@ func WithMaxTokens(n int) options.Option[Runner] {
 	}
 }
 
+// WithTemperature sets the sampling temperature on each completion request.
+// t <= 0 leaves it unset (the request omits temperature, so the provider /
+// server default applies). A low value (e.g. 0.2) improves determinism and
+// tool-call reliability for local models.
+func WithTemperature(t float32) options.Option[Runner] {
+	return func(r *Runner) {
+		if t > 0 {
+			r.temperature = t
+		}
+	}
+}
+
 // WithThinkingBudget cuts an iteration that has streamed only reasoning
 // (thinking) tokens past byteBudget without yet emitting any visible
 // content or tool call — the degenerate "stuck thinking" loop. The cut is

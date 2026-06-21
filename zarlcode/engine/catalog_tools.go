@@ -38,22 +38,20 @@ func NewLoadSkillTool(c *RuntimeCatalog) *loadSkillTool { return &loadSkillTool{
 func (t *loadSkillTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameLoadSkill,
-		Description: "Load a skill's markdown body into context by name. Names come from the inline " +
-			"'Skills available to you' section in your system prompt — pick one whose description " +
-			"matches what you're about to do. Prefer this over read(<path>) for skills so the " +
-			"user can see which skills the current turn is drawing on.",
+		Description: "Load a skill's markdown body into context by exact name. Use this only " +
+			"when the user asks for a skill or after listing skills to choose one; do not guess " +
+			"skill names and do not use read(<path>) for skill bodies.",
 		Parameters: llm.SchemaFromMap(map[string]any{
 			schemaType: schemaTypeObject,
 			schemaProperties: map[string]any{
 				schemaPropName: map[string]any{
 					schemaType:    "string",
-					"description": "Skill name (no path, no .md extension). Must match one of the names listed in 'Skills available to you'.",
+					"description": "Exact skill name from list_skills or the user's request.",
 				},
 			},
 			"required":       []string{schemaPropName},
 			schemaAdditional: false,
-		}),
-	}
+		})}
 }
 
 func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
@@ -80,11 +78,10 @@ func NewListSkillsTool(c *RuntimeCatalog) *listSkillsTool { return &listSkillsTo
 func (t *listSkillsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameListSkills,
-		Description: "Return the workspace's skill catalogue as labelled plaintext — one entry per skill " +
-			"with name, description, and path. The same list is inlined in your system prompt under " +
-			"'Skills available to you'; only call this tool if the inline section is missing.",
-		Parameters: llm.SchemaFromMap(map[string]any{schemaType: schemaTypeObject, schemaProperties: map[string]any{}, schemaAdditional: false}),
-	}
+		Description: "Return the workspace skill catalogue as labelled plaintext — one entry per skill " +
+			"with name, description, and path. Call only when the user asks about skills or " +
+			"when a task clearly needs a skill lookup.",
+		Parameters: llm.SchemaFromMap(map[string]any{schemaType: schemaTypeObject, schemaProperties: map[string]any{}, schemaAdditional: false})}
 }
 
 func (t *listSkillsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
@@ -119,12 +116,10 @@ func NewListAgentsTool(c *RuntimeCatalog) *listAgentsTool { return &listAgentsTo
 func (t *listAgentsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameListAgents,
-		Description: "Return the workspace's named sub-agent catalogue as labelled plaintext — one entry per " +
-			"agent with name, description, provider/model/workspace when set, and path. The same list is " +
-			"inlined in your system prompt under 'Sub-agents available to you'; prefer passing the chosen " +
-			"name directly to spawn_agent(agent=…).",
-		Parameters: llm.SchemaFromMap(map[string]any{schemaType: schemaTypeObject, schemaProperties: map[string]any{}, schemaAdditional: false}),
-	}
+		Description: "Return the workspace named sub-agent catalogue as labelled plaintext — one entry " +
+			"per agent with name, description, provider/model/workspace when set, and path. Call " +
+			"only when the user asks about sub-agents or delegation is clearly needed.",
+		Parameters: llm.SchemaFromMap(map[string]any{schemaType: schemaTypeObject, schemaProperties: map[string]any{}, schemaAdditional: false})}
 }
 
 func (t *listAgentsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {

@@ -41,21 +41,73 @@ func RunLogin(ctx context.Context, svc *prefs.Service, stdin io.Reader, stdout i
 }
 
 func extractToken(out string) string {
+	var candidates []string
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		if strings.Contains(line, "=") {
-			parts := strings.Split(line, "=")
-			line = strings.TrimSpace(parts[len(parts)-1])
+		if key, val, ok := strings.Cut(line, "="); ok {
+			_ = key
+			if tok := normalizeCandidate(val); looksLikeClaudeOAuthToken(tok) {
+				if strings.HasPrefix(tok, "sk-") {
+					return tok
+				}
+				candidates = append(candidates, tok)
+				continue
+			}
 		}
-		line = strings.Trim(line, "'\"")
-		if len(line) >= 20 && !strings.Contains(line, " ") {
-			return line
+		for _, field := range strings.FieldsFunc(line, func(r rune) bool {
+			switch r {
+			case ' ', '\t', '\r', '\n', '\'', '"', '=', ':', ',', ';', '(', ')', '[', ']', '{', '}':
+				return true
+			default:
+				return false
+			}
+		}) {
+			tok := normalizeCandidate(field)
+			if strings.EqualFold(tok, "CLAUDE_CODE_OAUTH_TOKEN") {
+				continue
+			}
+			if !looksLikeClaudeOAuthToken(tok) {
+				continue
+			}
+			if strings.HasPrefix(tok, "sk-") {
+				return tok
+			}
+			candidates = append(candidates, tok)
 		}
 	}
-	return strings.TrimSpace(out)
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	return ""
+}
+
+func normalizeCandidate(s string) string {
+	return strings.TrimSpace(strings.Trim(s, "'\""))
+}
+
+func looksLikeClaudeOAuthToken(s string) bool {
+	s = strings.TrimSpace(strings.Trim(s, "'\""))
+	if len(s) < 20 {
+		return false
+	}
+	if strings.ContainsAny(s, " \t\r\n") {
+		return false
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		switch r {
+		case '_', '-', '.':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func finishLogin(ctx context.Context, svc *prefs.Service, token string, stdout io.Writer) error {

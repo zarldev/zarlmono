@@ -10,6 +10,14 @@ import (
 // [System] / [Plan] defaults, a user's prompt.md override, and a named
 // sub-agent's body. Every consumer (the TUI and the eval harness) builds the
 // same struct and renders through [Render], so the two cannot silently drift.
+//
+// Data is intentionally a STABLE SUPERSET: fields are not removed when the
+// default embedded prompt stops using them, because a user's ~/.zarlcode/prompt.md
+// or workspace override may still reference them. text/template treats a missing
+// struct field as a hard execute error (unlike a missing map key), so dropping a
+// field crashes every override that names it — failing the whole turn before any
+// provider call. Keep unused fields here (nil/zero renders empty) rather than
+// deleting them.
 type Data struct {
 	WorkspaceRoot   string
 	Tools           []ToolInfo
@@ -18,11 +26,10 @@ type Data struct {
 	Agents          []AgentInfo
 	InstructionDocs []InstructionDoc
 
-	// SelfMod enables the self-modification material (identity, dynamic-tool
-	// authoring, "modifying zarlcode itself", and the dynamic-tool rules). It
-	// should track whether the self-mod tools (new_tool / register_tool) are
-	// actually registered — instructing the model to use tooling it doesn't
-	// have wastes tokens and invites confabulation.
+	// SelfMod enables the self-modification material. It should track whether the
+	// self-mod tools (new_tool / register_tool) are actually registered —
+	// instructing the model to use tooling it doesn't have wastes tokens and
+	// invites confabulation.
 	SelfMod bool
 
 	// Planning enables the update_plan operating contract. It should track
@@ -38,7 +45,9 @@ type ToolInfo struct {
 	Description string
 }
 
-// AgentInfo is a named sub-agent as the system template renders it.
+// AgentInfo is a named sub-agent as a prompt template renders it. Retained for
+// override-prompt compatibility even though the default prompt no longer
+// enumerates agents (they are discovered via list_agents at runtime).
 type AgentInfo struct {
 	Name        string
 	Description string

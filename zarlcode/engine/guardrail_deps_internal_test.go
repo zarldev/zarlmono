@@ -23,3 +23,18 @@ func TestHeadlessGuardrailDepsUseStrictTestEdit(t *testing.T) {
 		t.Fatalf("interactive test-edit policy = %q, want nil (no test-edit guardrail)", g.Name())
 	}
 }
+
+func TestZarlcodeGuardrailDepsDoNotDefaultLoadGoVerifier(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	live := NewLiveRunner(nil, ws, nil, "local")
+
+	if got := live.guardrailDeps().Verifiers; len(got) != 0 {
+		t.Fatalf("interactive verifiers = %d, want none by default", len(got))
+	}
+	if got := live.headlessGuardrailDeps().Verifiers; len(got) != 0 {
+		t.Fatalf("headless verifiers = %d, want none by default", len(got))
+	}
+}

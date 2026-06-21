@@ -84,6 +84,10 @@ type Runner struct {
 	// timer scheduling under load, which the wall-clock iteration timeout is
 	// not. Set via WithMaxTokens.
 	maxTokens int
+	// temperature sets the sampling temperature on each completion request.
+	// 0 = unset (left off the request so the provider/server default applies).
+	// Set via WithTemperature.
+	temperature float32
 	// thinkingBudgetBytes cuts an iteration that has emitted only reasoning
 	// (thinking) tokens past this many bytes with no visible content or tool
 	// call — the "stuck thinking" loop. 0 disables. Content-aware, so it

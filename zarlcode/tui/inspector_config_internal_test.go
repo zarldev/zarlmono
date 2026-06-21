@@ -10,8 +10,8 @@ import (
 )
 
 // The inspector's guardrail summary is derived from the real Deps, not a
-// hand-maintained string: the verifier, fan-out caps, and test-edit policy all
-// come from the struct, so changing a limit changes the summary.
+// hand-maintained string: optional verifiers, fan-out caps, and test-edit policy
+// all come from the struct, so changing a limit changes the summary.
 func TestGuardrailSummary_ReflectsDeps(t *testing.T) {
 	deps := guardrails.Deps{
 		Verifiers: []guardrails.Verifier{&guardrails.GoVerifier{}},

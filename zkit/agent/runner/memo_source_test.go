@@ -209,3 +209,120 @@ func TestMemoSource_ForgetTask(t *testing.T) {
 		t.Errorf("after ForgetTask: dispatch count = %d, want 2", inner.calls)
 	}
 }
+
+type toolStub struct{ spec tools.ToolSpec }
+
+func (t toolStub) Definition() tools.ToolSpec { return t.spec }
+func (t toolStub) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	return &tools.ToolResult{ToolCallID: call.ID, Success: true}, nil
+}
+
+type sequenceSource struct {
+	toolsCalls int
+	calls      int
+	results    []*tools.ToolResult
+	tools      []tools.Tool
+}
+
+func (s *sequenceSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
+	_ = ctx
+	s.toolsCalls++
+	return func(yield func(tools.Tool) bool) {
+		for _, tool := range s.tools {
+			if !yield(tool) {
+				return
+			}
+		}
+	}
+}
+
+func (s *sequenceSource) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	s.calls++
+	if s.calls > len(s.results) {
+		return nil, errors.New("unexpected extra execute")
+	}
+	r := *s.results[s.calls-1]
+	r.ToolCallID = call.ID
+	return &r, nil
+}
+
+func TestMemoSource_InvalidatesCacheAfterSuccessfulMutator(t *testing.T) {
+	inner := &sequenceSource{
+		results: []*tools.ToolResult{
+			{Success: true, Data: "old contents"},
+			{Success: true, Data: "edited"},
+			{Success: true, Data: "new contents"},
+		},
+		tools: []tools.Tool{
+			toolStub{spec: tools.ToolSpec{Name: "read"}},
+			toolStub{spec: tools.ToolSpec{Name: "edit", Mutates: true}},
+		},
+	}
+	m := runner.NewMemoSource(inner, runner.PureTools("read"))
+
+	ctx := context.Background()
+	read := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
+	res1, _ := m.Execute(ctx, read)
+	if res1 == nil || res1.Data != "old contents" {
+		t.Fatalf("first read = %+v, want old contents", res1)
+	}
+
+	mutate := tools.ToolCall{ID: "2", ToolName: "edit", Arguments: tools.ToolParameters{"path": "foo.go"}}
+	res2, _ := m.Execute(ctx, mutate)
+	if res2 == nil || res2.Data != "edited" {
+		t.Fatalf("edit = %+v, want edited", res2)
+	}
+
+	read.ID = "3"
+	res3, _ := m.Execute(ctx, read)
+	if res3 == nil || res3.Data != "new contents" {
+		t.Fatalf("read after edit = %+v, want new contents", res3)
+	}
+
+	if inner.calls != 3 {
+		t.Fatalf("dispatch count = %d, want 3 (read, edit, read after invalidation)", inner.calls)
+	}
+	if inner.toolsCalls == 0 {
+		t.Fatal("expected tool enumeration for mutator detection")
+	}
+}
+
+func TestMemoSource_InvalidatesCacheAfterSuccessfulBash(t *testing.T) {
+	inner := &sequenceSource{
+		results: []*tools.ToolResult{
+			{Success: true, Data: "old contents"},
+			{Success: true, Data: "bash edited file"},
+			{Success: true, Data: "new contents"},
+		},
+		tools: []tools.Tool{
+			toolStub{spec: tools.ToolSpec{Name: "read"}},
+			// bash declares AffectsWorkspace (not Mutates) — a shell command
+			// can change files, so ChangesWorkspace invalidates the cache.
+			toolStub{spec: tools.ToolSpec{Name: "bash", AffectsWorkspace: true}},
+		},
+	}
+	m := runner.NewMemoSource(inner, runner.PureTools("read"))
+
+	ctx := context.Background()
+	read := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
+	res1, _ := m.Execute(ctx, read)
+	if res1 == nil || res1.Data != "old contents" {
+		t.Fatalf("first read = %+v, want old contents", res1)
+	}
+
+	mutate := tools.ToolCall{ID: "2", ToolName: "bash", Arguments: tools.ToolParameters{"command": "printf hi > foo.go"}}
+	res2, _ := m.Execute(ctx, mutate)
+	if res2 == nil || res2.Data != "bash edited file" {
+		t.Fatalf("bash = %+v, want bash edited file", res2)
+	}
+
+	read.ID = "3"
+	res3, _ := m.Execute(ctx, read)
+	if res3 == nil || res3.Data != "new contents" {
+		t.Fatalf("read after bash = %+v, want new contents", res3)
+	}
+
+	if inner.calls != 3 {
+		t.Fatalf("dispatch count = %d, want 3 (read, bash, read after invalidation)", inner.calls)
+	}
+}

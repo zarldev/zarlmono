@@ -21,9 +21,10 @@ import (
 // panes then re-render on the next frame from the updated session.
 type Session struct {
 	// Workspace identity.
-	Workspace    string // ~-shortened display path
-	WorkspaceDir string // real path for file operations
-	Branch       string // git branch, or ""
+	Workspace    string  // ~-shortened display path
+	WorkspaceDir string  // real path for file operations
+	Branch       string  // git branch, or ""
+	PR           *PRInfo // open GitHub PR for Branch, or nil until resolved
 
 	// Active provider/model display state.
 	Provider string
@@ -169,6 +170,7 @@ func (s *Session) SetWorkspace(root, model string) {
 	s.workingSet().SetWorkspaceDir(root)
 	s.checkpoints().SetWorkspaceDir(root)
 	s.Branch = gitBranch(root)
+	s.PR = nil // resolved asynchronously by fetchPRCmd
 	s.Model = model
 	s.ApplyModelPricing(model)
 }

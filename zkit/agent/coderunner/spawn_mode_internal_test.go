@@ -31,7 +31,6 @@ func TestSpawnModePolicy(t *testing.T) {
 		{spawn.SpawnModeExplore, code.ToolNameGrep, true},
 		{spawn.SpawnModeExplore, code.ToolNameGlob, true},
 		{spawn.SpawnModeExplore, code.ToolNameWrite, false},
-		{spawn.SpawnModeExplore, code.ToolNameWriteAppend, false},
 		{spawn.SpawnModeExplore, code.ToolNameEdit, false},
 		{spawn.SpawnModeExplore, code.ToolNameBash, false},
 

@@ -14,10 +14,19 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/toolparse"
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 const jsonNull = "null"
+
+// eventTypeAssistant and eventTypeStreamEvent are the two Claude Code
+// stream-json line types the parsers below switch on: the terminal per-turn
+// snapshot, and the incremental streamed delta wrapper.
+const (
+	eventTypeAssistant   = "assistant"
+	eventTypeStreamEvent = "stream_event"
+)
 
 // toolCallTypeFunction is the OpenAI-style tool-call discriminator the
 // provider stamps on every emitted tool call.
@@ -159,7 +168,7 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	defer cancel()
 
 	args := []string{
-		"-p", prompt,
+		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--include-partial-messages",
@@ -170,6 +179,12 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 		args = append(args, "--model", p.model)
 	}
 	cmd := exec.CommandContext(runCtx, p.binaryPath, args...)
+	// The prompt grows with conversation length (rendered history, tool
+	// results) and a long conversation pushes it past Linux's per-argument
+	// MAX_ARG_STRLEN (128KiB), which fails the exec with an argument-list
+	// error the CLI surfaces as a parameter-count complaint. Stdin has no
+	// such ceiling.
+	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Env = append(os.Environ(),
 		"CLAUDE_CODE_OAUTH_TOKEN="+tok.Access,
 		// Ensure API keys in the caller environment do not take precedence
@@ -312,6 +327,7 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var lastText string
+	var lastThinking string
 	var buffered strings.Builder
 	var usage *llm.Usage
 	for scanner.Scan() {
@@ -328,6 +344,20 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 		if calls := tools.toolCallsFromLine(line); len(calls) > 0 {
 			if !yield(llm.CompletionChunk{ToolCalls: calls}, nil) {
 				return usage, false, nil
+			}
+		}
+		if thinking := thinkingDeltaFromLine(line); thinking != "" {
+			delta := thinking
+			if strings.HasPrefix(thinking, lastThinking) {
+				delta = thinking[len(lastThinking):]
+				lastThinking = thinking
+			} else {
+				lastThinking += thinking
+			}
+			if delta != "" {
+				if !yield(llm.CompletionChunk{Thinking: delta}, nil) {
+					return usage, false, nil
+				}
 			}
 		}
 		text := textDeltaFromLine(line)
@@ -427,126 +457,8 @@ func usageFromLine(line string) *llm.Usage {
 }
 
 func parseToolProtocol(text string) []llm.ToolCall {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-	if calls := parseToolProtocolObject(stripJSONFence(text)); len(calls) > 0 {
-		return calls
-	}
-	// Claude Code's model sometimes disobeys the "JSON object and no prose"
-	// instruction and emits a short preamble such as "Let me read the files"
-	// before the tool_calls object. Treat the JSON object as authoritative and
-	// suppress the prose so raw tool-call JSON never reaches the chat transcript.
-	for _, candidate := range toolProtocolCandidates(text) {
-		if calls := parseToolProtocolObject(candidate); len(calls) > 0 {
-			return calls
-		}
-	}
-	return nil
-}
-
-func stripJSONFence(text string) string {
-	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "```") {
-		text = strings.TrimPrefix(text, "```json")
-		text = strings.TrimPrefix(text, "```")
-		text = strings.TrimSuffix(text, "```")
-		text = strings.TrimSpace(text)
-	}
-	return text
-}
-
-func toolProtocolCandidates(text string) []string {
-	var out []string
-	for i := 0; i < len(text); i++ {
-		if text[i] != '{' {
-			continue
-		}
-		end := jsonObjectEnd(text, i)
-		if end < 0 {
-			continue
-		}
-		candidate := text[i:end]
-		if strings.Contains(candidate, `"tool_calls"`) {
-			out = append(out, candidate)
-		}
-		i = end - 1
-	}
-	return out
-}
-
-func jsonObjectEnd(text string, start int) int {
-	if start < 0 || start >= len(text) || text[start] != '{' {
-		return -1
-	}
-	depth := 0
-	inString := false
-	escaped := false
-	for i := start; i < len(text); i++ {
-		c := text[i]
-		if inString {
-			if escaped {
-				escaped = false
-				continue
-			}
-			switch c {
-			case '\\':
-				escaped = true
-			case '"':
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return i + 1
-			}
-		}
-	}
-	return -1
-}
-
-func parseToolProtocolObject(text string) []llm.ToolCall {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-	var payload struct {
-		ToolCalls []struct {
-			ID        string          `json:"id"`
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		} `json:"tool_calls"`
-	}
-	if err := json.Unmarshal([]byte(text), &payload); err != nil || len(payload.ToolCalls) == 0 {
-		return nil
-	}
-	out := make([]llm.ToolCall, 0, len(payload.ToolCalls))
-	for i, c := range payload.ToolCalls {
-		if c.Name == "" {
-			continue
-		}
-		id := c.ID
-		if id == "" {
-			id = fmt.Sprintf("call_%d", i)
-		}
-		args := strings.TrimSpace(string(c.Arguments))
-		if args == "" || args == jsonNull {
-			args = "{}"
-		}
-		out = append(
-			out,
-			llm.ToolCall{ID: id, Type: toolCallTypeFunction, Function: llm.ToolCallFunction{Name: c.Name, Arguments: args}},
-		)
-	}
-	return out
+	res := toolparse.ParseArtifact(text)
+	return res.Calls
 }
 
 type partialToolCall struct {
@@ -573,10 +485,10 @@ func (s *toolCallState) toolCallsFromLine(line string) []llm.ToolCall {
 	if err := json.Unmarshal([]byte(line), &m); err != nil {
 		return nil
 	}
-	if m["type"] == "stream_event" {
+	if m["type"] == eventTypeStreamEvent {
 		return s.toolCallsFromStreamEvent(m)
 	}
-	if m["type"] == "assistant" {
+	if m["type"] == eventTypeAssistant {
 		if msg, _ := m["message"].(map[string]any); msg != nil {
 			return s.toolCallsFromContent(msg["content"])
 		}
@@ -712,7 +624,7 @@ func textDeltaFromLine(line string) string {
 	if err := json.Unmarshal([]byte(line), &m); err != nil {
 		return ""
 	}
-	if m["type"] == "stream_event" {
+	if m["type"] == eventTypeStreamEvent {
 		if ev, _ := m["event"].(map[string]any); ev != nil {
 			if delta, _ := ev["delta"].(map[string]any); delta != nil && delta["type"] == "text_delta" {
 				if s, _ := delta["text"].(string); s != "" {
@@ -721,7 +633,7 @@ func textDeltaFromLine(line string) string {
 			}
 		}
 	}
-	if m["type"] == "assistant" {
+	if m["type"] == eventTypeAssistant {
 		if msg, _ := m["message"].(map[string]any); msg != nil {
 			return contentText(msg["content"])
 		}
@@ -743,6 +655,54 @@ func contentText(v any) string {
 		}
 		if pm["type"] == "text" {
 			if s, _ := pm["text"].(string); s != "" {
+				b.WriteString(s)
+			}
+		}
+	}
+	return b.String()
+}
+
+// thinkingDeltaFromLine extracts extended-thinking text the same way
+// textDeltaFromLine extracts visible text — from stream_event
+// content_block_delta lines (delta.type == "thinking_delta") and from the
+// terminal assistant snapshot's "thinking" content blocks. Without this, the
+// model's reasoning is parsed as nothing and silently disappears.
+func thinkingDeltaFromLine(line string) string {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		return ""
+	}
+	if m["type"] == eventTypeStreamEvent {
+		if ev, _ := m["event"].(map[string]any); ev != nil {
+			if delta, _ := ev["delta"].(map[string]any); delta != nil && delta["type"] == "thinking_delta" {
+				if s, _ := delta["thinking"].(string); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	if m["type"] == eventTypeAssistant {
+		if msg, _ := m["message"].(map[string]any); msg != nil {
+			return thinkingText(msg["content"])
+		}
+		return thinkingText(m["content"])
+	}
+	return ""
+}
+
+func thinkingText(v any) string {
+	parts, ok := v.([]any)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	for _, part := range parts {
+		pm, _ := part.(map[string]any)
+		if pm == nil {
+			continue
+		}
+		if pm["type"] == "thinking" {
+			if s, _ := pm["thinking"].(string); s != "" {
 				b.WriteString(s)
 			}
 		}
