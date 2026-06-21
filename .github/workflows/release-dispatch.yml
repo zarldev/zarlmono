@@ -1,0 +1,233 @@
+name: release-dispatch
+
+# Manual release orchestrator.
+#
+# This workflow is the operator-facing release button. It validates the version,
+# computes which module tags will be created, checks for obvious release
+# blockers, and either prints the plan (dry-run) or creates/pushes the tags.
+#
+# zarlcode's tagged release pipeline remains tag-driven: pushing `zarlcode/vX.Y.Z`
+# triggers `.github/workflows/release.yml`, which publishes binaries, checksums,
+# and the Homebrew tap update.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (vX.Y.Z)
+        required: true
+        type: string
+      scope:
+        description: Release scope
+        required: true
+        type: choice
+        default: zarlcode
+        options:
+          - zarlcode
+          - all
+          - custom
+      custom_modules:
+        description: Comma-separated modules for scope=custom (zkit,zarlcode,zarlai,swebench-eval,examples)
+        required: false
+        type: string
+      dry_run:
+        description: Validate and print the tag plan without pushing tags
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-dispatch-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  plan-and-release:
+    name: release plan / publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: setup go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: validate inputs and build tag plan
+        id: plan
+        env:
+          VERSION: ${{ inputs.version }}
+          SCOPE: ${{ inputs.scope }}
+          CUSTOM_MODULES: ${{ inputs.custom_modules }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          case "$VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "version must look like vX.Y.Z (got '$VERSION')" >&2; exit 2 ;;
+          esac
+
+          if [ "$REF_NAME" != "main" ]; then
+            echo "release-dispatch must run from main (got '$REF_NAME')" >&2
+            exit 1
+          fi
+
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "checkout is not clean; aborting" >&2
+            exit 1
+          fi
+
+          if ! grep -q "\[$VERSION\]" CHANGELOG.md; then
+            echo "CHANGELOG.md does not contain an entry for $VERSION" >&2
+            exit 1
+          fi
+
+          resolve_modules() {
+            case "$SCOPE" in
+              zarlcode)
+                printf '%s\n' zarlcode
+                ;;
+              all)
+                printf '%s\n' zkit zarlcode zarlai swebench-eval examples
+                ;;
+              custom)
+                if [ -z "${CUSTOM_MODULES// }" ]; then
+                  echo "custom_modules is required when scope=custom" >&2
+                  exit 1
+                fi
+                printf '%s' "$CUSTOM_MODULES" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d'
+                ;;
+              *)
+                echo "unknown scope: $SCOPE" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          valid_module() {
+            case "$1" in
+              zkit|zarlcode|zarlai|swebench-eval|examples) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          mapfile -t raw_modules < <(resolve_modules)
+          if [ "${#raw_modules[@]}" -eq 0 ]; then
+            echo "no modules selected" >&2
+            exit 1
+          fi
+
+          modules=()
+          seen=''
+          for module in "${raw_modules[@]}"; do
+            if ! valid_module "$module"; then
+              echo "unsupported module: $module" >&2
+              exit 1
+            fi
+            case ",$seen," in
+              *",$module,"*) ;;
+              *) modules+=("$module"); seen="$seen,$module" ;;
+            esac
+          done
+
+          tags=()
+          for module in "${modules[@]}"; do
+            tag="$module/$VERSION"
+            if git rev-parse "$tag" >/dev/null 2>&1; then
+              echo "tag already exists: $tag" >&2
+              exit 1
+            fi
+            tags+=("$tag")
+          done
+
+          if printf '%s\n' "${modules[@]}" | grep -qx 'zarlcode'; then
+            if ! grep -q 'github.com/zarldev/zarlmono/zkit v' zarlcode/go.mod; then
+              echo "zarlcode/go.mod does not contain a pinned zkit dependency" >&2
+              exit 1
+            fi
+          fi
+
+          summary_file="$RUNNER_TEMP/release-summary.md"
+          {
+            echo "## Release plan"
+            echo
+            echo "- Version: \\`$VERSION\\`"
+            echo "- Scope: \\`$SCOPE\\`"
+            echo "- Dry run: \\`$DRY_RUN\\`"
+            echo "- Modules: \\`${modules[*]}\\`"
+            echo
+            echo "### Tags"
+            for tag in "${tags[@]}"; do
+              echo "- \\`$tag\\`"
+            done
+            echo
+            if printf '%s\n' "${modules[@]}" | grep -qx 'zarlcode'; then
+              echo "Pushing \\`zarlcode/$VERSION\\` will trigger the tag-driven publish workflow for binaries, checksums, and Homebrew tap updates."
+            fi
+          } > "$summary_file"
+          cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            printf 'version=%s\n' "$VERSION"
+            printf 'modules=%s\n' "$(IFS=,; echo "${modules[*]}")"
+            printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: preflight checks
+        env:
+          MODULES: ${{ steps.plan.outputs.modules }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a modules <<< "$MODULES"
+          for module in "${modules[@]}"; do
+            case "$module" in
+              zkit)
+                go build -C zkit ./...
+                ;;
+              zarlcode)
+                go build -C zarlcode ./...
+                ;;
+              zarlai)
+                go build -C zarlai ./...
+                ;;
+              swebench-eval)
+                go build -C swebench-eval ./...
+                ;;
+              examples)
+                go build -C examples ./...
+                ;;
+            esac
+          done
+
+      - name: stop after dry-run
+        if: ${{ inputs.dry_run }}
+        run: echo "dry-run complete; no tags were created"
+
+      - name: create and push tags
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAGS: ${{ steps.plan.outputs.tags }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a tags <<< "$TAGS"
+          for tag in "${tags[@]}"; do
+            module="${tag%%/*}"
+            git tag -a "$tag" -m "$module $VERSION"
+          done
+          git push origin "${tags[@]}"
+          {
+            echo
+            echo "## Release published"
+            echo
+            for tag in "${tags[@]}"; do
+              echo "- pushed \\`$tag\\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

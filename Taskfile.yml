@@ -122,7 +122,7 @@ tasks:
       - echo "removed{{":"}} {{.ZARLCODE}}"
 
   zarlcode:release:
-    desc: Tag and push a zarlcode release (VERSION=vX.Y.Z)
+    desc: Tag and push a zarlcode release directly (manual path; prefer GitHub Actions release-dispatch)
     cmds:
       - |
         set -euo pipefail
@@ -144,18 +144,18 @@ tasks:
         git push origin "$tag"
         echo "pushed release tag: $tag"
         echo
-        echo "release workflow will publish binaries + checksums to GitHub Releases"
-        echo "if HOMEBREW_APP_ID and HOMEBREW_APP_PRIVATE_KEY are configured in GitHub Actions, it will also update zarldev/homebrew-tap"
+        echo "prefer the GitHub Actions release-dispatch workflow for the canonical release path"
+        echo "this direct path still triggers the tag-driven publish workflow for binaries, checksums, and Homebrew updates"
     requires:
       vars: [VERSION]
   # --- SWE-bench eval tool ---
+
   sweeval:
     desc: Build and install the SWE-bench eval tool
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - go build -C swebench-eval -trimpath -o {{.SWEEVAL}} ./cmd/eval
       - echo "installed{{":"}} {{.SWEEVAL}}"
-
   sweeval:install:
     desc: Alias for sweeval
     cmds:

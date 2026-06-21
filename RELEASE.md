@@ -12,12 +12,29 @@ Use this checklist before each release.
 - [ ] Date in CHANGELOG.md is correct
 - [ ] No `go get -u` was run (which would re-bump `jsonschema` past v0.13.0)
 
-## Tagging
+## Release button (canonical path)
+
+Use the GitHub Actions **release-dispatch** workflow as the operator-facing release button.
+
+Inputs:
+- `version`: `vX.Y.Z`
+- `scope`: `zarlcode`, `all`, or `custom`
+- `custom_modules`: comma-separated list for `scope=custom`
+- `dry_run`: validate and print the tag plan without pushing tags
+
+The workflow validates the version, checks that `CHANGELOG.md` contains the target release, verifies tags do not already exist, runs module build preflights, and either prints the plan or creates/pushes the tags.
+
+Pushing `zarlcode/vX.Y.Z` still triggers the existing tag-driven publish workflow for binaries, checksums, and Homebrew tap updates.
+
+## Tagging (direct/manual path)
+
+Use this only when you intentionally want to bypass the release-dispatch workflow.
 
 ### zkit (shared library) — required
 
 ```bash
-git tag -a zkit/vX.Y.Z -m "zkit vX.Y.Z — <summary>"git push origin zkit/v0.1.0
+git tag -a zkit/vX.Y.Z -m "zkit vX.Y.Z — <summary>"
+git push origin zkit/vX.Y.Z
 ```
 
 ### zarlcode (TUI product) — required
@@ -26,16 +43,16 @@ git tag -a zkit/vX.Y.Z -m "zkit vX.Y.Z — <summary>"git push origin zkit/v0.1.0
 go tool task zarlcode:release VERSION=vX.Y.Z
 ```
 
-This creates `zarlcode/vX.Y.Z`, validates the version format, checks for a clean tree, and pushes the tag. The Taskfile task is the canonical path — it also ensures the `zarlcode` binary's ldflags version string matches.
+This creates `zarlcode/vX.Y.Z`, validates the version format, checks for a clean tree, and pushes the tag. The Taskfile task is a direct/manual path; the GitHub Actions `release-dispatch` workflow is the canonical operator path.
 
 ### swebench-eval (eval tool) — optional but recommended
 
 ```bash
-git tag -a swebench-eval/vX.Y.Z -m "swebench-eval vX.Y.Z — <summary>"git push origin swebench-eval/v0.1.0
+git tag -a swebench-eval/vX.Y.Z -m "swebench-eval vX.Y.Z — <summary>"
+git push origin swebench-eval/vX.Y.Z
 ```
 
 ### zarlai (assistant app) — defer until stable
-
 `zarlai` is excluded from standard CI and has CGO system dependencies. No release pipeline exists yet. Tag when:
 - CI job for `zarlai` is added (or the exclusion is justified)
 - A `task zarlai:release` is added to `Taskfile.yml`

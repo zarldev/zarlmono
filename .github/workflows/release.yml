@@ -1,19 +1,17 @@
 name: release
 
-# Publishes versioned zarlcode binaries. Push a tag like `v1.2.3` and this
-# cross-compiles the pure-Go zarlcode TUI for every supported platform, packages
-# each build with a checksum, and attaches the archives to a GitHub Release.
+# Publishes versioned zarlcode binaries after a `zarlcode/vX.Y.Z` tag is pushed.
+# The canonical operator entrypoint is `.github/workflows/release-dispatch.yml`,
+# which validates inputs and pushes the release tags. This workflow remains the
+# downstream tag-driven publisher for zarlcode assets, checksums, and Homebrew.
 #
 # zarlcode is its own Go module (github.com/zarldev/zarlmono/zarlcode), so it is
-# versioned with submodule-prefixed tags `zarlcode/vX.Y.Z` — the form the module
-# proxy needs for `go install .../zarlcode/cmd@vX.Y.Z`. The build strips the
+# versioned with submodule-prefixed tags `zarlcode/vX.Y.Z`. The build strips the
 # `zarlcode/` prefix for the binary version and archive names.
 #
 # The archive name is the contract `zarlcode upgrade` relies on:
 #   zarlcode_<version>_<goos>_<goarch>.tar.gz   (unix)
-#   zarlcode_<version>_<goos>_<goarch>.zip      (windows)
 # using raw GOOS/GOARCH so the client matcher needs no os/arch translation.
-
 on:
   push:
     tags: ["zarlcode/v*"]
