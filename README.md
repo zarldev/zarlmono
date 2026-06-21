@@ -36,7 +36,32 @@ site/           Documentation site (Astro Starlight → GitHub Pages)
 docker/         Local service definitions, including SearXNG
 ```
 ## Quick start
+## Install
 
+### zarlcode
+
+```bash
+# Go install (recommended)
+go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2
+
+# Or build from source
+go run ./zarlcode/cmd
+```
+
+`zarlcode upgrade` self-updates from GitHub Releases. Set the release channel:
+
+```bash
+zarlcode upgrade source set zarldev/zarlmono
+zarlcode upgrade                       # download latest, verify checksum, replace binary
+```
+
+Homebrew formula is planned for a future release.
+
+### zkit (library)
+
+```bash
+go get github.com/zarldev/zarlmono/zkit@v0.1.2
+```
 ### Use `zkit` in your own code
 
 A complete agent is a provider, a tool registry, and the loop — take those
