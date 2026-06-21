@@ -452,6 +452,11 @@ linters:
       - path: '(?:^|/monorepo/)zkit/zrpc/h2c\.go'
         text: 'SA1019:'
         linters: [ staticcheck ]
+      # Doctor checks run version commands from a safe, known-good list;
+      # the arguments are not user-controlled.
+      - path: '^zarlai/cmd/doctor/main\.go'
+        text: 'G204:'
+        linters: [ gosec ]
       # TUI keybind, navigation, and display labels are UI constants more readable as literals.
       - path: '^zarlcode/tui/.*\.go'
         linters: [ goconst ]
@@ -486,6 +491,11 @@ linters:
       - path: '^examples/'
         text: 'S1005:'
         linters: [ staticcheck ]
+      # Doctor checks run version commands from a safe, known-good list;
+      # the arguments are not user-controlled.
+      - path: '^zarlai/cmd/doctor/main\.go'
+        text: 'G204:'
+        linters: [ gosec ]
       # Example harness entrypoints that reserve params for future use.
       - path: '^examples/spawn_worker/scripted\.go'
         text: 'NewScriptedClient - fs is unused'
@@ -541,4 +551,9 @@ linters:
       - path: '^zarlai/service/tts_controller\.go'
         text: 'ST1020:'
         linters: [ staticcheck ]
+      # Doctor checks run version commands from a safe, known-good list;
+      # the arguments are not user-controlled.
+      - path: '^zarlai/cmd/doctor/main\.go'
+        text: 'G204:'
+        linters: [ gosec ]
 
