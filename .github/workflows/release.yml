@@ -134,13 +134,23 @@ jobs:
             --checksums artifacts/checksums.txt \
             --output homebrew/zarlcode.rb
 
+      - name: create homebrew tap app token
+        id: homebrew-app-token
+        if: ${{ secrets.HOMEBREW_APP_ID != '' && secrets.HOMEBREW_APP_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: zarldev
+          repositories: homebrew-tap
+
       - name: update homebrew tap
-        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        if: ${{ steps.homebrew-app-token.outputs.token != '' }}
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_APP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
         run: |
           set -euo pipefail
-          repo_url="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/zarldev/homebrew-tap.git"
+          repo_url="https://x-access-token:${HOMEBREW_TAP_APP_TOKEN}@github.com/zarldev/homebrew-tap.git"
           tmpdir="$(mktemp -d)"
           trap 'rm -rf "$tmpdir"' EXIT
           git clone "$repo_url" "$tmpdir"

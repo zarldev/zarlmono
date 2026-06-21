@@ -145,10 +145,9 @@ tasks:
         echo "pushed release tag: $tag"
         echo
         echo "release workflow will publish binaries + checksums to GitHub Releases"
-        echo "if HOMEBREW_TAP_TOKEN is configured in GitHub Actions, it will also update zarldev/homebrew-tap"
+        echo "if HOMEBREW_APP_ID and HOMEBREW_APP_PRIVATE_KEY are configured in GitHub Actions, it will also update zarldev/homebrew-tap"
     requires:
       vars: [VERSION]
-
   # --- SWE-bench eval tool ---
   sweeval:
     desc: Build and install the SWE-bench eval tool

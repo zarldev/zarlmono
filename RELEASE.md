@@ -46,9 +46,8 @@ git tag -a swebench-eval/vX.Y.Z -m "swebench-eval vX.Y.Z — <summary>"git push 
 - [ ] Push CHANGELOG.md
 - [ ] Verify tags on GitHub: `git tag -l | sort`
 - [ ] Update GitHub Releases page with the release body (copy from CHANGELOG)
-- [ ] If `HOMEBREW_TAP_TOKEN` is configured in GitHub Actions, verify `zarldev/homebrew-tap` updated with the new `Formula/zarlcode.rb`
+- [ ] If `HOMEBREW_APP_ID` and `HOMEBREW_APP_PRIVATE_KEY` are configured in GitHub Actions, verify `zarldev/homebrew-tap` updated with the new `Formula/zarlcode.rb`
 - [ ] Announce in relevant channels (Discord, etc.)
-
 ## Versioning rules
 
 - **Pre-v1**: APIs may evolve. Stable-tier packages should avoid breaking changes.
