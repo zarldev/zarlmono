@@ -86,6 +86,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
+      - name: setup go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -115,3 +123,35 @@ jobs:
             --title "zarlcode ${TAG#zarlcode/}" \
             --generate-notes \
             artifacts/*
+
+      - name: generate homebrew formula
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_homebrew_formula.py \
+            --version "${TAG#zarlcode/}" \
+            --checksums artifacts/checksums.txt \
+            --output homebrew/zarlcode.rb
+
+      - name: update homebrew tap
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo_url="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/zarldev/homebrew-tap.git"
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          git clone "$repo_url" "$tmpdir"
+          mkdir -p "$tmpdir/Formula"
+          cp homebrew/zarlcode.rb "$tmpdir/Formula/zarlcode.rb"
+          if git -C "$tmpdir" diff --quiet -- Formula/zarlcode.rb; then
+            echo "homebrew tap already up to date"
+            exit 0
+          fi
+          git -C "$tmpdir" config user.name "github-actions[bot]"
+          git -C "$tmpdir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tmpdir" add Formula/zarlcode.rb
+          git -C "$tmpdir" commit -m "zarlcode ${GITHUB_REF_NAME#zarlcode/}"
+          git -C "$tmpdir" push

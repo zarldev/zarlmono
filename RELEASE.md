@@ -46,15 +46,17 @@ git tag -a swebench-eval/vX.Y.Z -m "swebench-eval vX.Y.Z — <summary>"git push 
 - [ ] Push CHANGELOG.md
 - [ ] Verify tags on GitHub: `git tag -l | sort`
 - [ ] Update GitHub Releases page with the release body (copy from CHANGELOG)
+- [ ] If `HOMEBREW_TAP_TOKEN` is configured in GitHub Actions, verify `zarldev/homebrew-tap` updated with the new `Formula/zarlcode.rb`
 - [ ] Announce in relevant channels (Discord, etc.)
-- [ ] Update homebrew formula SHA256 values in `homebrew/zarlcode.rb`
+
 ## Versioning rules
 
 - **Pre-v1**: APIs may evolve. Stable-tier packages should avoid breaking changes.
 - **Tag format**: `module/vX.Y.Z` — the module name is the prefix, not the repo name.
-- **Go module consumers** use `go get github.com/zarldev/zarlmono/zkit@v0.1.2` to pin.58:- **zarlcode** consumers use `go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2` or `zarlcode upgrade`.
-## Next release (v0.2.0)
+- **Go module consumers** use `go get github.com/zarldev/zarlmono/zkit@v0.1.2` to pin.
+- **zarlcode** consumers use `go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2` or `zarlcode upgrade`.
 
+## Next release (v0.2.0)
 When v0.2.0 is ready:
 1. Bump version in CHANGELOG.md
 2. Run the checklist above
