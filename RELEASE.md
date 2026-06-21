@@ -17,8 +17,7 @@ Use this checklist before each release.
 ### zkit (shared library) — required
 
 ```bash
-git tag -a zkit/v0.1.0 -m "zkit vX.Y.Z — <summary>"
-git push origin zkit/v0.1.0
+git tag -a zkit/vX.Y.Z -m "zkit vX.Y.Z — <summary>"git push origin zkit/v0.1.0
 ```
 
 ### zarlcode (TUI product) — required
@@ -32,8 +31,7 @@ This creates `zarlcode/vX.Y.Z`, validates the version format, checks for a clean
 ### swebench-eval (eval tool) — optional but recommended
 
 ```bash
-git tag -a swebench-eval/v0.1.0 -m "swebench-eval vX.Y.Z — <summary>"
-git push origin swebench-eval/v0.1.0
+git tag -a swebench-eval/vX.Y.Z -m "swebench-eval vX.Y.Z — <summary>"git push origin swebench-eval/v0.1.0
 ```
 
 ### zarlai (assistant app) — defer until stable
@@ -54,9 +52,8 @@ git push origin swebench-eval/v0.1.0
 
 - **Pre-v1**: APIs may evolve. Stable-tier packages should avoid breaking changes.
 - **Tag format**: `module/vX.Y.Z` — the module name is the prefix, not the repo name.
-- **Go module consumers** use `go get github.com/zarldev/zarlmono/zkit@zkit/v0.1.0` to pin.
-- **zarlcode** consumers use `go get github.com/zarldev/zarlmono/zarlcode@zarlcode/v0.1.0` or the self-upgrade command.
-
+v3ux|- **Go module consumers** use `go get github.com/zarldev/zarlmono/zkit@v0.1.2` to pin.
+58:- **zarlcode** consumers use `go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2` or `zarlcode upgrade`.
 ## Next release (v0.2.0)
 
 When v0.2.0 is ready:

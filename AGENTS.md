@@ -18,8 +18,7 @@ Essential, high-signal context for agents working in this repo. If it doesn't he
 | `.` | `github.com/zarldev/zarlmono` | root module: repository tooling and workspace coordination (no product packages). |
 
 - **`./...` does NOT cross module boundaries.** In a `go.work` repo, `go build/vet/test ./...` from any directory only expands within the *current* module. To act on everything you must iterate modules (`cd <mod> && go ... ./...`) — see CI.
-- **`replace` directives are deliberate.** `go.work` covers normal in-repo builds; the per-module `replace … => ../zkit` lines keep standalone `GOWORK=off` builds working (see `swebench-eval/go.mod`'s header). Don't "clean them up."
-- **Canonical packages live in `zkit/`.**
+- **`replace` directives are stripped from tagged modules.** `go.work` handles local resolution; the per-module `go.mod` files must NOT contain `replace` directives pointing to local paths, because the Go module proxy rejects them for `go install`. The release pipeline pins internal deps to published versions.- **Canonical packages live in `zkit/`.**
 - **`zkit/options`** is the canonical functional options pattern (`Option[T] func(*T)`). Every package uses it.
 - **Package-local agent notes are named `AGENTS.md`.**
 

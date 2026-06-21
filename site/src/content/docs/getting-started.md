@@ -12,8 +12,7 @@ runner drives the loop.
 ## Install
 
 ```sh
-go get github.com/zarldev/zarlmono/zkit
-```
+go get github.com/zarldev/zarlmono/zkit@v0.1.2```
 
 Go 1.26 or later. Everything below imports from `zkit/...`.
 

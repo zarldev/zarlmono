@@ -1,8 +1,7 @@
 // swebench-eval is its own module so its parquet-go dependency tree
 // stays out of the root module's graph (it was bumping x/ansi and
 // breaking the v1 TUI's cellbuf on root `go mod tidy`). It's a member
-// of the root go.work, so it resolves the parent's packages locally;
-// the replace keeps standalone (GOWORK=off) builds working too.
+// of the root go.work, so it resolves sibling modules locally;
 module github.com/zarldev/zarlmono/swebench-eval
 
 go 1.26.1

@@ -69,8 +69,41 @@ First public release of `zarlmono` — the Zarldev monorepo.
 
 ---
 
-### Unreleased
+## [v0.1.2] — 2025-06-21
 
-_No changes yet._
+### Added
 
-[v0.1.0]: https://github.com/zarldev/zarlmono/releases/tag/placeholder
+- **go install support** — all `replace` directives stripped from submodule `go.mod` files; `go.work` handles local resolution, module proxy handles remote installs. `go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2` works.
+
+### Changed
+
+- **Dependency pinning** — all modules pin internal dependencies to published versions (`zkit v0.1.2`, `zarlcode v0.1.2`) instead of pseudo-versions with `replace` directives.
+- **Release pipeline** — builds output to `dist/` to avoid directory conflicts; Windows dropped from cross-compile matrix (Unix syscall deps).
+
+### Fixed
+
+- CI: `go build ./...` in zarlcode excludes `./cmd` (main package output conflicts with `cmd/` directory)
+- Release pipeline: YAML syntax errors resolved, all 4 platforms publish correctly
+- Upgrade source: defaults to `zarldev/zarlmono` (was a local path)
+
+## [v0.1.1] — 2025-06-21
+
+### Fixed
+
+- Release pipeline artifacts published to GitHub Releases for linux/{amd64,arm64} + darwin/{amd64,arm64}
+- `zarlcode upgrade` works from GitHub Releases
+- CI pipeline passes all 10 checks
+
+### Changed
+
+- Release matrix: 4 platforms (dropped windows/amd64 — Unix syscall dependencies)
+
+## [v0.1.0] — 2025-06-18
+
+### Added
+
+- Initial public release of the Zarldev monorepo
+
+[v0.1.2]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.2
+[v0.1.1]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.1
+[v0.1.0]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.0
