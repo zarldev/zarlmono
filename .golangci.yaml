@@ -466,17 +466,73 @@ linters:
       - path: '^zkit/agent/tools/spawn/spawn_planner\.go'
         text: 'G124:'
         linters: [ gosec ]
+      # Provider/theme/model registration uses init() as the canonical wire-up mechanism (see AGENTS.md).
+      - path: '^zkit/agent/tools/spawn/spawn_planner\.go'
+        linters: [ gochecknoinits ]
+      - path: '^zkit/ai/llm/backends/definitions\.go'
+        linters: [ gochecknoinits ]
+      - path: '^zkit/ai/llm/openaicodex/models\.go'
+        linters: [ gochecknoinits ]
+      - path: '^zkit/tui/theme/builtins\.go'
+        linters: [ gochecknoinits ]
       - path: '^zarlcode/tui/composer\.go'
         text: 'handleGlobalShortcut - result 0'
         linters: [ unparam ]
       - path: '^zkit/zrpc/middleware/recovery\.go'
         text: 'named return .* found'
         linters: [ nonamedreturns ]
+      - path: '^zarlcode/engine/mode\.go'
+        linters: [ goconst ]
+      # init() in catalog_tools.go is intentional tool registration.
+      - path: '^zarlcode/engine/catalog_tools\.go'
+        linters: [ gochecknoinits ]
+      # gosec: subprocess calls with controlled arguments.
+      - path: '^zarlcode/cli/serve\.go'
+        text: 'G702:'
+        linters: [ gosec ]
+      - path: '^zarlcode/hooks/hooks\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zarlcode/tui/catalog_edit\.go'
+        text: 'G204:'
+        linters: [ gosec ]
       - path: 'zkit/zlog/.*\.go'
         text: "import 'log' is not allowed"
         linters: [ depguard ]
       - path: 'zkit/zhttp/client\.go'
         text: 'G404: Use of weak random number generator'
+        linters: [ gosec ]
+      # gosec: subprocess calls with controlled arguments, cookie config, and
+      # credential-like strings that are actually URLs/keys/env-var names.
+      - path: '^zkit/agent/coderunner/probe\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/llm/claudecode/provider\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/llm/openaicodex/debug_sse\.go'
+        text: 'G703:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/llm/openaicodex/oauth\.go'
+        text: 'G101:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/tools/code/bash\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/tools/code/processmgr\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/ai/tools/dynamic/binary\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^zkit/prefs/keys\.go'
+        text: 'G101:'
+        linters: [ gosec ]
+      - path: '^zkit/vault/vault\.go'
+        text: 'G101:'
+        linters: [ gosec ]
+      - path: '^zkit/zhttp/auth/cookie\.go'
+        text: 'G124:'
         linters: [ gosec ]
 
       # --- examples: demonstration programs — fmt.Print*, repeated JSON-schema
@@ -503,6 +559,14 @@ linters:
       - path: '^examples/stuck_recovery/guardrails\.go'
         text: 'BuildGuardrails'
         linters: [ unparam ]
+      # --- swebench-eval: harness and runner subprocess calls are controlled.
+      - path: '^swebench-eval/harness/zarlcode\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+      - path: '^swebench-eval/runner/score\.go'
+        text: 'G204:'
+        linters: [ gosec ]
+
 
       # --- zarlai: large assistant app migrated onto zkit. Its bespoke
       #     .golangci.yml was removed in favour of this scoped carve-out — the

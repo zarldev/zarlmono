@@ -2,11 +2,12 @@ package engine
 
 import (
 	"context"
-	"github.com/zarldev/zarlmono/zkit/ai/tools"
-	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"iter"
 	"strings"
 	"testing"
+
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
 type fakeTool struct{ name tools.ToolName }

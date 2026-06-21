@@ -550,16 +550,16 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 		deps.PlanFirst = true
 		deps.PlanTool = code.ToolNameUpdatePlan
 	}
-	// fanout_cap > 0 overrides the per-tool exploration caps uniformly (bounds
+	// fanout_fanoutCap > 0 overrides the per-tool exploration caps uniformly (bounds
 	// context growth on small-window local models). 0 keeps the eval-shared
 	// StandardFanoutLimits.
 	if l.settings != nil {
-		if cap := l.settings.FanoutCap(l.parentContext()); cap > 0 {
+		if fanoutCap := l.settings.FanoutCap(l.parentContext()); fanoutCap > 0 {
 			deps.FanoutLimits = map[tools.ToolName]int{
-				code.ToolNameRead: cap,
-				code.ToolNameLs:   cap,
-				code.ToolNameGrep: cap,
-				code.ToolNameGlob: cap,
+				code.ToolNameRead: fanoutCap,
+				code.ToolNameLs:   fanoutCap,
+				code.ToolNameGrep: fanoutCap,
+				code.ToolNameGlob: fanoutCap,
 			}
 		}
 	}
