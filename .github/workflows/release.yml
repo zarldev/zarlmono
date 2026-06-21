@@ -37,7 +37,6 @@ jobs:
           - { goos: linux, goarch: arm64 }
           - { goos: darwin, goarch: amd64 }
           - { goos: darwin, goarch: arm64 }
-          - { goos: windows, goarch: amd64 }
     steps:
       - uses: actions/checkout@v6
 
@@ -55,26 +54,25 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
           TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          VERSION="${TAG#zarlcode/}"   # zarlcode/v1.2.3 -> v1.2.3
-          ldflags="-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version=${VERSION}"
-          bin="zarlcode"
-          [ "${GOOS}" = "windows" ] && bin="zarlcode.exe"
-          go build -trimpath -ldflags "${ldflags}" -o "${bin}" ./zarlcode/cmd
-
-          base="zarlcode_${VERSION}_${GOOS}_${GOARCH}"
-          mkdir -p dist
-          if [ "${GOOS}" = "windows" ]; then
-            archive="${base}.zip"
-            zip -q "dist/${archive}" "${bin}"
-          else
-            archive="${base}.tar.gz"
-            tar -czf "dist/${archive}" "${bin}"
+DOQ3|        run: |
+tZ6/|          set -euo pipefail
+25tL|          VERSION="${TAG#zarlcode/}"   # zarlcode/v1.2.3 -> v1.2.3
+hHLy|          ldflags="-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version=${VERSION}"
+b81g|          bin="zarlcode"
+om/q|          [ "${GOOS}" = "windows" ] && bin="zarlcode.exe"
+91kS|          mkdir -p dist
+47DE|          go build -trimpath -ldflags "${ldflags}" -o "dist/${bin}" ./zarlcode/cmd
+47DE|
+Wa01|          base="zarlcode_${VERSION}_${GOOS}_${GOARCH}"
+wowk|          if [ "${GOOS}" = "windows" ]; then
+zngk|            archive="${base}.zip"
+gSEH|            zip -q "dist/${archive}" "dist/${bin}"
+ZfXq|          else
+mbSo|            archive="${base}.tar.gz"
+            tar -czf "dist/${archive}" "dist/${bin}"
           fi
           ( cd dist && sha256sum "${archive}" > "${archive}.sha256" )
           echo "packaged dist/${archive}"
-
       - name: upload build artifact
         uses: actions/upload-artifact@v4
         with:

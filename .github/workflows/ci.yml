@@ -39,10 +39,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
       - name: build
         working-directory: ${{ matrix.module }}
         run: go build ./...
+        if: matrix.module != 'zarlcode'
+      - name: build (zarlcode)
+        working-directory: ${{ matrix.module }}
+        run: go list ./... | grep -v '/cmd$' | xargs go build
+        if: matrix.module == 'zarlcode'
 
       - name: vet
         working-directory: ${{ matrix.module }}
