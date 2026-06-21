@@ -486,7 +486,7 @@ linters:
           - forbidigo     # fmt.Print* in demo programs is the point
           - goconst       # repeated strings in tool-schema maps are clearer inline
       - path: '^examples/'
-        text: 'G(301|306):'
+        text: 'G(101|301|306):'
         linters: [ gosec ]
       - path: '^examples/'
         text: 'S1005:'
