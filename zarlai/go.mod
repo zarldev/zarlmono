@@ -17,7 +17,10 @@ require (
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.46.0 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/openai/openai-go/v2 v2.7.1 // indirect
 	github.com/redis/go-redis/v9 v9.20.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
@@ -40,8 +43,6 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
-	github.com/zarldev/zarlmono/zkit v0.0.0-00010101000000-000000000000
+	github.com/zarldev/zarlmono/zkit v0.1.2
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/zarldev/zarlmono/zkit => ../zkit
