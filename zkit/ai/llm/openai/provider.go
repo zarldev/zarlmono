@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/toolparse"
 	"github.com/zarldev/zarlmono/zkit/options"
 	"github.com/zarldev/zarlmono/zkit/zhttp"
 )
@@ -210,6 +211,22 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 				// FinishReason is captured below and emitted on the single
 				// terminal Done chunk only — not on content deltas — so the
 				// "final chunk carries the finish reason" contract holds.
+				// Recover tool calls from <tool_calls> artifacts in streamed content.
+				if toolparse.IsToolCallArtifactPrefix(choice.Delta.Content) {
+					result := toolparse.ParseArtifact(choice.Delta.Content)
+					if result.HighConfidence {
+						if !yield(llm.CompletionChunk{
+							Content:      result.RemainingContent,
+							FinishReason: choice.FinishReason,
+							Done:         true,
+							ToolCalls:    result.Calls,
+						}, nil) {
+							return
+						}
+						return
+					}
+				}
+
 				if !yield(llm.CompletionChunk{Content: choice.Delta.Content}, nil) {
 					return
 				}
@@ -459,6 +476,28 @@ func (p *Provider) nonStreamCompletion(
 					Arguments: tc.Function.Arguments,
 				},
 			})
+		}
+
+		// Recover tool calls from <tool_calls> artifacts when the SDK
+		// didn't surface any (model emitted the protocol block as text).
+		if len(toolCalls) == 0 && toolparse.IsToolCallArtifactPrefix(choice.Message.Content) {
+			result := toolparse.ParseArtifact(choice.Message.Content)
+			if result.HighConfidence {
+				yield(llm.CompletionChunk{
+					Content:      result.RemainingContent,
+					Thinking:     extractReasoningFromMessage(choice.Message),
+					FinishReason: choice.FinishReason,
+					Done:         true,
+					ToolCalls:    result.Calls,
+					Usage: &llm.Usage{
+						PromptTokens:     int(completion.Usage.PromptTokens),
+						CompletionTokens: int(completion.Usage.CompletionTokens),
+						TotalTokens:      int(completion.Usage.TotalTokens),
+						CachedTokens:     int(completion.Usage.PromptTokensDetails.CachedTokens),
+					},
+				}, nil)
+				return
+			}
 		}
 
 		yield(llm.CompletionChunk{

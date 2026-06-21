@@ -2,11 +2,11 @@ package engine
 
 import (
 	"context"
-	"iter"
-	"testing"
-
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	"iter"
+	"strings"
+	"testing"
 )
 
 type fakeTool struct{ name tools.ToolName }
@@ -71,4 +71,50 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	if _, err := src.Execute(ctx, tools.ToolCall{ToolName: code.ToolNameWrite}); err != nil {
 		t.Errorf("build: dispatching write should be allowed: %v", err)
 	}
+}
+
+func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
+	inner := fakeSource{names: []tools.ToolName{
+		code.ToolNameRead,
+		code.ToolNameWrite,
+		code.ToolNameBash,
+		"spawn_agent",
+	}}
+	plan := true
+	visible := NewModeFilteredSource(inner, func() bool { return plan })
+
+	// PLAN mode filters the tools delivered to the model (via the tool interface),
+	// not the prompt text — the prompt no longer enumerates a roster. Assert the
+	// filter on the curated source, and that the prompt carries no tool list.
+	planNames := toolNameSet(ToolInfoFromSource(t.Context(), visible))
+	if !planNames["read"] || !planNames["spawn_agent"] {
+		t.Fatalf("plan mode dropped a read-only tool: %v", planNames)
+	}
+	if planNames["write"] || planNames["bash"] {
+		t.Fatalf("plan mode leaked a mutating tool: %v", planNames)
+	}
+
+	prompt, err := RenderLivePrompt("plan", LivePlanPromptTemplate, "/repo", nil, nil, nil, ToolInfoFromSource(t.Context(), visible))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(prompt, "**read**") || strings.Contains(prompt, "**write**") {
+		t.Fatalf("plan prompt should not enumerate the tool roster:\n%s", prompt)
+	}
+
+	plan = false
+	buildNames := toolNameSet(ToolInfoFromSource(t.Context(), visible))
+	for _, want := range []tools.ToolName{"read", "write", "bash", "spawn_agent"} {
+		if !buildNames[want] {
+			t.Fatalf("build mode missing tool %q: %v", want, buildNames)
+		}
+	}
+}
+
+func toolNameSet(infos []promptTool) map[tools.ToolName]bool {
+	m := make(map[tools.ToolName]bool, len(infos))
+	for _, i := range infos {
+		m[tools.ToolName(i.Name)] = true
+	}
+	return m
 }

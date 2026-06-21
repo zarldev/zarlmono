@@ -449,7 +449,7 @@ linters:
       - path: '^zkit/agent/diffrecorder/diffrecorder_test\.go'
         text: 'result 1 \(error\) is always nil'
         linters: [ unparam ]
-      - path: '^zkit/zrpc/h2c\.go'
+      - path: '(?:^|/monorepo/)zkit/zrpc/h2c\.go'
         text: 'SA1019:'
         linters: [ staticcheck ]
       # TUI keybind, navigation, and display labels are UI constants more readable as literals.
@@ -458,22 +458,7 @@ linters:
       - path: '^zkit/agent/tools/spawn/spawn_planner\.go'
         linters: [ goconst ]
       # Provider/theme/model registration uses init() as the canonical wire-up mechanism (see AGENTS.md).
-      - path: '(^zkit/ai/llm/backends/definitions\.go|^zkit/ai/llm/openaicodex/models\.go|^zkit/tui/theme/builtins\.go)'
-        linters: [ gochecknoinits ]
-      # Command execution is the feature: bash tool, process manager, CLI serve, binary builder, external editor.
-      - text: 'G204: Subprocess launched with a potential tainted input or cmd arguments'
-        linters: [ gosec ]
-      - text: 'G702: Command injection via taint analysis'
-        linters: [ gosec ]
-      # Debug SSE file path is gated behind an env var (CODEX_DEBUG_SSE); not user-controlled at runtime.
-      - path: '^zkit/ai/llm/openaicodex/debug_sse\.go'
-        text: 'G703:'
-        linters: [ gosec ]
-      # G101 false positives: env var names (HN_USER, CODEX_REASONING_EFFORT), OAuth client IDs, askpass socket.
-      - text: 'G101: Potential hardcoded credentials'
-        linters: [ gosec ]
-      # Cookie security attributes (Secure/SameSite) are set at runtime via CookieManager constructor; linter cannot see runtime config.
-      - path: '^zkit/zhttp/auth/cookie\.go'
+      - path: '^zkit/agent/tools/spawn/spawn_planner\.go'
         text: 'G124:'
         linters: [ gosec ]
       - path: '^zarlcode/tui/composer\.go'

@@ -30,7 +30,7 @@ func TestRender_SelfModGating(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"You are zarlcode", "Building a new dynamic tool", "new_tool"} {
+	for _, want := range []string{"You are zarlcode", "new_tool", "Extending yourself"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("SelfMod render missing %q", want)
 		}
@@ -55,8 +55,8 @@ func TestRender_PlanningGating(t *testing.T) {
 	}
 	for _, want := range []string{
 		"update_plan",
-		"Before signing off, close every step.",
-		"truthful final state",
+		"leave the plan truthful before finishing",
+		"mark done steps `completed`",
 	} {
 		if !strings.Contains(on, want) {
 			t.Errorf("Planning=true render missing %q", want)
@@ -75,11 +75,12 @@ func TestRender_CommonOperatingCoreAlwaysPresent(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"spawn_agent",           // delegation discipline
-			"After a compaction",    // compaction-recovery markers
-			"[compacted —",          // the literal marker
-			"truncated to the tail", // tool-result truncation behaviour
-			"/repo",                 // workspace root interpolation
+			"spawn_agent",                // delegation discipline
+			"[compacted —",               // compaction-recovery marker
+			"spill path",                 // tool-result truncation behaviour
+			"through the tool interface", // tools come via the API, not enumerated in the prompt
+			"one clear action",           // local-model-friendly call discipline
+			"/repo",                      // workspace root interpolation
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("SelfMod=%v render missing core content %q", selfMod, want)

@@ -84,6 +84,55 @@ func TestBuildPromptIncludesToolResults(t *testing.T) {
 	}
 }
 
+// TestParseStreamCapturesThinkingDelta locks the fix for thinking_delta
+// stream_event lines being parsed as nothing — the model's extended
+// reasoning must surface as a Thinking chunk, distinct from Content.
+func TestParseStreamCapturesThinkingDelta(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"stream_event","event":{"delta":{"type":"thinking_delta","thinking":"Let me "}}}`,
+		`{"type":"stream_event","event":{"delta":{"type":"thinking_delta","thinking":"think."}}}`,
+		`{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"Hi"}}}`,
+	}, "\n")
+	var thinking, content strings.Builder
+	yield := func(c llm.CompletionChunk, _ error) bool {
+		thinking.WriteString(c.Thinking)
+		content.WriteString(c.Content)
+		return true
+	}
+	if _, _, err := parseStream(strings.NewReader(stream), yield, newToolCallState(), false); err != nil {
+		t.Fatalf("parseStream: %v", err)
+	}
+	if got := thinking.String(); got != "Let me think." {
+		t.Fatalf("thinking = %q, want %q", got, "Let me think.")
+	}
+	if got := content.String(); got != "Hi" {
+		t.Fatalf("content = %q, want %q", got, "Hi")
+	}
+}
+
+// TestParseStreamDoesNotDuplicateFinalThinking mirrors
+// TestStreamDoesNotDuplicateFinalText: the terminal assistant event repeats
+// the whole thinking block, which must not be re-emitted on top of the
+// incremental thinking_delta lines already yielded.
+func TestParseStreamDoesNotDuplicateFinalThinking(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"stream_event","event":{"delta":{"type":"thinking_delta","thinking":"hello "}}}`,
+		`{"type":"stream_event","event":{"delta":{"type":"thinking_delta","thinking":"world"}}}`,
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hello world"}]}}`,
+	}, "\n")
+	var b strings.Builder
+	yield := func(c llm.CompletionChunk, _ error) bool {
+		b.WriteString(c.Thinking)
+		return true
+	}
+	if _, _, err := parseStream(strings.NewReader(stream), yield, newToolCallState(), false); err != nil {
+		t.Fatalf("parseStream: %v", err)
+	}
+	if got := b.String(); got != "hello world" {
+		t.Fatalf("thinking = %q, want %q (terminal assistant event was re-emitted)", got, "hello world")
+	}
+}
+
 func TestToolCallFromStreamingEvents(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"read_file","input":{}}}}`,
@@ -168,6 +217,23 @@ func TestParseToolProtocolAssistantToolCallsWithPreamble(t *testing.T) {
 	}
 	if calls[0].Function.Arguments != `{"path":"VOICE.md"}` {
 		t.Fatalf("arguments = %q", calls[0].Function.Arguments)
+	}
+}
+
+// TestParseToolProtocolToolCallsTagFlatShape covers the model renaming the
+// <assistant_tool_calls> framing tag to <tool_calls> (matching the protocol's
+// own key) while also using the documented flat per-call shape instead of the
+// nested-function OpenAI shape — both must still be caught as a tool call.
+func TestParseToolProtocolToolCallsTagFlatShape(t *testing.T) {
+	calls := parseToolProtocol(
+		`<tool_calls> [{"id":"call_2","name":"bash","arguments":{"command":"echo hi","description":"say hi"}}] </tool_calls>`,
+	)
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1: %#v", len(calls), calls)
+	}
+	if calls[0].ID != "call_2" || calls[0].Function.Name != "bash" ||
+		calls[0].Function.Arguments != `{"command":"echo hi","description":"say hi"}` {
+		t.Fatalf("unexpected call: %#v", calls[0])
 	}
 }
 

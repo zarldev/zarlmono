@@ -155,6 +155,60 @@ func (s *Settings) ShellSandbox(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeySandbox, "on") == "on"
 }
 
+// PlanFirst resolves whether the plan-first guardrail is armed — the first
+// workspace-changing call in a task is then refused until update_plan has run.
+// Off by default; recommended for weak / local models that skip planning.
+func (s *Settings) PlanFirst(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyPlanFirst, "off") == "on"
+}
+
+// Temperature resolves the sampling temperature for completion requests. A
+// zero return means "unset" — the runner leaves it off the request so the
+// server's own default applies. A low value (e.g. 0.2) improves determinism
+// for local models.
+func (s *Settings) Temperature(ctx context.Context) float32 {
+	v := strings.TrimSpace(s.setting(ctx, prefs.KeyTemperature, ""))
+	if v == "" || v == "(default)" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(v, 32)
+	if err != nil || f < 0 {
+		return 0
+	}
+	return float32(f)
+}
+
+// ToolResultMaxBytes resolves the per-tool-result byte cap before tail
+// truncation + spill, in bytes. Default 50 KB, matching the runner default.
+func (s *Settings) ToolResultMaxBytes(ctx context.Context) int {
+	return s.intSetting(ctx, prefs.KeyToolResultMaxKB, 50) * 1024
+}
+
+// ToolResultMaxLines resolves the per-tool-result line cap. Default 2000.
+func (s *Settings) ToolResultMaxLines(ctx context.Context) int {
+	return s.intSetting(ctx, prefs.KeyToolResultMaxLines, 2000)
+}
+
+// FanoutCap resolves the per-tool exploration fan-out cap. 0 keeps the built-in
+// per-tool defaults; a positive value caps every exploration tool at that count.
+func (s *Settings) FanoutCap(ctx context.Context) int {
+	return s.intSetting(ctx, prefs.KeyFanoutCap, 0)
+}
+
+// EnableMCP / EnableWeb / EnableBackground gate optional tool clusters. All on
+// by default; turn off to shrink the tool surface for a lean local-model setup.
+func (s *Settings) EnableMCP(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyEnableMCP, "on") == "on"
+}
+
+func (s *Settings) EnableWeb(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyEnableWeb, "on") == "on"
+}
+
+func (s *Settings) EnableBackground(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyEnableBackground, "on") == "on"
+}
+
 // setting reads an effective-scope setting, returning def when unset or on
 // error (config reads must never block startup).
 func (s *Settings) setting(ctx context.Context, key, def string) string {

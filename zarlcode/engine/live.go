@@ -536,13 +536,33 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 	if headless {
 		testEdit = guardrails.NewTestEditStrict()
 	}
-	// Shared invariant (GoVerifier + fan-out caps) from coderunner so it can't
-	// drift from the eval; SkillLookup is the TUI-only extra. DecomposeJudge
-	// arms the constrained-verdict judge when the decompose_judge setting is
-	// on; nil keeps the deterministic path.
+	// Shared fan-out caps from coderunner so they can't drift from the eval;
+	// StandardGuardrailDeps wires no language verifier by default. SkillLookup
+	// is the TUI-only extra. DecomposeJudge arms the constrained-verdict judge
+	// when the decompose_judge setting is on; nil keeps the deterministic path.
 	deps := coderunner.StandardGuardrailDeps(l.ws.Root(), testEdit)
 	deps.SkillLookup = l.catalog
 	deps.DecomposeJudge = l.decomposeJudge()
+	// plan_first gate: refuse the first workspace-changing call until update_plan
+	// has run. Off unless the user opts in (weak/local-model profile). PlanTool
+	// matches what sourceWithDeps registers against the live plan store.
+	if l.settings != nil && l.settings.PlanFirst(l.parentContext()) {
+		deps.PlanFirst = true
+		deps.PlanTool = code.ToolNameUpdatePlan
+	}
+	// fanout_cap > 0 overrides the per-tool exploration caps uniformly (bounds
+	// context growth on small-window local models). 0 keeps the eval-shared
+	// StandardFanoutLimits.
+	if l.settings != nil {
+		if cap := l.settings.FanoutCap(l.parentContext()); cap > 0 {
+			deps.FanoutLimits = map[tools.ToolName]int{
+				code.ToolNameRead: cap,
+				code.ToolNameLs:   cap,
+				code.ToolNameGrep: cap,
+				code.ToolNameGlob: cap,
+			}
+		}
+	}
 	return deps
 }
 
@@ -589,7 +609,23 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	l.mu.Lock()
 	toolEnv := cloneStringMap(l.toolEnv)
 	l.mu.Unlock()
-	coderunner.RegisterStandardTools(reg, l.ws, l.pm,
+
+	// Optional tool clusters, gated by settings so a lean local-model setup can
+	// shrink the surface. Resolved per turn (toggling re-shapes the next turn's
+	// roster). Background off → bash registers foreground-only and the
+	// bash_output/stop_process/list_processes trio is omitted (pm = nil).
+	enableWeb, enableMCP, enableBackground := true, true, true
+	if l.settings != nil {
+		sctx := l.parentContext()
+		enableWeb = l.settings.EnableWeb(sctx)
+		enableMCP = l.settings.EnableMCP(sctx)
+		enableBackground = l.settings.EnableBackground(sctx)
+	}
+	pmArg := l.pm
+	if !enableBackground {
+		pmArg = nil
+	}
+	coderunner.RegisterStandardTools(reg, l.ws, pmArg,
 		coderunner.WithToolSandbox(l.sandbox),
 		coderunner.WithToolEnv(toolEnv),
 	)
@@ -606,21 +642,27 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// external SearXNG endpoint), so register it here when one is configured.
 	// Registered before GuardedSource so it runs under the same guardrail
 	// chain as every other tool.
-	if searxngURL != "" {
+	if enableWeb && searxngURL != "" {
 		reg.Register(search.New(searxngURL))
 	}
 
-	// web_fetch is always registered — no external configuration needed.
-	// HTTP GET is the fast path; chromedp fallback for JS-heavy pages.
-	ft := fetch.New()
-	if l.settings != nil {
-		if cp := l.settings.ChromeBinPath(l.parentContext()); cp != "" {
-			ft.WithChromeBinPath(cp)
+	// web_fetch — HTTP GET fast path, chromedp fallback for JS-heavy pages.
+	// Gated with web_search under the enable_web cluster toggle.
+	if enableWeb {
+		ft := fetch.New()
+		if l.settings != nil {
+			if cp := l.settings.ChromeBinPath(l.parentContext()); cp != "" {
+				ft.WithChromeBinPath(cp)
+			}
 		}
+		reg.Register(ft)
 	}
-	reg.Register(ft)
 
 	if l.catalog != nil {
+		// Skill/agent catalogue tools are active lookup surfaces. The catalogues are
+		// intentionally NOT inlined into prompts; local models should not pay that
+		// token cost unless the user asks for a skill/sub-agent or the task clearly
+		// needs one.
 		reg.Register(NewListSkillsTool(l.catalog))
 		reg.Register(NewLoadSkillTool(l.catalog))
 		reg.Register(NewListAgentsTool(l.catalog))
@@ -629,8 +671,9 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// MCP: the connect/disconnect/list tools mutate the persistent registry
 	// (so connections survive across turns), and every tool already exposed by
 	// a connected server is merged onto this turn's registry. Registered before
-	// GuardedSource so MCP tool calls run under the same guardrail chain.
-	if l.mcp != nil {
+	// GuardedSource so MCP tool calls run under the same guardrail chain. Gated
+	// by the enable_mcp cluster toggle.
+	if l.mcp != nil && enableMCP {
 		reg.Register(dynamic.NewMCPConnect(l.mcp))
 		reg.Register(dynamic.NewMCPDisconnect(l.mcp))
 		reg.Register(dynamic.NewMCPList(l.mcp))
@@ -717,6 +760,17 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 		reserve = liveReserveTokens
 	}
 
+	// Per-turn settings tuning: tool-result truncation caps (mutate the shared
+	// truncator — turns are serialized) and sampling temperature. Read live so a
+	// settings change applies next turn without a restart.
+	var temperature float32
+	if settings != nil {
+		sctx := l.parentContext()
+		l.truncator.MaxBytes = settings.ToolResultMaxBytes(sctx)
+		l.truncator.MaxLines = settings.ToolResultMaxLines(sctx)
+		temperature = settings.Temperature(sctx)
+	}
+
 	opts := coderunner.StandardOptions(coderunner.Tuning{
 		Model:         model,
 		MaxIterations: maxIter,
@@ -729,6 +783,7 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 		runner.WithCompactor(coderunner.StandardCompactor(
 			buildLiveCompactor(engine, window, compactProv, compactModel, l), window, reserve)),
 		runner.WithResultTruncator(l.truncator),
+		runner.WithTemperature(temperature),
 	)
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))

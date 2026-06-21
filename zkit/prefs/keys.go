@@ -20,9 +20,33 @@ const (
 	// guardrail consults on repeated tool failures. Off by default — the
 	// guardrail then keeps its deterministic advisory path. Provider/model
 	// mirror the compact_* pair: unset reuses the active backend.
-	KeyDecomposeJudge     = "decompose_judge"
-	KeyJudgeProvider      = "judge_provider"
-	KeyJudgeModel         = "judge_model"
+	KeyDecomposeJudge = "decompose_judge"
+	KeyJudgeProvider  = "judge_provider"
+	KeyJudgeModel     = "judge_model"
+	// KeyPlanFirst arms the plan-first guardrail: the first workspace-changing
+	// call in a task is refused until update_plan has run. Off by default;
+	// turn it on for weak / local models that dive into edits before planning.
+	KeyPlanFirst = "plan_first"
+	// KeyTemperature sets the sampling temperature on completion requests.
+	// Empty/"(default)" leaves it unset (server default). A low value (e.g. 0.2)
+	// improves determinism and tool-call reliability for local models.
+	KeyTemperature = "temperature"
+	// KeyToolResultMaxKB / KeyToolResultMaxLines cap how much of a tool result
+	// joins the conversation before tail-truncation + spill. Defaults match the
+	// runner (50 KB / 2000 lines); lower them for small-context local models.
+	KeyToolResultMaxKB    = "tool_result_max_kb"
+	KeyToolResultMaxLines = "tool_result_max_lines"
+	// KeyFanoutCap overrides the per-tool exploration fan-out cap (read/ls/grep/
+	// glob). 0 keeps the built-in per-tool defaults; a positive value caps every
+	// exploration tool at that count to bound context growth.
+	KeyFanoutCap = "fanout_cap"
+	// KeyEnableMCP / KeyEnableWeb / KeyEnableBackground gate optional tool
+	// clusters. On by default; turn off to shrink the tool surface for a lean
+	// local-model setup (MCP tools, web_search/web_fetch, background-process
+	// tools + bash background mode respectively).
+	KeyEnableMCP          = "enable_mcp"
+	KeyEnableWeb          = "enable_web"
+	KeyEnableBackground   = "enable_background"
 	KeySearxngURL         = "search_searxng_url"
 	KeyEditor             = "editor"
 	KeyReserveTokens      = "reserve_tokens"

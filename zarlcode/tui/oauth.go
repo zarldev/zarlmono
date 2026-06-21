@@ -78,8 +78,8 @@ func (m *UI) startOAuthLogin(provider string) tea.Cmd {
 	case backends.NameClaudeCode:
 		// Claude Code signs in via `claude setup-token` (its own browser
 		// flow). Run it attached to the terminal — tea.ExecProcess suspends
-		// the alt-screen — and capture stdout to extract + store the token.
-		// No manual CLI step for the user.
+		// the alt-screen — and capture BOTH stdout and stderr because the CLI
+		// may print the token on either stream. No manual CLI step for the user.
 		if pd != nil {
 			pd.status = "running `claude setup-token` — complete the browser sign-in…"
 		}
@@ -87,7 +87,7 @@ func (m *UI) startOAuthLogin(provider string) tea.Cmd {
 		cmd := claude.SetupTokenCommand()
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = io.MultiWriter(os.Stdout, buf) // user sees it; we capture it
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = io.MultiWriter(os.Stderr, buf)
 		return tea.ExecProcess(cmd, func(err error) tea.Msg {
 			if err != nil {
 				return oauthFailedMsg{provider: provider, err: err}

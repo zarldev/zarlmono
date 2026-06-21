@@ -6,8 +6,12 @@
 // Scope is per-task: each Run gets its own bucket keyed by taskscope.ID
 // (planted on ctx by the runner). When the task ends the bucket is
 // dropped on the next call — no cross-task pollution, no manual
-// invalidation. Tools that mutate state (bash, write, edit, apply_patch)
-// must NOT be marked pure; only declare a tool pure when (args ⇒
+// invalidation. When a successful mutating tool call lands inside the same
+// task (for example write / edit / write_append / apply_patch), MemoSource
+// proactively clears that task's pure-tool bucket so a subsequent read sees
+// fresh workspace state. Tools that mutate state must NOT be marked pure; only
+// declare a tool pure when (args ⇒ result) holds for the duration of one
+// user-level turn between mutations.
 // result) holds for the duration of one user-level turn.
 package runner
 
@@ -117,8 +121,13 @@ func (m *MemoSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 // Failed results (Success=false) are never cached — a transient
 // failure on the first call shouldn't poison the rest of the turn.
 func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	invalidates := m.invalidatesCache(ctx, call.ToolName)
 	if m.isPure == nil || !m.isPure(call.ToolName) {
-		return m.inner.Execute(ctx, call)
+		result, err := m.inner.Execute(ctx, call)
+		if err == nil && result != nil && result.Success && invalidates {
+			m.forgetCurrentTask(ctx)
+		}
+		return result, err
 	}
 	bucket := m.bucketFor(ctx)
 	key := tools.CallSignature(call)
@@ -162,6 +171,10 @@ func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 	}
 	result, err := m.inner.Execute(ctx, call)
 	if err == nil && result != nil && result.Success {
+		if invalidates {
+			m.forgetCurrentTask(ctx)
+			return result, err
+		}
 		_ = bucket.Set(ctx, key, *result)
 		// Successful miss counts as the first invocation; the next
 		// identical call is the first cache hit (hits=1, silent), the
@@ -183,6 +196,31 @@ func (m *MemoSource) bumpHit(ctx context.Context, key string) int {
 	}
 	m.hits[id][key]++
 	return m.hits[id][key]
+}
+
+// forgetCurrentTask clears the memo bucket and hit counters for the task on ctx.
+// Mutating tools call this after a successful execution so later pure reads in
+// the same task observe fresh workspace state.
+func (m *MemoSource) forgetCurrentTask(ctx context.Context) {
+	id := taskscope.IDFrom(ctx)
+	m.mu.Lock()
+	delete(m.buckets, id)
+	delete(m.hits, id)
+	m.mu.Unlock()
+}
+
+// invalidatesCache reports whether a successful call should drop the current
+// task's memoized pure-read state. Any tool that changes the workspace — a
+// file edit (Mutates) or a side effect like bash (AffectsWorkspace) — counts,
+// via ChangesWorkspace, so there's no per-tool name special-case to drift.
+func (m *MemoSource) invalidatesCache(ctx context.Context, name tools.ToolName) bool {
+	for tool := range m.inner.Tools(ctx) {
+		spec := tool.Definition()
+		if spec.Name == name {
+			return spec.ChangesWorkspace()
+		}
+	}
+	return false
 }
 
 // bucketFor returns (creating if necessary) the per-task cache for

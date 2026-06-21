@@ -22,6 +22,18 @@ type Deps struct {
 	// Optional override. Nil keeps the decompose guardrail's deterministic path.
 	DecomposeJudge VerdictJudge
 
+	// PlanFirst arms the plan-first gate: the first workspace-changing call in
+	// a task is refused until the planning tool has run. Off by default; the
+	// local-model profile turns it on to stop weak models diving into edits
+	// before planning. The gate needs the spec Iterable, so sourcechain.New
+	// composes it (next to schema) rather than PostSchemaGuardrails.
+	PlanFirst bool
+
+	// PlanTool names the tool whose success satisfies PlanFirst. Zero value
+	// means the gate is inert even when PlanFirst is set (no tool can clear
+	// it), so a consumer enabling PlanFirst must set this.
+	PlanTool tools.ToolName
+
 	// Optional slot fill. The caller chooses advisory vs strict; this package
 	// owns the canonical production slot after fanout and before improvement.
 	TestEdit Guardrail

@@ -206,18 +206,26 @@ You review code.
 	live.SetLimits(0, 0, 0, 1) // enable spawn_agent, so agent roster is inlined
 	snap := BuildInspectorSnapshot(NewSession("~", root, ""), live, nil)
 
+	// The prompt itself no longer enumerates a tool roster or skill/agent lists
+	// (kept thin + byte-stable); it carries the static surface plus workspace
+	// instructions.
 	for _, want := range []string{
 		"rendered next-turn BUILD mode prompt",
 		"Inspector must show workspace instructions.",
-		"Go workflow",
-		"spawn_agent",
-		"Sub-agents available to you",
-		"reviewer",
-		"web_fetch",
-		"update_plan",
 	} {
 		if !strings.Contains(snap.PromptSystem, want) {
 			t.Fatalf("inspector prompt missing %q:\n%s", want, snap.PromptSystem)
+		}
+	}
+	// Tools (incl. the skill/agent discovery tools) are surfaced via the
+	// inspector's tool list and the model's tool interface, not the prompt text.
+	toolset := map[string]bool{}
+	for _, spec := range snap.Tools {
+		toolset[spec.Name.String()] = true
+	}
+	for _, want := range []string{"list_skills", "list_agents", "spawn_agent", "web_fetch", "update_plan"} {
+		if !toolset[want] {
+			t.Fatalf("inspector tool list missing %q: %v", want, snap.Tools)
 		}
 	}
 	if len(snap.Errors) != 0 {

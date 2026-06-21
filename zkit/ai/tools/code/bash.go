@@ -150,11 +150,15 @@ func NewBashTool(ws Workspace, opts ...BashOption) *BashTool {
 // Definition advertises bash with command (required), timeout_seconds,
 // background, and description parameters; the spec text documents the
 // 1MB output cap, 300s default / 600s max timeout, background process
-// management, and the pkill -f footgun. Mutates is left unset even
-// though shell commands can write.
+// management, and the pkill -f footgun. Mutates stays false — a shell
+// command is not a tracked file edit and must not count as patch-producing
+// work — but AffectsWorkspace is true: a command can write files or mutate
+// git/env state, so cache-invalidation and plan-first gating treat it as
+// workspace-changing via ChangesWorkspace.
 func (t *BashTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameBash,
+		Name:             ToolNameBash,
+		AffectsWorkspace: true,
 		Description: "Execute a shell command in the workspace. " +
 			"Synchronous (default): blocks until exit, returns stdout+stderr+code; output capped at 1MB by the tool, then trimmed to the tail by the runner's 50KB / 2000-line tool-result cap (full output is spilled to disk and the path is included in the footer); timeout 300s default, 600s max. " +
 			"Background (`background: true`): returns immediately with a process_id; manage with bash_output / stop_process / list_processes. Use for servers, watchers, dev-mode toolchains. " +

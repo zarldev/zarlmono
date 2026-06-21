@@ -203,6 +203,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			Tools:              llmTools,
 			Stream:             true,
 			MaxTokens:          r.maxTokens,
+			Temperature:        r.temperature,
 			Thinking:           llm.ThinkingConfig{Enabled: t.thinking},
 			ChatTemplateKwargs: r.template.ThinkingKwargs(t.thinking).AsMap(),
 		}
@@ -601,7 +602,7 @@ func (r *Runner) toolResultText(result *tools.ToolResult, toolName string) strin
 	if !result.Success {
 		var msg string
 		if result.Error != "" {
-			msg = "ERROR: " + result.Error
+			msg = "ERROR: " + result.Error + toolErrorHint(result.Err)
 		} else {
 			msg = "ERROR: tool reported failure"
 		}
@@ -611,6 +612,28 @@ func (r *Runner) toolResultText(result *tools.ToolResult, toolName string) strin
 		return "ok"
 	}
 	return r.truncator.Truncate(formatToolData(result.Data), toolName)
+}
+
+func toolErrorHint(err *tools.Error) string {
+	if err == nil {
+		return ""
+	}
+	switch err.Kind {
+	case tools.Kinds.VALIDATION:
+		return " | check the tool schema and fix the argument"
+	case tools.Kinds.PERMISSION:
+		return " | try a non-mutating tool or ask for access"
+	case tools.Kinds.TRANSIENT:
+		return " | retry once or verify state"
+	case tools.Kinds.BUDGET:
+		return " | reduce scope, avoid deep reads, or delegate via spawn_agent"
+	case tools.Kinds.FATAL:
+		return " | cannot recover — stop retrying and explain the issue"
+	case tools.Kinds.STALE:
+		return " | perform a fresh read of the target area, then retry with fresh hashes"
+	default:
+		return ""
+	}
 }
 
 // formatToolData renders a tool result's structured Data as text: a

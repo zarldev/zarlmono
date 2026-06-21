@@ -152,7 +152,7 @@ func Fatal(op string, wrapped error) *Error {
 	return &Error{Kind: Kinds.FATAL, Op: op, Wrapped: wrapped}
 }
 
-// Stale reports a well-formed call whose anchor no longer matches the
+// Stale reports that the arguments were well-formed but missed their
 // target because it changed since it was read. reason should name the
 // stale anchor and tell the caller to re-read; the Kind steers guardrails
 // toward "re-read the file" rather than "fix your input format".

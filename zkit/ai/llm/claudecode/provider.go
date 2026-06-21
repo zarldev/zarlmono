@@ -14,23 +14,23 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/toolparse"
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 const jsonNull = "null"
 
+// eventTypeAssistant and eventTypeStreamEvent are the two Claude Code
+// stream-json line types the parsers below switch on: the terminal per-turn
+// snapshot, and the incremental streamed delta wrapper.
+const (
+	eventTypeAssistant   = "assistant"
+	eventTypeStreamEvent = "stream_event"
+)
+
 // toolCallTypeFunction is the OpenAI-style tool-call discriminator the
 // provider stamps on every emitted tool call.
 const toolCallTypeFunction = "function"
-
-// assistantToolCalls{Open,Close} bracket the tool-call block buildPrompt
-// renders for prior assistant turns. The model frequently copies this framing
-// back instead of the documented {"tool_calls":...} protocol, so the inline
-// parser has to recognize it.
-const (
-	assistantToolCallsOpen  = "<assistant_tool_calls>"
-	assistantToolCallsClose = "</assistant_tool_calls>"
-)
 
 const (
 	defaultModel   = "sonnet"
@@ -168,7 +168,7 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	defer cancel()
 
 	args := []string{
-		"-p", prompt,
+		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--include-partial-messages",
@@ -179,6 +179,12 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 		args = append(args, "--model", p.model)
 	}
 	cmd := exec.CommandContext(runCtx, p.binaryPath, args...)
+	// The prompt grows with conversation length (rendered history, tool
+	// results) and a long conversation pushes it past Linux's per-argument
+	// MAX_ARG_STRLEN (128KiB), which fails the exec with an argument-list
+	// error the CLI surfaces as a parameter-count complaint. Stdin has no
+	// such ceiling.
+	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Env = append(os.Environ(),
 		"CLAUDE_CODE_OAUTH_TOKEN="+tok.Access,
 		// Ensure API keys in the caller environment do not take precedence
@@ -321,6 +327,7 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var lastText string
+	var lastThinking string
 	var buffered strings.Builder
 	var usage *llm.Usage
 	for scanner.Scan() {
@@ -337,6 +344,20 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 		if calls := tools.toolCallsFromLine(line); len(calls) > 0 {
 			if !yield(llm.CompletionChunk{ToolCalls: calls}, nil) {
 				return usage, false, nil
+			}
+		}
+		if thinking := thinkingDeltaFromLine(line); thinking != "" {
+			delta := thinking
+			if strings.HasPrefix(thinking, lastThinking) {
+				delta = thinking[len(lastThinking):]
+				lastThinking = thinking
+			} else {
+				lastThinking += thinking
+			}
+			if delta != "" {
+				if !yield(llm.CompletionChunk{Thinking: delta}, nil) {
+					return usage, false, nil
+				}
 			}
 		}
 		text := textDeltaFromLine(line)
@@ -436,220 +457,8 @@ func usageFromLine(line string) *llm.Usage {
 }
 
 func parseToolProtocol(text string) []llm.ToolCall {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-	// The model often mimics the <assistant_tool_calls> few-shot framing from
-	// the prompt's rendered history (see buildPrompt) instead of the documented
-	// {"tool_calls":...} protocol. Honor that tagged, OpenAI-array shape first so
-	// it is caught rather than leaking into the transcript as prose.
-	if calls := parseAssistantToolCallsBlocks(text); len(calls) > 0 {
-		return calls
-	}
-	if calls := parseToolProtocolObject(stripJSONFence(text)); len(calls) > 0 {
-		return calls
-	}
-	// Claude Code's model sometimes disobeys the "JSON object and no prose"
-	// instruction and emits a short preamble such as "Let me read the files"
-	// before the tool_calls object. Treat the JSON object as authoritative and
-	// suppress the prose so raw tool-call JSON never reaches the chat transcript.
-	for _, candidate := range toolProtocolCandidates(text) {
-		if calls := parseToolProtocolObject(candidate); len(calls) > 0 {
-			return calls
-		}
-	}
-	// Last resort: a bare OpenAI-style array emitted without the wrapping tags.
-	if calls := parseToolCallArray(stripJSONFence(text)); len(calls) > 0 {
-		return calls
-	}
-	return nil
-}
-
-// parseAssistantToolCallsBlocks extracts every tool call the model emitted
-// inside <assistant_tool_calls>...</assistant_tool_calls> tags. The payload is
-// the OpenAI-style array json.Marshal(m.ToolCalls) produces in buildPrompt —
-// objects with a nested "function" whose "arguments" is a JSON-encoded string.
-func parseAssistantToolCallsBlocks(text string) []llm.ToolCall {
-	var calls []llm.ToolCall
-	for {
-		start := strings.Index(text, assistantToolCallsOpen)
-		if start < 0 {
-			break
-		}
-		rest := text[start+len(assistantToolCallsOpen):]
-		end := strings.Index(rest, assistantToolCallsClose)
-		if end < 0 {
-			break
-		}
-		calls = append(calls, parseToolCallArray(stripJSONFence(rest[:end]))...)
-		text = rest[end+len(assistantToolCallsClose):]
-	}
-	return calls
-}
-
-// parseToolCallArray parses the OpenAI-style tool-call array
-// [{"id":...,"type":"function","function":{"name":...,"arguments":"<json>"}}].
-// arguments is normally the JSON-encoded string the wire format uses; an object
-// form is tolerated for models that nest it directly.
-func parseToolCallArray(text string) []llm.ToolCall {
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "[") {
-		return nil
-	}
-	var raw []struct {
-		ID       string `json:"id"`
-		Function struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		} `json:"function"`
-	}
-	if err := json.Unmarshal([]byte(text), &raw); err != nil || len(raw) == 0 {
-		return nil
-	}
-	out := make([]llm.ToolCall, 0, len(raw))
-	for i, c := range raw {
-		if c.Function.Name == "" {
-			continue
-		}
-		id := c.ID
-		if id == "" {
-			id = fmt.Sprintf("call_%d", i)
-		}
-		out = append(out, llm.ToolCall{
-			ID:   id,
-			Type: toolCallTypeFunction,
-			Function: llm.ToolCallFunction{
-				Name:      c.Function.Name,
-				Arguments: normalizeToolArguments(c.Function.Arguments),
-			},
-		})
-	}
-	return out
-}
-
-// normalizeToolArguments returns the call arguments as a JSON object string.
-// The OpenAI wire form encodes arguments as a JSON-encoded string
-// ("{\"k\":1}"); some models nest the object directly ({"k":1}). Handle both,
-// defaulting empty or null to "{}".
-func normalizeToolArguments(raw json.RawMessage) string {
-	s := strings.TrimSpace(string(raw))
-	if s == "" || s == jsonNull {
-		return "{}"
-	}
-	if strings.HasPrefix(s, `"`) {
-		var unquoted string
-		if json.Unmarshal(raw, &unquoted) == nil {
-			if unquoted = strings.TrimSpace(unquoted); unquoted != "" && unquoted != jsonNull {
-				return unquoted
-			}
-			return "{}"
-		}
-	}
-	return s
-}
-
-func stripJSONFence(text string) string {
-	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "```") {
-		text = strings.TrimPrefix(text, "```json")
-		text = strings.TrimPrefix(text, "```")
-		text = strings.TrimSuffix(text, "```")
-		text = strings.TrimSpace(text)
-	}
-	return text
-}
-
-func toolProtocolCandidates(text string) []string {
-	var out []string
-	for i := 0; i < len(text); i++ {
-		if text[i] != '{' {
-			continue
-		}
-		end := jsonObjectEnd(text, i)
-		if end < 0 {
-			continue
-		}
-		candidate := text[i:end]
-		if strings.Contains(candidate, `"tool_calls"`) {
-			out = append(out, candidate)
-		}
-		i = end - 1
-	}
-	return out
-}
-
-func jsonObjectEnd(text string, start int) int {
-	if start < 0 || start >= len(text) || text[start] != '{' {
-		return -1
-	}
-	depth := 0
-	inString := false
-	escaped := false
-	for i := start; i < len(text); i++ {
-		c := text[i]
-		if inString {
-			if escaped {
-				escaped = false
-				continue
-			}
-			switch c {
-			case '\\':
-				escaped = true
-			case '"':
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return i + 1
-			}
-		}
-	}
-	return -1
-}
-
-func parseToolProtocolObject(text string) []llm.ToolCall {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-	var payload struct {
-		ToolCalls []struct {
-			ID        string          `json:"id"`
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		} `json:"tool_calls"`
-	}
-	if err := json.Unmarshal([]byte(text), &payload); err != nil || len(payload.ToolCalls) == 0 {
-		return nil
-	}
-	out := make([]llm.ToolCall, 0, len(payload.ToolCalls))
-	for i, c := range payload.ToolCalls {
-		if c.Name == "" {
-			continue
-		}
-		id := c.ID
-		if id == "" {
-			id = fmt.Sprintf("call_%d", i)
-		}
-		args := strings.TrimSpace(string(c.Arguments))
-		if args == "" || args == jsonNull {
-			args = "{}"
-		}
-		out = append(
-			out,
-			llm.ToolCall{ID: id, Type: toolCallTypeFunction, Function: llm.ToolCallFunction{Name: c.Name, Arguments: args}},
-		)
-	}
-	return out
+	res := toolparse.ParseArtifact(text)
+	return res.Calls
 }
 
 type partialToolCall struct {
@@ -676,10 +485,10 @@ func (s *toolCallState) toolCallsFromLine(line string) []llm.ToolCall {
 	if err := json.Unmarshal([]byte(line), &m); err != nil {
 		return nil
 	}
-	if m["type"] == "stream_event" {
+	if m["type"] == eventTypeStreamEvent {
 		return s.toolCallsFromStreamEvent(m)
 	}
-	if m["type"] == "assistant" {
+	if m["type"] == eventTypeAssistant {
 		if msg, _ := m["message"].(map[string]any); msg != nil {
 			return s.toolCallsFromContent(msg["content"])
 		}
@@ -815,7 +624,7 @@ func textDeltaFromLine(line string) string {
 	if err := json.Unmarshal([]byte(line), &m); err != nil {
 		return ""
 	}
-	if m["type"] == "stream_event" {
+	if m["type"] == eventTypeStreamEvent {
 		if ev, _ := m["event"].(map[string]any); ev != nil {
 			if delta, _ := ev["delta"].(map[string]any); delta != nil && delta["type"] == "text_delta" {
 				if s, _ := delta["text"].(string); s != "" {
@@ -824,7 +633,7 @@ func textDeltaFromLine(line string) string {
 			}
 		}
 	}
-	if m["type"] == "assistant" {
+	if m["type"] == eventTypeAssistant {
 		if msg, _ := m["message"].(map[string]any); msg != nil {
 			return contentText(msg["content"])
 		}
@@ -846,6 +655,54 @@ func contentText(v any) string {
 		}
 		if pm["type"] == "text" {
 			if s, _ := pm["text"].(string); s != "" {
+				b.WriteString(s)
+			}
+		}
+	}
+	return b.String()
+}
+
+// thinkingDeltaFromLine extracts extended-thinking text the same way
+// textDeltaFromLine extracts visible text — from stream_event
+// content_block_delta lines (delta.type == "thinking_delta") and from the
+// terminal assistant snapshot's "thinking" content blocks. Without this, the
+// model's reasoning is parsed as nothing and silently disappears.
+func thinkingDeltaFromLine(line string) string {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		return ""
+	}
+	if m["type"] == eventTypeStreamEvent {
+		if ev, _ := m["event"].(map[string]any); ev != nil {
+			if delta, _ := ev["delta"].(map[string]any); delta != nil && delta["type"] == "thinking_delta" {
+				if s, _ := delta["thinking"].(string); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	if m["type"] == eventTypeAssistant {
+		if msg, _ := m["message"].(map[string]any); msg != nil {
+			return thinkingText(msg["content"])
+		}
+		return thinkingText(m["content"])
+	}
+	return ""
+}
+
+func thinkingText(v any) string {
+	parts, ok := v.([]any)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	for _, part := range parts {
+		pm, _ := part.(map[string]any)
+		if pm == nil {
+			continue
+		}
+		if pm["type"] == "thinking" {
+			if s, _ := pm["thinking"].(string); s != "" {
 				b.WriteString(s)
 			}
 		}

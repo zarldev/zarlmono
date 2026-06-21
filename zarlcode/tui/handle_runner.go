@@ -80,6 +80,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	case teasink.ToolStartedMsg:
 		m.session.applyToolStarted(e)
 		m.timeline.startTool(e.TaskID, e.Depth, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters))
+		m.notePRRelevantTool(e.ToolName, e.Parameters)
 
 	case teasink.ToolCompletedMsg:
 		effect := m.session.applyToolCompleted(e)
@@ -163,6 +164,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 				m.timeline.closeGroups()
 				cmd = tea.Batch(cmd, m.launchQueuedTurn())
 			}
+			// Re-resolve the PR after the turn settles: catches an agent
+			// checkout (branch change) or a git/gh tool that opened/pushed a PR.
+			cmd = tea.Batch(cmd, m.refreshPRCmd())
 		}
 
 	default:

@@ -136,6 +136,9 @@ func (m *UI) llmStateLines() []string {
 		}
 		add("workspace", ws)
 	}
+	if pr := m.session.PR; pr != nil {
+		add("pr", prLine(pr))
+	}
 	if !m.session.StartedAt.IsZero() {
 		started := palette.Fg.On(m.session.StartedAt.Format("15:04")) +
 			palette.Muted.On(" · ") + palette.Subtle.On(fmtAgo(time.Since(m.session.StartedAt)))
