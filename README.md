@@ -55,8 +55,11 @@ zarlcode upgrade source set zarldev/zarlmono
 zarlcode upgrade                       # download latest, verify checksum, replace binary
 ```
 
-Homebrew formula is planned for a future release.
+### Homebrew
 
+```bash
+brew install zarldev/tap/zarlcode
+```
 ### zkit (library)
 
 ```bash
