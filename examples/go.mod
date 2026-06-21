@@ -5,8 +5,7 @@ go 1.26.1
 require (
 	github.com/chromedp/chromedp v0.15.1
 	github.com/joho/godotenv v1.5.1
-	github.com/zarldev/zarlmono/zarlcode v0.0.0-00010101000000-000000000000
-	github.com/zarldev/zarlmono/zkit v0.0.0-00010101000000-000000000000
+	github.com/zarldev/zarlmono/zkit v0.1.2
 )
 
 require (
@@ -59,12 +58,13 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/term v0.44.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/api v0.283.0 // indirect
 	google.golang.org/genai v1.59.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
@@ -74,10 +74,6 @@ require (
 	modernc.org/libc v1.72.5 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.51.0 // indirect
+	modernc.org/sqlite v1.52.0 // indirect
 	mvdan.cc/sh/v3 v3.13.1 // indirect
 )
-
-replace github.com/zarldev/zarlmono/zkit => ../zkit
-
-replace github.com/zarldev/zarlmono/zarlcode => ../zarlcode
