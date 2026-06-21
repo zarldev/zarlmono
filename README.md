@@ -10,8 +10,37 @@ guardrails, history compaction, an LLM provider layer, and the
 infrastructure underneath. The tools in this repo (`zarlcode`, `zarlai`,
 `swebench-eval`) are all built with it.
 
-## Modules
+## Install
 
+### zarlcode
+
+```bash
+# go install (recommended)
+go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2
+
+# or via homebrew
+brew install zarldev/tap/zarlcode
+
+# or build from source
+go run ./zarlcode/cmd
+```
+
+`zarlcode upgrade` self-updates from GitHub Releases:
+
+```bash
+zarlcode upgrade source set zarldev/zarlmono
+zarlcode upgrade
+```
+
+### zkit (library)
+
+```bash
+go get github.com/zarldev/zarlmono/zkit@v0.1.2
+```
+
+Docs: **[zarldev.github.io/zarlmono](https://zarldev.github.io/zarlmono)**
+
+## Modules
 `go.work` joins six Go modules:
 
 | Path | Module | Purpose |
@@ -36,35 +65,7 @@ site/           Documentation site (Astro Starlight → GitHub Pages)
 docker/         Local service definitions, including SearXNG
 ```
 ## Quick start
-## Install
 
-### zarlcode
-
-```bash
-# Go install (recommended)
-go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.2
-
-# Or build from source
-go run ./zarlcode/cmd
-```
-
-`zarlcode upgrade` self-updates from GitHub Releases. Set the release channel:
-
-```bash
-zarlcode upgrade source set zarldev/zarlmono
-zarlcode upgrade                       # download latest, verify checksum, replace binary
-```
-
-### Homebrew
-
-```bash
-brew install zarldev/tap/zarlcode
-```
-### zkit (library)
-
-```bash
-go get github.com/zarldev/zarlmono/zkit@v0.1.2
-```
 ### Use `zkit` in your own code
 
 A complete agent is a provider, a tool registry, and the loop — take those
@@ -210,7 +211,6 @@ and sessions persist to SQLite so `-continue` resumes the workspace.
 Useful docs:
 
 - [`zarlcode/AGENTS.md`](zarlcode/AGENTS.md) — implementation notes for the TUI/config/storage layer.
-- [zarldev.github.io/zarlmono](https://zarldev.github.io/zarlmono) — the zkit documentation site.
 
 ## Trust and safety boundaries
 
