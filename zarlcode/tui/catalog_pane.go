@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
@@ -437,49 +438,50 @@ func (d *catalogDialog) handleKey(msg tea.KeyPressMsg) action {
 
 func (d *catalogDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	w, h := area.Dx(), area.Dy()
-	if w < 30 || h < 10 {
+	if w < 50 || h < 12 {
 		return
 	}
-	boxW := min(70, w-4)
-	boxH := min(20, h-2)
-
-	lay, ok := drawDialogPane(scr, area, d.title(), boxW, boxH, palette.Border, palette.Primary)
+	l, ok := drawSplitPane(scr, area, "catalog", 28)
 	if !ok {
 		return
 	}
-	innerW, innerX := lay.Body.Dx(), lay.Body.Min.X
-
-	// Tab bar.
-	labels := make([]string, len(d.panes))
-	for i, name := range []string{" agents ", " skills ", " hooks "} {
-		if i == d.tab {
-			labels[i] = palette.Primary.On(name)
-		} else {
-			labels[i] = palette.Muted.On(name)
+	counts := make([]int, len(d.panes))
+	for i, p := range d.panes {
+		for _, r := range p.rows {
+			if r.name != "" {
+				counts[i]++
+			}
 		}
 	}
-	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), strings.Join(labels, " "))
-
-	// Body — detail lines fill all but the last body row, which is the status line.
+	left := overlayTopBar("catalog", []string{"agents", "skills", "hooks"}, d.tab, fmt.Sprintf("%d agents · %d skills · %d hooks", counts[0], counts[1], counts[2]), l.Context.Dx())
+	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+k close "), palette.Border)
 	pane := d.activePane()
-	detailY := lay.Body.Min.Y
-	detailH := lay.Body.Dy() - 1
-	lines := pane.detailLines(innerW, detailH)
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" inventory and local definitions"))
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
+	detailY := l.Nav.Min.Y + 2
+	detailH := max(0, l.Nav.Dy()-2)
+	lines := pane.detailLines(l.Nav.Dx(), detailH)
 	for i, line := range lines {
 		if i >= detailH {
 			break
 		}
-		drawPaddedLine(scr, uv.Rect(innerX, detailY+i, innerW, 1), line)
+		drawLine(scr, uv.Rect(l.Nav.Min.X, detailY+i, l.Nav.Dx(), 1), ansi.Truncate(line, l.Nav.Dx(), ""))
 	}
-
-	// Status (last body row).
-	if pane.status != "" && time.Since(pane.statusAt) < 3*time.Second {
-		drawPaddedLine(scr, uv.Rect(innerX, lay.Body.Max.Y-1, innerW, 1), palette.Muted.On(pane.status))
+	selection := []string{
+		sectionHead("selection", l.Detail.Dx()),
+		palette.Muted.On("browse and edit agent, skill, and hook definitions"),
 	}
-
-	// Footer.
+	for i, line := range selection {
+		if i >= l.Detail.Dy() {
+			break
+		}
+		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, l.Detail.Dx(), 1), ansi.Truncate(line, l.Detail.Dx(), ""))
+	}
+	if pane.status != "" && time.Since(pane.statusAt) < 3*time.Second && l.Detail.Dy() > 2 {
+		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+2, l.Detail.Dx(), 1), ansi.Truncate(palette.Muted.On(pane.status), l.Detail.Dx(), ""))
+	}
 	hint := pane.footerHint() + "  " + keyLegend(keyHint{"tab", "switch"}, keyHint{"esc", "close"})
-	drawPaddedLine(scr, uv.Rect(innerX, lay.Footer.Min.Y, innerW, 1), hint)
+	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+hint), "")
 }
 
 func (d *catalogDialog) title() string {

@@ -235,7 +235,7 @@ The two generators run via `task proto` and `sqlc generate`:
 | You want to…                          | Touch                                                  |
 |---------------------------------------|--------------------------------------------------------|
 | Add a tool                            | new pkg under `tools/` or `<name>/`, implement `service.Tool`, register in `cmd/zarl/main.go` |
-| Add a sensor                          | implement `sensor.Sensor`, register in `cmd/zarl/main.go` |
+| Add a sensor                          | implement `sensor.Sensor`, wire it through `cmd/zarl/sensors.go` |
 | Change the API surface                | edit `proto/zarl/v1/*.proto`, `task proto`, implement on both sides |
 | Add a DB table or query               | new migration in `migrations/`, query in `repository/queries/`, `cd repository && sqlc generate` |
 | Give the taskrunner a new personality | new profile in `taskrunner/builtin_profiles.go` (or DB override) |

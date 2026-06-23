@@ -115,7 +115,8 @@ Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls
 | `Shift+Tab` | Toggle Plan ↔ Build mode |
 | `Tab` | Enter transcript browse mode |
 | `Esc` | Stop running turn |
-| `Ctrl+C` / `Ctrl+Q` | Quit |
+| `Ctrl+C` | Quit |
+| `Ctrl+Q` | Clear context |
 | `Ctrl+L` | Expand context dashboard |
 | `PgUp` / `PgDn` | Page transcript |
 
@@ -132,7 +133,7 @@ Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls
 | `Ctrl+G` | Help — full key reference |
 | `Ctrl+W` | Working set pane — files touched this session |
 | `Ctrl+Y` | Execution tray — steer a live run |
-| `Ctrl+O` | Inspector — drill into tool calls and results |
+| `Ctrl+I` | Inspector — drill into tool calls and results |
 
 #### Browse mode (`Tab` to enter)
 
@@ -170,11 +171,11 @@ Exit codes: 0 = completed, 1 = max iterations / cancelled, 2 = error, 4 = bad in
 |---------|-------------|
 | `zarlcode init` | Materialise `~/.zarlcode/` (prompt.md, skills, tools, config skeleton) |
 | `zarlcode keys` | Manage credentials: `list`, `set`, `delete`, `oauth`, `protect status/on/off` |
-| `zarlcode serve` | Launch as a headless HTTP server (ConnectRPC API) |
+| `zarlcode serve` | Exec `llama-server` with zarlcode's canonical local-model defaults |
 | `zarlcode upgrade` | Self-upgrade — download and replace the zarlcode binary |
 | `zarlcode --askpass` | Internal: sudo `SUDO_ASKPASS` shim used when `sudo_askpass` is enabled |
 
-Plus TUI flags: `-env`, `-agent`, `-continue`, `-version`.
+Interactive flags: `-env`, `-agent`, `-continue`, `-version`. Headless flags: `--headless`, `--prompt-file`, `--prompt-text`, `--max-iter`.
 
 ## Module structure
 

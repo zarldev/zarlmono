@@ -1,20 +1,18 @@
 package tui
 
 import (
+	"cmp"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
-)
-
-// cockpitMinWidth / cockpitMinHeight are the inner dimensions below which
-// the rich graphical cockpit degrades to the flat row fallback (run.lines).
-const (
-	cockpitMinWidth  = 26
-	cockpitMinHeight = 10
 )
 
 // cockpitLines renders the rich cockpit body — gauge, context graph,
@@ -173,6 +171,141 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 	return out
 }
 
+func (m *UI) contextPromptLines(width int) []string {
+	snap := BuildInspectorSnapshot(m.session, m.live, nil)
+	out := []string{sectionHead("prompt", width)}
+	stackLines := promptStackSummaryLines(snap.PromptStack)
+	if len(stackLines) == 0 {
+		out = append(out, palette.Muted.On("prompt stack unavailable"))
+	} else {
+		out = append(out, stackLines...)
+	}
+	if len(snap.Errors) > 0 {
+		out = append(out, "", sectionHead("warnings", width))
+		for _, err := range snap.Errors {
+			out = append(out, "  "+palette.Muted.On(err))
+		}
+	}
+	if snap.PromptSystem == "" {
+		return append(out, "", sectionHead("preview", width), palette.Muted.On("prompt preview not available"))
+	}
+	preview := promptPreviewLines(snap.PromptSystem, width)
+	if len(preview) > 0 {
+		out = append(out, "", sectionHead("preview", width))
+		out = append(out, preview...)
+	}
+	return out
+}
+
+func promptPreviewLines(prompt string, width int) []string {
+	var out []string
+	for _, ln := range strings.Split(prompt, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if trimmed == "" || trimmed == "---" {
+			continue
+		}
+		prefix := "  "
+		style := palette.Muted.On
+		if strings.HasPrefix(trimmed, "[") {
+			style = palette.Info.On
+		} else if strings.HasSuffix(trimmed, ":") || strings.HasPrefix(trimmed, "workspace:") || strings.HasPrefix(trimmed, "model:") {
+			style = palette.Subtle.On
+		}
+		out = append(out, renderPlain(width, prefix+trimmed, withStyle(style))...)
+		if len(out) >= 24 {
+			out = append(out, palette.Subtle.On("  … prompt preview truncated"))
+			break
+		}
+	}
+	return out
+}
+
+func (m *UI) contextToolsLines(width int) []string {
+	snap := BuildInspectorSnapshot(m.session, m.live, nil)
+	available, hidden := groupContextTools(snap.Tools, snap.PlanMode)
+	out := []string{sectionHead("tools", width)}
+	out = append(out, palette.Muted.On(fmt.Sprintf("%d available now · %d hidden", len(available), len(hidden))))
+	if len(available) > 0 {
+		out = append(out, "", sectionHead("available", width))
+		out = append(out, renderToolSpecRows(available)...)
+	}
+	if len(hidden) > 0 {
+		out = append(out, "", sectionHead("plan-hidden", width))
+		out = append(out, renderToolSpecRows(hidden)...)
+	}
+	if top := m.session.Run.topTools(); len(top) > 0 {
+		out = append(out, "", sectionHead("recent usage", width))
+		out = append(out, toolHistogram(top, width, max(12, len(top)))...)
+	}
+	return out
+}
+
+func groupContextTools(specs []tools.ToolSpec, plan bool) (available, hidden []tools.ToolSpec) {
+	for _, spec := range specs {
+		if plan && !engine.PlanAllows(spec.Name) {
+			hidden = append(hidden, spec)
+			continue
+		}
+		available = append(available, spec)
+	}
+	slices.SortFunc(available, func(a, b tools.ToolSpec) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(hidden, func(a, b tools.ToolSpec) int { return cmp.Compare(a.Name, b.Name) })
+	return available, hidden
+}
+
+func renderToolSpecRows(specs []tools.ToolSpec) []string {
+	out := make([]string, 0, len(specs)*2)
+	for _, spec := range specs {
+		out = append(out, "  "+palette.Info.On(string(spec.Name)))
+		out = append(out, "    "+palette.Muted.On(spec.Description))
+	}
+	return out
+}
+
+func (m *UI) contextEventsLines(width int) []string {
+	snap := BuildInspectorSnapshot(m.session, m.live, nil)
+	groups := groupContextEvents(snap.EventLog)
+	out := []string{sectionHead("events", width)}
+	if len(snap.EventLog) == 0 {
+		return append(out, palette.Muted.On("no events recorded yet"))
+	}
+	for _, g := range groups {
+		if len(g.events) == 0 {
+			continue
+		}
+		out = append(out, "", sectionHead(g.label, width))
+		for _, e := range g.events {
+			out = append(out, formatContextEventRow(e))
+		}
+	}
+	return out
+}
+
+type contextEventGroup struct {
+	label  string
+	events []EventRingEntry
+}
+
+func groupContextEvents(events []EventRingEntry) []contextEventGroup {
+	groups := []contextEventGroup{{label: "context", events: nil}, {label: "run", events: nil}, {label: "system", events: nil}}
+	for _, e := range events {
+		kind := strings.ToLower(e.Kind + " " + e.Detail)
+		switch {
+		case strings.Contains(kind, "compact") || strings.Contains(kind, "context"):
+			groups[0].events = append(groups[0].events, e)
+		case strings.Contains(kind, "tool") || strings.Contains(kind, "run") || strings.Contains(kind, "turn") || strings.Contains(kind, "agent"):
+			groups[1].events = append(groups[1].events, e)
+		default:
+			groups[2].events = append(groups[2].events, e)
+		}
+	}
+	return groups
+}
+
+func formatContextEventRow(e EventRingEntry) string {
+	return fmt.Sprintf("  %s  %s  %s", palette.Subtle.On(e.At.Format("15:04:05")), palette.Primary.On(e.Kind), palette.Muted.On(e.Detail))
+}
+
 func (m *UI) toolsPaneLines(width, _ int) []string {
 	tools := m.session.Run.topTools()
 	if len(tools) == 0 {
@@ -199,12 +332,21 @@ func (m *UI) runPaneLines(width, height int) []string {
 			out = append(out, tp)
 		}
 	}
-	out = append(out, "", sectionHead("history", width))
-	rows := max(4, height-len(out)-1)
-	out = append(out, s.historyTable(rows)...)
-	if s.compactions > 0 && len(out)+2 < height {
-		out = append(out, "", sectionHead("compaction", width))
-		out = append(out, s.compactionLines()...)
+	if tail := min(len(s.history), 6); tail > 0 {
+		out = append(out, "")
+		out = append(out, sectionHead("history", width))
+		start := len(s.history) - tail
+		for i, h := range s.history[start:] {
+			cachePct := 0
+			if h.tokIn > 0 {
+				cachePct = h.cached * 100 / h.tokIn
+			}
+			line := fmt.Sprintf("• turn %d · %s in · %s out · %d%% cache", start+i+1, fmtCount(h.tokIn), fmtCount(h.tokOut), cachePct)
+			if h.compacted {
+				line += " · compacted"
+			}
+			out = append(out, palette.Muted.On(ansi.Truncate(line, width, "…")))
+		}
 	}
 	return out
 }
@@ -213,23 +355,36 @@ func (m *UI) planStateLines(width int) []string {
 	p := m.session.Plan
 	done, doing, pending := planCounts(p)
 	out := []string{palette.Muted.On(itoa(len(p.Steps)) + " steps · " + itoa(done) + " done · " + itoa(doing) + " active · " + itoa(pending) + " pending")}
+	prioritized := prioritizedPlanPreviewSteps(p.Steps)
 	shown := 0
-	for _, step := range p.Steps {
+	for _, step := range prioritized {
 		if shown >= 3 {
 			break
 		}
-		if shown > 0 && step.Status == code.StepStatuses.COMPLETED && doing+pending > 0 {
-			continue
-		}
 		glyph, style := planStepDecor(step.Status)
-		prefix := glyph + " "
-		out = append(out, renderPlain(width, step.Text,
-			withFirstPrefix(prefix, strings.Repeat(" ", ansi.StringWidth(prefix))),
-			withStyle(style),
-		)...)
+		line := glyph + " " + ansi.Truncate(step.Text, max(1, width-ansi.StringWidth(glyph)-1), "…")
+		out = append(out, style(line))
 		shown++
 	}
+	if hidden := len(p.Steps) - shown; hidden > 0 {
+		out = append(out, palette.Subtle.On("… "+itoa(hidden)+" more plan items"))
+	}
 	return out
+}
+
+func prioritizedPlanPreviewSteps(steps []code.PlanStep) []code.PlanStep {
+	ordered := make([]code.PlanStep, 0, len(steps))
+	appendStatus := func(status code.StepStatus) {
+		for _, step := range steps {
+			if step.Status == status {
+				ordered = append(ordered, step)
+			}
+		}
+	}
+	appendStatus(code.StepStatuses.INPROGRESS)
+	appendStatus(code.StepStatuses.PENDING)
+	appendStatus(code.StepStatuses.COMPLETED)
+	return ordered
 }
 
 func (m *UI) modeLabel() string {
@@ -268,7 +423,7 @@ func kvLine(label, value string) string {
 // of the active LLM configuration before the live token/cost/tool gauges begin.
 func (m *UI) llmStateLines() []string {
 	s := &m.session.Run
-	out := make([]string, 0, 8)
+	out := make([]string, 0, 9)
 	add := func(label, value string) {
 		out = append(out, palette.Subtle.On(padRight(label, 10))+value)
 	}
@@ -298,11 +453,10 @@ func (m *UI) llmStateLines() []string {
 	add("billing", s.billingLine())
 
 	if m.session.Workspace != "" {
-		ws := palette.Fg.On(m.session.Workspace)
-		if m.session.Branch != "" {
-			ws += palette.Muted.On(" · ") + palette.Secondary.On(m.session.Branch)
-		}
-		add("workspace", ws)
+		add("workspace", palette.Fg.On(m.session.Workspace))
+	}
+	if m.session.Branch != "" {
+		add("branch", palette.Secondary.On(m.session.Branch))
 	}
 	if pr := m.session.PR; pr != nil {
 		add("pr", prLine(pr))

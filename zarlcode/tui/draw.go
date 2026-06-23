@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
@@ -160,6 +162,69 @@ func drawDialogPane(scr uv.Screen, area uv.Rectangle, label string, w, h int, bo
 	}, true
 }
 
+// overlayTopBar renders the shared full-screen overlay top strip: a left title/
+// summary cluster and an optional right-side hint cluster, with active tabs
+// bracketed in the primary tone and passive tabs muted.
+func overlayTopBar(title string, tabs []string, active int, summary string, width int) string {
+	parts := []string{palette.Muted.On(title)}
+	if len(tabs) > 0 {
+		tabParts := make([]string, 0, len(tabs))
+		for i, tab := range tabs {
+			if i == active {
+				tabParts = append(tabParts, palette.Primary.On("[ "+tab+" ]"))
+			} else {
+				tabParts = append(tabParts, palette.Subtle.On(tab))
+			}
+		}
+		parts = append(parts, strings.Join(tabParts, "  "))
+	}
+	if summary != "" {
+		parts = append(parts, palette.Subtle.On("· ")+palette.Muted.On(summary))
+	}
+	return ansi.Truncate(strings.Join(parts, " "), width, "")
+}
+
+func compactFooterHints(hints ...keyHint) string {
+	compact := make([]keyHint, len(hints))
+	copy(compact, hints)
+	for i := range compact {
+		switch compact[i].label {
+		case "navigate":
+			compact[i].label = "move"
+		case "scroll detail":
+			compact[i].label = "detail"
+		case "switch view":
+			compact[i].label = "view"
+		case "show diff":
+			compact[i].label = "diff"
+		case "kill process":
+			compact[i].label = "kill"
+		case "open folder":
+			compact[i].label = "open"
+		case "open source":
+			compact[i].label = "source"
+		case "edit file":
+			compact[i].label = "edit"
+		case "clear queue":
+			compact[i].label = "clear"
+		case "switch mode":
+			compact[i].label = "mode"
+		case "switch tab":
+			compact[i].label = "tab"
+		case "switch provider":
+			compact[i].label = "provider"
+		}
+	}
+	return keyLegend(compact...)
+}
+
+// drawOverlayContext paints the top strip plus a separating rule for a
+// full-screen overlay using the shared reference design.
+func drawOverlayContext(scr uv.Screen, l splitPaneLayout, left, right string, border theme.Color) {
+	drawPaneRow(scr, l.Context, left, right)
+	drawLine(scr, uv.Rect(l.Context.Min.X, l.Context.Min.Y+1, l.Context.Dx(), 1), border.On(strings.Repeat("─", l.Context.Dx())))
+}
+
 // drawPaneRow paints a left/right row inside an already-framed pane region.
 func drawPaneRow(scr uv.Screen, r uv.Rectangle, left, right string) {
 	if r.Dx() < 1 || r.Dy() < 1 {
@@ -178,9 +243,10 @@ func drawListRow(scr uv.Screen, r uv.Rectangle, label string, selected, focused 
 	}
 	marker := "  "
 	if selected {
-		marker = palette.Assistant.On("▶ ")
 		if focused {
-			marker = palette.Primary.On("▶ ")
+			marker = palette.Primary.On("▸ ")
+		} else {
+			marker = palette.Subtle.On("▸ ")
 		}
 	}
 	line := ansi.Truncate(marker+label, w, "")

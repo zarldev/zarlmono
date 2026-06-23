@@ -47,10 +47,10 @@ General preferences when the matching tools are present:
    ```
    ## Plan
 
-   1. **Add `Foo` field** to `pkg/bar/baz.go:42` — change the
+   1. **Add `Foo` field** to `internal/bar/baz.go:42` — change the
       struct definition + downstream constructor.
    2. **Update `Marshal()`** in the same file to emit Foo.
-   3. **Add a test** in `pkg/bar/baz_test.go` covering the Foo
+   3. **Add a test** in `internal/bar/baz_test.go` covering the Foo
       round-trip.
    4. **Wire the new field** into the consumer at
       `cmd/qux/main.go:118`.

@@ -110,11 +110,12 @@ func (t *WriteTool) Execute(_ context.Context, call tools.ToolCall) (*tools.Tool
 	if _, statErr := os.Stat(abs); statErr == nil {
 		return tools.Failure(call.ID, tools.Validation("write", fmt.Sprintf(
 			"%q already exists. write only creates NEW files — use edit to modify it:\n"+
-				"  edit(path=%q, old_string=<exact current text>, new_string=<replacement>)\n"+
+				"  1) read(path=%q, ...) to get line/hash anchors\n"+
+				"  2) edit(path=%q, start_line=<from read>, start_hash=<from read>, new_string=<replacement> ...)\n"+
 				"If you don't already know the current content, call read first. "+
-				"Include 2-3 lines of surrounding context in old_string so it's unique in the file. "+
+				"Use the anchors from read; they usually survive line-number shifts from earlier edits, but if the file changed underneath you then re-read and retry with fresh anchors. "+
 				"For multiple changes, emit one edit per location — do not retry write, it will be refused again.",
-			args.Path, args.Path))), nil
+			args.Path, args.Path, args.Path))), nil
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
 		return tools.Failure(call.ID, tools.Fatal("write", fmt.Errorf("stat %q: %w", args.Path, statErr))), nil
 	}

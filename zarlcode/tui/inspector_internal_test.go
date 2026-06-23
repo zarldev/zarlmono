@@ -1,3 +1,4 @@
+
 package tui
 
 import (
@@ -12,6 +13,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -34,6 +36,21 @@ func TestInspector_OpensWithCtrlI(t *testing.T) {
 	for _, want := range []string{"inspector", "tools", "prompt", "guardrails", "processes", "mcp", "events", "skills", "agents"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("inspector missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestContextView_TabBarAndPromptSummary(t *testing.T) {
+	m := New()
+	stepUI(t, m, tea.WindowSizeMsg{Width: 120, Height: 32})
+	m.session.SetCockpitExpanded(true)
+	m.session.Run.foldTurnComplete(&llm.Usage{PromptTokens: 600, CompletionTokens: 80, TotalTokens: 680, CachedTokens: 200}, time.Second, 1)
+	m.contextView.setTab(contextViewTabPrompt)
+
+	out := ansi.Strip(m.View().Content)
+	for _, want := range []string{"context view", "overview", "context", "prompt", "tools", "events", "preview"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("context view missing %q:\n%s", want, out)
 		}
 	}
 }

@@ -200,7 +200,6 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 		boxW = maxW
 	}
 	boxH := min(20, h-2)
-
 	lay, ok := drawDialogPane(scr, area, "model", boxW, boxH, palette.Border, palette.Primary)
 	if !ok {
 		return
@@ -208,12 +207,15 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 	innerW, innerX := lay.Body.Dx(), lay.Body.Min.X
 	bodyY := lay.Body.Min.Y
 
-	// Provider tabs.
-	p.drawTabs(scr, innerX, lay.Context.Min.Y, innerW)
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), overlayTopBar("model", nil, 0, p.activeProvider(), innerW))
+	drawPaddedLine(scr, uv.Rect(innerX, bodyY, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
+	bodyY += 1
 
-	// Free-text fallback.
+	p.drawTabs(scr, innerX, bodyY, innerW)
+	bodyY += 2
+
 	if p.fallback {
-		p.drawFallback(scr, lay.Body)
+		p.drawFallback(scr, uv.Rect(innerX, bodyY, innerW, lay.Footer.Min.Y-bodyY))
 		return
 	}
 
@@ -223,16 +225,12 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 		drawPaddedLine(scr, uv.Rect(innerX, bodyY, innerW, 1), line)
 		return
 	}
-
 	if len(models) == 0 {
 		label := palette.Muted.On("  no models — type to enter a model name")
 		drawPaddedLine(scr, uv.Rect(innerX, bodyY, innerW, 1), label)
 		return
 	}
-
-	// Scrollable model list — reserve indicator rows so the selected model stays
-	// visible instead of being scrolled onto the footer (same fix as themepicker).
-	start, end, up, down := listWindow(p.cursor, len(models), lay.Body.Dy())
+	start, end, up, down := listWindow(p.cursor, len(models), lay.Footer.Min.Y-bodyY)
 	y := bodyY
 	if up {
 		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Muted.On("  ↑ more"))
@@ -248,13 +246,11 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), line)
 		y++
 	}
-	if down {
+	if down && y < lay.Footer.Min.Y {
 		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Muted.On("  ↓ more"))
 	}
 
-	// Footer.
-	hint := keyLegend(keyHint{"↑↓", "navigate"}, keyHint{"enter", "select"},
-		keyHint{"tab", "provider"}, keyHint{"esc", "close"})
+	hint := keyLegend(keyHint{"↑↓", "navigate"}, keyHint{"enter", "select"}, keyHint{"tab", "provider"}, keyHint{"esc", "close"})
 	drawPaddedLine(scr, uv.Rect(innerX, lay.Footer.Min.Y, innerW, 1), hint)
 }
 
@@ -264,15 +260,13 @@ func (p *modelQuickPick) drawTabs(scr uv.Screen, x, y, width int) {
 	}
 	var parts []string
 	for i, name := range p.providers {
-		label := " " + name + " "
 		if i == p.provCur {
-			label = palette.Primary.On(label)
+			parts = append(parts, palette.Primary.On("[ "+name+" ]"))
 		} else {
-			label = palette.Muted.On(label)
+			parts = append(parts, palette.Subtle.On(name))
 		}
-		parts = append(parts, label)
 	}
-	drawPaddedLine(scr, uv.Rect(x, y, width, 1), strings.Join(parts, ""))
+	drawPaddedLine(scr, uv.Rect(x, y, width, 1), strings.Join(parts, "  "))
 }
 
 const modelQuickPickMinWidth = 60
@@ -283,7 +277,7 @@ func (p *modelQuickPick) providerTabsWidth() int {
 	}
 	w := 0
 	for _, name := range p.providers {
-		w += ansi.StringWidth(" " + name + " ")
+		w += ansi.StringWidth("[ " + name + " ]  ")
 	}
 	return w
 }

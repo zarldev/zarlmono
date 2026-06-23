@@ -27,7 +27,7 @@ func TestSteerTrayRendersQueuedMessages(t *testing.T) {
 
 	stepUI(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'y'})
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"execution tray", "hello", "world", "2 queued message(s)", "prefer minimal diffs"} {
+	for _, want := range []string{"execution tray", "hello", "world", "2 queued · 5 controls", "prefer minimal di"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("steer tray missing %q:\n%s", want, out)
 		}

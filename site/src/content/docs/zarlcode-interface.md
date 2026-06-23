@@ -158,6 +158,7 @@ interleaved output.
 | `Ctrl+K` | agents & skills catalog |
 | `Ctrl+G` | key help |
 | `Ctrl+Q` | clear context (with confirm) |
+| `Ctrl+I` | inspector |
 | `Ctrl+C` | quit |
 
 Slash commands work in the composer too: `/clear` resets the

@@ -22,10 +22,10 @@ func TestThemePicker_RendersFramedBox(t *testing.T) {
 	p.draw(scr, uv.Rect(0, 0, 120, 40))
 	out := ansi.Strip(scr.Render())
 
-	// Title + summary + footer, plus the selected theme ("nord") which must stay
-	// visible even when scrolled, and the full footer ("close") which the box now
-	// widens to fit.
-	for _, want := range []string{"themes", "previewing live", "nord", "navigate", "select", "close"} {
+	// Title + compact summary + footer, plus the selected theme ("nord") which
+	// must stay visible even when scrolled, and the full footer ("close") which
+	// the box now widens to fit.
+	for _, want := range []string{"themes", "32/57", "nord", "navigate", "select", "close"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("theme picker render missing %q:\n%s", want, out)
 		}

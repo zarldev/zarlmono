@@ -31,15 +31,24 @@ func TestSidebar_ShowsRunState(t *testing.T) {
 
 func TestSidebar_StateCardShowsChangesAndSessionTotals(t *testing.T) {
 	m := New()
+	m.session.Workspace = "~/proj"
+	m.session.Branch = "feat/sidebar"
+	m.session.PR = &PRInfo{Number: 4, Title: "Sidebar polish", State: "OPEN", URL: "https://github.com/zarldev/zarlmono/pull/4"}
 	m.session.WorkingSet.RecordDiff("a.txt", "@@\n-old\n+new")
 	m.session.Run.sessionTurns = 2
 	m.session.Run.sessionToolCalls = 5
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	out := ansi.Strip(mm.View().Content)
-	for _, want := range []string{"changes", "1 files", "1 edits", "session", "2 turns", "5 calls"} {
+	for _, want := range []string{"workspace", "~/proj", "branch", "feat/sidebar", "pr", "#4", "changes", "1 files", "1 edits", "session", "2 turns", "5 calls"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("state card missing %q:\n%s", want, out)
 		}
+	}
+	workspaceAt := strings.Index(out, "workspace ~/proj")
+	branchAt := strings.Index(out, "branch    feat/sidebar")
+	prAt := strings.Index(out, "pr        #4")
+	if workspaceAt < 0 || branchAt < 0 || prAt < 0 || !(workspaceAt < branchAt && branchAt < prAt) {
+		t.Fatalf("expected workspace, then branch, then pr ordering:\n%s", out)
 	}
 }
 

@@ -78,6 +78,10 @@ type inspector struct {
 	height        int
 }
 
+func inspectorSummary(s InspectorSnapshot) string {
+	return fmt.Sprintf("%d tools · %d events · %d processes", len(s.Tools), len(s.EventLog), len(s.Processes))
+}
+
 func newInspector(snapshot InspectorSnapshot) *inspector {
 	return &inspector{snapshot: snapshot}
 }
@@ -173,26 +177,27 @@ func (d *inspector) draw(scr uv.Screen, area uv.Rectangle) {
 		return
 	}
 	d.height = l.Detail.Dy()
-	drawPaneRow(scr, l.Context, palette.Muted.On(" "+d.tabBar()), palette.Subtle.On("ctrl+o close "))
-	drawPaneHRule(scr, l.Context.Min.X, l.Context.Min.Y+1, l.Context.Dx(), -1, "")
-
-	// Nav: tab names
+	left := overlayTopBar("inspector", inspectorTabNames, d.cursor, inspectorSummary(d.snapshot), l.Context.Dx())
+	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+o close "), palette.Border)
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" tabs · next-turn diagnostics"))
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
 	for i, name := range inspectorTabNames {
-		screenY := l.Nav.Min.Y + i
+		screenY := l.Nav.Min.Y + 2 + i
 		if screenY >= l.Nav.Max.Y {
 			break
 		}
 		drawListRow(scr, uv.Rect(l.Nav.Min.X, screenY, l.Nav.Dx(), 1), name, i == d.cursor, true)
 	}
 
-	cw := l.Detail.Dx() - scrollbarWidth // reserve the gutter
+	detailY := l.Detail.Min.Y
+	detailH := l.Detail.Dy()
+	cw := l.Detail.Dx() - scrollbarWidth
 	contentLines := d.contentLines(cw)
-	d.scroll = clampScrollOffset(d.scroll, len(contentLines), l.Detail.Dy())
-	for i := d.scroll; i < len(contentLines) && i-d.scroll < l.Detail.Dy(); i++ {
-		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i-d.scroll, cw, 1),
-			ansi.Truncate(contentLines[i], cw, ""))
+	d.scroll = clampScrollOffset(d.scroll, len(contentLines), detailH)
+	for i := d.scroll; i < len(contentLines) && i-d.scroll < detailH; i++ {
+		drawLine(scr, uv.Rect(l.Detail.Min.X, detailY+i-d.scroll, cw, 1), ansi.Truncate(contentLines[i], cw, ""))
 	}
-	drawPaneScrollbar(scr, l.Detail.Max.X-1, l.Detail.Min.Y, l.Detail.Dy(), len(contentLines), d.scroll)
+	drawPaneScrollbar(scr, l.Detail.Max.X-1, detailY, detailH, len(contentLines), d.scroll)
 	d.drawFooter(scr, l.Footer)
 }
 

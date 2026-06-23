@@ -32,7 +32,7 @@ func (m *UI) statusHint() string {
 		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q clear"
 	}
 	if m.session.CockpitExpanded {
-		return " ↑↓/jk scroll  ·  pgup/pgdn page  ·  home/end jump  ·  ctrl+l / esc / q close  ·  " + stopKey + "  ·  ctrl+g keys"
+		return " tab/←→ switch  ·  ↑↓/jk scroll  ·  pgup/pgdn page  ·  home/end jump  ·  ctrl+l / esc / q close  ·  " + stopKey + "  ·  ctrl+g keys"
 	}
 	if m.timeline.browsing {
 		return " ↑↓/jk move  ·  enter expand  ·  pgup/pgdn page  ·  esc/i compose  ·  " + stopKey + "  ·  ctrl+g keys"

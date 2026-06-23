@@ -48,7 +48,7 @@ func TestWorkingSetPane_CoalescesMultipleEditsInFileRows(t *testing.T) {
 	stepUI(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'w'})
 
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"a.go", "b.go", "2 edits", "2 mutations", "2 files · 1 turns · 0/0 processes"} {
+	for _, want := range []string{"a.go", "b.go", "2 mutations", "2 mutations", "2 files · 1 turns · 0/0 processes"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("working set multi-file view missing %q:\n%s", want, out)
 		}
@@ -68,7 +68,7 @@ func TestWorkingSetPane_GroupsByTurn(t *testing.T) {
 	stepUI(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"working set · turns", "2 files · 2 turns · 0/0 processes", "turn #1", "turn #2", "2 files", "id: turn-1"} {
+	for _, want := range []string{"[ turns ]", "2 files · 2 turns · 0/0 processes", "turn #1", "turn #2", "2 files", "2 edits", "id: turn-1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("working set turn view missing %q:\n%s", want, out)
 		}
@@ -83,7 +83,7 @@ func TestWorkingSetPane_RendersProcessesView(t *testing.T) {
 	stepUI(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"working set · processes", "no background processes tracked", "0/0 processes"} {
+	for _, want := range []string{"[ processes ]", "no background processes tracked", "0/0 processes", "background processes for this session"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("working set processes view missing %q:\n%s", want, out)
 		}

@@ -82,7 +82,7 @@ func TestWrite_RefusalMessageGuidesToEdit(t *testing.T) {
 	if res.Success {
 		t.Fatal("want refusal")
 	}
-	for _, want := range []string{"already exists", "edit", "path", "old_string", "new_string", "read"} {
+	for _, want := range []string{"already exists", "edit", "read", "start_line", "start_hash", "new_string"} {
 		if !strings.Contains(res.Error, want) {
 			t.Errorf("refusal message missing %q: %q", want, res.Error)
 		}

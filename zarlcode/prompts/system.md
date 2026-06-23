@@ -39,7 +39,7 @@ Preferences when the matching tools are present:
 - Search before reading: content search for text, filename globbing for paths, and
   directory listing for one-level inspection.
 - For edits, read the target first and use the anchors returned by the read output.
-  Re-read only after a stale-anchor error.
+  Anchors usually survive line-number shifts from your own earlier edits; re-read when the target's content may have changed underneath you, and always after a stale-anchor error.
 - For long output, use the spill path named by the tool result rather than rerunning
   the same noisy command.
 

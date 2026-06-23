@@ -32,12 +32,9 @@ The interactive surface is at `/` (Immersive — camera + talking head),
 - **Text-to-speech** via sherpa-onnx (Kokoro voices)
 - **Face recognition** via dlib / go-face (128-dim embeddings, per-person
   memory across sessions)
-- **Tool calling** — Home Assistant control, Obsidian vault read/write,
-  Spotify playback, web search (SearXNG), local Wikipedia semantic
-  search, per-person memory (Qdrant), timers, generic MCP servers
+- **Tool calling** — Home Assistant control, web search (SearXNG), YouTube search, local Wikipedia semantic search, per-person memory (Qdrant), timers, Spotify playback, code/workspace tools, and generic MCP servers
 - **Autonomous background tasks** with named profiles:
-  - **researcher** — multi-step web/wiki research with Obsidian
-    write-up
+  - **researcher** — multi-step web/wiki/video research with optional Obsidian write-up when the Obsidian MCP provider is configured
   - **coder** — bash + file editing in a workspace, autonomous code
     changes
   - **default** — general-purpose loops, scheduled or ad-hoc, with

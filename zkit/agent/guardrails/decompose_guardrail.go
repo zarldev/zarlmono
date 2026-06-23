@@ -418,7 +418,7 @@ func toolNudgeAdvisory(original string, tool tools.ToolName, toolCount int, allV
 		return fmt.Sprintf(
 			"%s (advisory: the %q tool has now failed %d times in this task because the "+
 				"target kept moving — your line/hash anchors are stale. Re-run read on the "+
-				"file before each edit so the anchors are fresh; the input format is fine "+
+				"file when the target may have changed underneath you, and always after a stale-anchor rejection, so the anchors are fresh; the input format is fine "+
 				"and switching tools won't help. The original error is the source of truth.)",
 			original, tool, toolCount)
 	}

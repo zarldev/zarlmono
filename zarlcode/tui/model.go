@@ -39,8 +39,10 @@ type UI struct {
 	// intro is the full-screen fresh-start surface: first prompt plus a picker
 	// for saved sessions in this workspace. Nil after the user starts/resumes.
 	intro *introPane
-	// dashboardScroll is the vertical offset inside the expanded context view.
-	dashboardScroll int
+	// contextView tracks the full-screen ctrl+l live-context surface: active tab,
+	// per-tab scroll offsets, and any tab-local cursors. It replaces the old
+	// single dashboardScroll field now that the context view is tabbed.
+	contextView contextViewState
 	// frame counts animation ticks; ticking guards a single in-flight tick
 	// loop. Both drive the streaming pulse on the cockpit gauge while a run
 	// is live; they idle (no ticks scheduled) when nothing is running.
@@ -91,6 +93,64 @@ type UI struct {
 	startupFailure *startupFailurePane
 
 }
+
+type contextViewTab int
+
+const (
+	contextViewTabOverview contextViewTab = iota
+	contextViewTabContext
+	contextViewTabPrompt
+	contextViewTabTools
+	contextViewTabEvents
+	contextViewTabCount
+)
+
+var contextViewTabNames = []string{"overview", "context", "prompt", "tools", "events"}
+
+type contextViewState struct {
+	tab         contextViewTab
+	scroll      [contextViewTabCount]int
+	toolSection int
+	eventGroup  int
+}
+
+func (s *contextViewState) activeScroll() int {
+	if s == nil {
+		return 0
+	}
+	return s.scroll[s.tab]
+}
+
+func (s *contextViewState) setActiveScroll(v int) {
+	if s == nil {
+		return
+	}
+	s.scroll[s.tab] = v
+}
+
+func (s *contextViewState) scrollActiveBy(delta int) {
+	if s == nil || delta == 0 {
+		return
+	}
+	s.scroll[s.tab] += delta
+	if s.scroll[s.tab] < 0 {
+		s.scroll[s.tab] = 0
+	}
+}
+
+func (s *contextViewState) setTab(tab contextViewTab) {
+	if s == nil {
+		return
+	}
+	if tab < 0 || tab >= contextViewTabCount {
+		tab = contextViewTabOverview
+	}
+	s.tab = tab
+}
+
+func (s *contextViewState) nextTab() { s.setTab((s.tab + 1) % contextViewTabCount) }
+
+func (s *contextViewState) prevTab() { s.setTab((s.tab + contextViewTabCount - 1) % contextViewTabCount) }
 
 // SetRunFn wires the live-run launcher invoked when the user submits a
 // prompt. The standalone cmd sets this after building the runner factory.

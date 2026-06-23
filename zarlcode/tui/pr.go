@@ -17,11 +17,15 @@ import (
 const prTitleMax = 32
 
 // prLine formats a PRInfo for the workspace card: "#123 Title · open", with the
-// number in the accent colour and the state coloured by how it reads —
-// merged/draft muted, closed warning, open success.
+// number in the accent colour and, when the terminal supports OSC 8 hyperlinks,
+// linked to the PR URL. The state is coloured by how it reads — merged/draft
+// muted, closed warning, open success.
 func prLine(pr *PRInfo) string {
-	out := palette.Secondary.On("#"+itoa(pr.Number)) + " " +
-		palette.Fg.On(truncateRunes(pr.Title, prTitleMax))
+	num := palette.Secondary.On("#" + itoa(pr.Number))
+	if pr.URL != "" {
+		num = hyperlink(num, pr.URL)
+	}
+	out := num + " " + palette.Fg.On(truncateRunes(pr.Title, prTitleMax))
 
 	state := strings.ToLower(pr.State)
 	if pr.Draft {
@@ -35,6 +39,14 @@ func prLine(pr *PRInfo) string {
 		tone = palette.Warning
 	}
 	return out + palette.Muted.On(" · ") + tone.On(state)
+}
+
+func hyperlink(text, url string) string {
+	if url == "" {
+		return text
+	}
+	const esc = "\x1b"
+	return esc + "]8;;" + url + esc + "\\" + text + esc + "]8;;" + esc + "\\"
 }
 
 // prFetchTimeout bounds the gh subprocess so a slow network can't stall the

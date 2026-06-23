@@ -17,7 +17,7 @@ import "github.com/zarldev/zarlmono/zkit/zenv"
 //
 //	CODE_WRITE_MAX_BYTES   default 262144  write/content
 //	CODE_APPEND_MAX_BYTES  default 262144  write_append/content
-//	CODE_EDIT_MAX_BYTES    default 65536   edit/old_string and edit/new_string
+//	CODE_EDIT_MAX_BYTES    default 65536   edit args (legacy old_string/new_string or hashline new_string)
 //
 // Set to 0 to remove the cap entirely.
 var (

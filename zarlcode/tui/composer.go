@@ -239,24 +239,29 @@ func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
 		return cmd
 	}
 	switch msg.String() {
+	case "tab", "right":
+		m.contextView.nextTab()
+	case "shift+tab", "left":
+		m.contextView.prevTab()
 	case "up", "k":
-		m.dashboardScroll--
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(-1)
+		m.clampContextViewScroll()
 	case "down", "j":
-		m.dashboardScroll++
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(1)
+		m.clampContextViewScroll()
 	case "pgup":
-		m.dashboardScroll -= m.dashboardPageStep()
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(-m.dashboardPageStep())
+		m.clampContextViewScroll()
 	case "pgdown":
-		m.dashboardScroll += m.dashboardPageStep()
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(m.dashboardPageStep())
+		m.clampContextViewScroll()
 	case "home", "g":
-		m.dashboardScroll = 0
+		m.contextView.setActiveScroll(0)
 	case "end":
-		m.dashboardScroll = m.dashboardMaxScroll()
+		m.contextView.setActiveScroll(m.dashboardMaxScroll())
 	case "esc", "ctrl+l", "q":
 		m.session.SetCockpitExpanded(false)
+		m.contextView = contextViewState{}
 	}
 	return nil
 }
@@ -320,7 +325,7 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.timeline.enterBrowse()
 	case "ctrl+l":
 		m.session.SetCockpitExpanded(true)
-		m.dashboardScroll = 0
+		m.contextView = contextViewState{}
 	case "pgup":
 		m.timeline.pageUp()
 	case "pgdown":
