@@ -14,7 +14,7 @@ import (
 // PlanAllows reports whether a tool is callable in PLAN mode — pure read /
 // explore / research, plus the path-locked save_plan carve-out so plan mode can
 // still produce a markdown artifact. Everything else (bash, write,
-// write_append, edit, apply_patch) is blocked: failing closed is the right
+// write_append, edit) is blocked: failing closed is the right
 // default for a mode whose whole purpose is "don't change anything".
 func PlanAllows(name tools.ToolName) bool {
 	switch name {

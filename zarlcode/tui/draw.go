@@ -25,6 +25,10 @@ func (m *UI) Draw(scr uv.Screen, _ uv.Rectangle) {
 		}
 		return
 	}
+	if m.startupFailure != nil {
+		m.startupFailure.draw(scr, uv.Rect(0, 0, m.width, m.height))
+		return
+	}
 	// The header rect is zero-height in the default layout; app/mode/model live
 	// in the timeline title so there is only one top status row.
 	m.headerPane.Draw(scr, m.layout.header)

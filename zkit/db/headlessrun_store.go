@@ -71,6 +71,41 @@ type HeadlessRunRecord struct {
 	Model          string
 }
 
+// HeadlessAttemptRecord is one completed pursue/REDRIVE attempt within a
+// headless run. It stores the runner outcome plus the goal decision that either
+// ended the run or produced feedback for the next attempt.
+type HeadlessAttemptRecord struct {
+	RunID          string
+	AttemptNumber  int
+	Prompt         string
+	TerminalReason string
+	Error          string
+	FinalContent   string
+	Iterations     int
+	ToolCalls      int
+	TokensIn       *int64
+	TokensOut      *int64
+	DecisionDone   bool
+	Feedback       string
+	RecordedAt     time.Time
+}
+
+// HeadlessVerifierResultRecord is the structured verifier/oracle verdict for a
+// headless attempt. Skipped is true when the oracle was deliberately not run
+// (for example, the changed-nothing guard re-used prior feedback).
+type HeadlessVerifierResultRecord struct {
+	RunID         string
+	AttemptNumber int
+	Command       string
+	Skipped       bool
+	Success       bool
+	ExitCode      *int64
+	Error         string
+	OutputTail    string
+	Duration      time.Duration
+	RecordedAt    time.Time
+}
+
 // InsertHeadlessRun records the start of a task. Called immediately
 // after the prompt is parsed and the runner is built, so a crashed
 // run still leaves a row with ended_at NULL that the eval framework
@@ -104,6 +139,96 @@ func (s *Store) UpdateHeadlessRunProgress(ctx context.Context, id string, iter, 
 		return fmt.Errorf("update progress %q: %w", id, err)
 	}
 	return nil
+}
+
+// InsertHeadlessAttempt records one completed REDRIVE attempt. The underlying
+// query upserts on (run_id, attempt_number), so repeated recorder calls replace
+// the row with the latest summary instead of failing the whole run.
+func (s *Store) InsertHeadlessAttempt(ctx context.Context, r HeadlessAttemptRecord) error {
+	decisionDone := int64(0)
+	if r.DecisionDone {
+		decisionDone = 1
+	}
+	if r.RecordedAt.IsZero() {
+		r.RecordedAt = time.Now()
+	}
+	if err := s.q.InsertHeadlessAttempt(ctx, gen.InsertHeadlessAttemptParams{
+		RunID:          r.RunID,
+		AttemptNumber:  int64(r.AttemptNumber),
+		Prompt:         r.Prompt,
+		TerminalReason: nullableString(r.TerminalReason),
+		Error:          nullableString(r.Error),
+		FinalContent:   nullableString(r.FinalContent),
+		Iterations:     nullableInt64Value(int64(r.Iterations)),
+		ToolCalls:      nullableInt64Value(int64(r.ToolCalls)),
+		TokensIn:       nullableInt64Ptr(r.TokensIn),
+		TokensOut:      nullableInt64Ptr(r.TokensOut),
+		DecisionDone:   decisionDone,
+		Feedback:       nullableString(r.Feedback),
+		RecordedAt:     r.RecordedAt.Unix(),
+	}); err != nil {
+		return fmt.Errorf("insert headless attempt %q/%d: %w", r.RunID, r.AttemptNumber, err)
+	}
+	return nil
+}
+
+// InsertHeadlessVerifierResult records the structured oracle result for one
+// REDRIVE attempt. The query upserts on (run_id, attempt_number) for idempotent
+// recorder retries.
+func (s *Store) InsertHeadlessVerifierResult(ctx context.Context, r HeadlessVerifierResultRecord) error {
+	skipped, success := int64(0), int64(0)
+	if r.Skipped {
+		skipped = 1
+	}
+	if r.Success {
+		success = 1
+	}
+	if r.RecordedAt.IsZero() {
+		r.RecordedAt = time.Now()
+	}
+	if err := s.q.InsertHeadlessVerifierResult(ctx, gen.InsertHeadlessVerifierResultParams{
+		RunID:         r.RunID,
+		AttemptNumber: int64(r.AttemptNumber),
+		Command:       r.Command,
+		Skipped:       skipped,
+		Success:       success,
+		ExitCode:      nullableInt64Ptr(r.ExitCode),
+		Error:         nullableString(r.Error),
+		OutputTail:    nullableString(r.OutputTail),
+		DurationMs:    r.Duration.Milliseconds(),
+		RecordedAt:    r.RecordedAt.Unix(),
+	}); err != nil {
+		return fmt.Errorf("insert headless verifier result %q/%d: %w", r.RunID, r.AttemptNumber, err)
+	}
+	return nil
+}
+
+// ListHeadlessVerifierResults returns structured oracle results for one
+// headless run in attempt order.
+func (s *Store) ListHeadlessVerifierResults(ctx context.Context, runID string) ([]HeadlessVerifierResultRecord, error) {
+	rows, err := s.q.ListHeadlessVerifierResults(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list headless verifier results for %q: %w", runID, err)
+	}
+	out := make([]HeadlessVerifierResultRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, headlessVerifierResultRowToRecord(r))
+	}
+	return out, nil
+}
+
+// ListHeadlessAttempts returns all attempt trace rows for one headless run in
+// attempt order.
+func (s *Store) ListHeadlessAttempts(ctx context.Context, runID string) ([]HeadlessAttemptRecord, error) {
+	rows, err := s.q.ListHeadlessAttempts(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list headless attempts for %q: %w", runID, err)
+	}
+	out := make([]HeadlessAttemptRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, headlessAttemptRowToRecord(r))
+	}
+	return out, nil
 }
 
 // BackfillHeadlessRunProviderModel sets provider + model on every

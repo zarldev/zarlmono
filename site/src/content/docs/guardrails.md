@@ -78,7 +78,7 @@ slot at construction: `NewTestEditAdvisory` only annotates;
 
 ### Improvement — verifiers after every edit
 
-After a code-modifying call (`edit`, `write`, `apply_patch`), run
+After a code-modifying call (`edit`, `write`), run
 language verifiers against the **packages the agent actually
 touched** — never the whole module:
 

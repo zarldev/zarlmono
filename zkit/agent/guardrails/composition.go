@@ -14,10 +14,12 @@ import (
 // non-nil.
 type Deps struct {
 	// Mandatory leaf config for specific guardrails.
-	SkillLookup   SkillLookup
-	Verifiers     []Verifier
-	WorkspaceRoot string
-	FanoutLimits  map[tools.ToolName]int
+	SkillLookup         SkillLookup
+	Verifiers           []Verifier
+	WorkspaceRoot       string
+	FanoutLimits        map[tools.ToolName]int
+	ReadBeforeWriteMode ReadBeforeWriteMode
+	ExtraEvidence       TaskCallLedger
 
 	// Optional override. Nil keeps the decompose guardrail's deterministic path.
 	DecomposeJudge VerdictJudge
@@ -68,6 +70,9 @@ func PostSchemaGuardrails(deps Deps) []Guardrail {
 		NewSkillHintGuardrail(deps.SkillLookup),
 		decompose,
 		NewFanoutGuardrail(deps.FanoutLimits),
+	}
+	if rbw := NewReadBeforeWriteGuardrail(deps.ExtraEvidence, deps.ReadBeforeWriteMode); rbw != nil {
+		guards = append(guards, rbw)
 	}
 	if deps.TestEdit != nil {
 		guards = append(guards, deps.TestEdit)

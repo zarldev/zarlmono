@@ -25,7 +25,7 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 		t.Fatalf("top row should be the timeline border title, not a standalone header:\n%s", title)
 	}
 	// The timeline title carries the lowercase app/mode tokens and the model.
-	// Workspace, branch, and session timing belong in the run pane.
+	// Workspace, branch, and session timing belong in the state sidebar.
 	for _, want := range []string{"[" + appDisplayName + "]", "[chat]", "[qwen3]"} {
 		if !strings.Contains(title, want) {
 			t.Errorf("timeline title missing %q:\n%s", want, title)
@@ -36,7 +36,7 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 			t.Errorf("timeline title should not include %q:\n%s", unwanted, title)
 		}
 	}
-	for _, want := range []string{"enter submit", "shift+enter", "ctrl+c quit", "ctrl+q clear", "ctrl+g keys"} {
+	for _, want := range []string{"enter submit", "shift+enter", "ctrl+c quit", "ctrl+q clear", "ctrl+g"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status missing %q:\n%s", want, out)
 		}
@@ -105,7 +105,7 @@ func TestStatusHintListsCurrentShortcuts(t *testing.T) {
 	m := New()
 	// Compose footer: only the essentials, ctrl+g as gateway.
 	got := m.statusHint()
-	for _, want := range []string{"enter submit", "shift+enter newline", "tab browse", "shift+tab plan", "ctrl+c quit", "ctrl+q clear", "ctrl+g keys"} {
+	for _, want := range []string{"enter submit", "shift+enter newline", "tab browse", "shift+tab plan mode", "ctrl+c quit", "ctrl+q clear", "ctrl+g"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("compose status hint missing %q:\n%s", want, got)
 		}
@@ -118,7 +118,7 @@ func TestStatusHintListsCurrentShortcuts(t *testing.T) {
 
 	m.session.PlanMode = true
 	got = m.statusHint()
-	for _, want := range []string{"enter submit", "shift+tab build", "ctrl+c quit", "ctrl+q clear", "ctrl+g keys"} {
+	for _, want := range []string{"enter submit", "shift+tab build", "ctrl+c quit", "ctrl+q clear", "ctrl+g"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("plan status hint missing %q:\n%s", want, got)
 		}
@@ -131,7 +131,7 @@ func TestStatusHintListsCurrentShortcuts(t *testing.T) {
 
 	m.session.PlanMode = false
 	m.timeline.browsing = true
-	for _, want := range []string{"↑↓/jk move", "pgup/pgdn page", "esc/i compose", "ctrl+g keys"} {
+	for _, want := range []string{"↑↓/jk move", "pgup/pgdn page", "esc/i compose", "ctrl+g"} {
 		if got := m.statusHint(); !strings.Contains(got, want) {
 			t.Fatalf("browse status hint missing %q:\n%s", want, got)
 		}
@@ -139,7 +139,7 @@ func TestStatusHintListsCurrentShortcuts(t *testing.T) {
 
 	m.timeline.browsing = false
 	m.session.SetCockpitExpanded(true)
-	for _, want := range []string{"ctrl+l / esc / q close", "ctrl+g keys"} {
+	for _, want := range []string{"ctrl+l / esc / q close", "ctrl+g"} {
 		if got := m.statusHint(); !strings.Contains(got, want) {
 			t.Fatalf("context status hint missing %q:\n%s", want, got)
 		}

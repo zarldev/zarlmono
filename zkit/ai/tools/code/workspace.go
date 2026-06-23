@@ -257,6 +257,15 @@ func (w Workspace) LockPath(absPath string) func() {
 // (joined to root) or absolute (must be inside root). Symlinks are followed
 // and the final path is re-checked against root.
 func (w Workspace) Resolve(p string) (string, error) {
+	return w.ResolveForRead(p, false)
+}
+
+// ResolveForRead resolves p for a read-side tool. When unrestricted is false it
+// enforces the workspace root exactly like Resolve. When unrestricted is true,
+// reads may escape the workspace: absolute paths are used as-is and relative
+// paths are cleaned after joining to the workspace root, so ../ segments may
+// walk out.
+func (w Workspace) ResolveForRead(p string, unrestricted bool) (string, error) {
 	if p == "" {
 		return "", errors.New("workspace: path must not be empty")
 	}
@@ -267,15 +276,47 @@ func (w Workspace) Resolve(p string) (string, error) {
 	}
 	target = filepath.Clean(target)
 
+	resolved := evalExisting(target)
+	if unrestricted {
+		return resolved, nil
+	}
 	if !w.contains(target) {
 		return "", fmt.Errorf("workspace: path %q escapes root %q", p, w.root)
 	}
-
-	resolved := evalExisting(target)
 	if !w.contains(resolved) {
 		return "", fmt.Errorf("workspace: path %q resolves outside root %q", p, w.root)
 	}
 	return resolved, nil
+}
+
+// StatPath stats abs either through the workspace root handle (for paths still
+// under root) or directly through the host filesystem (for unrestricted
+// read-side paths outside the workspace).
+func (w Workspace) StatPath(abs string) (os.FileInfo, error) {
+	if w.contains(abs) {
+		return w.StatInRoot(abs)
+	}
+	return os.Stat(abs)
+}
+
+// ReadFilePath reads abs through the workspace root handle when it remains
+// under the workspace, falling back to direct host reads for unrestricted
+// read-side paths outside the workspace.
+func (w Workspace) ReadFilePath(abs string) ([]byte, error) {
+	if w.contains(abs) {
+		return w.ReadFileInRoot(abs)
+	}
+	return os.ReadFile(abs)
+}
+
+// ReadDirPath reads a directory via the workspace root handle when it remains
+// under the workspace, falling back to direct host directory reads for
+// unrestricted read-side paths outside the workspace.
+func (w Workspace) ReadDirPath(abs string) ([]os.DirEntry, error) {
+	if w.contains(abs) {
+		return w.ReadDirInRoot(abs)
+	}
+	return os.ReadDir(abs)
 }
 
 func (w Workspace) contains(p string) bool {

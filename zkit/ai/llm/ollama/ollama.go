@@ -47,6 +47,7 @@ func NewProvider(opts ...options.Option[Provider]) (llm.Provider, error) {
 
 	innerOpts := []options.Option[openai.Provider]{
 		openai.WithBaseURL(p.baseURL),
+		openai.WithChatTemplateKwargs(true),
 	}
 	if p.model != "" {
 		innerOpts = append(innerOpts, openai.WithModel(p.model))

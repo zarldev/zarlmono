@@ -18,7 +18,10 @@ import (
 // ".") are excluded by default. The output field selects the model-facing
 // rendering (labelled plaintext or JSON); the structured entries are
 // identical either way.
-type LsTool struct{ ws Workspace }
+type LsTool struct {
+	ws                    Workspace
+	allowOutsideWorkspace bool
+}
 
 // LsArgs is the typed argument struct LsTool.Execute decodes into
 // via tools.DecodeArgs. Field tags drive both JSON decoding
@@ -30,7 +33,13 @@ type LsArgs struct {
 }
 
 // NewLsTool returns the directory-listing tool bound to ws.
-func NewLsTool(ws Workspace) *LsTool { return &LsTool{ws: ws} }
+func NewLsTool(ws Workspace, opts ...ReadOption) *LsTool {
+	var policy readPolicy
+	for _, opt := range opts {
+		opt(&policy)
+	}
+	return &LsTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
+}
 
 // Definition advertises ls with optional path, show_hidden, and a
 // labeled|json output enum; listing never mutates.
@@ -87,11 +96,11 @@ func (r LsResult) String() string {
 // Entries are sorted by name so both output modes — and any consumer
 // rendering from the typed slice — see a stable order. Returns the entry
 // list and a display path for the result message.
-func collectLsEntries(ws Workspace, args LsArgs) ([]lsEntry, string, error) {
+func collectLsEntries(ws Workspace, allowOutsideWorkspace bool, args LsArgs) ([]lsEntry, string, error) {
 	target := ws.Root()
 	displayPath := "."
 	if args.Path != "" && args.Path != "." {
-		abs, err := ws.Resolve(args.Path)
+		abs, err := ws.ResolveForRead(args.Path, allowOutsideWorkspace)
 		if err != nil {
 			return nil, "", tools.Permission("ls", err.Error())
 		}
@@ -99,7 +108,7 @@ func collectLsEntries(ws Workspace, args LsArgs) ([]lsEntry, string, error) {
 		displayPath = args.Path
 	}
 
-	entries, err := ws.ReadDirInRoot(target)
+	entries, err := ws.ReadDirPath(target)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, "", tools.NotFound("ls", fmt.Sprintf("%q does not exist", displayPath))
@@ -138,7 +147,7 @@ func (t *LsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolRes
 	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
-	entries, displayPath, err := collectLsEntries(t.ws, args)
+	entries, displayPath, err := collectLsEntries(t.ws, t.allowOutsideWorkspace, args)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
 	}

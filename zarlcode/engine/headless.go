@@ -75,12 +75,18 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 		root := l.ws.Root()
 		goal := coderunner.CommandGoal(root, verifyCmd,
 			func() string { return gitWorktreeState(root) },
-			coderunner.VerifyOpts{})
+			coderunner.VerifyOpts{OnResult: func(result coderunner.VerifyResult) {
+				rec.verifierResult(ctx, result)
+			}})
 		reqOpts = append(reqOpts, pursue.WithGoal(goal))
-		driveOpts = append(driveOpts,
-			pursue.WithMaxAttempts(verifyAttempts),
+		driveOpts = append(driveOpts, pursue.WithMaxAttempts(verifyAttempts),
 			pursue.WithContextThreader(pursue.ThreadFullTranscript()),
 		)
+	}
+	if rec != nil {
+		driveOpts = append(driveOpts, pursue.WithOnAttempt(func(report pursue.AttemptReport) {
+			rec.attempt(ctx, report)
+		}))
 	}
 	return driveHeadless(ctx, r, spec, rec, reqOpts, driveOpts...)
 }

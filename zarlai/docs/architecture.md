@@ -197,6 +197,8 @@ binding lets a skill apply only when the active task profile matches
 ships everywhere. The selector rebuilds its index when
 `SkillSource.Version()` ticks (admin edit, proposal approval).
 
+This is deliberately prompt-stack composition rather than learned policy. Semantic selection keeps the stack smaller and more relevant, but it does not prove a skill improves behaviour; operators should keep skill bodies concise and inspect which fragments were active when debugging a turn.
+
 Skill *proposals* mirror prompt and sensor proposals: the LLM writes
 to `skill_proposals`, an operator approves via `/admin → Proposals`,
 approval flips the live skill row. Source: `repository/skill.go` +

@@ -50,7 +50,10 @@ import (
 // A bare basename pattern (no path separator) matches anywhere
 // recursively. A pattern containing `/` is rooted against the
 // workspace (or the `root` arg) and respects path structure literally.
-type GlobTool struct{ ws Workspace }
+type GlobTool struct {
+	ws                    Workspace
+	allowOutsideWorkspace bool
+}
 
 // GlobArgs is the typed argument struct shared by both glob impls.
 // Field tags drive both JSON decoding and SchemaFor schema generation.
@@ -72,7 +75,13 @@ type GlobArgs struct {
 }
 
 // NewGlobTool returns a JSON glob tool bound to the given workspace.
-func NewGlobTool(ws Workspace) *GlobTool { return &GlobTool{ws: ws} }
+func NewGlobTool(ws Workspace, opts ...ReadOption) *GlobTool {
+	var policy readPolicy
+	for _, opt := range opts {
+		opt(&policy)
+	}
+	return &GlobTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
+}
 
 // Definition advertises glob with pattern (required), root,
 // include_dirs, max_results (default 200), and a labeled|json output
@@ -218,7 +227,7 @@ func walkGlobMatches(ctx context.Context, ws Workspace, args GlobArgs, rootAbs s
 
 	walkRoot := rootAbs
 	rootForRel := rootAbs
-	if ws.OSRoot() != nil {
+	if ws.OSRoot() != nil && ws.contains(rootAbs) {
 		relRoot, relErr := ws.RelToRoot(rootAbs)
 		if relErr != nil {
 			return nil, false, tools.Permission("glob", relErr.Error())
@@ -227,7 +236,7 @@ func walkGlobMatches(ctx context.Context, ws Workspace, args GlobArgs, rootAbs s
 		rootForRel = relRoot
 	}
 	walkFn := filepath.WalkDir
-	if ws.OSRoot() != nil {
+	if ws.OSRoot() != nil && ws.contains(rootAbs) {
 		walkFn = func(root string, fn fs.WalkDirFunc) error {
 			return fs.WalkDir(ws.OSRoot().FS(), filepath.ToSlash(root), fn)
 		}
@@ -284,7 +293,7 @@ func walkGlobMatches(ctx context.Context, ws Workspace, args GlobArgs, rootAbs s
 
 // resolveGlob validates args, applies defaults, resolves the search
 // root, and returns the absolute root path and effective maxResults.
-func resolveGlob(ws Workspace, args GlobArgs) (string, int, error) {
+func resolveGlob(ws Workspace, allowOutsideWorkspace bool, args GlobArgs) (string, int, error) {
 	if args.Pattern == "" {
 		return "", 0, tools.Validation("glob", "pattern required")
 	}
@@ -301,11 +310,11 @@ func resolveGlob(ws Workspace, args GlobArgs) (string, int, error) {
 	if rootRel == "" {
 		rootRel = "."
 	}
-	rootAbs, err := ws.Resolve(rootRel)
+	rootAbs, err := ws.ResolveForRead(rootRel, allowOutsideWorkspace)
 	if err != nil {
 		return "", 0, tools.Permission("glob", err.Error())
 	}
-	info, err := ws.StatInRoot(rootAbs)
+	info, err := ws.StatPath(rootAbs)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", 0, tools.NotFound("glob",
@@ -329,7 +338,7 @@ func (t *GlobTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Too
 	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
-	rootAbs, maxResults, err := resolveGlob(t.ws, args)
+	rootAbs, maxResults, err := resolveGlob(t.ws, t.allowOutsideWorkspace, args)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
 	}

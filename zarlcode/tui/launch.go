@@ -168,7 +168,15 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	}
 	prov, spec, err := settings.BuildActive(ctx, fallback)
 	if err != nil {
-		return nil, fmt.Errorf("provider %q: %w", spec.Name, err)
+		model := New()
+		model.SetWorkspace(root, "")
+		model.SetStartupFailure(root, "provider startup", fmt.Sprintf("provider %q: %v", spec.Name, err))
+		return &Zarlcode{
+			root:  root,
+			ws:    ws,
+			model: model,
+			spec:  spec,
+		}, nil
 	}
 
 	// Sink first (no send yet); Run wires it to the program once it exists.
@@ -248,7 +256,9 @@ func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) in
 		return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter)
 	}
 	prog := tea.NewProgram(z.model, tea.WithContext(ctx))
-	z.sink.SetSend(prog.Send)
+	if z.sink != nil {
+		z.sink.SetSend(prog.Send)
+	}
 	if z.model.askpass != nil {
 		z.model.askpass.SetSend(prog.Send)
 	}

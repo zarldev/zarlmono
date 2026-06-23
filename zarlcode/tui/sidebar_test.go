@@ -1,13 +1,15 @@
-package tui_test
+package tui
 
 import (
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
 func TestSidebar_ShowsRunState(t *testing.T) {
@@ -17,16 +19,38 @@ func TestSidebar_ShowsRunState(t *testing.T) {
 		teasink.ToolCompletedMsg{TaskID: "t1", ToolID: "c1", ToolName: "bash", Duration: time.Second},
 		teasink.IterationCompletedMsg{TaskID: "t1", Iter: 1, Usage: &llm.Usage{PromptTokens: 120, TotalTokens: 200}},
 	)
-	// The run state shows on the title ("⠋ running"); the body shows the
-	// CONTEXT section, the tools histogram, and the live context occupancy
-	// (prompt tokens) against the window — "120" is the gauge numerator, not
-	// the total. (Iteration/tool counters were folded off the panel into the
-	// title's status + live tok/s.)
-	for _, want := range []string{"[state]", "running", "[tools]", "[context]", "120"} {
+	for _, want := range []string{"[state]", "context", "plan", "run", "cost", "tools", "running", "provider", "model", "window", "session", "1 calls"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("sidebar missing %q:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "tok/s") {
+		t.Errorf("state pane should not include throughput detail:\n%s", out)
+	}
+}
+
+func TestSidebar_StateCardShowsChangesAndSessionTotals(t *testing.T) {
+	m := New()
+	m.session.WorkingSet.RecordDiff("a.txt", "@@\n-old\n+new")
+	m.session.Run.sessionTurns = 2
+	m.session.Run.sessionToolCalls = 5
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	out := ansi.Strip(mm.View().Content)
+	for _, want := range []string{"changes", "1 files", "1 edits", "session", "2 turns", "5 calls"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("state card missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func drive(t *testing.T, msgs ...tea.Msg) string {
+	t.Helper()
+	var m tea.Model = New()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	for _, msg := range msgs {
+		m, _ = m.Update(msg)
+	}
+	return ansi.Strip(m.View().Content)
 }
 
 func TestSidebar_SectionRulesMeetFrame(t *testing.T) {
@@ -34,9 +58,8 @@ func TestSidebar_SectionRulesMeetFrame(t *testing.T) {
 		teasink.ConversationStartedMsg{TaskID: "t1", Prompt: "do the thing"},
 		teasink.IterationCompletedMsg{TaskID: "t1", Iter: 1, Usage: &llm.Usage{PromptTokens: 120, TotalTokens: 200}},
 	)
-
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.Contains(line, "[context]") {
+		if !strings.Contains(line, "├─[context]") {
 			continue
 		}
 		start := strings.LastIndex(line, "├─[context]")
@@ -89,10 +112,7 @@ func TestSidebar_OnlyLastTurnReportsTokPerSec(t *testing.T) {
 		},
 	)
 
-	if got := strings.Count(out, "tok/s"); got != 1 {
-		t.Fatalf("tok/s should be reported once in the cockpit last-turn row, got %d:\n%s", got, out)
-	}
-	if !strings.Contains(out, "60 tok/s") {
-		t.Errorf("last-turn provider-token throughput missing:\n%s", out)
+	if got := strings.Count(out, "tok/s"); got != 0 {
+		t.Fatalf("state pane should keep throughput out of the sidebar, got %d tok/s rows:\n%s", got, out)
 	}
 }

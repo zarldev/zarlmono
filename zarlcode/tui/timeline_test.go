@@ -27,6 +27,16 @@ func drive(t *testing.T, msgs ...tea.Msg) string {
 	}
 	return ansi.Strip(m.View().Content)
 }
+func driveKey(t *testing.T, key string, msgs ...tea.Msg) string {
+	t.Helper()
+	var m tea.Model = tui.New()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	for _, msg := range msgs {
+		m, _ = m.Update(msg)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: []rune(key)[0], Text: key})
+	return ansi.Strip(m.View().Content)
+}
 
 func TestTimeline_FoldsRun(t *testing.T) {
 	out := drive(t,
@@ -128,8 +138,8 @@ func TestTimeline_PlanUpdateIsCollapsibleInline(t *testing.T) {
 	if !strings.Contains(out, "[+] plan updated · 1/2 done") {
 		t.Fatalf("collapsed plan update summary missing:\n%s", out)
 	}
-	if strings.Contains(out, "read the failing test") {
-		t.Fatalf("collapsed plan update should hide step details:\n%s", out)
+	if strings.Count(out, "read the failing test") > 1 {
+		t.Fatalf("collapsed plan update should hide timeline step details:\n%s", out)
 	}
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})   // browse mode

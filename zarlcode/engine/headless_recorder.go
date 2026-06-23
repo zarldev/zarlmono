@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
+	"github.com/zarldev/zarlmono/zkit/agent/pursue"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -69,6 +70,66 @@ func (r *headlessRecorder) progress(ctx context.Context, iter, toolCalls int) {
 	}
 	if err := r.store.UpdateHeadlessRunProgress(ctx, r.id, iter, toolCalls); err != nil {
 		slog.WarnContext(ctx, "headless: update progress", "id", r.id, "iter", iter, "err", err)
+	}
+}
+
+// attempt records one completed pursue/REDRIVE attempt and the decision that
+// either accepted it or generated feedback for the next attempt.
+func (r *headlessRecorder) attempt(ctx context.Context, report pursue.AttemptReport) {
+	if r == nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	res := report.Attempt.Result
+	rec := db.HeadlessAttemptRecord{
+		RunID:          r.id,
+		AttemptNumber:  report.Attempt.Number,
+		Prompt:         report.Attempt.Spec.Prompt,
+		TerminalReason: string(res.Reason),
+		FinalContent:   res.FinalContent,
+		Iterations:     res.Iterations,
+		ToolCalls:      coderunner.ToolCallCount(res.Messages),
+		DecisionDone:   report.Decision.Done,
+		Feedback:       report.Decision.Feedback,
+		RecordedAt:     time.Now(),
+	}
+	if res.Err != nil {
+		rec.Error = res.Err.Error()
+	}
+	if u := res.TotalUsage; u != nil {
+		in, out := int64(u.PromptTokens), int64(u.CompletionTokens)
+		rec.TokensIn, rec.TokensOut = &in, &out
+	}
+	if err := r.store.InsertHeadlessAttempt(ctx, rec); err != nil {
+		slog.WarnContext(ctx, "headless: insert attempt row", "id", r.id, "attempt", report.Attempt.Number, "err", err)
+	}
+}
+
+// verifierResult records the structured command-backed oracle result for a
+// completed REDRIVE attempt. It can be called before the attempt row itself is
+// recorded because pursue evaluates the goal before firing WithOnAttempt.
+func (r *headlessRecorder) verifierResult(ctx context.Context, result coderunner.VerifyResult) {
+	if r == nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	rec := db.HeadlessVerifierResultRecord{
+		RunID:         r.id,
+		AttemptNumber: result.AttemptNumber,
+		Command:       result.Command,
+		Skipped:       result.Skipped,
+		Success:       result.Success,
+		Error:         result.Error,
+		OutputTail:    result.OutputTail,
+		Duration:      result.Duration,
+		RecordedAt:    time.Now(),
+	}
+	if result.ExitCode != nil {
+		code := int64(*result.ExitCode)
+		rec.ExitCode = &code
+	}
+	if err := r.store.InsertHeadlessVerifierResult(ctx, rec); err != nil {
+		slog.WarnContext(ctx, "headless: insert verifier result", "id", r.id, "attempt", result.AttemptNumber, "err", err)
 	}
 }
 

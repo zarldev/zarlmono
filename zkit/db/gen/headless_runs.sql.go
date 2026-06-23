@@ -126,6 +126,64 @@ func (q *Queries) GetHeadlessRun(ctx context.Context, id string) (HeadlessRun, e
 	return i, err
 }
 
+const insertHeadlessAttempt = `-- name: InsertHeadlessAttempt :exec
+INSERT INTO headless_attempts (
+    run_id, attempt_number, prompt,
+    terminal_reason, error, final_content,
+    iterations, tool_calls, tokens_in, tokens_out,
+    decision_done, feedback, recorded_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id, attempt_number) DO UPDATE SET
+    prompt          = excluded.prompt,
+    terminal_reason = excluded.terminal_reason,
+    error           = excluded.error,
+    final_content   = excluded.final_content,
+    iterations      = excluded.iterations,
+    tool_calls      = excluded.tool_calls,
+    tokens_in       = excluded.tokens_in,
+    tokens_out      = excluded.tokens_out,
+    decision_done   = excluded.decision_done,
+    feedback        = excluded.feedback,
+    recorded_at     = excluded.recorded_at
+`
+
+type InsertHeadlessAttemptParams struct {
+	RunID          string
+	AttemptNumber  int64
+	Prompt         string
+	TerminalReason sql.NullString
+	Error          sql.NullString
+	FinalContent   sql.NullString
+	Iterations     sql.NullInt64
+	ToolCalls      sql.NullInt64
+	TokensIn       sql.NullInt64
+	TokensOut      sql.NullInt64
+	DecisionDone   int64
+	Feedback       sql.NullString
+	RecordedAt     int64
+}
+
+// Records one completed REDRIVE attempt for a headless run. Upsert keeps
+// recorder retries/idempotent tests from failing on the composite key.
+func (q *Queries) InsertHeadlessAttempt(ctx context.Context, arg InsertHeadlessAttemptParams) error {
+	_, err := q.db.ExecContext(ctx, insertHeadlessAttempt,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.Prompt,
+		arg.TerminalReason,
+		arg.Error,
+		arg.FinalContent,
+		arg.Iterations,
+		arg.ToolCalls,
+		arg.TokensIn,
+		arg.TokensOut,
+		arg.DecisionDone,
+		arg.Feedback,
+		arg.RecordedAt,
+	)
+	return err
+}
+
 const insertHeadlessRun = `-- name: InsertHeadlessRun :exec
 INSERT INTO headless_runs (
     id, workspace, base_commit, prompt, started_at, provider, model
@@ -162,6 +220,102 @@ func (q *Queries) InsertHeadlessRun(ctx context.Context, arg InsertHeadlessRunPa
 		arg.Model,
 	)
 	return err
+}
+
+const insertHeadlessVerifierResult = `-- name: InsertHeadlessVerifierResult :exec
+INSERT INTO headless_verifier_results (
+    run_id, attempt_number, command,
+    skipped, success, exit_code, error, output_tail,
+    duration_ms, recorded_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id, attempt_number) DO UPDATE SET
+    command     = excluded.command,
+    skipped     = excluded.skipped,
+    success     = excluded.success,
+    exit_code   = excluded.exit_code,
+    error       = excluded.error,
+    output_tail = excluded.output_tail,
+    duration_ms = excluded.duration_ms,
+    recorded_at = excluded.recorded_at
+`
+
+type InsertHeadlessVerifierResultParams struct {
+	RunID         string
+	AttemptNumber int64
+	Command       string
+	Skipped       int64
+	Success       int64
+	ExitCode      sql.NullInt64
+	Error         sql.NullString
+	OutputTail    sql.NullString
+	DurationMs    int64
+	RecordedAt    int64
+}
+
+// Records the structured verifier/oracle result for one REDRIVE attempt.
+func (q *Queries) InsertHeadlessVerifierResult(ctx context.Context, arg InsertHeadlessVerifierResultParams) error {
+	_, err := q.db.ExecContext(ctx, insertHeadlessVerifierResult,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.Command,
+		arg.Skipped,
+		arg.Success,
+		arg.ExitCode,
+		arg.Error,
+		arg.OutputTail,
+		arg.DurationMs,
+		arg.RecordedAt,
+	)
+	return err
+}
+
+const listHeadlessAttempts = `-- name: ListHeadlessAttempts :many
+SELECT
+    run_id, attempt_number, prompt,
+    terminal_reason, error, final_content,
+    iterations, tool_calls, tokens_in, tokens_out,
+    decision_done, feedback, recorded_at
+FROM headless_attempts
+WHERE run_id = ?
+ORDER BY attempt_number ASC
+`
+
+// Returns attempt trace rows for one headless run in attempt order.
+func (q *Queries) ListHeadlessAttempts(ctx context.Context, runID string) ([]HeadlessAttempt, error) {
+	rows, err := q.db.QueryContext(ctx, listHeadlessAttempts, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HeadlessAttempt{}
+	for rows.Next() {
+		var i HeadlessAttempt
+		if err := rows.Scan(
+			&i.RunID,
+			&i.AttemptNumber,
+			&i.Prompt,
+			&i.TerminalReason,
+			&i.Error,
+			&i.FinalContent,
+			&i.Iterations,
+			&i.ToolCalls,
+			&i.TokensIn,
+			&i.TokensOut,
+			&i.DecisionDone,
+			&i.Feedback,
+			&i.RecordedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listHeadlessRunsByWorkspace = `-- name: ListHeadlessRunsByWorkspace :many
@@ -213,6 +367,51 @@ func (q *Queries) ListHeadlessRunsByWorkspace(ctx context.Context, arg ListHeadl
 			&i.Escalated,
 			&i.Provider,
 			&i.Model,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHeadlessVerifierResults = `-- name: ListHeadlessVerifierResults :many
+SELECT
+    run_id, attempt_number, command,
+    skipped, success, exit_code, error, output_tail,
+    duration_ms, recorded_at
+FROM headless_verifier_results
+WHERE run_id = ?
+ORDER BY attempt_number ASC
+`
+
+// Returns verifier/oracle results for one headless run in attempt order.
+func (q *Queries) ListHeadlessVerifierResults(ctx context.Context, runID string) ([]HeadlessVerifierResult, error) {
+	rows, err := q.db.QueryContext(ctx, listHeadlessVerifierResults, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HeadlessVerifierResult{}
+	for rows.Next() {
+		var i HeadlessVerifierResult
+		if err := rows.Scan(
+			&i.RunID,
+			&i.AttemptNumber,
+			&i.Command,
+			&i.Skipped,
+			&i.Success,
+			&i.ExitCode,
+			&i.Error,
+			&i.OutputTail,
+			&i.DurationMs,
+			&i.RecordedAt,
 		); err != nil {
 			return nil, err
 		}

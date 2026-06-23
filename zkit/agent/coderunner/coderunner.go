@@ -76,6 +76,10 @@ func RegisterStandardTools(reg *tools.Registry, ws code.Workspace, pm *code.Proc
 	if len(cfg.env) > 0 {
 		bashOpts = append(bashOpts, code.WithEnv(cfg.env))
 	}
+	var readOpts []code.ReadOption
+	if cfg.unrestrictedReads || cfg.sandbox == nil {
+		readOpts = append(readOpts, code.WithUnrestrictedReads())
+	}
 	if pm != nil {
 		reg.Register(code.NewBashTool(ws, append(bashOpts, code.WithProcessManager(pm))...))
 		reg.Register(code.NewBashOutputTool(pm))
@@ -84,18 +88,19 @@ func RegisterStandardTools(reg *tools.Registry, ws code.Workspace, pm *code.Proc
 	} else {
 		reg.Register(code.NewBashTool(ws, bashOpts...))
 	}
-	reg.Register(code.NewReadFileHLTool(ws))
+	reg.Register(code.NewReadFileHLTool(ws, readOpts...))
 	reg.Register(code.NewWriteTool(ws))
 	reg.Register(code.NewEditFileHLTool(ws))
-	reg.Register(code.NewGrepTool(ws))
-	reg.Register(code.NewLsTool(ws))
-	reg.Register(code.NewGlobTool(ws))
+	reg.Register(code.NewGrepTool(ws, readOpts...))
+	reg.Register(code.NewLsTool(ws, readOpts...))
+	reg.Register(code.NewGlobTool(ws, readOpts...))
 }
 
 // toolsConfig collects RegisterStandardTools options.
 type toolsConfig struct {
-	sandbox code.Sandboxer
-	env     map[string]string
+	sandbox           code.Sandboxer
+	env               map[string]string
+	unrestrictedReads bool
 }
 
 // ToolsOption tunes RegisterStandardTools.
@@ -113,6 +118,15 @@ func WithToolSandbox(sb code.Sandboxer) ToolsOption {
 // spawned by the bash tool.
 func WithToolEnv(env map[string]string) ToolsOption {
 	return func(c *toolsConfig) { c.env = env }
+}
+
+// WithUnrestrictedReads allows read-only tools (read, ls, grep, glob) to
+// access paths outside the workspace root. Mutating tools remain rooted to the
+// workspace. Callers normally rely on the default derived from sandbox mode
+// (sandbox off => unrestricted reads); this option exists for tests and custom
+// embeddings.
+func WithUnrestrictedReads() ToolsOption {
+	return func(c *toolsConfig) { c.unrestrictedReads = true }
 }
 
 // RegisterSpawnTool registers the spawn_agent tool on reg, wired to parent
@@ -414,8 +428,6 @@ func StandardFanoutLimits() map[tools.ToolName]int {
 // (advisory for an interactive session, strict for a headless run or the eval
 // grader). No language verifier is wired by default: runtime checks should
 // reflect explicit user/workspace config, not baked-in language assumptions.
-// A consumer that wants one fills Verifiers (along with its own SkillLookup /
-// DecomposeJudge) on the returned value; centralising the fan-out invariant
 // here is why a cap can't drift between the TUI and the eval.
 func StandardGuardrailDeps(root string, testEdit guardrails.Guardrail) guardrails.Deps {
 	return guardrails.Deps{
@@ -424,6 +436,8 @@ func StandardGuardrailDeps(root string, testEdit guardrails.Guardrail) guardrail
 		TestEdit:      testEdit,
 	}
 }
+
+// pureReadTools are the side-effect-free tools the MemoSource caches
 
 // pureReadTools are the side-effect-free tools the MemoSource caches
 // per task: identical args → identical answer within one task, so a
@@ -450,11 +464,20 @@ func GuardedSource(
 	pipeline sourcechain.Pipeline,
 	extraPure ...tools.ToolName,
 ) (tools.Source, []string, error) {
+	var ledger runner.TaskCallLedger
+	if deps.ReadBeforeWriteMode != guardrails.ReadBeforeWriteOff {
+		ledger = runner.NewMemoryTaskCallLedger()
+		deps.ExtraEvidence = ledger
+	}
 	chain, err := sourcechain.New(pipeline.Wrap(base), deps)
 	if err != nil {
 		return nil, nil, err
 	}
 	pure := append(append([]tools.ToolName{}, pureReadTools...), extraPure...)
+	if ledger != nil {
+		memo := runner.NewMemoSourceWithLedger(chain.Source, runner.PureTools(pure...), ledger)
+		return memo, chain.GuardrailNames, nil
+	}
 	memo := runner.NewMemoSource(chain.Source, runner.PureTools(pure...))
 	return memo, chain.GuardrailNames, nil
 }

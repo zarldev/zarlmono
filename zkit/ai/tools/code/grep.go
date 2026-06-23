@@ -16,7 +16,10 @@ const grepDefaultMaxResults = 100
 // GrepTool wraps ripgrep and returns structured matches. The output field
 // selects the model-facing rendering (labelled plaintext or JSON); the
 // structured hits are identical either way.
-type GrepTool struct{ ws Workspace }
+type GrepTool struct {
+	ws                    Workspace
+	allowOutsideWorkspace bool
+}
 
 // GrepArgs is the typed argument struct GrepTool.Execute decodes
 // into via tools.DecodeArgs. Field tags drive both JSON decoding
@@ -31,7 +34,13 @@ type GrepArgs struct {
 }
 
 // NewGrepTool returns the content-search tool bound to ws.
-func NewGrepTool(ws Workspace) *GrepTool { return &GrepTool{ws: ws} }
+func NewGrepTool(ws Workspace, opts ...ReadOption) *GrepTool {
+	var policy readPolicy
+	for _, opt := range opts {
+		opt(&policy)
+	}
+	return &GrepTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
+}
 
 // Definition advertises grep with pattern (required), path, glob,
 // case_insensitive, max_results (default 100), and a labeled|json
@@ -90,7 +99,7 @@ func (t *GrepTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Too
 	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
-	hits, truncated, err := runGrep(ctx, t.ws, args)
+	hits, truncated, err := runGrep(ctx, t.ws, t.allowOutsideWorkspace, args)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
@@ -190,7 +199,7 @@ func parseGrepJSON(out []byte, maxResults int) ([]GrepHit, bool) {
 
 // runGrep validates args, invokes ripgrep, and parses the JSON output.
 // Returns the structured hits and whether the max-results cap truncated them.
-func runGrep(ctx context.Context, ws Workspace, args GrepArgs) ([]GrepHit, bool, error) {
+func runGrep(ctx context.Context, ws Workspace, allowOutsideWorkspace bool, args GrepArgs) ([]GrepHit, bool, error) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		return nil, false, tools.Fatal("grep", fmt.Errorf("ripgrep (rg) not installed: %w", err))
 	}
@@ -199,13 +208,17 @@ func runGrep(ctx context.Context, ws Workspace, args GrepArgs) ([]GrepHit, bool,
 	}
 	target := "."
 	if args.Path != "" {
-		abs, err := ws.Resolve(args.Path)
+		abs, err := ws.ResolveForRead(args.Path, allowOutsideWorkspace)
 		if err != nil {
 			return nil, false, tools.Permission("grep", err.Error())
 		}
-		target, err = ws.RelToRoot(abs)
-		if err != nil {
-			return nil, false, tools.Permission("grep", err.Error())
+		if ws.contains(abs) {
+			target, err = ws.RelToRoot(abs)
+			if err != nil {
+				return nil, false, tools.Permission("grep", err.Error())
+			}
+		} else {
+			target = abs
 		}
 	}
 	maxResults := args.MaxResults

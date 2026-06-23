@@ -17,7 +17,10 @@ const (
 )
 
 // ReadTool reads a file from the workspace and returns line-numbered content.
-type ReadTool struct{ ws Workspace }
+type ReadTool struct {
+	ws                    Workspace
+	allowOutsideWorkspace bool
+}
 
 // ReadArgs is the typed argument struct ReadTool.Execute decodes
 // into via tools.DecodeArgs. Field tags drive both JSON decoding
@@ -29,7 +32,13 @@ type ReadArgs struct {
 }
 
 // NewReadTool returns the file-reading tool bound to ws.
-func NewReadTool(ws Workspace) *ReadTool { return &ReadTool{ws: ws} }
+func NewReadTool(ws Workspace, opts ...ReadOption) *ReadTool {
+	var policy readPolicy
+	for _, opt := range opts {
+		opt(&policy)
+	}
+	return &ReadTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
+}
 
 // Definition advertises read with path (required), offset, and limit
 // parameters; reads never mutate, so Mutates stays false.
@@ -41,7 +50,7 @@ func (t *ReadTool) Definition() tools.ToolSpec {
 	}
 }
 
-// Execute resolves the path inside the workspace, refuses files over
+// Execute resolves the path inside the workspace (or anywhere on the host when unrestricted reads are enabled), refuses files over
 // readMaxBytes (10 MB) before reading, rejects content with a NUL byte
 // in the first 8 KB as binary, and returns 1-based line-numbered output
 // starting at offset (negative offsets clamp to 0; default limit
@@ -55,12 +64,12 @@ func (t *ReadTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolR
 	if args.Path == "" {
 		return tools.Failure(call.ID, tools.Validation("read", "path required")), nil
 	}
-	abs, err := t.ws.Resolve(args.Path)
+	abs, err := t.ws.ResolveForRead(args.Path, t.allowOutsideWorkspace)
 	if err != nil {
 		return tools.Failure(call.ID, tools.Permission("read", err.Error())), nil
 	}
 
-	info, err := t.ws.StatInRoot(abs)
+	info, err := t.ws.StatPath(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return tools.Failure(call.ID, tools.NotFound("read", fmt.Sprintf("%q does not exist", args.Path))), nil
@@ -77,7 +86,7 @@ func (t *ReadTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolR
 		), nil
 	}
 
-	data, err := t.ws.ReadFileInRoot(abs)
+	data, err := t.ws.ReadFilePath(abs)
 	if err != nil {
 		return tools.Failure(call.ID, tools.Fatal("read", fmt.Errorf("%q: %w", args.Path, err))), nil
 	}

@@ -562,6 +562,7 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 				code.ToolNameGlob: fanoutCap,
 			}
 		}
+		deps.ReadBeforeWriteMode = l.settings.ReadBeforeWriteMode(l.parentContext())
 	}
 	return deps
 }
@@ -679,7 +680,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 		reg.Register(dynamic.NewMCPList(l.mcp))
 	}
 
-	// Diff recorder: capture write/edit/apply_patch mutations and stream
+	// Diff recorder: capture write/edit mutations and stream
 	// them to the timeline (ordered with tool events via the sink pump).
 	var pipeline sourcechain.Pipeline
 	if l.sink != nil {

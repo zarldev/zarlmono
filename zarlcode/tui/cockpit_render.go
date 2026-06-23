@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -95,12 +96,179 @@ func (m *UI) cockpitLines(width int) []string {
 	return out
 }
 
+func (m *UI) stateSidebarContent(width, height int) []string {
+	s := &m.session.Run
+	out := make([]string, 0, max(16, height))
+	add := func(ss ...string) { out = append(out, ss...) }
+	add(m.llmStateLines()...)
+
+	if !s.Running && len(s.history) == 0 && s.liveCtx == 0 {
+		return out
+	}
+	add("")
+	add(sectionHead("context", width))
+	add(s.stateContextLine())
+	if pressure := s.compactionPressureLine(); pressure != "" {
+		add(pressure)
+	}
+	if !m.session.Plan.IsEmpty() {
+		add("")
+		add(sectionHead("plan", width))
+		add(m.planStateLines(width)...)
+	}
+	if s.lastTotal > 0 || s.lastIn > 0 || s.iterations > 0 {
+		add("")
+		add(sectionHead("run", width))
+		add(m.cockpitStatusLine())
+		if s.lastTotal > 0 || s.lastIn > 0 {
+			add(s.lastTurnSummary())
+		}
+	}
+	add("")
+	add(sectionHead("cost", width))
+	switch {
+	case s.hasPricing():
+		add(s.costSummary())
+		if s.sessionCached > 0 {
+			add(s.cacheSavedLine())
+		}
+	case s.subscription:
+		add(palette.Muted.On("subscription — no metered cost"))
+	case s.local:
+		add(palette.Muted.On("local — no metered cost"))
+	default:
+		add(palette.Muted.On("metered · rate unknown"))
+	}
+	if tools := s.topTools(); len(tools) > 0 {
+		add("")
+		add(sectionHead("tools", width))
+		add(s.toolsSummaryLine())
+	}
+	if height > 0 && len(out) > height {
+		return out[:height]
+	}
+	return out
+}
+
+func (m *UI) contextPaneLines(width, _ int) []string {
+	s := &m.session.Run
+	out := []string{sectionHead("context", width), s.contextHeadline()}
+	if s.hasBreakdown() {
+		out = append(out, contextRoleBar(s, width), "")
+		out = append(out, contextRoleLegend(s)...)
+		out = append(out, "", sectionHead("cache", width), contextSplitBar(s, width), "", contextSplitLegend(s))
+	} else {
+		out = append(out, contextSplitBar(s, width), "", contextSplitLegend(s))
+	}
+	if pressure := s.compactionPressureLine(); pressure != "" {
+		out = append(out, pressure)
+	}
+	if s.compactions > 0 {
+		out = append(out, "", sectionHead("compaction", width))
+		out = append(out, s.compactionLines()...)
+	}
+	if s.lastTotal > 0 || s.lastIn > 0 {
+		out = append(out, "", sectionHead("throughput", width), s.throughputLine(width))
+	}
+	return out
+}
+
+func (m *UI) toolsPaneLines(width, _ int) []string {
+	tools := m.session.Run.topTools()
+	if len(tools) == 0 {
+		return []string{palette.Muted.On("no tool calls yet")}
+	}
+	out := []string{sectionHead("tools", width), m.session.Run.toolsSummaryLine()}
+	out = append(out, "")
+	out = append(out, toolHistogram(tools, width, max(12, len(tools)))...)
+	return out
+}
+
+func (m *UI) runPaneLines(width, height int) []string {
+	s := &m.session.Run
+	if len(s.history) == 0 {
+		return []string{
+			palette.Muted.On("no verified run active"),
+			palette.Subtle.On("headless REDRIVE traces will appear here"),
+		}
+	}
+	out := []string{sectionHead("run", width), m.cockpitStatusLine()}
+	if s.lastTotal > 0 || s.lastIn > 0 {
+		out = append(out, s.lastTurnSummary())
+		if tp := s.throughputLine(width); tp != "" {
+			out = append(out, tp)
+		}
+	}
+	out = append(out, "", sectionHead("history", width))
+	rows := max(4, height-len(out)-1)
+	out = append(out, s.historyTable(rows)...)
+	if s.compactions > 0 && len(out)+2 < height {
+		out = append(out, "", sectionHead("compaction", width))
+		out = append(out, s.compactionLines()...)
+	}
+	return out
+}
+
+func (m *UI) planStateLines(width int) []string {
+	p := m.session.Plan
+	done, doing, pending := planCounts(p)
+	out := []string{palette.Muted.On(itoa(len(p.Steps)) + " steps · " + itoa(done) + " done · " + itoa(doing) + " active · " + itoa(pending) + " pending")}
+	shown := 0
+	for _, step := range p.Steps {
+		if shown >= 3 {
+			break
+		}
+		if shown > 0 && step.Status == code.StepStatuses.COMPLETED && doing+pending > 0 {
+			continue
+		}
+		glyph, style := planStepDecor(step.Status)
+		prefix := glyph + " "
+		out = append(out, renderPlain(width, step.Text,
+			withFirstPrefix(prefix, strings.Repeat(" ", ansi.StringWidth(prefix))),
+			withStyle(style),
+		)...)
+		shown++
+	}
+	return out
+}
+
+func (m *UI) modeLabel() string {
+	if m.session.PlanMode {
+		return palette.PlanMode.On("PLAN")
+	}
+	return palette.Success.On("BUILD")
+}
+
+func (m *UI) compactModelLine() string {
+	provider := m.session.Provider
+	model := m.session.Model
+	if provider == "" {
+		provider = "not configured"
+	}
+	if model == "" {
+		return palette.Fg.On(provider)
+	}
+	return palette.Fg.On(provider) + palette.Muted.On("/") + palette.Subtle.On(model)
+}
+
+func (m *UI) workspaceLine() string {
+	line := palette.Fg.On(m.session.Workspace)
+	if m.session.Branch != "" {
+		line += palette.Muted.On(" · ") + palette.Secondary.On(m.session.Branch)
+	}
+	return line
+}
+
+func kvLine(label, value string) string {
+	return palette.Subtle.On(padRight(label, 10)) + value
+}
+
 // llmStateLines renders the sidebar's top card. This is deliberately not a
-// pile of abbreviations: the side pane should be a useful at-a-glance overview
+// pile of abbreviations: the sidebar should be a useful at-a-glance overview
 // of the active LLM configuration before the live token/cost/tool gauges begin.
 func (m *UI) llmStateLines() []string {
 	s := &m.session.Run
-	out := make([]string, 0, 6)
+	out := make([]string, 0, 8)
 	add := func(label, value string) {
 		out = append(out, palette.Subtle.On(padRight(label, 10))+value)
 	}
@@ -139,6 +307,12 @@ func (m *UI) llmStateLines() []string {
 	if pr := m.session.PR; pr != nil {
 		add("pr", prLine(pr))
 	}
+	if changes := m.workspaceChangesLine(); changes != "" {
+		add("changes", changes)
+	}
+	if totals := s.sessionTotalsLine(); totals != "" {
+		add("session", totals)
+	}
 	if !m.session.StartedAt.IsZero() {
 		started := palette.Fg.On(m.session.StartedAt.Format("15:04")) +
 			palette.Muted.On(" · ") + palette.Subtle.On(fmtAgo(time.Since(m.session.StartedAt)))
@@ -146,6 +320,22 @@ func (m *UI) llmStateLines() []string {
 	}
 
 	return out
+}
+
+func (m *UI) workspaceChangesLine() string {
+	if m.session == nil || m.session.WorkingSet == nil {
+		return ""
+	}
+	files := m.session.WorkingSet.FilesChangedThisSession()
+	if len(files) == 0 {
+		return ""
+	}
+	mutations := m.session.WorkingSet.MutationsThisSession()
+	parts := []string{palette.Fg.On(fmtCount(len(files))) + palette.Subtle.On(" files")}
+	if len(mutations) > 0 {
+		parts = append(parts, palette.Fg.On(fmtCount(len(mutations)))+palette.Subtle.On(" edits"))
+	}
+	return strings.Join(parts, palette.Muted.On(" · "))
 }
 
 // cockpitStatusLine is the one-line "what's happening now" row: a braille
@@ -421,6 +611,48 @@ func (s *RunState) costSummary() string {
 	}
 	if br := s.burnRate(); br > 0 {
 		parts = append(parts, palette.Muted.On("~"+fmtUSD(br)+"/hr"))
+	}
+	return strings.Join(parts, palette.Muted.On(" · "))
+}
+
+func (s *RunState) stateContextLine() string {
+	used := s.effectiveUsed()
+	line := palette.Subtle.On("using ") + palette.Fg.On(fmtCount(used))
+	if s.window > 0 {
+		line += palette.Muted.On(" of ") + palette.Fg.On(fmtCount(s.window))
+		line += palette.Muted.On(" · ") + pressureColor(s.fillFrac()).On(itoa(used*100/s.window)+"% full")
+	}
+	return line
+}
+
+func (s *RunState) toolsSummaryLine() string {
+	parts := []string{palette.Subtle.On(itoa(s.sessionToolCalls) + " calls")}
+	if n := len(s.toolStats); n > 0 {
+		parts = append(parts, palette.Fg.On(itoa(n)+" tools"))
+	}
+	if s.toolsRunning > 0 {
+		parts = append(parts, palette.Success.On(itoa(s.toolsRunning)+" running"))
+	}
+	fails := 0
+	for _, st := range s.toolStats {
+		fails += st.fails
+	}
+	if fails > 0 {
+		parts = append(parts, palette.Warning.On(itoa(fails)+" failed"))
+	}
+	return strings.Join(parts, palette.Muted.On(" · "))
+}
+
+func (s *RunState) sessionTotalsLine() string {
+	parts := make([]string, 0, 3)
+	if s.sessionTurns > 0 {
+		parts = append(parts, palette.Fg.On(fmtCount(s.sessionTurns))+palette.Subtle.On(" turns"))
+	}
+	if s.sessionToolCalls > 0 {
+		parts = append(parts, palette.Fg.On(fmtCount(s.sessionToolCalls))+palette.Subtle.On(" calls"))
+	}
+	if s.hasPricing() {
+		parts = append(parts, palette.Fg.On(fmtUSD(s.sessionCost()))+palette.Subtle.On(" spend"))
 	}
 	return strings.Join(parts, palette.Muted.On(" · "))
 }

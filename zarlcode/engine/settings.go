@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
@@ -160,6 +161,20 @@ func (s *Settings) ShellSandbox(ctx context.Context) bool {
 // Off by default; recommended for weak / local models that skip planning.
 func (s *Settings) PlanFirst(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyPlanFirst, "off") == "on"
+}
+
+// ReadBeforeWriteMode resolves the read-before-write guardrail mode. "off"
+// disables it; "advisory" and "strict" both refuse blind edit/write calls
+// until the task has first established local context.
+func (s *Settings) ReadBeforeWriteMode(ctx context.Context) guardrails.ReadBeforeWriteMode {
+	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyReadBeforeWrite, "off"))) {
+	case "advisory":
+		return guardrails.ReadBeforeWriteAdvisory
+	case "strict":
+		return guardrails.ReadBeforeWriteStrict
+	default:
+		return guardrails.ReadBeforeWriteOff
+	}
 }
 
 // Temperature resolves the sampling temperature for completion requests. A

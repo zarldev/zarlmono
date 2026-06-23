@@ -203,6 +203,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "provider for judge verdicts. (active) reuses the active provider — verdicts want a small fast model."},
 				{label: "judge model", key: prefs.KeyJudgeModel, kind: rowModel, def: "(active)",
 					desc: "model for judge verdicts, from the judge provider's list. (active) reuses the active model."},
+				{label: "read before write", key: prefs.KeyReadBeforeWrite, kind: rowEnum, def: "off", opts: []string{"off", "advisory", "strict"},
+					desc: "require the task to read the target file or nearby context before edit/write. advisory and strict both refuse blind edits; strict is the strongest local-model setting."},
 			}},
 			{name: "compaction", rows: []settingsRow{
 				{label: "engine", key: prefs.KeyCompactEngine, kind: rowEnum, def: "tiered", opts: compactEngineOpts(),

@@ -170,6 +170,7 @@ func (a *App[T]) runProgram(ctx context.Context) int {
 
 	instance, err := a.program.Create(ctx, a)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: create: %v\n", a.Name(), err)
 		return a.createFailureCode
 	}
 

@@ -59,6 +59,12 @@ Compaction has two triggers:
 
 The runner skips iteration 0 (no prior usage to drive a decision) and calls `Compact` at the top of every iteration after. Implementations MUST preserve the leading system message at index 0 if present — the loop relies on it.
 
+## Prompt text is a control plane
+
+The runner deliberately treats prompts as a portable, inspectable control plane, not as learned policy. `PromptSource` returns ordinary text because zkit must work across OpenAI-compatible endpoints, Anthropic, Google, local llama.cpp/Ollama servers, and OAuth-backed coding providers without assuming gradient access, fine-tuning, or model-family-specific soft prompts.
+
+That trade-off makes prompt influence easy to inspect and hot-reload, but it also means prompt prose is behaviour-bearing source material. Keep prompt fragments small, attributable, reviewed, and testable. Prefer putting capability in tools and narrow interfaces; use prompt text for operating contracts and task-specific guidance that needs to be visible to operators.
+
 ## Why context.AfterFunc instead of polling
 
 `ConversationLock.Wait` uses `sync.Cond` (Release wakes waiters immediately) plus `context.AfterFunc` (ctx cancellation broadcasts the cond). No poll loop, no timer drift. Don't add poll loops in this package: either a sync primitive wakes you (Cond, channel, AfterFunc) or the design is wrong.

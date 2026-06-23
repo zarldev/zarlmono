@@ -105,3 +105,48 @@ func TestCommandGoalFeedbackCarriesOutputTail(t *testing.T) {
 		t.Errorf("feedback lost the oracle output: %q", d.Feedback)
 	}
 }
+
+func TestCommandGoalReportsVerifierResult(t *testing.T) {
+	root := t.TempDir()
+	var reports []coderunner.VerifyResult
+	goal := coderunner.CommandGoal(root, "echo 'FAIL: nope'; exit 7", nil, coderunner.VerifyOpts{
+		OnResult: func(r coderunner.VerifyResult) { reports = append(reports, r) },
+	})
+
+	d := goal.Evaluate(t.Context(), pursue.Attempt{Number: 4})
+	if d.Done {
+		t.Fatal("failing command reported Done")
+	}
+	if len(reports) != 1 {
+		t.Fatalf("got %d reports, want 1", len(reports))
+	}
+	got := reports[0]
+	if got.AttemptNumber != 4 || got.Command == "" || got.Success || got.Skipped {
+		t.Errorf("report = %+v", got)
+	}
+	if got.ExitCode == nil || *got.ExitCode != 7 {
+		t.Errorf("exit code = %v, want 7", got.ExitCode)
+	}
+	if !strings.Contains(got.OutputTail, "FAIL: nope") || got.Error == "" {
+		t.Errorf("report output/error = %q / %q", got.OutputTail, got.Error)
+	}
+}
+
+func TestCommandGoalReportsSkippedVerifierResult(t *testing.T) {
+	root := t.TempDir()
+	var reports []coderunner.VerifyResult
+	goal := coderunner.CommandGoal(root, "exit 1", dirState(root), coderunner.VerifyOpts{
+		OnResult: func(r coderunner.VerifyResult) { reports = append(reports, r) },
+	})
+
+	d := goal.Evaluate(t.Context(), pursue.Attempt{Number: 1})
+	if d.Done || !strings.Contains(d.Feedback, "no changes") {
+		t.Fatalf("done=%v feedback=%q, want unchanged retry", d.Done, d.Feedback)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("got %d reports, want 1", len(reports))
+	}
+	if !reports[0].Skipped || reports[0].AttemptNumber != 1 || !strings.Contains(reports[0].OutputTail, "no changes") {
+		t.Errorf("skipped report = %+v", reports[0])
+	}
+}

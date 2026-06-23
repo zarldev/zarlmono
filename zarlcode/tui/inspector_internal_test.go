@@ -253,7 +253,7 @@ func TestInspectorToolsUsePlanFilteredLiveSurface(t *testing.T) {
 			t.Fatalf("plan inspector tools missing %q; saw %#v", want, seen)
 		}
 	}
-	for _, blocked := range []string{"write", "edit", "apply_patch", "bash"} {
+	for _, blocked := range []string{"write", "edit", "bash"} {
 		if seen[blocked] {
 			t.Fatalf("plan inspector tools should hide %q; saw %#v", blocked, seen)
 		}

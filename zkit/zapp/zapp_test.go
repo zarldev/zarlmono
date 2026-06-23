@@ -1,6 +1,7 @@
 package zapp_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"

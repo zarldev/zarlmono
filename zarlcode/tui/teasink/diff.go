@@ -2,8 +2,7 @@ package teasink
 
 import "github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 
-// DiffMsg carries a file mutation captured by the diff recorder
-// (write / edit / apply_patch). Diff is a unified diff. It is NOT a
+// (write / edit). Diff is a unified diff. It is NOT a
 // runner EventSink event — it's dispatched through the same pump
 // (Sink.Diff) so it stays ordered with the tool events around it.
 type DiffMsg struct {

@@ -157,6 +157,9 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.intro != nil {
 		return m.handleIntroKey(msg)
 	}
+	if m.startupFailure != nil {
+		return m.handleStartupFailureKey(msg)
+	}
 	if m.session.CockpitExpanded {
 		return m.handleDashboardKey(msg)
 	}
@@ -164,6 +167,20 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleBrowseKey(msg)
 	}
 	return m.handleComposerKey(msg)
+}
+
+func (m *UI) handleIntroKey(msg tea.KeyPressMsg) tea.Cmd {
+	if cmd, ok := m.handleCommonShortcut(msg); ok {
+		return cmd
+	}
+	return m.intro.handleKey(m, msg)
+}
+
+func (m *UI) handleStartupFailureKey(msg tea.KeyPressMsg) tea.Cmd {
+	if cmd, ok := m.handleCommonShortcut(msg); ok {
+		return cmd
+	}
+	return m.startupFailure.handleKey(msg)
 }
 
 func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
@@ -212,15 +229,9 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "shift+tab":
 		m.togglePlan()
 		return nil, true
+
 	}
 	return nil, false
-}
-
-func (m *UI) handleIntroKey(msg tea.KeyPressMsg) tea.Cmd {
-	if cmd, ok := m.handleCommonShortcut(msg); ok {
-		return cmd
-	}
-	return m.intro.handleKey(m, msg)
 }
 
 func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {

@@ -84,38 +84,27 @@ type UI struct {
 	// Panes — imperative rendering regions driven by the shell.
 	headerPane *headerPane
 	statusPane *statusPane
+	// startupFailure is a full-screen fatal launch surface shown when zarlcode
+	// can initialize the shell UI but cannot finish startup (for example an
+	// invalid workspace-scoped provider config). Non-nil disables the normal
+	// cockpit and exits on enter/esc.
+	startupFailure *startupFailurePane
+
 }
 
 // SetRunFn wires the live-run launcher invoked when the user submits a
 // prompt. The standalone cmd sets this after building the runner factory.
 func (m *UI) SetRunFn(fn func(prompt string) tea.Cmd) { m.runFn = fn }
 
-// SetSettings wires the persistence handle so the settings overlay (ctrl+s)
-// can read and write preferences. Nil leaves the overlay unavailable.
-// Also resolves the confirm_quit setting.
-func (m *UI) SetSettings(s *engine.Settings) {
-	m.settings = s
-	m.session.SetConfirmQuit(s.ConfirmQuit(m.appContext()))
-	if s != nil && s.Registry != nil {
-		m.session.SetModelMeta(s.Registry)
-	}
-}
-
-// handleQuit returns a quit command, optionally showing a confirmation
-// dialog first when confirm_quit is enabled.
-func (m *UI) handleQuit() tea.Cmd {
-	if m.session.ConfirmQuit {
-		m.overlay.push(newQuitConfirmDialog())
-		return nil
-	}
-	m.cancelLiveTurnForQuit()
-	return tea.Quit
-}
 
 func (m *UI) cancelLiveTurnForQuit() {
 	if m.live != nil {
 		m.live.CancelTurn()
 	}
+}
+
+func (m *UI) SetStartupFailure(wsRoot, title, err string) {
+	m.startupFailure = newStartupFailurePane(shortenHome(wsRoot), title, err)
 }
 
 func (m *UI) appContext() context.Context {
@@ -158,7 +147,7 @@ func (m *UI) togglePlan() {
 }
 
 // SetWorkspace sets the workspace path (~-shortened), git branch (if any), and
-// model name. The workspace/branch render in the run pane; the model also
+// model name. The workspace/branch render in the state sidebar; the model also
 // appears in the timeline title. Resolving the model name seeds the cockpit's
 // best-effort token pricing (overridable via SetPricing).
 func (m *UI) SetWorkspace(root, model string) {
@@ -245,6 +234,28 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 		return m.fetchModelsCmd(current.Name)
 	}
 	return nil
+}
+
+// SetSettings wires the persistence handle so the settings overlay (ctrl+s)
+// can read and write preferences. Nil leaves the overlay unavailable.
+// Also resolves the confirm_quit setting.
+func (m *UI) SetSettings(s *engine.Settings) {
+	m.settings = s
+	m.session.SetConfirmQuit(s.ConfirmQuit(m.appContext()))
+	if s != nil && s.Registry != nil {
+		m.session.SetModelMeta(s.Registry)
+	}
+}
+
+// handleQuit returns a quit command, optionally showing a confirmation
+// dialog first when confirm_quit is enabled.
+func (m *UI) handleQuit() tea.Cmd {
+	if m.session.ConfirmQuit {
+		m.overlay.push(newQuitConfirmDialog())
+		return nil
+	}
+	m.cancelLiveTurnForQuit()
+	return tea.Quit
 }
 
 // SetContextWindow overrides the cockpit gauge's denominator (the model's

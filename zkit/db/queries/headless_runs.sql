@@ -80,3 +80,63 @@ WHERE id = ?;
 UPDATE headless_runs
 SET provider = ?, model = ?
 WHERE workspace = ? AND provider = '' AND model = '';
+
+-- name: InsertHeadlessAttempt :exec
+-- Records one completed REDRIVE attempt for a headless run. Upsert keeps
+-- recorder retries/idempotent tests from failing on the composite key.
+INSERT INTO headless_attempts (
+    run_id, attempt_number, prompt,
+    terminal_reason, error, final_content,
+    iterations, tool_calls, tokens_in, tokens_out,
+    decision_done, feedback, recorded_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id, attempt_number) DO UPDATE SET
+    prompt          = excluded.prompt,
+    terminal_reason = excluded.terminal_reason,
+    error           = excluded.error,
+    final_content   = excluded.final_content,
+    iterations      = excluded.iterations,
+    tool_calls      = excluded.tool_calls,
+    tokens_in       = excluded.tokens_in,
+    tokens_out      = excluded.tokens_out,
+    decision_done   = excluded.decision_done,
+    feedback        = excluded.feedback,
+    recorded_at     = excluded.recorded_at;
+
+-- name: ListHeadlessAttempts :many
+-- Returns attempt trace rows for one headless run in attempt order.
+SELECT
+    run_id, attempt_number, prompt,
+    terminal_reason, error, final_content,
+    iterations, tool_calls, tokens_in, tokens_out,
+    decision_done, feedback, recorded_at
+FROM headless_attempts
+WHERE run_id = ?
+ORDER BY attempt_number ASC;
+
+-- name: InsertHeadlessVerifierResult :exec
+-- Records the structured verifier/oracle result for one REDRIVE attempt.
+INSERT INTO headless_verifier_results (
+    run_id, attempt_number, command,
+    skipped, success, exit_code, error, output_tail,
+    duration_ms, recorded_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id, attempt_number) DO UPDATE SET
+    command     = excluded.command,
+    skipped     = excluded.skipped,
+    success     = excluded.success,
+    exit_code   = excluded.exit_code,
+    error       = excluded.error,
+    output_tail = excluded.output_tail,
+    duration_ms = excluded.duration_ms,
+    recorded_at = excluded.recorded_at;
+
+-- name: ListHeadlessVerifierResults :many
+-- Returns verifier/oracle results for one headless run in attempt order.
+SELECT
+    run_id, attempt_number, command,
+    skipped, success, exit_code, error, output_tail,
+    duration_ms, recorded_at
+FROM headless_verifier_results
+WHERE run_id = ?
+ORDER BY attempt_number ASC;

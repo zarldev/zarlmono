@@ -44,7 +44,7 @@ Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex
 
 ## Capabilities
 
-**File tools.** Read, write, edit, and `apply_patch` (Codex-style multi-file patches with atomic commit). `grep` and `glob` for search. All file ops are workspace-bounded and tracked.
+**File tools.** Read, write, and edit files, plus `grep` and `glob` for search. All file ops are workspace-bounded and tracked.
 
 **Shell.** `bash` with foreground (blocking, 600s max) and background (detached process) modes. Long output is spooled to disk and tail-summarised. Guardrail policies block destructive patterns.
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -47,6 +48,8 @@ type InspectorSnapshot struct {
 	PlanMode bool
 	// PromptSystem is the rendered system prompt for the current mode.
 	PromptSystem string
+	// PromptStack records neutral prompt-fragment accounting for inspection.
+	PromptStack prompts.Stack
 	// Errors are non-fatal snapshot/render issues surfaced in the inspector.
 	Errors []string
 	// Guardrails is a summary of guardrail configuration.
@@ -322,6 +325,10 @@ func (d *inspector) promptLines(width int) []string {
 		headerLine("system prompt · "+modeLabel(d.snapshot.PlanMode), width, palette.Primary.On),
 		"",
 	}
+	lines = append(lines, promptStackSummaryLines(d.snapshot.PromptStack)...)
+	if len(d.snapshot.PromptStack.Fragments) > 0 {
+		lines = append(lines, "")
+	}
 	lines = append(lines, d.errorLines()...)
 	if len(d.snapshot.Errors) > 0 {
 		lines = append(lines, "")
@@ -330,6 +337,55 @@ func (d *inspector) promptLines(width int) []string {
 		lines = append(lines, palette.Muted.On(ln))
 	}
 	return lines
+}
+
+func promptStackSummaryLines(stack prompts.Stack) []string {
+	if len(stack.Fragments) == 0 {
+		return nil
+	}
+	lines := []string{
+		palette.Subtle.On(fmt.Sprintf("prompt stack: %d fragments · %d words · %d bytes", len(stack.Fragments), stack.TotalWords, stack.TotalBytes)),
+	}
+	largest := make([]prompts.Fragment, 0, len(stack.Fragments))
+	for _, f := range stack.Fragments {
+		if f.Kind == prompts.FragmentRenderedTotal {
+			continue
+		}
+		largest = append(largest, f)
+		source := f.Source
+		if source == "" {
+			source = "(unknown source)"
+		}
+		lines = append(lines, fmt.Sprintf("  %02d %-21s %s · %d words · %d bytes", f.Order, f.Kind, palette.Info.On(f.Name), f.Words, f.Bytes))
+		lines = append(lines, "     "+palette.Subtle.On(source))
+	}
+	slices.SortFunc(largest, func(a, b prompts.Fragment) int { return cmp.Compare(b.Bytes, a.Bytes) })
+	if len(largest) > 0 {
+		lines = append(lines, palette.Subtle.On("largest fragments"))
+		for i, f := range largest {
+			if i >= 3 {
+				break
+			}
+			lines = append(lines, fmt.Sprintf("  %s · %s · %d bytes", palette.Info.On(f.Name), f.Kind, f.Bytes))
+		}
+	}
+	return lines
+}
+
+func promptStackFragment(stack prompts.Stack, kind prompts.FragmentKind, name string) (prompts.Fragment, bool) {
+	for _, f := range stack.Fragments {
+		if f.Kind == kind && f.Name == name {
+			return f, true
+		}
+	}
+	return prompts.Fragment{}, false
+}
+
+func contributionLabel(contributes bool) string {
+	if contributes {
+		return "contributes now"
+	}
+	return "catalogued; loaded on demand"
 }
 
 func (d *inspector) errorLines() []string {
@@ -467,6 +523,9 @@ func (d *inspector) skillsLines(width int) []string {
 		lines = append(lines, fmt.Sprintf("  %s %s", palette.PlanMode.On("#"), palette.Info.On(s.Name)))
 		lines = append(lines, fmt.Sprintf("    %s", palette.Muted.On(s.Description)))
 		lines = append(lines, fmt.Sprintf("    %s", palette.Subtle.On(s.Source)))
+		if f, ok := promptStackFragment(d.snapshot.PromptStack, prompts.FragmentSkill, s.Name); ok {
+			lines = append(lines, fmt.Sprintf("    %s", palette.Subtle.On(fmt.Sprintf("prompt fragment: %d words · %d bytes · %s", f.Words, f.Bytes, contributionLabel(f.Contributes)))))
+		}
 		lines = append(lines, "")
 	}
 	return lines
@@ -545,6 +604,7 @@ func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *
 		s.Errors = ins.Errors
 		s.Tools = ins.Tools
 		s.Guardrails = guardrailSummary(ins.Guardrails)
+		s.PromptStack = ins.PromptStack
 		s.Skills = ins.Skills
 		s.Agents = ins.Agents
 		s.Hooks = ins.Hooks

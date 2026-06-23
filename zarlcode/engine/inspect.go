@@ -5,6 +5,7 @@ import (
 	"iter"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
+	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -29,6 +30,7 @@ type Inspection struct {
 	MCPActive     bool
 	Tools         []tools.ToolSpec
 	PromptSystem  string
+	PromptStack   prompts.Stack
 	Errors        []string
 	Skills        []catalog.Skill
 	Agents        []catalog.Agent
@@ -92,11 +94,17 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	for t := range visible.Tools(ctx) {
 		ins.Tools = append(ins.Tools, t.Definition())
 	}
-	prompt, err := RenderLivePrompt(inspectorPromptName(ins.PlanMode), inspectorPromptBody(ins.PlanMode), l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, visible))
+	promptName := inspectorPromptName(ins.PlanMode)
+	promptBody := inspectorPromptBody(ins.PlanMode)
+	promptSkills := l.catalogSnapshotSkills()
+	promptAgents := l.catalogSnapshotAgents()
+	promptDocs := l.instructionSnapshotDocs()
+	prompt, err := RenderLivePrompt(promptName, promptBody, l.ws.Root(), promptSkills, promptAgents, promptDocs, ToolInfoFromSource(ctx, visible))
 	if err != nil {
 		ins.Errors = append(ins.Errors, "prompt: "+err.Error())
 	} else {
 		ins.PromptSystem = prompt
+		ins.PromptStack = BuildPromptStack(promptName, promptBody, prompt, promptSkills, promptAgents, promptDocs)
 	}
 	return ins
 }

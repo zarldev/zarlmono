@@ -627,7 +627,7 @@ func (m *UI) drawTimeline(scr uv.Screen, r uv.Rectangle) {
 	drawFrame(scr, r, frameStyle{Border: palette.Border})
 	// The timeline title owns the global app/mode/model context; the old
 	// standalone top header line was removed to avoid two adjacent status rows.
-	m.drawRunTitleStatus(scr, r, false)
+	m.drawPaneTitleStatus(scr, r, false)
 	w, h := r.Dx(), r.Dy()
 	if w < 4 || h < 3 {
 		return

@@ -30,7 +30,7 @@ First public release of `zarlmono` — the Zarldev monorepo.
 - **Release pipeline** — `task zarlcode:release VERSION=vX.Y.Z` tags and pushes
 - **Settings system** — workspace/global scope, promote (Ctrl+G), inline save feedback, storage inspector
 - **Provider support** — anthropic, openai, deepseek, gemini, google-vertex, llamacpp, ollama, claude-code (OAuth), openai-codex (OAuth)
-- **File tools** — read, write, edit, apply_patch, grep, glob — workspace-bounded and tracked
+- **File tools** — read, write, edit, grep, glob — workspace-bounded and tracked
 - **Shell tools** — foreground (600s max) and background modes with guardrail policies
 - **MCP servers** — stdio and HTTP transports; tools register on the flat tool list
 - **Sub-agents** — parallel dispatch with mode enforcement (explore/verify/implement)

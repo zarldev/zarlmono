@@ -117,3 +117,36 @@ func headlessRowToRecord(r gen.HeadlessRun) HeadlessRunRecord {
 	}
 	return rec
 }
+
+func headlessAttemptRowToRecord(r gen.HeadlessAttempt) HeadlessAttemptRecord {
+	return HeadlessAttemptRecord{
+		RunID:          r.RunID,
+		AttemptNumber:  int(r.AttemptNumber),
+		Prompt:         r.Prompt,
+		TerminalReason: stringFromNull(r.TerminalReason),
+		Error:          stringFromNull(r.Error),
+		FinalContent:   stringFromNull(r.FinalContent),
+		Iterations:     int(int64FromNull(r.Iterations)),
+		ToolCalls:      int(int64FromNull(r.ToolCalls)),
+		TokensIn:       int64PtrFromNull(r.TokensIn),
+		TokensOut:      int64PtrFromNull(r.TokensOut),
+		DecisionDone:   r.DecisionDone != 0,
+		Feedback:       stringFromNull(r.Feedback),
+		RecordedAt:     time.Unix(r.RecordedAt, 0),
+	}
+}
+
+func headlessVerifierResultRowToRecord(r gen.HeadlessVerifierResult) HeadlessVerifierResultRecord {
+	return HeadlessVerifierResultRecord{
+		RunID:         r.RunID,
+		AttemptNumber: int(r.AttemptNumber),
+		Command:       r.Command,
+		Skipped:       r.Skipped != 0,
+		Success:       r.Success != 0,
+		ExitCode:      int64PtrFromNull(r.ExitCode),
+		Error:         stringFromNull(r.Error),
+		OutputTail:    stringFromNull(r.OutputTail),
+		Duration:      time.Duration(r.DurationMs) * time.Millisecond,
+		RecordedAt:    time.Unix(r.RecordedAt, 0),
+	}
+}

@@ -12,6 +12,8 @@ zarl's persona and the universal rules; skills add task-specific
 playbooks on demand. Most users will never need to touch the prompt —
 they add skills.
 
+The implementation is intentionally a hard-prompt control plane, not model training: a skill is ordinary text selected for the current turn. That makes behaviour inspectable and provider-portable, but it also means skill text should be treated like source code — small, reviewed, attributable, and measured by whether it helps the turns where it fires.
+
 ## When a skill fires
 
 `SkillSelector` mirrors `ToolSelector`:
@@ -77,6 +79,12 @@ full markdown body to the prompt forever, eating tokens. Reserve for
 universal guidance (e.g. "how to use memory") that genuinely applies
 to every interaction.
 
+## Prompt discipline
+
+Prefer observable, task-specific guidance over broad personality prose. A good skill says when it applies, what procedure to follow, and what output shape helps the user. Keep bodies concise enough that selecting the skill is a clear win over spending the same context on conversation history or tool output.
+
+Because skills are selected prompt fragments, attribution matters: use stable names, accurate descriptions, and bodies that are narrow enough to inspect when a turn goes wrong. If the guidance really belongs on every turn, put it in the active prompt instead of hiding it inside an always-on skill; if the behaviour is better expressed as a tool affordance, build the tool rather than adding more markdown.
+
 ## Pitfalls
 
 - **Don't hardcode tool names.** Skills end up in the system prompt,
@@ -86,6 +94,7 @@ to every interaction.
   `remember_about_person`). Tools carry their own descriptions; if a
   tool needs richer guidance, improve *its* description. A skill that
   names tools rots the moment the tool is renamed or swapped.
+
 - **Description sentences, not labels.** "Weekly review" matches
   poorly. "When the user asks for a status update or wants to review
   what they've been working on" matches well — the selector embeds
