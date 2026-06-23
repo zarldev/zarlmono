@@ -222,8 +222,10 @@ func makeCallbackHandler(expectedState string, resCh chan<- callbackResult) http
 
 // openBrowser tries to open the given URL in the user's default
 // browser. Failures are silent — the caller has already printed the
-// URL for the user to copy/paste as a fallback.
-func openBrowser(ctx context.Context, url string) {
+// URL for the user to copy/paste as a fallback. It's a var so tests
+// driving runManual/RunLogin can stub it: running the real one would
+// spawn a ChatGPT login tab on every `go test` of this package.
+var openBrowser = func(ctx context.Context, url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

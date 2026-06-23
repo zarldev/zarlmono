@@ -5,7 +5,37 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/toolparse"
 )
+
+// TestRenderedToolCallHistoryRoundTrips guards the format-conflict fix: the
+// <assistant_tool_calls> block buildPrompt renders for prior turns is the same
+// shape the model copies into a new turn, so it must parse back into the
+// original call via toolparse.ParseArtifact. Rendering the old double-
+// stringified arguments blob let the model fumble the escaping and leak the
+// call as visible text.
+func TestRenderedToolCallHistoryRoundTrips(t *testing.T) {
+	calls := []llm.ToolCall{{
+		ID:   "call_1",
+		Type: toolCallTypeFunction,
+		Function: llm.ToolCallFunction{
+			Name:      "bash",
+			Arguments: `{"command":"echo hi","timeout_seconds":20}`,
+		},
+	}}
+	block := "<assistant_tool_calls>\n" + renderToolCalls(calls) + "\n</assistant_tool_calls>"
+	res := toolparse.ParseArtifact(block)
+	if len(res.Calls) != 1 {
+		t.Fatalf("ParseArtifact recovered %d calls, want 1, from:\n%s", len(res.Calls), block)
+	}
+	got := res.Calls[0]
+	if got.Function.Name != "bash" {
+		t.Fatalf("recovered name %q, want bash", got.Function.Name)
+	}
+	if want := `"command":"echo hi"`; !strings.Contains(got.Function.Arguments, want) {
+		t.Fatalf("recovered arguments %q missing %q", got.Function.Arguments, want)
+	}
+}
 
 func TestTextDeltaFromStreamEvent(t *testing.T) {
 	line := `{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"hello"}}}`
@@ -76,7 +106,7 @@ func TestBuildPromptIncludesToolResults(t *testing.T) {
 	if want := `"name":"bash"`; !strings.Contains(prompt, want) {
 		t.Fatalf("prompt missing tool call name %q in:\n%s", want, prompt)
 	}
-	if want := `"arguments":"{\"command\":\"echo hi\"}"`; !strings.Contains(prompt, want) {
+	if want := `"arguments":{"command":"echo hi"}`; !strings.Contains(prompt, want) {
 		t.Fatalf("prompt missing tool call arguments %q in:\n%s", want, prompt)
 	}
 	if want := "<tool_result tool_call_id=\"call_1\">\nhi\n\n</tool_result>"; !strings.Contains(prompt, want) {
