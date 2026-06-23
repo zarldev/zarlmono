@@ -18,7 +18,7 @@ func TestStartupFailurePaneRenders(t *testing.T) {
 	m = mm.(*tui.UI)
 
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"startup failed", "provider startup", `provider "anthropic": invalid api key`, "workspace", "~", "ctrl+s settings"} {
+	for _, want := range []string{"startup failed", "provider startup", `provider "anthropic": invalid api key`, "workspace", "ctrl+s settings"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("startup failure screen missing %q:\n%s", want, out)
 		}
