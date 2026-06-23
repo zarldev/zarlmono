@@ -27,7 +27,10 @@ const (
 // ReadFileHLTool reads a file with line-number + hash anchors for the edit
 // tool. Its Definition returns ToolNameRead — it replaces ReadTool in the
 // standard toolset without changing the name the model sees.
-type ReadFileHLTool struct{ ws Workspace }
+type ReadFileHLTool struct {
+	ws                    Workspace
+	allowOutsideWorkspace bool
+}
 
 // ReadFileHLArgs is the typed argument struct ReadFileHLTool.Execute decodes.
 type ReadFileHLArgs struct {
@@ -38,7 +41,13 @@ type ReadFileHLArgs struct {
 }
 
 // NewReadFileHLTool returns the hashline read tool bound to ws.
-func NewReadFileHLTool(ws Workspace) *ReadFileHLTool { return &ReadFileHLTool{ws: ws} }
+func NewReadFileHLTool(ws Workspace, opts ...ReadOption) *ReadFileHLTool {
+	var policy readPolicy
+	for _, opt := range opts {
+		opt(&policy)
+	}
+	return &ReadFileHLTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
+}
 
 // Definition advertises read with path, offset, limit, and hash_len.
 func (t *ReadFileHLTool) Definition() tools.ToolSpec {
@@ -66,7 +75,7 @@ func (t *ReadFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 		return tools.Failure(call.ID, tools.Validation("read", err.Error())), nil
 	}
 
-	data, fail := readHashlineFile(t.ws, args.Path, call.ID, "read")
+	data, fail := readHashlineFile(t.ws, args.Path, call.ID, "read", t.allowOutsideWorkspace)
 	if fail != nil {
 		return fail, nil
 	}
@@ -232,8 +241,8 @@ type hashlineLine struct {
 	Content string
 }
 
-func readHashlineFile(ws Workspace, path, callID, op string) ([]byte, *tools.ToolResult) {
-	abs, err := ws.Resolve(path)
+func readHashlineFile(ws Workspace, path, callID, op string, allowOutsideWorkspace bool) ([]byte, *tools.ToolResult) {
+	abs, err := ws.ResolveForRead(path, allowOutsideWorkspace)
 	if err != nil {
 		return nil, tools.Failure(callID, tools.Permission(op, err.Error()))
 	}
@@ -241,7 +250,7 @@ func readHashlineFile(ws Workspace, path, callID, op string) ([]byte, *tools.Too
 }
 
 func readHashlineFileAt(ws Workspace, abs, path, callID, op string) ([]byte, *tools.ToolResult) {
-	info, err := ws.StatInRoot(abs)
+	info, err := ws.StatPath(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, tools.Failure(callID, tools.NotFound(op, fmt.Sprintf("%q does not exist", path)))
@@ -255,7 +264,7 @@ func readHashlineFileAt(ws Workspace, abs, path, callID, op string) ([]byte, *to
 		))
 	}
 
-	data, err := ws.ReadFileInRoot(abs)
+	data, err := ws.ReadFilePath(abs)
 	if err != nil {
 		return nil, tools.Failure(callID, tools.Fatal(op, fmt.Errorf("%q: %w", path, err)))
 	}

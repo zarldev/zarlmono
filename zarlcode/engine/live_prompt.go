@@ -93,6 +93,34 @@ func RenderLivePrompt(name, body, wsRoot string, skills []catalog.Skill, agents 
 	return prompts.Render(name, body, data)
 }
 
+func BuildPromptStack(name, body, rendered string, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document) prompts.Stack {
+	kind := prompts.FragmentSystem
+	source := "embedded system prompt or user override"
+	if name == "plan" || name == "inspector:plan" {
+		kind = prompts.FragmentPlan
+		source = "embedded plan prompt"
+	}
+	order := 0
+	fragments := []prompts.Fragment{
+		prompts.NewFragment(kind, name, source, "active prompt body", order, body, true),
+	}
+	order++
+	for _, doc := range instructionDocs {
+		fragments = append(fragments, prompts.NewFragment(prompts.FragmentWorkspaceInstruction, doc.RelPath, doc.RelPath, "workspace instruction appended to prompt", order, doc.Content, true))
+		order++
+	}
+	for _, skill := range skills {
+		fragments = append(fragments, prompts.NewFragment(prompts.FragmentSkill, skill.Name, skill.Source, "catalogued skill; loaded on demand", order, skill.Body, false))
+		order++
+	}
+	for _, agent := range agents {
+		fragments = append(fragments, prompts.NewFragment(prompts.FragmentAgent, agent.Name, agent.Source, "catalogued sub-agent; used when delegated", order, agent.Body, false))
+		order++
+	}
+	fragments = append(fragments, prompts.NewFragment(prompts.FragmentRenderedTotal, name, "rendered prompt", "fully rendered system message", order, rendered, true))
+	return prompts.NewStack(fragments)
+}
+
 func (l *LiveRunner) instructionSnapshotDocs() []instructions.Document {
 	if l == nil {
 		return nil

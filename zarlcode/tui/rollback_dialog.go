@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -51,7 +52,8 @@ func (d *rollbackDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (d *rollbackDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	drawDialogBox(scr, area, "rollback", d.lines())
+	lines := append([]string{overlayTopBar("rollback", nil, 0, "confirm", 72), palette.Subtle.On(strings.Repeat("─", 72))}, d.lines()...)
+	drawDialogBox(scr, area, "rollback", lines)
 }
 
 func (d *rollbackDialog) lines() []string {

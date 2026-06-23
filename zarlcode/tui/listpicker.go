@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 )
@@ -58,13 +61,24 @@ func (p *listPicker) draw(scr uv.Screen, area uv.Rectangle) {
 	if end > len(p.items) {
 		end = len(p.items)
 	}
-	lines := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		if i == p.cursor {
-			lines = append(lines, palette.Primary.On("▸ "+p.items[i]))
-		} else {
-			lines = append(lines, "  "+palette.Subtle.On(p.items[i]))
-		}
+	boxW := min(72, area.Dx()-4)
+	boxH := min(listPickerVisible+5, area.Dy()-2)
+	lay, ok := drawDialogPane(scr, area, p.title, boxW, boxH, palette.Border, palette.Primary)
+	if !ok {
+		return
 	}
-	drawDialogBox(scr, area, p.title+"  (↑↓ enter)", lines)
+	innerW, innerX := lay.Body.Dx(), lay.Body.Min.X
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), overlayTopBar(p.title, nil, 0, fmt.Sprintf("%d choices", len(p.items)), innerW))
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Body.Min.Y, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
+	y := lay.Body.Min.Y + 1
+	for i := start; i < end && y < lay.Footer.Min.Y; i++ {
+		if i == p.cursor {
+			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Primary.On("▸ "+p.items[i]))
+		} else {
+			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), "  "+palette.Subtle.On(p.items[i]))
+		}
+		y++
+	}
+	hint := keyLegend(keyHint{"↑↓", "navigate"}, keyHint{"enter", "select"}, keyHint{"esc", "close"})
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Footer.Min.Y, innerW, 1), hint)
 }

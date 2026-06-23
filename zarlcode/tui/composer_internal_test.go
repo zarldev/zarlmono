@@ -232,7 +232,7 @@ func TestComposer_CtrlQUsesClearConfirmation(t *testing.T) {
 	}
 }
 
-func TestComposer_ContextDashboardScrollKeys(t *testing.T) {
+func TestComposer_ContextViewScrollKeys(t *testing.T) {
 	m := New()
 	m.width, m.height = 100, 14
 	m.layout = computeLayout(m.width, m.height)
@@ -241,32 +241,32 @@ func TestComposer_ContextDashboardScrollKeys(t *testing.T) {
 	}
 	maxScroll := m.dashboardMaxScroll()
 	if maxScroll == 0 {
-		t.Fatal("test setup should produce an overflowing dashboard")
+		t.Fatal("test setup should produce an overflowing context view")
 	}
 
 	m.handleKey(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
 	if !m.session.CockpitExpanded {
-		t.Fatal("ctrl+l should open the context dashboard in session state")
+		t.Fatal("ctrl+l should open the context view in session state")
 	}
-	if m.dashboardScroll != 0 {
-		t.Fatalf("dashboard should open at top, got scroll %d", m.dashboardScroll)
+	if m.contextView.activeScroll() != 0 {
+		t.Fatalf("context view should open at top, got scroll %d", m.contextView.activeScroll())
 	}
 
 	m.handleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.dashboardScroll <= 0 {
-		t.Fatalf("pgdown should scroll dashboard, got %d", m.dashboardScroll)
+	if m.contextView.activeScroll() <= 0 {
+		t.Fatalf("pgdown should scroll context view, got %d", m.contextView.activeScroll())
 	}
 	m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if m.dashboardScroll != maxScroll {
-		t.Fatalf("end scroll = %d, want %d", m.dashboardScroll, maxScroll)
+	if m.contextView.activeScroll() != maxScroll {
+		t.Fatalf("end scroll = %d, want %d", m.contextView.activeScroll(), maxScroll)
 	}
 	m.handleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.dashboardScroll != maxScroll {
-		t.Fatalf("dashboard scroll should clamp at max %d, got %d", maxScroll, m.dashboardScroll)
+	if m.contextView.activeScroll() != maxScroll {
+		t.Fatalf("context view scroll should clamp at max %d, got %d", maxScroll, m.contextView.activeScroll())
 	}
 	m.handleKey(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
 	if m.session.CockpitExpanded {
-		t.Fatal("ctrl+l should close the context dashboard when focused")
+		t.Fatal("ctrl+l should close the context view when focused")
 	}
 }
 

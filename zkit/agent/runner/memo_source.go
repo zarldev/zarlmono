@@ -81,6 +81,7 @@ func PureTools(names ...tools.ToolName) PureFn {
 type MemoSource struct {
 	inner  ToolSource
 	isPure PureFn
+	ledger TaskCallLedger
 
 	mu      sync.Mutex
 	buckets map[taskscope.ID]cache.Cache[string, tools.ToolResult]
@@ -105,6 +106,16 @@ func NewMemoSource(source ToolSource, pure PureFn) *MemoSource {
 		buckets: make(map[taskscope.ID]cache.Cache[string, tools.ToolResult]),
 		hits:    make(map[taskscope.ID]map[string]int),
 	}
+}
+
+// NewMemoSourceWithLedger wraps source with per-task memoization and records
+// successful pure calls into ledger when non-nil. The same invalidation
+// boundary applies to both cache and ledger: any successful workspace-changing
+// call drops the current task's pure-call evidence.
+func NewMemoSourceWithLedger(source ToolSource, pure PureFn, ledger TaskCallLedger) *MemoSource {
+	m := NewMemoSource(source, pure)
+	m.ledger = ledger
+	return m
 }
 
 // Tools delegates to the inner source. Memoization doesn't change
@@ -180,6 +191,9 @@ func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		// identical call is the first cache hit (hits=1, silent), the
 		// one after that is the loud rejection (hits=2).
 		m.bumpHit(ctx, key)
+		if m.ledger != nil {
+			m.ledger.RecordSuccessfulPureCall(ctx, call.ToolName, call.Arguments)
+		}
 	}
 	return result, err
 }
@@ -207,6 +221,9 @@ func (m *MemoSource) forgetCurrentTask(ctx context.Context) {
 	delete(m.buckets, id)
 	delete(m.hits, id)
 	m.mu.Unlock()
+	if m.ledger != nil {
+		m.ledger.ForgetTask(id)
+	}
 }
 
 // invalidatesCache reports whether a successful call should drop the current
@@ -249,6 +266,9 @@ func (m *MemoSource) ForgetTask(id taskscope.ID) {
 	delete(m.buckets, id)
 	delete(m.hits, id)
 	m.mu.Unlock()
+	if m.ledger != nil {
+		m.ledger.ForgetTask(id)
+	}
 	if tf, ok := m.inner.(interface{ ForgetTask(taskscope.ID) }); ok {
 		tf.ForgetTask(id)
 	}

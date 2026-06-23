@@ -17,7 +17,7 @@ name: edit
 description: recover from edit failures
 ---
 
-Use smaller old_string matches.
+Use narrower anchored edits.
 `)
 	mustWrite(t, filepath.Join(root, ".zarlcode", "agents", "reviewer.md"), `---
 name: reviewer

@@ -57,6 +57,7 @@ func NewProvider(opts ...options.Option[Provider]) (llm.Provider, error) {
 	innerOpts := []options.Option[openai.Provider]{
 		openai.WithBaseURL(p.baseURL),
 		openai.WithCachePrompt(true),
+		openai.WithChatTemplateKwargs(true),
 	}
 	if p.timeout > 0 {
 		innerOpts = append(innerOpts, openai.WithTimeout(p.timeout))

@@ -19,6 +19,13 @@ type TestEditAdvisoryGuardrail struct {
 	tools []tools.ToolName
 }
 
+var defaultTestEditTools = map[tools.ToolName]struct{}{
+	code.ToolNameWrite:       {},
+	code.ToolNameEdit:        {},
+	code.ToolNameWriteAppend: {},
+	code.ToolNameApplyPatch:  {},
+}
+
 // NewTestEditAdvisory builds the interactive-mode test edit advisory. With no
 // tool names it watches the default write-style tools.
 func NewTestEditAdvisory(names ...tools.ToolName) *TestEditAdvisoryGuardrail {
@@ -160,12 +167,8 @@ func firstInterpreterTestPath(command string) string {
 
 func matchesTestEditTool(names []tools.ToolName, name tools.ToolName) bool {
 	if len(names) == 0 {
-		switch name {
-		case "write", "edit", "write_append", "apply_patch":
-			return true
-		default:
-			return false
-		}
+		_, ok := defaultTestEditTools[name]
+		return ok
 	}
 	for _, n := range names {
 		if n == name {

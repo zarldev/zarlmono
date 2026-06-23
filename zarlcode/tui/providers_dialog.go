@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -43,6 +44,10 @@ type providersDialog struct {
 
 	oauthBusy bool   // an OAuth sign-in is awaiting the browser callback
 	oauthURL  string // the sign-in URL (shown for manual copy)
+}
+
+func (d *providersDialog) summary() string {
+	return fmt.Sprintf("%d providers · active %s", len(d.defs), d.active)
 }
 
 var providerAddLabels = [6]string{"name", "base url", "default model", "reasoning", "context window", "price /M (in/out)"}
@@ -572,8 +577,57 @@ func (d *providersDialog) addFormLines() []string {
 // directly, e.g. in tests). Inline use goes through detailLines + the host's
 // footer; standalone re-appends the footer hint so the box reads on its own.
 func (d *providersDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	lines := append(d.detailLines(area.Dx()), "", d.footerHint())
-	drawDialogBox(scr, area, "providers", lines)
+	w, h := area.Dx(), area.Dy()
+	if w < 50 || h < 10 {
+		return
+	}
+	l, ok := drawSplitPane(scr, area, "providers", 26)
+	if !ok {
+		return
+	}
+	left := overlayTopBar("providers", []string{"registry", "oauth", "custom"}, 0, d.summary(), l.Context.Dx())
+	drawOverlayContext(scr, l, left, palette.Subtle.On("esc close "), palette.Border)
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" providers · built-in and custom"))
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
+	lines := d.detailLines(l.Nav.Dx())
+	for i, line := range lines {
+		if i+2 >= l.Nav.Dy() {
+			break
+		}
+		drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+2+i, l.Nav.Dx(), 1), ansi.Truncate(line, l.Nav.Dx(), ""))
+	}
+	detail := []string{
+		sectionHead("selection", l.Detail.Dx()),
+		palette.Muted.On("manage provider credentials, active provider, and custom openai-compatible definitions"),
+		"",
+	}
+	switch {
+	case d.oauthBusy:
+		detail = append(detail, d.signInLines(l.Detail.Dx())...)
+	case d.adding:
+		detail = append(detail, d.addFormLines()...)
+	case d.cursor < len(d.defs):
+		def := d.cur()
+		detail = append(detail,
+			palette.Subtle.On("name ")+palette.Muted.On(def.Name),
+			palette.Subtle.On("status ")+d.tags(def),
+		)
+		if def.BaseURL != "" {
+			detail = append(detail, palette.Subtle.On("base url ")+palette.Muted.On(def.BaseURL))
+		}
+		if def.DefaultModel != "" {
+			detail = append(detail, palette.Subtle.On("default model ")+palette.Muted.On(def.DefaultModel))
+		}
+	default:
+		detail = append(detail, palette.Muted.On("create a new custom provider definition"))
+	}
+	for i, line := range detail {
+		if i >= l.Detail.Dy() {
+			break
+		}
+		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, l.Detail.Dx(), 1), ansi.Truncate(line, l.Detail.Dx(), ""))
+	}
+	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+d.footerHint()), "")
 }
 
 // tags renders the per-provider status badges (active / origin / credential)

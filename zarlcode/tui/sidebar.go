@@ -7,15 +7,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// drawSidebar paints the cockpit into r. When the pane interior is wide and
-// tall enough it draws the rich graphical cockpit (gauge + context graph +
-// sparklines + cost + tools); otherwise it degrades to the flat row list.
+// drawSidebar paints the single state sidebar into r.
 func (m *UI) drawSidebar(scr uv.Screen, r uv.Rectangle) {
 	drawFrame(scr, r, frameStyle{Border: palette.Border})
 
-	// The title bar shows the pane name plus live run state:
+	// The title bar shows the state label plus live run status:
 	//   ┌─[state] [⠄ idle]──────┐   ┌─[state] [⠋ running]──────────────┐
-	m.drawRunTitleStatus(scr, r, true)
+	m.drawPaneTitleStatus(scr, r, true)
 
 	w, h := r.Dx(), r.Dy()
 	if w < 6 || h < 3 {
@@ -28,7 +26,7 @@ func (m *UI) drawSidebar(scr uv.Screen, r uv.Rectangle) {
 	innerW := w - 2 - 2*sidePad
 	innerH := h - 2
 
-	lines := m.sidebarLines(innerW, innerH)
+	lines := m.stateSidebarLines(innerW, innerH)
 
 	for i, ln := range lines {
 		if i >= innerH {
@@ -60,19 +58,16 @@ func sidebarSectionRule(line string, width int) string {
 	return line + palette.Border.On(strings.Repeat("─", fill)+"┤")
 }
 
-func (m *UI) sidebarLines(innerW, innerH int) []string {
-	if innerW >= cockpitMinWidth && innerH >= cockpitMinHeight {
-		return m.cockpitLines(innerW)
-	}
-	return m.session.Run.lines()
+func (m *UI) stateSidebarLines(innerW, innerH int) []string {
+	return m.stateSidebarContent(innerW, innerH)
 }
 
-// drawRunTitleStatus paints the run pane title plus state — "[state] [⠄ idle]"
+// drawPaneTitleStatus paints the sidebar title plus state — "[state] [⠄ idle]"
 // in the sidebar, or "[ƶarl/code] [chat] [model] [⠄ idle]" in the timeline
 // pane. Timeline titles carry the global app/mode/model context now that there
 // is no standalone top header line.
-func (m *UI) drawRunTitleStatus(scr uv.Screen, r uv.Rectangle, showLabel bool) {
-	title := m.runTitleStatus(showLabel)
+func (m *UI) drawPaneTitleStatus(scr uv.Screen, r uv.Rectangle, showLabel bool) {
+	title := m.paneTitleStatus(showLabel)
 
 	// Title sits right after "┌─" (cols 0,1) at col 2.
 	x := r.Min.X + 2
@@ -89,7 +84,11 @@ func (m *UI) drawRunTitleStatus(scr uv.Screen, r uv.Rectangle, showLabel bool) {
 	drawLine(scr, uv.Rect(x, r.Min.Y, w, 1), title)
 }
 
-func (m *UI) runTitleStatus(showLabel bool) string {
+func (m *UI) stateSidebarTitle(status string) string {
+	return bracketed(palette.Primary.On("state")) + " " + bracketed(status)
+}
+
+func (m *UI) paneTitleStatus(showLabel bool) string {
 	s := &m.session.Run
 	glyph, tone := runActivityGlyph(m.frame, false), palette.Muted
 	word := "idle"
@@ -99,7 +98,7 @@ func (m *UI) runTitleStatus(showLabel bool) string {
 	}
 	var title string
 	if showLabel {
-		title = bracketed(palette.Primary.On("state")) + " " + bracketed(tone.On(glyph+" "+word))
+		title = m.stateSidebarTitle(tone.On(glyph + " " + word))
 	} else {
 		parts := []string{
 			bracketed(palette.Primary.On(appDisplayName)),

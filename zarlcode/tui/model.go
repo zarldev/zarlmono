@@ -39,8 +39,10 @@ type UI struct {
 	// intro is the full-screen fresh-start surface: first prompt plus a picker
 	// for saved sessions in this workspace. Nil after the user starts/resumes.
 	intro *introPane
-	// dashboardScroll is the vertical offset inside the expanded context view.
-	dashboardScroll int
+	// contextView tracks the full-screen ctrl+l live-context surface: active tab,
+	// per-tab scroll offsets, and any tab-local cursors. It replaces the old
+	// single dashboardScroll field now that the context view is tabbed.
+	contextView contextViewState
 	// frame counts animation ticks; ticking guards a single in-flight tick
 	// loop. Both drive the streaming pulse on the cockpit gauge while a run
 	// is live; they idle (no ticks scheduled) when nothing is running.
@@ -84,38 +86,83 @@ type UI struct {
 	// Panes — imperative rendering regions driven by the shell.
 	headerPane *headerPane
 	statusPane *statusPane
+	// startupFailure is a full-screen fatal launch surface shown when zarlcode
+	// can initialize the shell UI but cannot finish startup (for example an
+	// invalid workspace-scoped provider config). Non-nil disables the normal
+	// cockpit and exits on enter/esc.
+	startupFailure *startupFailurePane
+}
+
+type contextViewTab int
+
+const (
+	contextViewTabOverview contextViewTab = iota
+	contextViewTabContext
+	contextViewTabPrompt
+	contextViewTabTools
+	contextViewTabEvents
+	contextViewTabCount
+)
+
+var contextViewTabNames = []string{"overview", "context", "prompt", "tools", "events"}
+
+type contextViewState struct {
+	tab    contextViewTab
+	scroll [contextViewTabCount]int
+}
+
+func (s *contextViewState) activeScroll() int {
+	if s == nil {
+		return 0
+	}
+	return s.scroll[s.tab]
+}
+
+func (s *contextViewState) setActiveScroll(v int) {
+	if s == nil {
+		return
+	}
+	s.scroll[s.tab] = v
+}
+
+func (s *contextViewState) scrollActiveBy(delta int) {
+	if s == nil || delta == 0 {
+		return
+	}
+	s.scroll[s.tab] += delta
+	if s.scroll[s.tab] < 0 {
+		s.scroll[s.tab] = 0
+	}
+}
+
+func (s *contextViewState) setTab(tab contextViewTab) {
+	if s == nil {
+		return
+	}
+	if tab < 0 || tab >= contextViewTabCount {
+		tab = contextViewTabOverview
+	}
+	s.tab = tab
+}
+
+func (s *contextViewState) nextTab() { s.setTab((s.tab + 1) % contextViewTabCount) }
+
+func (s *contextViewState) prevTab() {
+	s.setTab((s.tab + contextViewTabCount - 1) % contextViewTabCount)
 }
 
 // SetRunFn wires the live-run launcher invoked when the user submits a
 // prompt. The standalone cmd sets this after building the runner factory.
 func (m *UI) SetRunFn(fn func(prompt string) tea.Cmd) { m.runFn = fn }
 
-// SetSettings wires the persistence handle so the settings overlay (ctrl+s)
-// can read and write preferences. Nil leaves the overlay unavailable.
-// Also resolves the confirm_quit setting.
-func (m *UI) SetSettings(s *engine.Settings) {
-	m.settings = s
-	m.session.SetConfirmQuit(s.ConfirmQuit(m.appContext()))
-	if s != nil && s.Registry != nil {
-		m.session.SetModelMeta(s.Registry)
-	}
-}
-
-// handleQuit returns a quit command, optionally showing a confirmation
-// dialog first when confirm_quit is enabled.
-func (m *UI) handleQuit() tea.Cmd {
-	if m.session.ConfirmQuit {
-		m.overlay.push(newQuitConfirmDialog())
-		return nil
-	}
-	m.cancelLiveTurnForQuit()
-	return tea.Quit
-}
-
 func (m *UI) cancelLiveTurnForQuit() {
 	if m.live != nil {
 		m.live.CancelTurn()
 	}
+}
+
+func (m *UI) SetStartupFailure(wsRoot, title, err string) {
+	m.startupFailure = newStartupFailurePane(shortenHome(wsRoot), title, err)
 }
 
 func (m *UI) appContext() context.Context {
@@ -158,7 +205,7 @@ func (m *UI) togglePlan() {
 }
 
 // SetWorkspace sets the workspace path (~-shortened), git branch (if any), and
-// model name. The workspace/branch render in the run pane; the model also
+// model name. The workspace/branch render in the state sidebar; the model also
 // appears in the timeline title. Resolving the model name seeds the cockpit's
 // best-effort token pricing (overridable via SetPricing).
 func (m *UI) SetWorkspace(root, model string) {
@@ -245,6 +292,28 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 		return m.fetchModelsCmd(current.Name)
 	}
 	return nil
+}
+
+// SetSettings wires the persistence handle so the settings overlay (ctrl+s)
+// can read and write preferences. Nil leaves the overlay unavailable.
+// Also resolves the confirm_quit setting.
+func (m *UI) SetSettings(s *engine.Settings) {
+	m.settings = s
+	m.session.SetConfirmQuit(s.ConfirmQuit(m.appContext()))
+	if s != nil && s.Registry != nil {
+		m.session.SetModelMeta(s.Registry)
+	}
+}
+
+// handleQuit returns a quit command, optionally showing a confirmation
+// dialog first when confirm_quit is enabled.
+func (m *UI) handleQuit() tea.Cmd {
+	if m.session.ConfirmQuit {
+		m.overlay.push(newQuitConfirmDialog())
+		return nil
+	}
+	m.cancelLiveTurnForQuit()
+	return tea.Quit
 }
 
 // SetContextWindow overrides the cockpit gauge's denominator (the model's

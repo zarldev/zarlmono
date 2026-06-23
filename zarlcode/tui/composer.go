@@ -157,6 +157,9 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.intro != nil {
 		return m.handleIntroKey(msg)
 	}
+	if m.startupFailure != nil {
+		return m.handleStartupFailureKey(msg)
+	}
 	if m.session.CockpitExpanded {
 		return m.handleDashboardKey(msg)
 	}
@@ -164,6 +167,20 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handleBrowseKey(msg)
 	}
 	return m.handleComposerKey(msg)
+}
+
+func (m *UI) handleIntroKey(msg tea.KeyPressMsg) tea.Cmd {
+	if cmd, ok := m.handleCommonShortcut(msg); ok {
+		return cmd
+	}
+	return m.intro.handleKey(m, msg)
+}
+
+func (m *UI) handleStartupFailureKey(msg tea.KeyPressMsg) tea.Cmd {
+	if cmd, ok := m.handleCommonShortcut(msg); ok {
+		return cmd
+	}
+	return m.startupFailure.handleKey(msg)
 }
 
 func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
@@ -190,11 +207,6 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	case "ctrl+e":
 		return m.openModelQuickPick(), true
-	case "ctrl+k":
-		if m.settings != nil {
-			m.overlay.push(newCatalogDialog(m.settings))
-		}
-		return nil, true
 	case "ctrl+g":
 		m.overlay.push(newHelpDialog())
 		return nil, true
@@ -216,36 +228,34 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (m *UI) handleIntroKey(msg tea.KeyPressMsg) tea.Cmd {
-	if cmd, ok := m.handleCommonShortcut(msg); ok {
-		return cmd
-	}
-	return m.intro.handleKey(m, msg)
-}
-
 func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
 	if cmd, ok := m.handleDashboardShortcut(msg); ok {
 		return cmd
 	}
 	switch msg.String() {
+	case "tab", "right":
+		m.contextView.nextTab()
+	case "shift+tab", "left":
+		m.contextView.prevTab()
 	case "up", "k":
-		m.dashboardScroll--
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(-1)
+		m.clampContextViewScroll()
 	case "down", "j":
-		m.dashboardScroll++
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(1)
+		m.clampContextViewScroll()
 	case "pgup":
-		m.dashboardScroll -= m.dashboardPageStep()
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(-m.dashboardPageStep())
+		m.clampContextViewScroll()
 	case "pgdown":
-		m.dashboardScroll += m.dashboardPageStep()
-		m.clampDashboardScroll()
+		m.contextView.scrollActiveBy(m.dashboardPageStep())
+		m.clampContextViewScroll()
 	case "home", "g":
-		m.dashboardScroll = 0
+		m.contextView.setActiveScroll(0)
 	case "end":
-		m.dashboardScroll = m.dashboardMaxScroll()
+		m.contextView.setActiveScroll(m.dashboardMaxScroll())
 	case "esc", "ctrl+l", "q":
 		m.session.SetCockpitExpanded(false)
+		m.contextView = contextViewState{}
 	}
 	return nil
 }
@@ -257,11 +267,6 @@ func (m *UI) handleDashboardShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	case "ctrl+e":
 		return m.openModelQuickPick(), true
-	case "ctrl+k":
-		if m.settings != nil {
-			m.overlay.push(newCatalogDialog(m.settings))
-		}
-		return nil, true
 	}
 	return nil, false
 }
@@ -309,7 +314,7 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.timeline.enterBrowse()
 	case "ctrl+l":
 		m.session.SetCockpitExpanded(true)
-		m.dashboardScroll = 0
+		m.contextView = contextViewState{}
 	case "pgup":
 		m.timeline.pageUp()
 	case "pgdown":

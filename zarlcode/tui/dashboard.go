@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -13,42 +15,57 @@ func (m *UI) dashboardRect() uv.Rectangle {
 }
 
 // dashColGap is the blank gutter between dashboard columns.
-const dashColGap = 3
+const (
+	cockpitMinWidth  = 26
+	cockpitMinHeight = 10
+	dashColGap       = 3
+)
 
 // drawDashboard paints the full-width context dashboard: the same cockpit
 // signals as the sidebar, spread across two or three columns with room for
 // the extra sparkline grid and per-turn history table that don't fit the
 // 48-col sidebar. Degrades to a single column on narrower terminals.
 func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
-	drawFrame(scr, r, frameStyle{Label: "context dashboard", Border: palette.Border, LabelColor: palette.Primary})
+	drawFrame(scr, r, frameStyle{Label: "context view", Border: palette.Border, LabelColor: palette.Primary})
 	innerW, innerH := r.Dx()-4, r.Dy()-2
 	if innerW < cockpitMinWidth || innerH < 4 {
 		return
 	}
 	x0, y0 := r.Min.X+2, r.Min.Y+1
 
-	cols := dashboardColumnCount(innerW)
-	colW := (innerW - (cols-1)*dashColGap) / cols
+	tabRow := m.contextViewTabBar(innerW)
+	drawLine(scr, uv.Rect(x0, y0, innerW, 1), tabRow)
+	if tabHelp := m.contextViewTabHelp(innerW); tabHelp != "" {
+		drawLine(scr, uv.Rect(x0, y0+1, innerW, 1), tabHelp)
+	}
+	drawLine(scr, uv.Rect(x0, y0+2, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
 
-	columns := m.dashboardColumns(cols, colW)
-	m.clampDashboardScroll()
-	scroll := m.dashboardScroll
-	if maxScroll := dashboardMaxScroll(columns, innerH); maxScroll > 0 {
+	contentY := y0 + 3
+	contentH := innerH - 4
+	if contentH < 1 {
+		contentH = 1
+	}
+	cw := innerW
+	contentLines := m.activeContextViewLines(cw)
+	m.clampContextViewScroll()
+	scroll := m.contextView.activeScroll()
+	if maxScroll := m.dashboardMaxScroll(); maxScroll > 0 {
 		indicator := palette.Subtle.On(" ↑↓ scroll ") + palette.Fg.On(itoa(scroll+1)) + palette.Subtle.On("/") + palette.Fg.On(itoa(maxScroll+1))
 		indicatorW := ansi.StringWidth(indicator)
 		drawLine(scr, uv.Rect(max(r.Min.X+1, r.Max.X-indicatorW-2), r.Min.Y, indicatorW, 1), indicator)
 	}
-
-	cx := x0
-	for _, lines := range columns {
-		for i := scroll; i < len(lines); i++ {
-			if i-scroll >= innerH {
-				break
-			}
-			drawLine(scr, uv.Rect(cx, y0+i-scroll, colW, 1), lines[i])
-		}
-		cx += colW + dashColGap
+	for i := scroll; i < len(contentLines) && i-scroll < contentH; i++ {
+		drawLine(scr, uv.Rect(x0, contentY+i-scroll, cw, 1), ansi.Truncate(contentLines[i], cw, ""))
 	}
+	drawPaneScrollbar(scr, r.Max.X-2, contentY, contentH, len(contentLines), scroll)
+	drawLine(scr, uv.Rect(x0, r.Max.Y-3, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
+	footer := keyLegend(
+		keyHint{"tab/←→", "switch tab"},
+		keyHint{"↑↓/jk", "scroll"},
+		keyHint{"pgup/pgdn", "page"},
+		keyHint{"esc", "close"},
+	)
+	drawPaneRow(scr, uv.Rect(x0, r.Max.Y-2, innerW, 1), palette.Subtle.On(" "+footer), "")
 }
 
 func dashboardColumnCount(innerW int) int {
@@ -75,38 +92,105 @@ func dashboardMaxScroll(columns [][]string, visibleH int) int {
 	return maxLines - visibleH
 }
 
-func (m *UI) dashboardGeometry() (int, int, int) {
+func (m *UI) dashboardGeometry() (int, int) {
 	r := m.dashboardRect()
 	innerW, innerH := r.Dx()-4, r.Dy()-2
 	if innerW < cockpitMinWidth || innerH < 1 {
-		return 1, cockpitMinWidth, 0
+		return cockpitMinWidth, 0
 	}
 	cols := dashboardColumnCount(innerW)
 	colW := (innerW - (cols-1)*dashColGap) / cols
-	return cols, colW, innerH
+	return colW, innerH
 }
 
 func (m *UI) dashboardMaxScroll() int {
-	cols, colW, visibleH := m.dashboardGeometry()
-	return dashboardMaxScroll(m.dashboardColumns(cols, colW), visibleH)
+	colW, visibleH := m.dashboardGeometry()
+	if visibleH <= 0 {
+		return 0
+	}
+	contentLines := m.activeContextViewLines(colW)
+	if len(contentLines) <= visibleH {
+		return 0
+	}
+	return len(contentLines) - visibleH
 }
 
 func (m *UI) clampDashboardScroll() {
+	m.clampContextViewScroll()
+}
+
+func (m *UI) clampContextViewScroll() {
 	maxScroll := m.dashboardMaxScroll()
-	if m.dashboardScroll > maxScroll {
-		m.dashboardScroll = maxScroll
+	if m.contextView.activeScroll() > maxScroll {
+		m.contextView.setActiveScroll(maxScroll)
 	}
-	if m.dashboardScroll < 0 {
-		m.dashboardScroll = 0
+	if m.contextView.activeScroll() < 0 {
+		m.contextView.setActiveScroll(0)
 	}
 }
 
 func (m *UI) dashboardPageStep() int {
-	_, _, visibleH := m.dashboardGeometry()
+	_, visibleH := m.dashboardGeometry()
 	if visibleH <= 2 {
 		return 1
 	}
 	return visibleH - 2
+}
+
+func (m *UI) activeContextViewLines(width int) []string {
+	switch m.contextView.tab {
+	case contextViewTabContext:
+		return m.contextPaneLines(width, 0)
+	case contextViewTabPrompt:
+		return m.contextPromptLines(width)
+	case contextViewTabTools:
+		return m.contextToolsLines(width)
+	case contextViewTabEvents:
+		return m.contextEventsLines(width)
+	default:
+		cols := dashboardColumnCount(width)
+		colW := (width - (cols-1)*dashColGap) / cols
+		return flattenDashboardColumns(m.dashboardColumns(cols, colW), colW)
+	}
+}
+
+func flattenDashboardColumns(columns [][]string, colW int) []string {
+	maxLines := 0
+	for _, lines := range columns {
+		if len(lines) > maxLines {
+			maxLines = len(lines)
+		}
+	}
+	out := make([]string, 0, maxLines)
+	for row := range maxLines {
+		parts := make([]string, 0, len(columns))
+		for _, lines := range columns {
+			if row < len(lines) {
+				parts = append(parts, padStyled(lines[row], colW))
+			} else {
+				parts = append(parts, spaces(colW))
+			}
+		}
+		out = append(out, strings.Join(parts, strings.Repeat(" ", dashColGap)))
+	}
+	return out
+}
+
+func (m *UI) contextViewTabBar(width int) string {
+	parts := make([]string, len(contextViewTabNames))
+	for i, name := range contextViewTabNames {
+		if contextViewTab(i) == m.contextView.tab {
+			parts[i] = palette.Primary.On("[ " + name + " ]")
+		} else {
+			parts[i] = palette.Subtle.On(name)
+		}
+	}
+	return ansi.Truncate(strings.Join(parts, "  "), width, "")
+}
+
+func (m *UI) contextViewTabHelp(width int) string {
+	summary := "live context surface · summary-first prompt · grouped tools/events"
+	return palette.Muted.On(ansi.Truncate(summary, width, ""))
 }
 
 // dashboardColumns lays the cockpit sections into cols columns of width colW.

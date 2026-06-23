@@ -14,8 +14,7 @@ not by API symmetry. Two more tools live in sibling packages:
 | `read` | File reads with offset/limit + stable line hashes for anchored edits. Pure → cached by MemoSource. |
 | `write` | **Creates only — refuses to overwrite.** Existing files are rejected with a validation error naming `edit` as the recovery path. |
 | `write_append` | Append-only writes, so intent is explicit. Also the structural fix for large files: scaffold with `write(path, "")`, then chunk via repeated appends. |
-| `edit` | String-replace edits with line/hash anchors from `read` output. Whitespace-sensitive failure messages help the model fix its own near-miss matches. |
-| `apply_patch` | Unified-diff application. |
+| `edit` | Line/hash anchored edits from `read` output. Anchors usually survive line-number shifts from earlier edits; stale-anchor failures tell the model to re-read and retry with fresh anchors. |
 | `grep` | Workspace-rooted search with glob filtering. Pure → cached. |
 | `glob` | Workspace path enumeration by glob pattern. Returns labelled or JSON output. |
 | `ls` | Structured single-level directory listing. Pure → cached. |

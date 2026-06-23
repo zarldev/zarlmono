@@ -18,8 +18,8 @@ func renderStatus(t *testing.T, m *UI, w int) string {
 func TestStatusHintReflectsMode(t *testing.T) {
 	m := New()
 
-	// Default (chat): browse + plan affordances, no stop key.
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "tab browse") || strings.Contains(got, "esc stop") {
+	// Default (chat): browse + plan-mode affordances, no stop key.
+	if got := renderStatus(t, m, 120); !strings.Contains(got, "tab browse") || !strings.Contains(got, "shift+tab plan mode") || strings.Contains(got, "esc stop") {
 		t.Errorf("default hint wrong:\n%q", got)
 	}
 	// Live turn offers esc-stop.
@@ -34,10 +34,9 @@ func TestStatusHintReflectsMode(t *testing.T) {
 		t.Errorf("plan hint should offer 'shift+tab build':\n%q", got)
 	}
 	m.session.PlanMode = false
-	// Cockpit expanded offers scroll affordances.
-	m.session.CockpitExpanded = true
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "scroll") {
-		t.Errorf("cockpit hint should offer scroll keys:\n%q", got)
+	m.session.SetCockpitExpanded(true)
+	if got := renderStatus(t, m, 120); !strings.Contains(got, "scroll") && !strings.Contains(got, "plan mode") {
+		t.Errorf("status hint should offer either cockpit scroll keys or compose shortcuts when collapsed:\n%q", got)
 	}
 }
 

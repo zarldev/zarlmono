@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
+	"github.com/zarldev/zarlmono/zkit/agent/pursue"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -69,10 +71,87 @@ func TestHeadlessRecorder_PersistsLifecycle(t *testing.T) {
 	}
 }
 
+func TestHeadlessRecorder_PersistsAttempt(t *testing.T) {
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := t.Context()
+	rec := &headlessRecorder{store: store, id: "run-attempt", workspace: t.TempDir()}
+	rec.start(ctx, "fix the bug", "llamacpp", "qwen3.6")
+	rec.attempt(ctx, pursue.AttemptReport{
+		Attempt: pursue.Attempt{
+			Number: 1,
+			Spec:   runner.TaskSpec{Prompt: "fix the bug"},
+			Result: runner.TaskResult{
+				Reason:       runner.TerminalCompleted,
+				FinalContent: "not yet",
+				Iterations:   2,
+				TotalUsage:   &llm.Usage{PromptTokens: 11, CompletionTokens: 7},
+			},
+		},
+		Decision: pursue.Retry("tests still fail"),
+	})
+
+	attempts, err := store.ListHeadlessAttempts(ctx, "run-attempt")
+	if err != nil {
+		t.Fatalf("ListHeadlessAttempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("got %d attempts, want 1", len(attempts))
+	}
+	got := attempts[0]
+	if got.AttemptNumber != 1 || got.Prompt != "fix the bug" || got.Feedback != "tests still fail" || got.DecisionDone {
+		t.Errorf("attempt = %+v", got)
+	}
+	if got.TokensIn == nil || *got.TokensIn != 11 || got.TokensOut == nil || *got.TokensOut != 7 {
+		t.Errorf("tokens = %v/%v", got.TokensIn, got.TokensOut)
+	}
+}
+
+func TestHeadlessRecorder_PersistsVerifierResult(t *testing.T) {
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := t.Context()
+	rec := &headlessRecorder{store: store, id: "run-verifier", workspace: t.TempDir()}
+	rec.start(ctx, "fix the bug", "llamacpp", "qwen3.6")
+	code := 7
+	rec.verifierResult(ctx, coderunner.VerifyResult{
+		AttemptNumber: 1,
+		Command:       "go test ./...",
+		Success:       false,
+		ExitCode:      &code,
+		Error:         "exit status 7",
+		OutputTail:    "FAIL: TestThing",
+	})
+
+	results, err := store.ListHeadlessVerifierResults(ctx, "run-verifier")
+	if err != nil {
+		t.Fatalf("ListHeadlessVerifierResults: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d verifier results, want 1", len(results))
+	}
+	got := results[0]
+	if got.Command != "go test ./..." || got.Success || got.OutputTail != "FAIL: TestThing" {
+		t.Errorf("verifier result = %+v", got)
+	}
+	if got.ExitCode == nil || *got.ExitCode != 7 {
+		t.Errorf("exit code = %v, want 7", got.ExitCode)
+	}
+}
+
 func TestHeadlessRecorder_NilIsNoOp(t *testing.T) {
 	var rec *headlessRecorder // no store configured
 	// None of these must panic or touch a store.
 	rec.start(context.Background(), "p", "prov", "model")
 	rec.progress(context.Background(), 1, 2)
+	rec.attempt(context.Background(), pursue.AttemptReport{})
 	rec.complete(context.Background(), runner.TaskResult{Reason: runner.TerminalCompleted})
 }

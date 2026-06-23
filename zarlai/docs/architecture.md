@@ -197,6 +197,8 @@ binding lets a skill apply only when the active task profile matches
 ships everywhere. The selector rebuilds its index when
 `SkillSource.Version()` ticks (admin edit, proposal approval).
 
+This is deliberately prompt-stack composition rather than learned policy. Semantic selection keeps the stack smaller and more relevant, but it does not prove a skill improves behaviour; operators should keep skill bodies concise and inspect which fragments were active when debugging a turn.
+
 Skill *proposals* mirror prompt and sensor proposals: the LLM writes
 to `skill_proposals`, an operator approves via `/admin → Proposals`,
 approval flips the live skill row. Source: `repository/skill.go` +
@@ -233,7 +235,7 @@ The two generators run via `task proto` and `sqlc generate`:
 | You want to…                          | Touch                                                  |
 |---------------------------------------|--------------------------------------------------------|
 | Add a tool                            | new pkg under `tools/` or `<name>/`, implement `service.Tool`, register in `cmd/zarl/main.go` |
-| Add a sensor                          | implement `sensor.Sensor`, register in `cmd/zarl/main.go` |
+| Add a sensor                          | implement `sensor.Sensor`, wire it through `cmd/zarl/sensors.go` |
 | Change the API surface                | edit `proto/zarl/v1/*.proto`, `task proto`, implement on both sides |
 | Add a DB table or query               | new migration in `migrations/`, query in `repository/queries/`, `cd repository && sqlc generate` |
 | Give the taskrunner a new personality | new profile in `taskrunner/builtin_profiles.go` (or DB override) |

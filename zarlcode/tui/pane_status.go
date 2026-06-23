@@ -62,15 +62,10 @@ func (s *statusPane) statusHint() string {
 	if s.session.Run.Running {
 		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q clear"
 	}
-	if s.session.CockpitExpanded {
-		return " ↑↓/jk scroll  ·  pgup/pgdn page  ·  home/end jump  ·  ctrl+l / esc / q close  ·  " + stopKey + "  ·  ctrl+g keys"
-	}
-	// These still reference m.timeline and m.composer — will be refactored
-	// when those become proper panes.
 	if s.session.PlanMode {
 		return " enter submit  ·  shift+enter newline  ·  shift+tab build  ·  " + stopKey + "  ·  ctrl+g keys"
 	}
-	return " enter submit  ·  shift+enter newline  ·  tab browse  ·  shift+tab plan  ·  " + stopKey + "  ·  ctrl+g keys"
+	return " enter submit  ·  shift+enter newline  ·  tab browse  ·  shift+tab plan mode  ·  " + stopKey + "  ·  ctrl+g keys"
 }
 
 func (s *statusPane) statusToast() string {

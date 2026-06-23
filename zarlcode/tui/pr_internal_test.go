@@ -31,6 +31,11 @@ func TestPRLine(t *testing.T) {
 			pr:   &PRInfo{Number: 1, Title: strings.Repeat("x", 100), State: "OPEN"},
 			want: []string{"…"},
 		},
+		{
+			name: "url becomes hyperlink",
+			pr:   &PRInfo{Number: 4, Title: "Sidebar polish", State: "OPEN", URL: "https://github.com/zarldev/zarlmono/pull/4"},
+			want: []string{"#4", "https://github.com/zarldev/zarlmono/pull/4", "Sidebar polish", "open"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

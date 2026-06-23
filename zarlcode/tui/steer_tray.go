@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -24,8 +25,6 @@ const (
 	steerTrayRowClear
 	steerTrayRowControl
 )
-
-const steerTrayVisibleRows = 12
 
 type steerTrayRow struct {
 	kind  steerTrayRowKind
@@ -157,60 +156,120 @@ func (t *steerTray) clampCursor(rows []steerTrayRow) {
 	}
 }
 
-func (t *steerTray) draw(scr uv.Screen, area uv.Rectangle) {
-	var msgs []engine.QueuedMessage
-	if t != nil && t.live != nil {
-		msgs = t.live.QueueSnapshot()
-	}
-	rows := t.rows()
-	t.clampCursor(rows)
-
-	start := 0
-	if t.cursor >= steerTrayVisibleRows {
-		start = t.cursor - steerTrayVisibleRows + 1
-	}
-	end := start + steerTrayVisibleRows
-	if end > len(rows) {
-		end = len(rows)
-	}
-
-	lines := make([]string, 0, steerTrayVisibleRows+7)
-	lines = append(lines,
-		palette.Primary.On("execution tray (ctrl+y close)"),
-		fmt.Sprintf(" %d queued message(s) · %d control option(s)", len(msgs), len(steerControlOptions)),
-		"",
-	)
-	for i := start; i < end; i++ {
-		row := rows[i]
-		prefix := "  "
-		style := palette.Subtle
-		if i == t.cursor {
-			prefix = "▸ "
-			style = palette.Primary
-		}
-
-		label := row.label
+func (t *steerTray) queueSummary(rows []steerTrayRow) string {
+	queued, controls := 0, 0
+	for _, row := range rows {
 		switch row.kind {
 		case steerTrayRowMessage:
-			label = fmt.Sprintf("%d. %s", i+1, ansi.Truncate(row.text, 60, "..."))
-		case steerTrayRowClear:
-			label = "clear all queued messages"
+			queued++
 		case steerTrayRowControl:
-			label = row.label
+			controls++
 		}
-		lines = append(lines, style.On(prefix+label))
 	}
-	if start > 0 || end < len(rows) {
-		lines = append(lines, palette.Muted.On(fmt.Sprintf(" showing %d-%d of %d", start+1, end, len(rows))))
+	return fmt.Sprintf("%d queued · %d controls", queued, controls)
+}
+
+func (t *steerTray) navSummary(rows []steerTrayRow) string {
+	if len(rows) == 0 || t.cursor < 0 || t.cursor >= len(rows) {
+		return "queue empty"
 	}
-	lines = append(lines, "",
-		palette.Subtle.On("↑↓ / j k")+palette.Muted.On(" select"),
-		palette.Subtle.On("enter")+palette.Muted.On(" edit selected message / append selected control"),
-		palette.Subtle.On("e")+palette.Muted.On(" edit message")+palette.Muted.On("  ")+palette.Subtle.On("d")+palette.Muted.On(" delete message")+palette.Muted.On("  ")+palette.Subtle.On("c")+palette.Muted.On(" clear queue"),
+	row := rows[t.cursor]
+	switch row.kind {
+	case steerTrayRowMessage:
+		return fmt.Sprintf("queued message · id %d", row.id)
+	case steerTrayRowClear:
+		return "destructive queue action"
+	default:
+		return "control snippet"
+	}
+}
+
+func (t *steerTray) detailLines(rows []steerTrayRow, width int) []string {
+	out := []string{
+		sectionHead("selection", width),
+		palette.Muted.On("queue controls are sent as steering messages to the live runner"),
 		"",
-		palette.Muted.On("Control options are queued as mid-run steering messages."),
+	}
+	if len(rows) == 0 || t.cursor < 0 || t.cursor >= len(rows) {
+		return append(out, palette.Muted.On("no queued messages or controls"))
+	}
+	row := rows[t.cursor]
+	kind := "queued message"
+	detail := row.text
+	actions := "enter/e edit · d delete"
+	switch row.kind {
+	case steerTrayRowClear:
+		kind = "clear queued messages"
+		detail = "remove every queued steer message"
+		actions = "enter/c clear"
+	case steerTrayRowControl:
+		kind = "control snippet"
+		detail = row.text
+		actions = "enter send control"
+	}
+	out = append(out,
+		palette.Subtle.On("kind ")+palette.Muted.On(kind),
+		palette.Subtle.On("effect ")+palette.Muted.On(detail),
+		palette.Subtle.On("actions ")+palette.Muted.On(actions),
 	)
-	drawDialogBox(scr, area, "execution tray", lines)
+	if row.kind == steerTrayRowMessage {
+		out = append(out, "", sectionHead("message", width))
+		out = append(out, renderPlain(width, row.text, withFirstPrefix("  ", "  "), withStyle(palette.Muted.On))...)
+	}
+	return out
+}
+
+func (t *steerTray) draw(scr uv.Screen, area uv.Rectangle) {
+	rows := t.rows()
+	t.clampCursor(rows)
+	w, h := area.Dx(), area.Dy()
+	if w < 60 || h < 12 {
+		return
+	}
+	l, ok := drawSplitPane(scr, area, "execution tray", 42)
+	if !ok {
+		return
+	}
+	left := overlayTopBar("live controls", []string{"queue", "controls"}, 0, t.queueSummary(rows), l.Context.Dx())
+	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+y close "), palette.Border)
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), ansi.Truncate(palette.Muted.On(" "+t.navSummary(rows)), l.Nav.Dx(), ""))
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
+	navY := l.Nav.Min.Y + 2
+	navH := max(0, l.Nav.Dy()-2)
+	start, end := windowAroundCursor(t.cursor, len(rows), navH)
+	if len(rows) == 0 {
+		drawLine(scr, uv.Rect(l.Nav.Min.X, navY, l.Nav.Dx(), 1), palette.Muted.On("  no queued messages or controls"))
+	} else {
+		for i := start; i < end; i++ {
+			row := rows[i]
+			label := row.label
+			switch row.kind {
+			case steerTrayRowMessage:
+				label = palette.Assistant.On("msg") + " " + row.text
+			case steerTrayRowClear:
+				label = palette.Warning.On("clear") + " queued messages"
+			case steerTrayRowControl:
+				label = palette.Info.On("ctl") + " " + row.label
+			}
+			drawListRow(scr, uv.Rect(l.Nav.Min.X, navY+(i-start), l.Nav.Dx(), 1), label, i == t.cursor, true)
+		}
+	}
+	lines := t.detailLines(rows, l.Detail.Dx())
+	for i, ln := range lines {
+		if i >= l.Detail.Dy() {
+			break
+		}
+		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, l.Detail.Dx(), 1), ansi.Truncate(ln, l.Detail.Dx(), ""))
+	}
+	footer := compactFooterHints(
+		keyHint{"↑↓/jk", "navigate"},
+		keyHint{"enter", "edit/send"},
+		keyHint{"e", "edit msg"},
+		keyHint{"d", "delete msg"},
+		keyHint{"c", "clear queue"},
+		keyHint{"esc", "close"},
+	)
+	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
 }
 
 type queueEditor struct {

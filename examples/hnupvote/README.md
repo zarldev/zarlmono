@@ -22,7 +22,7 @@ The model is free to be wrong inside any single run. The harness is what makes t
 ```
 pursue.Drive          run-until-goal: oracle + corrective re-drive + attempt budget
   └── r.Run             one agent loop: stream model, dispatch tools, repeat
-        ├── Client          the LLM (pkg/ai/llm provider behind runner.Client)
+        ├── Client          the LLM (`zkit/ai/llm` provider behind runner.Client)
         ├── ToolSource      tools the model can call …
         │     └── guardrails.GuardedSource   … wrapped with preconditions
         └── EventSink       observability (per-tool progress here)
@@ -152,7 +152,7 @@ Verify the world, not `TaskResult` content. The result's terminal reason tells y
 ### 5. Wire the runner and run
 
 ```go
-client := runner.ClientFromProvider(provider) // any pkg/ai/llm provider
+client := runner.ClientFromProvider(provider) // any `zkit/ai/llm` provider
 
 r := runner.New(client,
     runner.WithTools(source),

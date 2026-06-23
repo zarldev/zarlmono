@@ -26,6 +26,22 @@ type DynamicTool struct {
 	UpdatedAt  int64
 }
 
+type HeadlessAttempt struct {
+	RunID          string
+	AttemptNumber  int64
+	Prompt         string
+	TerminalReason sql.NullString
+	Error          sql.NullString
+	FinalContent   sql.NullString
+	Iterations     sql.NullInt64
+	ToolCalls      sql.NullInt64
+	TokensIn       sql.NullInt64
+	TokensOut      sql.NullInt64
+	DecisionDone   int64
+	Feedback       sql.NullString
+	RecordedAt     int64
+}
+
 type HeadlessRun struct {
 	ID             string
 	Workspace      string
@@ -45,6 +61,19 @@ type HeadlessRun struct {
 	Escalated      int64
 	Provider       string
 	Model          string
+}
+
+type HeadlessVerifierResult struct {
+	RunID         string
+	AttemptNumber int64
+	Command       string
+	Skipped       int64
+	Success       int64
+	ExitCode      sql.NullInt64
+	Error         sql.NullString
+	OutputTail    sql.NullString
+	DurationMs    int64
+	RecordedAt    int64
 }
 
 type LlmProvider struct {

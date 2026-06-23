@@ -59,13 +59,13 @@ func (d *askpassDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		masked += palette.Primary.On("▏")
 	}
 	lines := []string{
-		palette.Primary.On("sudo password requested"),
+		overlayTopBar("sudo", nil, 0, "password", 72),
+		palette.Subtle.On(strings.Repeat("─", 72)),
 		palette.Muted.On(d.prompt),
 		"",
 		masked,
 		"",
-		palette.Subtle.On("enter") + palette.Muted.On("  send password") + "   " +
-			palette.Subtle.On("esc") + palette.Muted.On("  cancel"),
+		palette.Subtle.On("enter") + palette.Muted.On("  send") + "   " + palette.Subtle.On("esc") + palette.Muted.On("  cancel"),
 	}
 	drawDialogBox(scr, area, "sudo", lines)
 }

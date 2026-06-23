@@ -25,8 +25,7 @@ very different shape.
 | `zkit/ai/llm` | Provider abstraction for chat and task models |
 | `zkit/ai/tools` | Tool registry, dynamic registration, MCP bridging |
 | `zkit/agent/sensor` | Periodic observers for ambient awareness |
-| `zkit/agent/taskrunner` | Background autonomous task loops |
-| `zkit/notify` / `zkit/messagebus` | Notifications and pub/sub |
+| `zkit/znotify` / `zkit/messagebus` | Notifications and pub/sub |
 
 ## Where to find it
 

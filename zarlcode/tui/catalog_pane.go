@@ -2,14 +2,12 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
@@ -393,103 +391,4 @@ func (p *catalogPane) footerHint() string {
 	}
 	return keyLegend(keyHint{"↑↓", "move"}, keyHint{"→", "expand"}, keyHint{"n", "new"},
 		keyHint{"e", "edit"}, keyHint{"x", "delete"}, keyHint{"esc", "back"})
-}
-
-// catalogDialog wraps the agents + skills + hooks inventory panes as a modal
-// overlay. tab cycles between them; esc/q close; every other key delegates to
-// the focused pane. The panes share the same settings handle for root
-// resolution and reload-on-edit.
-type catalogDialog struct {
-	panes [3]*catalogPane // agents, skills, hooks — indexed by tab
-	tab   int
-	s     *engine.Settings
-}
-
-func newCatalogDialog(s *engine.Settings) *catalogDialog {
-	return &catalogDialog{
-		panes: [3]*catalogPane{newAgentsPane(s), newSkillsPane(s), newHooksPane(s)},
-		s:     s,
-	}
-}
-
-func (d *catalogDialog) activePane() *catalogPane {
-	return d.panes[d.tab]
-}
-
-func (d *catalogDialog) handleKey(msg tea.KeyPressMsg) action {
-	switch msg.String() {
-	case "esc", "q", "ctrl+k":
-		return actionClose{}
-	case "tab":
-		d.tab = (d.tab + 1) % len(d.panes)
-		return actionNone{}
-	}
-	act := d.activePane().handleKey(msg)
-	// After an edit action (n→scaffold→edit, e→edit, x→delete), reload every
-	// pane from disk so the lists stay in sync.
-	if _, ok := act.(actionEditFile); ok {
-		for _, p := range d.panes {
-			p.reload(d.s)
-		}
-	}
-	return act
-}
-
-func (d *catalogDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	w, h := area.Dx(), area.Dy()
-	if w < 30 || h < 10 {
-		return
-	}
-	boxW := min(70, w-4)
-	boxH := min(20, h-2)
-
-	lay, ok := drawDialogPane(scr, area, d.title(), boxW, boxH, palette.Border, palette.Primary)
-	if !ok {
-		return
-	}
-	innerW, innerX := lay.Body.Dx(), lay.Body.Min.X
-
-	// Tab bar.
-	labels := make([]string, len(d.panes))
-	for i, name := range []string{" agents ", " skills ", " hooks "} {
-		if i == d.tab {
-			labels[i] = palette.Primary.On(name)
-		} else {
-			labels[i] = palette.Muted.On(name)
-		}
-	}
-	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), strings.Join(labels, " "))
-
-	// Body — detail lines fill all but the last body row, which is the status line.
-	pane := d.activePane()
-	detailY := lay.Body.Min.Y
-	detailH := lay.Body.Dy() - 1
-	lines := pane.detailLines(innerW, detailH)
-	for i, line := range lines {
-		if i >= detailH {
-			break
-		}
-		drawPaddedLine(scr, uv.Rect(innerX, detailY+i, innerW, 1), line)
-	}
-
-	// Status (last body row).
-	if pane.status != "" && time.Since(pane.statusAt) < 3*time.Second {
-		drawPaddedLine(scr, uv.Rect(innerX, lay.Body.Max.Y-1, innerW, 1), palette.Muted.On(pane.status))
-	}
-
-	// Footer.
-	hint := pane.footerHint() + "  " + keyLegend(keyHint{"tab", "switch"}, keyHint{"esc", "close"})
-	drawPaddedLine(scr, uv.Rect(innerX, lay.Footer.Min.Y, innerW, 1), hint)
-}
-
-func (d *catalogDialog) title() string {
-	counts := make([]int, len(d.panes))
-	for i, p := range d.panes {
-		for _, r := range p.rows {
-			if r.name != "" {
-				counts[i]++
-			}
-		}
-	}
-	return fmt.Sprintf(" catalog  %d agents · %d skills · %d hooks ", counts[0], counts[1], counts[2])
 }

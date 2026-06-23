@@ -2,6 +2,7 @@ package coderunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -19,6 +20,24 @@ type VerifyOpts struct {
 	// agent. The end of the output is where test failures land. Zero =
 	// defaultVerifyTailBytes.
 	FeedbackTailBytes int
+	// OnResult, when set, is called once per evaluated attempt with the
+	// structured verifier result. It runs synchronously on Drive's goroutine;
+	// implementations should be quick and best-effort.
+	OnResult func(VerifyResult)
+}
+
+// VerifyResult is the structured outcome of CommandGoal's oracle for one
+// attempt. Skipped is true when the changed-nothing guard avoided re-running
+// the command and reused prior feedback.
+type VerifyResult struct {
+	AttemptNumber int
+	Command       string
+	Skipped       bool
+	Success       bool
+	ExitCode      *int
+	Error         string
+	OutputTail    string
+	Duration      time.Duration
 }
 
 const (
@@ -69,18 +88,57 @@ func CommandGoal(root, command string, worktreeState func() string, opts VerifyO
 		if haveState {
 			state := worktreeState()
 			if state == lastState {
-				return pursue.Retry(unchangedFeedback(attempt, lastFeedback))
+				feedback := unchangedFeedback(attempt, lastFeedback)
+				if opts.OnResult != nil {
+					opts.OnResult(VerifyResult{
+						AttemptNumber: attempt.Number,
+						Command:       command,
+						Skipped:       true,
+						OutputTail:    feedback,
+					})
+				}
+				return pursue.Retry(feedback)
 			}
 			lastState = state
 		}
 
+		started := time.Now()
 		out, err := runVerifyCommand(ctx, root, command, timeout)
+		duration := time.Since(started)
+		tail := outputTailN(out, tailBytes)
+		if opts.OnResult != nil {
+			opts.OnResult(VerifyResult{
+				AttemptNumber: attempt.Number,
+				Command:       command,
+				Success:       err == nil,
+				ExitCode:      exitCode(err),
+				Error:         errorString(err),
+				OutputTail:    tail,
+				Duration:      duration,
+			})
+		}
 		if err == nil {
 			return pursue.Done()
 		}
-		lastFeedback = verifyFeedback(command, attempt, err, outputTailN(out, tailBytes))
+		lastFeedback = verifyFeedback(command, attempt, err, tail)
 		return pursue.Retry(lastFeedback)
 	}))
+}
+
+func exitCode(err error) *int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		return &code
+	}
+	return nil
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // runVerifyCommand runs the oracle once, bounded by timeout, returning its

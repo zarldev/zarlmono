@@ -326,3 +326,34 @@ func TestMemoSource_InvalidatesCacheAfterSuccessfulBash(t *testing.T) {
 		t.Fatalf("dispatch count = %d, want 3 (read, bash, read after invalidation)", inner.calls)
 	}
 }
+
+func TestMemoSource_LedgerRecordsPureCallsAndClearsOnMutation(t *testing.T) {
+	inner := &sequenceSource{
+		results: []*tools.ToolResult{
+			{Success: true, Data: "old contents"},
+			{Success: true, Data: "edited"},
+		},
+		tools: []tools.Tool{
+			toolStub{spec: tools.ToolSpec{Name: "read"}},
+			toolStub{spec: tools.ToolSpec{Name: "edit", Mutates: true}},
+		},
+	}
+	ledger := runner.NewMemoryTaskCallLedger()
+	m := runner.NewMemoSourceWithLedger(inner, runner.PureTools("read"), ledger)
+	ctx := context.Background()
+	read := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
+	if _, err := m.Execute(ctx, read); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	calls := ledger.Calls(ctx)
+	if len(calls) != 1 || calls[0].ToolName != "read" {
+		t.Fatalf("ledger after read = %+v, want one read call", calls)
+	}
+	mutate := tools.ToolCall{ID: "2", ToolName: "edit", Arguments: tools.ToolParameters{"path": "foo.go"}}
+	if _, err := m.Execute(ctx, mutate); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if calls := ledger.Calls(ctx); len(calls) != 0 {
+		t.Fatalf("ledger after mutation = %+v, want cleared", calls)
+	}
+}

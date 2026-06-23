@@ -91,7 +91,7 @@ func hookTemplate(name string) string {
 		"# event: pre_tool fires before the tool runs; post_tool after.\n" +
 		"event: post_tool\n" +
 		"# matcher is a regexp matched against the whole tool name; delete to match every tool.\n" +
-		"matcher: write|edit|apply_patch\n" +
+		"matcher: write|edit\n" +
 		"# blocking: true rejects the tool call when this script exits non-zero.\n" +
 		"blocking: false\n" +
 		"# timeout: 30s\n" +

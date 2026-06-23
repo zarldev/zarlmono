@@ -27,6 +27,10 @@ const (
 	// call in a task is refused until update_plan has run. Off by default;
 	// turn it on for weak / local models that dive into edits before planning.
 	KeyPlanFirst = "plan_first"
+	// KeyReadBeforeWrite controls the read-before-write guardrail. "off" disables
+	// it; "advisory" and "strict" both refuse blind edit/write calls until the
+	// task reads the target or enough nearby context first.
+	KeyReadBeforeWrite = "read_before_write"
 	// KeyTemperature sets the sampling temperature on completion requests.
 	// Empty/"(default)" leaves it unset (server default). A low value (e.g. 0.2)
 	// improves determinism and tool-call reliability for local models.

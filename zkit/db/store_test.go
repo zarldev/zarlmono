@@ -323,6 +323,130 @@ func TestStore_HeadlessRun_Roundtrip(t *testing.T) {
 	}
 }
 
+func TestStore_HeadlessAttempt_Roundtrip(t *testing.T) {
+	t.Parallel()
+	s := openTempStore(t)
+	ctx := t.Context()
+
+	start := db.HeadlessRunStart{
+		ID:        "task-attempts",
+		Workspace: "/ws/foo",
+		Prompt:    "fix it",
+		StartedAt: time.Unix(1700000000, 0),
+	}
+	if err := s.InsertHeadlessRun(ctx, start); err != nil {
+		t.Fatalf("InsertHeadlessRun: %v", err)
+	}
+
+	in, out := int64(10), int64(20)
+	attempts := []db.HeadlessAttemptRecord{
+		{
+			RunID:          start.ID,
+			AttemptNumber:  1,
+			Prompt:         "fix it",
+			TerminalReason: "completed",
+			FinalContent:   "first try",
+			Iterations:     2,
+			ToolCalls:      3,
+			TokensIn:       &in,
+			TokensOut:      &out,
+			DecisionDone:   false,
+			Feedback:       "still red",
+			RecordedAt:     time.Unix(1700000001, 0),
+		},
+		{
+			RunID:          start.ID,
+			AttemptNumber:  2,
+			Prompt:         "still red",
+			TerminalReason: "completed",
+			FinalContent:   "fixed",
+			Iterations:     1,
+			ToolCalls:      1,
+			DecisionDone:   true,
+			RecordedAt:     time.Unix(1700000002, 0),
+		},
+	}
+	for _, a := range attempts {
+		if err := s.InsertHeadlessAttempt(ctx, a); err != nil {
+			t.Fatalf("InsertHeadlessAttempt #%d: %v", a.AttemptNumber, err)
+		}
+	}
+
+	got, err := s.ListHeadlessAttempts(ctx, start.ID)
+	if err != nil {
+		t.Fatalf("ListHeadlessAttempts: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d attempts, want 2", len(got))
+	}
+	if got[0].AttemptNumber != 1 || got[0].Feedback != "still red" || got[0].DecisionDone {
+		t.Errorf("first attempt = %+v", got[0])
+	}
+	if got[0].TokensIn == nil || *got[0].TokensIn != 10 || got[0].TokensOut == nil || *got[0].TokensOut != 20 {
+		t.Errorf("first attempt tokens = %v/%v", got[0].TokensIn, got[0].TokensOut)
+	}
+	if got[1].AttemptNumber != 2 || !got[1].DecisionDone || got[1].Prompt != "still red" {
+		t.Errorf("second attempt = %+v", got[1])
+	}
+}
+
+func TestStore_HeadlessVerifierResult_Roundtrip(t *testing.T) {
+	t.Parallel()
+	s := openTempStore(t)
+	ctx := t.Context()
+
+	start := db.HeadlessRunStart{
+		ID:        "task-verifier",
+		Workspace: "/ws/foo",
+		Prompt:    "fix it",
+		StartedAt: time.Unix(1700000000, 0),
+	}
+	if err := s.InsertHeadlessRun(ctx, start); err != nil {
+		t.Fatalf("InsertHeadlessRun: %v", err)
+	}
+	if err := s.InsertHeadlessAttempt(ctx, db.HeadlessAttemptRecord{
+		RunID:         start.ID,
+		AttemptNumber: 1,
+		Prompt:        "fix it",
+		RecordedAt:    time.Unix(1700000001, 0),
+	}); err != nil {
+		t.Fatalf("InsertHeadlessAttempt: %v", err)
+	}
+
+	exitCode := int64(7)
+	want := db.HeadlessVerifierResultRecord{
+		RunID:         start.ID,
+		AttemptNumber: 1,
+		Command:       "go test ./...",
+		Success:       false,
+		ExitCode:      &exitCode,
+		Error:         "exit status 7",
+		OutputTail:    "FAIL: TestThing",
+		Duration:      1500 * time.Millisecond,
+		RecordedAt:    time.Unix(1700000002, 0),
+	}
+	if err := s.InsertHeadlessVerifierResult(ctx, want); err != nil {
+		t.Fatalf("InsertHeadlessVerifierResult: %v", err)
+	}
+
+	got, err := s.ListHeadlessVerifierResults(ctx, start.ID)
+	if err != nil {
+		t.Fatalf("ListHeadlessVerifierResults: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d verifier results, want 1", len(got))
+	}
+	if got[0].Command != want.Command || got[0].Success || got[0].OutputTail != want.OutputTail {
+		t.Errorf("verifier result = %+v", got[0])
+	}
+	if got[0].ExitCode == nil || *got[0].ExitCode != exitCode {
+		t.Errorf("exit code = %v, want %d", got[0].ExitCode, exitCode)
+	}
+	if got[0].Duration != want.Duration {
+		t.Errorf("duration = %v, want %v", got[0].Duration, want.Duration)
+	}
+}
+
 func TestStore_HeadlessRun_NotFound(t *testing.T) {
 	t.Parallel()
 	s := openTempStore(t)

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -102,7 +103,7 @@ func (p *themePicker) draw(scr uv.Screen, area uv.Rectangle) {
 	if contentW := p.longestNameWidth() + 6; contentW > boxW {
 		boxW = contentW
 	}
-	if footerW := ansi.StringWidth(hint) + 4; footerW > boxW { // +4: borders + padding
+	if footerW := ansi.StringWidth(hint) + 4; footerW > boxW {
 		boxW = footerW
 	}
 	if maxW := w - 4; boxW > maxW {
@@ -114,17 +115,14 @@ func (p *themePicker) draw(scr uv.Screen, area uv.Rectangle) {
 		return
 	}
 	innerW, innerX := lay.Body.Dx(), lay.Body.Min.X
-	listY := lay.Body.Min.Y
+	listY := lay.Body.Min.Y + 1
 	footerY := lay.Footer.Min.Y
-	visibleRows := lay.Body.Dy()
+	visibleRows := max(1, lay.Body.Dy()-1)
 
-	summary := fmt.Sprintf(" %d/%d  %s", p.cursor+1, len(p.names), palette.Muted.On("previewing live"))
-	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), summary)
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), overlayTopBar("themes", nil, 0, fmt.Sprintf("%d/%d", p.cursor+1, len(p.names)), innerW))
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Body.Min.Y, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
 
-	// Window the list around the cursor, reserving rows for the more-indicators
-	// so the selected theme is always visible (never scrolled onto the footer).
 	start, end, up, down := listWindow(p.cursor, len(p.names), visibleRows)
-
 	y := listY
 	if up {
 		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Muted.On("  ↑ more"))

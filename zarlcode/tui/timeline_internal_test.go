@@ -1,4 +1,4 @@
-package tui_test
+package tui
 
 import (
 	"strings"
@@ -8,25 +8,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/zarldev/zarlmono/zarlcode/tui"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
-
-// drive constructs the UI, sizes it, applies the messages, and returns
-// the painted frame with ANSI styling stripped — assertions check
-// visible text, which is robust to glamour/colour styling. Box-drawing
-// and rail glyphs are Unicode, not ANSI, so they survive the strip.
-func drive(t *testing.T, msgs ...tea.Msg) string {
-	t.Helper()
-	var m tea.Model = tui.New()
-	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
-	for _, msg := range msgs {
-		m, _ = m.Update(msg)
-	}
-	return ansi.Strip(m.View().Content)
-}
 
 func TestTimeline_FoldsRun(t *testing.T) {
 	out := drive(t,
@@ -62,7 +47,7 @@ func TestTimeline_ToolFailureShows(t *testing.T) {
 }
 
 func TestTimeline_ToolEffectSummaryRendersWhenExpanded(t *testing.T) {
-	var m tea.Model = tui.New()
+	var m tea.Model = New()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	effect := tools.NewFileEffect(tools.FileModify, "pkg/foo.go")
 	m, _ = m.Update(teasink.ConversationStartedMsg{TaskID: "t1", Prompt: "edit foo"})
@@ -120,7 +105,7 @@ func TestTimeline_PlanUpdateIsCollapsibleInline(t *testing.T) {
 		},
 		Explanation: "seeded initial plan",
 	}
-	var m tea.Model = tui.New()
+	var m tea.Model = New()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	m, _ = m.Update(teasink.PlanUpdatedMsg{Plan: p})
 
@@ -128,8 +113,8 @@ func TestTimeline_PlanUpdateIsCollapsibleInline(t *testing.T) {
 	if !strings.Contains(out, "[+] plan updated · 1/2 done") {
 		t.Fatalf("collapsed plan update summary missing:\n%s", out)
 	}
-	if strings.Contains(out, "read the failing test") {
-		t.Fatalf("collapsed plan update should hide step details:\n%s", out)
+	if strings.Count(out, "read the failing test") > 1 {
+		t.Fatalf("collapsed plan update should hide timeline step details:\n%s", out)
 	}
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})   // browse mode

@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/zarldev/zarlmono/zarlcode/catalog"
 )
 
 func TestFileViewer_RenderedContentUsesCodeBlockRenderer(t *testing.T) {
@@ -172,6 +175,32 @@ func TestFileViewerEditKeyIgnoresDirectories(t *testing.T) {
 	v := newFileViewer(root)
 	if a := v.handleKey(tea.KeyPressMsg{Code: 'e', Text: "e"}); a != (actionNone{}) {
 		t.Fatalf("action = %T, want actionNone", a)
+	}
+}
+
+func TestFileViewerCatalogPreviewMetadata(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "skill.md")
+	v := &fileViewer{
+		workspaceDir: root,
+		mode:         fileViewerSkills,
+		skills: []catalog.Skill{{
+			Name:        "repo-search",
+			Description: "search the repo",
+			Body:        "use rg first",
+			Source:      source,
+		}},
+	}
+	v.tryPreview()
+	v.width, v.height = 100, 30
+
+	buf := uv.NewScreenBuffer(100, 30)
+	v.drawCatalogPreview(buf, 0, 0, 80, 12)
+	out := ansi.Strip(buf.String())
+	for _, want := range []string{"repo-search", "search the repo", "skill.md", "use rg first"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("catalog preview missing %q:\n%s", want, out)
+		}
 	}
 }
 

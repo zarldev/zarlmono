@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
 // Verifier runs a fast compile / typecheck / lint pass against a set
@@ -62,7 +63,7 @@ type ImprovementGuardrail struct {
 // apply_patch) are verified from those effects regardless of this watch list.
 func NewImprovementGuardrail(root string, watch []tools.ToolName, verifiers ...Verifier) *ImprovementGuardrail {
 	if len(watch) == 0 {
-		watch = []tools.ToolName{"write", "edit", "write_append"}
+		watch = []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit, code.ToolNameWriteAppend}
 	}
 	byExt := make(map[string]Verifier)
 	for _, v := range verifiers {

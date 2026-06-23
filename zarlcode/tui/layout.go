@@ -9,7 +9,7 @@ import uv "github.com/charmbracelet/ultraviolet"
 type uiLayout struct {
 	header  uv.Rectangle
 	main    uv.Rectangle // the run timeline
-	sidebar uv.Rectangle // run-state; empty (collapsed) below sidebarMinWidth
+	sidebar uv.Rectangle // state sidebar; empty (collapsed) below sidebarMinWidth
 	editor  uv.Rectangle
 	status  uv.Rectangle
 }
@@ -19,7 +19,7 @@ const (
 	editorMinHeight = 3   // box: border + one input row
 	editorMaxHeight = 8   // box: border + six input rows, matching intro prompt
 	statusHeight    = 1   // single-line hint bar
-	sidebarWidth    = 56  // fits the dense context headline (pct · used/win · cached · fill)
+	sidebarWidth    = 56  // fits the state summary sections comfortably
 	sidebarMinWidth = 160 // below this total width the sidebar collapses
 )
 

@@ -270,9 +270,10 @@ func (p *workingSetPane) draw(scr uv.Screen, area uv.Rectangle) {
 	p.height = l.Detail.Dy()
 	p.clampCursor()
 
-	drawPaneRow(scr, l.Context, palette.Muted.On(" "+p.contextText()), palette.Subtle.On("ctrl+w close "))
-	p.drawNav(scr, l.Nav)
-	p.drawDetail(scr, l.Detail)
+	left := overlayTopBar(p.titleLabel(), p.tabNames(), p.activeTab(), p.contextText(), l.Context.Dx())
+	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+w close "), palette.Border)
+	p.drawNav(scr, p.drawSectionChrome(scr, l.Nav, p.navSummary()))
+	p.drawDetail(scr, p.drawSectionChrome(scr, l.Detail, p.viewSummary()))
 	p.drawFooter(scr, l.Footer)
 }
 
@@ -304,15 +305,63 @@ func (p *workingSetPane) contextText() string {
 	return fmt.Sprintf("%d files · %d turns · %d/%d processes", len(files), len(turns), running, len(procs))
 }
 
-func (p *workingSetPane) titleLabel() string {
-	view := "files"
+func (p *workingSetPane) titleLabel() string { return "working set" }
+
+func (p *workingSetPane) tabNames() []string { return []string{"files", "turns", "processes"} }
+
+func (p *workingSetPane) activeTab() int { return int(p.view) }
+
+func (p *workingSetPane) viewSummary() string {
 	switch p.view {
 	case workingSetViewTurns:
-		view = "turns"
+		return fmt.Sprintf("%d turns", len(p.turns()))
 	case workingSetViewProcesses:
-		view = "processes"
+		procs := p.processes()
+		running := 0
+		for _, proc := range procs {
+			if proc.Running {
+				running++
+			}
+		}
+		return fmt.Sprintf("%d/%d running", running, len(procs))
+	default:
+		return fmt.Sprintf("%d files", len(p.files()))
 	}
-	return "working set · " + view
+}
+
+func (p *workingSetPane) navSummary() string {
+	switch p.view {
+	case workingSetViewTurns:
+		if turn, ok := p.selectedTurn(); ok {
+			return fmt.Sprintf("turn focus · #%d · %s", turn.Ordinal, countLabel(turn.Files, "file", "files"))
+		}
+		return "turns changed this session"
+	case workingSetViewProcesses:
+		if proc, ok := p.selectedProcess(); ok {
+			state := "running"
+			if !proc.Running {
+				state = fmt.Sprintf("exited %d", proc.ExitCode)
+			}
+			return fmt.Sprintf("process focus · %s · pid %d", state, proc.PID)
+		}
+		return "background processes for this session"
+	default:
+		if file, ok := p.selectedFile(); ok {
+			return fmt.Sprintf("file focus · %s · %s", statBadge(file.Additions, file.Deletions), countLabel(file.Mutations, "mutation", "mutations"))
+		}
+		return "files changed this session"
+	}
+}
+
+func (p *workingSetPane) drawSectionChrome(scr uv.Screen, r uv.Rectangle, summary string) uv.Rectangle {
+	if r.Dy() <= 0 {
+		return r
+	}
+	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), ansi.Truncate(palette.Muted.On(" "+summary), r.Dx(), ""))
+	if r.Dy() > 1 {
+		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1, r.Dx(), 1), palette.Border.On(strings.Repeat("─", r.Dx())))
+	}
+	return uv.Rect(r.Min.X, r.Min.Y+2, r.Dx(), max(0, r.Dy()-2))
 }
 
 func (p *workingSetPane) drawNav(scr uv.Screen, r uv.Rectangle) {
@@ -329,12 +378,19 @@ func (p *workingSetPane) drawNav(scr uv.Screen, r uv.Rectangle) {
 		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), palette.Muted.On("  no changed files this session"))
 		return
 	}
-	start, end := windowAroundCursor(p.cursor, len(files), r.Dy())
+	start, end := windowAroundCursor(p.cursor, len(files), max(1, r.Dy()/2))
 	for i := start; i < end; i++ {
 		file := files[i]
-		screenY := r.Min.Y + (i - start)
-		label := fmt.Sprintf("%s  +%d -%d  %s", file.Path, file.Additions, file.Deletions, countLabel(file.Mutations, "edit", "edits"))
-		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), label, i == p.cursor, true)
+		screenY := r.Min.Y + (i-start)*2
+		if screenY >= r.Max.Y {
+			break
+		}
+		primary := fmt.Sprintf("%s  %s", file.Path, statBadge(file.Additions, file.Deletions))
+		secondary := palette.Subtle.On("    " + countLabel(file.Mutations, "mutation", "mutations") + " · " + timeRange(file.FirstChangedAt, file.LastChangedAt))
+		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), primary, i == p.cursor, true)
+		if screenY+1 < r.Max.Y {
+			drawLine(scr, uv.Rect(r.Min.X, screenY+1, r.Dx(), 1), ansi.Truncate(secondary, r.Dx(), ""))
+		}
 	}
 }
 
@@ -344,12 +400,19 @@ func (p *workingSetPane) drawTurnNav(scr uv.Screen, r uv.Rectangle) {
 		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), palette.Muted.On("  no turns with file edits"))
 		return
 	}
-	start, end := windowAroundCursor(p.cursor, len(turns), r.Dy())
+	start, end := windowAroundCursor(p.cursor, len(turns), max(1, r.Dy()/2))
 	for i := start; i < end; i++ {
 		turn := turns[i]
-		screenY := r.Min.Y + (i - start)
-		label := fmt.Sprintf("turn #%d  %s  %s", turn.Ordinal, countLabel(turn.Files, "file", "files"), countLabel(turn.Mutations, "edit", "edits"))
-		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), label, i == p.cursor, true)
+		screenY := r.Min.Y + (i-start)*2
+		if screenY >= r.Max.Y {
+			break
+		}
+		primary := fmt.Sprintf("turn #%d  %s", turn.Ordinal, statBadge(turn.Additions, turn.Deletions))
+		secondary := palette.Subtle.On("    " + countLabel(turn.Files, "file", "files") + " · " + countLabel(turn.Mutations, "edit", "edits") + " · " + turn.ID)
+		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), primary, i == p.cursor, true)
+		if screenY+1 < r.Max.Y {
+			drawLine(scr, uv.Rect(r.Min.X, screenY+1, r.Dx(), 1), ansi.Truncate(secondary, r.Dx(), ""))
+		}
 	}
 }
 
@@ -359,16 +422,23 @@ func (p *workingSetPane) drawProcessNav(scr uv.Screen, r uv.Rectangle) {
 		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), palette.Muted.On("  no background processes tracked"))
 		return
 	}
-	start, end := windowAroundCursor(p.processCursor, len(procs), r.Dy())
+	start, end := windowAroundCursor(p.processCursor, len(procs), max(1, r.Dy()/2))
 	for i := start; i < end; i++ {
 		proc := procs[i]
-		screenY := r.Min.Y + (i - start)
+		screenY := r.Min.Y + (i-start)*2
+		if screenY >= r.Max.Y {
+			break
+		}
 		state := palette.Success.On("running")
 		if !proc.Running {
 			state = palette.Muted.On(fmt.Sprintf("exited %d", proc.ExitCode))
 		}
-		label := fmt.Sprintf("%s  pid=%d  %s  age=%s", palette.Info.On(proc.ID), proc.PID, state, time.Since(proc.StartedAt).Round(time.Second))
-		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), label, i == p.processCursor, true)
+		primary := fmt.Sprintf("%s  pid=%d  %s", palette.Info.On(proc.ID), proc.PID, state)
+		secondary := palette.Subtle.On(fmt.Sprintf("    age %s · stdout %d · stderr %d", time.Since(proc.StartedAt).Round(time.Second), proc.StdoutLines, proc.StderrLines))
+		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), primary, i == p.processCursor, true)
+		if screenY+1 < r.Max.Y {
+			drawLine(scr, uv.Rect(r.Min.X, screenY+1, r.Dx(), 1), ansi.Truncate(secondary, r.Dx(), ""))
+		}
 	}
 }
 
@@ -409,15 +479,21 @@ func (p *workingSetPane) scrollLines(n int) {
 func (p *workingSetPane) fileDetailLines(width int) []string {
 	file, ok := p.selectedFile()
 	if !ok || p.session == nil || p.session.WorkingSet == nil {
-		return nil
+		return []string{
+			headerLine("file detail", width, palette.Primary.On),
+			palette.Muted.On(" status: unavailable"),
+			palette.Subtle.On(" choose a changed file to inspect its turn history and latest diff"),
+		}
 	}
 	mutations := p.session.WorkingSet.MutationsForFile(file.Path)
 	lines := []string{
 		headerLine(file.Path, width, palette.Primary.On),
 		fmt.Sprintf(" status: %s", palette.Warning.On("mutated in session")),
-		fmt.Sprintf(" summary: %s · %s · %s", countLabel(file.Mutations, "mutation", "mutations"), statBadge(file.Additions, file.Deletions), timeRange(file.FirstChangedAt, file.LastChangedAt)),
+		fmt.Sprintf(" source: %s", timeRange(file.FirstChangedAt, file.LastChangedAt)),
+		fmt.Sprintf(" summary: %s · %s", countLabel(file.Mutations, "mutation", "mutations"), statBadge(file.Additions, file.Deletions)),
+		fmt.Sprintf(" actions: %s · %s · %s", palette.Info.On("enter diff"), palette.Info.On("o open file"), palette.Info.On("r rollback")),
 		"",
-		palette.Subtle.On(" turns"),
+		sectionHead("turns", width),
 	}
 	seen := make(map[string]struct{})
 	for _, mutation := range mutations {
@@ -428,15 +504,20 @@ func (p *workingSetPane) fileDetailLines(width int) []string {
 		seen[label] = struct{}{}
 		lines = append(lines, "  "+label)
 	}
-	lines = append(lines, "", palette.Subtle.On(" latest mutation"))
+	if len(mutations) == 0 {
+		lines = append(lines, palette.Muted.On("  no recorded mutations for this file yet"))
+	}
+	lines = append(lines, "", sectionHead("latest mutation", width))
 	if len(mutations) > 0 {
 		latest := mutations[len(mutations)-1]
 		lines = append(lines,
 			fmt.Sprintf("  mutation #%d · %s · %s", latest.MutationOrdinal, turnLabel(latest), statBadge(latest.Additions, latest.Deletions)),
 			"",
-			palette.Subtle.On(" latest diff"),
+			sectionHead("latest diff", width),
 		)
 		lines = append(lines, renderContentBlock(width, contentBlock{kind: contentDiff, text: latest.Diff, bodyPrefix: "  ", maxLines: max(1, width/3)})...)
+	} else {
+		lines = append(lines, palette.Muted.On("  no diff captured yet"))
 	}
 	return lines
 }
@@ -444,25 +525,36 @@ func (p *workingSetPane) fileDetailLines(width int) []string {
 func (p *workingSetPane) turnDetailLines(width int) []string {
 	turn, ok := p.selectedTurn()
 	if !ok || p.session == nil || p.session.WorkingSet == nil {
-		return nil
+		return []string{
+			headerLine("turn detail", width, palette.Primary.On),
+			palette.Muted.On(" status: unavailable"),
+			palette.Subtle.On(" choose a turn to inspect changed files and the latest diff"),
+		}
 	}
 	files := p.session.WorkingSet.FilesChangedForTurn(turn.ID)
 	mutations := p.session.WorkingSet.MutationsForTurn(turn.ID)
 	lines := []string{
 		headerLine(fmt.Sprintf("turn #%d", turn.Ordinal), width, palette.Primary.On),
+		fmt.Sprintf(" status: %s", palette.Warning.On("mutated in session")),
 		fmt.Sprintf(" id: %s", turn.ID),
-		fmt.Sprintf(" summary: %s · %s · %s · %s", countLabel(turn.Files, "file", "files"), countLabel(turn.Mutations, "mutation", "mutations"), statBadge(turn.Additions, turn.Deletions), timeRange(turn.FirstChangedAt, turn.LastChangedAt)),
+		fmt.Sprintf(" summary: %s · %s · %s", countLabel(turn.Files, "file", "files"), countLabel(turn.Mutations, "mutation", "mutations"), statBadge(turn.Additions, turn.Deletions)),
+		fmt.Sprintf(" actions: %s · %s", palette.Info.On("enter diff"), palette.Info.On("r rollback turn")),
 		"",
-		palette.Subtle.On(" files"),
+		sectionHead("files", width),
 	}
 	for _, file := range files {
 		lines = append(lines, fmt.Sprintf("  %s · %s · %s", file.Path, countLabel(file.Mutations, "mutation", "mutations"), statBadge(file.Additions, file.Deletions)))
 	}
-	lines = append(lines, "", palette.Subtle.On(" latest diff"))
+	if len(files) == 0 {
+		lines = append(lines, palette.Muted.On("  no files recorded for this turn"))
+	}
+	lines = append(lines, "", sectionHead("latest diff", width))
 	if len(mutations) > 0 {
 		latest := mutations[len(mutations)-1]
 		lines = append(lines, fmt.Sprintf("  %s · mutation #%d · %s", latest.Path, latest.MutationOrdinal, statBadge(latest.Additions, latest.Deletions)))
 		lines = append(lines, renderContentBlock(width, contentBlock{kind: contentDiff, text: latest.Diff, bodyPrefix: "  ", maxLines: max(1, width/3)})...)
+	} else {
+		lines = append(lines, palette.Muted.On("  no diff captured yet"))
 	}
 	return lines
 }
@@ -470,7 +562,11 @@ func (p *workingSetPane) turnDetailLines(width int) []string {
 func (p *workingSetPane) processDetailLines(width int) []string {
 	proc, ok := p.selectedProcess()
 	if !ok {
-		return nil
+		return []string{
+			headerLine("process detail", width, palette.Primary.On),
+			palette.Muted.On(" status: unavailable"),
+			palette.Subtle.On(" choose a tracked process to inspect its state and output counters"),
+		}
 	}
 	state := palette.Success.On("running")
 	if !proc.Running {
@@ -478,14 +574,12 @@ func (p *workingSetPane) processDetailLines(width int) []string {
 	}
 	lines := []string{
 		headerLine(proc.ID, width, palette.Primary.On),
-		fmt.Sprintf(" pid: %d", proc.PID),
-		fmt.Sprintf(" state: %s", state),
-		fmt.Sprintf(" cwd: %s", palette.Muted.On(proc.CWD)),
+		fmt.Sprintf(" status: %s", state),
+		fmt.Sprintf(" source: pid %d · %s", proc.PID, proc.StartedAt.Format("15:04:05")),
+		fmt.Sprintf(" path: %s", palette.Muted.On(proc.CWD)),
 		fmt.Sprintf(" command: %s", palette.Muted.On(proc.Command)),
-		fmt.Sprintf(" started: %s", proc.StartedAt.Format("15:04:05")),
-		fmt.Sprintf(" age: %s", time.Since(proc.StartedAt).Round(time.Second)),
-		fmt.Sprintf(" stdout: %d lines", proc.StdoutLines),
-		fmt.Sprintf(" stderr: %d lines", proc.StderrLines),
+		fmt.Sprintf(" summary: age %s · stdout %d · stderr %d", time.Since(proc.StartedAt).Round(time.Second), proc.StdoutLines, proc.StderrLines),
+		fmt.Sprintf(" actions: %s", palette.Info.On("x kill process")),
 	}
 	if p.status != "" {
 		lines = append(lines, "", palette.Muted.On(p.status))
@@ -494,12 +588,11 @@ func (p *workingSetPane) processDetailLines(width int) []string {
 }
 
 func (p *workingSetPane) drawFooter(scr uv.Screen, r uv.Rectangle) {
-	hints := []keyHint{{"↑↓/jk", "select"}, {"tab", "files/turns/processes"}, {"enter", "diff"}, {"o", "open file"}, {"r", "rollback"}, {"esc", "close"}}
+	hints := []keyHint{{"↑↓/jk", "navigate"}, {"tab", "switch view"}, {"enter", "show diff"}, {"o", "open file"}, {"r", "rollback"}, {"pgup/pgdn", "scroll detail"}, {"esc", "close"}}
 	if p.view == workingSetViewProcesses {
-		hints = []keyHint{{"↑↓/jk", "select process"}, {"x", "kill"}, {"tab", "files/turns/processes"}, {"esc", "close"}}
+		hints = []keyHint{{"↑↓/jk", "navigate"}, {"x", "kill process"}, {"tab", "switch view"}, {"pgup/pgdn", "scroll detail"}, {"esc", "close"}}
 	}
-	footer := keyLegend(hints...)
-	drawPaneRow(scr, r, palette.Subtle.On(" "+footer), "")
+	drawPaneRow(scr, r, palette.Subtle.On(" "+compactFooterHints(hints...)), "")
 }
 
 func headerLine(label string, width int, style func(string) string) string {

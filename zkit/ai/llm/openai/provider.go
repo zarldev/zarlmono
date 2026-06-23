@@ -51,6 +51,12 @@ type Provider struct {
 	// field with HTTP 400. Only the llama.cpp construction paths enable it
 	// via [WithCachePrompt].
 	cachePrompt bool
+	// chatTemplateKwargs sends llama.cpp / vLLM's non-standard
+	// `chat_template_kwargs` request field when the runner supplies it.
+	// Strict hosted APIs and OpenAI-forwarding proxies reject the key, so
+	// the generic OpenAI-compatible provider keeps it OFF by default; local
+	// wrappers such as llama.cpp/Ollama opt in explicitly.
+	chatTemplateKwargs bool
 }
 
 const (
@@ -529,6 +535,10 @@ func (p *Provider) nonStreamCompletion(
 // prompt + early history is unchanged. It is NOT sent otherwise:
 // strict OpenAI-compatible backends, and proxies like LiteLLM that
 // forward unknown params upstream, reject the unrecognised field with
+// `chat_template_kwargs` follows the same opt-in shape via
+// [WithChatTemplateKwargs]. It is useful for local chat-template servers but
+// must stay off for GPT-compatible endpoints that validate request params.
+//
 // HTTP 400.
 //
 // Returns the option slice the callers spread into their
@@ -538,7 +548,7 @@ func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestO
 	if p.cachePrompt {
 		opts = append(opts, option.WithJSONSet("cache_prompt", true))
 	}
-	if len(req.ChatTemplateKwargs) > 0 {
+	if p.chatTemplateKwargs && len(req.ChatTemplateKwargs) > 0 {
 		opts = append(opts, option.WithJSONSet("chat_template_kwargs", req.ChatTemplateKwargs))
 	}
 	if rf, ok := buildResponseFormat(req.ResponseFormat); ok {
@@ -844,6 +854,18 @@ func WithHTTPClient(client *http.Client) options.Option[Provider] {
 func WithCachePrompt(enabled bool) options.Option[Provider] {
 	return func(p *Provider) {
 		p.cachePrompt = enabled
+	}
+}
+
+// WithChatTemplateKwargs enables forwarding the non-standard
+// `chat_template_kwargs` top-level request field when the runner supplies
+// template kwargs. This is intended for local OpenAI-compatible servers whose
+// chat templates consume those values (llama.cpp, Ollama/vLLM setups). Leave it
+// disabled for hosted OpenAI and forwarding proxies, which reject unknown
+// request parameters.
+func WithChatTemplateKwargs(enabled bool) options.Option[Provider] {
+	return func(p *Provider) {
+		p.chatTemplateKwargs = enabled
 	}
 }
 

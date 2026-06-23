@@ -47,9 +47,10 @@ type planDialog struct {
 	workspace string
 
 	// saved-tab preview state
-	previewName    string // path of the file currently previewed
-	previewContent string // cached markdown content
-	scroll         int    // preview scroll offset
+	previewName    string    // path of the file currently previewed
+	previewContent string    // cached markdown content
+	previewModTime time.Time // modtime of the cached preview; same path may change on disk
+	scroll         int       // preview scroll offset
 	height         int
 }
 
@@ -57,6 +58,25 @@ func newPlanDialog(plan *code.Plan, workspace string) *planDialog {
 	d := &planDialog{plan: plan, workspace: workspace, view: planViewLive}
 	d.loadEntries()
 	return d
+}
+
+func (d *planDialog) planSummary() string {
+	if d.plan == nil || d.plan.IsEmpty() {
+		return "no active plan"
+	}
+	done, doing, pending := planCounts(*d.plan)
+	return fmt.Sprintf("%d steps · %d done · %d active · %d pending", len(d.plan.Steps), done, doing, pending)
+}
+
+func (d *planDialog) savedSummary() string {
+	if len(d.entries) == 0 {
+		return "no saved plans"
+	}
+	if d.cursor >= 0 && d.cursor < len(d.entries) {
+		entry := d.entries[d.cursor]
+		return fmt.Sprintf("%d saved · %s", len(d.entries), entry.modTime.Format("2006-01-02 15:04"))
+	}
+	return fmt.Sprintf("%d saved", len(d.entries))
 }
 
 func (d *planDialog) loadEntries() {
@@ -145,21 +165,26 @@ func (d *planDialog) drawLive(scr uv.Screen, area uv.Rectangle) {
 	if d.plan != nil {
 		p = *d.plan
 	}
-	drawPlanDialogBox(scr, area, "planning pane",
-		append([]string{d.tabBar()}, planLines(p, planWrapForArea(area))...))
+	wrap := planWrapForArea(area)
+	lines := append([]string{
+		overlayTopBar("plan", []string{"live", "saved"}, int(planViewLive), d.planSummary(), wrap),
+	}, planLines(p, wrap)...)
+	drawPlanDialogBox(scr, area, "planning pane", lines)
 }
 
 // ─── saved tab (full-screen split pane) ─────────────────────────────────
 
 func (d *planDialog) tryPreview() {
 	if d.cursor < 0 || d.cursor >= len(d.entries) {
+		d.previewName = ""
+		d.previewContent = ""
+		d.previewModTime = time.Time{}
+		d.scroll = 0
 		return
 	}
 	e := d.entries[d.cursor]
-	if e.path == d.previewName {
-		return // already loaded
-	}
 	d.previewName = e.path
+	d.previewModTime = e.modTime
 	d.scroll = 0
 	data, err := os.ReadFile(e.path)
 	if err != nil {
@@ -174,57 +199,54 @@ func (d *planDialog) drawSaved(scr uv.Screen, area uv.Rectangle) {
 	if w < 40 || h < 8 {
 		return
 	}
-	l, ok := drawSplitPaneColored(scr, area, "plans", fileViewerNavW, palette.PlanMode, palette.PlanMode)
+	l, ok := drawSplitPane(scr, area, "plans", fileViewerNavW)
 	if !ok {
 		return
 	}
 	d.height = l.Body.Dy()
-	drawPaneRow(scr, l.Context, palette.Muted.On(" saved · "+code.PlansDir), palette.Subtle.On("tab live "))
-
-	// ── nav panel: plan file list ──
+	left := overlayTopBar("plan", []string{"live", "saved"}, int(d.view), d.savedSummary(), l.Context.Dx())
+	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+p close "), palette.Border)
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" saved plans · newest first"))
+	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
+	navY := l.Nav.Min.Y + 2
+	navH := max(0, l.Nav.Dy()-2)
 	if len(d.entries) == 0 {
-		drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On("  (no saved plans)"))
+		drawLine(scr, uv.Rect(l.Nav.Min.X, navY, l.Nav.Dx(), 1), palette.Muted.On("  no saved plans"))
 	} else {
-		start, end := windowAroundCursor(d.cursor, len(d.entries), l.Nav.Dy())
+		start, end := windowAroundCursor(d.cursor, len(d.entries), navH)
 		for i := start; i < end; i++ {
-			screenY := l.Nav.Min.Y + (i - start)
-			drawListRow(scr, uv.Rect(l.Nav.Min.X, screenY, l.Nav.Dx(), 1), d.entries[i].name, i == d.cursor, true)
+			screenY := navY + (i - start)
+			label := d.entries[i].name + palette.Subtle.On(" · "+d.entries[i].modTime.Format("2006-01-02 15:04"))
+			drawListRow(scr, uv.Rect(l.Nav.Min.X, screenY, l.Nav.Dx(), 1), label, i == d.cursor, true)
 		}
 	}
-
-	// ── detail panel: markdown preview ──
 	if d.previewContent != "" {
 		d.drawPlanContent(scr, l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), l.Body.Max.Y)
 	} else {
-		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), 1), palette.Muted.On(" select a plan to preview"))
+		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), 1), headerLine("saved plan preview", l.Detail.Dx(), palette.Primary.On))
+		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+1, l.Detail.Dx(), 1), palette.Muted.On(" status: unavailable"))
+		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+2, l.Detail.Dx(), 1), palette.Subtle.On(" choose a saved plan to preview its markdown"))
 	}
-
-	// ── footer ──
-	footer := keyLegend(
-		keyHint{"↑↓/jk", "select plan"},
+	footer := compactFooterHints(
+		keyHint{"↑↓/jk", "navigate"},
 		keyHint{"pgup/pgdn", "scroll"},
-		keyHint{"tab", "live plan"},
+		keyHint{"tab", "switch view"},
 		keyHint{"esc", "close"},
 	)
 	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
 }
 
 func (d *planDialog) drawPlanContent(scr uv.Screen, x, y, w int, footerY int) {
-	cw := w - scrollbarWidth // reserve the gutter
+	cw := w - scrollbarWidth
 	bodyW := min(cw-4, maxContentWidth)
 	bodyLines := renderMarkdownBlock(bodyW, d.previewContent,
 		withCacheKey("plan-preview:"+d.previewName),
 	)
-
-	// Header: plan name.
 	relPath, _ := filepath.Rel(d.workspace, d.previewName)
 	relPath = strings.TrimPrefix(relPath, code.PlansDir+"/")
-	header := fmt.Sprintf(" %s ", relPath)
-	header = palette.PlanMode.On(header) +
-		palette.Subtle.On(strings.Repeat("─", max(0, cw-ansi.StringWidth(header))))
-	drawLine(scr, uv.Rect(x, y, cw, 1), header)
-	y++
-
+	drawLine(scr, uv.Rect(x, y, cw, 1), headerLine(relPath, cw, palette.Primary.On))
+	drawLine(scr, uv.Rect(x, y+1, cw, 1), palette.Subtle.On(" status: loaded · source: saved plan markdown"))
+	y += 2
 	contentH := footerY - y
 	if contentH <= 0 {
 		return
@@ -235,27 +257,6 @@ func (d *planDialog) drawPlanContent(scr uv.Screen, x, y, w int, footerY int) {
 		drawLine(scr, uv.Rect(x, screenY, cw, 1), "  "+bodyLines[i])
 	}
 	drawPaneScrollbar(scr, x+w-1, y, contentH, len(bodyLines), d.scroll)
-}
-
-// scrollLines scrolls the saved-plan preview by n lines (negative = up); the
-// upper bound is clamped in drawPlanContent. Satisfies scroller.
-func (d *planDialog) scrollLines(n int) {
-	d.scroll += n
-	if d.scroll < 0 {
-		d.scroll = 0
-	}
-}
-
-func (d *planDialog) tabBar() string {
-	var liveTab, savedTab string
-	if d.view == planViewLive {
-		liveTab = palette.PlanMode.On("[live]")
-		savedTab = palette.Subtle.On("saved")
-	} else {
-		liveTab = palette.Subtle.On("live")
-		savedTab = palette.PlanMode.On("[saved]")
-	}
-	return fmt.Sprintf("%s  %s  %s", liveTab, savedTab, palette.Subtle.On("· tab to switch"))
 }
 
 // planWrapWidth caps step-text wrapping so a long step doesn't stretch the

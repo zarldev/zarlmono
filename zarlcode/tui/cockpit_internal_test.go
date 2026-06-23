@@ -308,14 +308,14 @@ func TestDashboardScrollClampsToContent(t *testing.T) {
 	if maxScroll == 0 {
 		t.Fatal("test setup should produce an overflowing dashboard")
 	}
-	m.dashboardScroll = maxScroll + 10
+	m.contextView.setActiveScroll(maxScroll + 10)
 	m.clampDashboardScroll()
-	if m.dashboardScroll != maxScroll {
-		t.Fatalf("dashboard scroll = %d, want clamped max %d", m.dashboardScroll, maxScroll)
+	if m.contextView.activeScroll() != maxScroll {
+		t.Fatalf("context view scroll = %d, want clamped max %d", m.contextView.activeScroll(), maxScroll)
 	}
-	m.dashboardScroll = -10
+	m.contextView.setActiveScroll(-10)
 	m.clampDashboardScroll()
-	if m.dashboardScroll != 0 {
-		t.Fatalf("dashboard scroll = %d, want clamped zero", m.dashboardScroll)
+	if m.contextView.activeScroll() != 0 {
+		t.Fatalf("context view scroll = %d, want clamped zero", m.contextView.activeScroll())
 	}
 }

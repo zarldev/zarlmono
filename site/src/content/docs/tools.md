@@ -118,7 +118,7 @@ When a tool mutates the world, consumers downstream need to know
 
 ```go
 // file mutation
-&tools.FileEffect{Path: "pkg/foo/bar.go", Op: tools.EffectOpWrite, BytesAfter: 4200}
+&tools.FileEffect{Path: "internal/foo/bar.go", Op: tools.EffectOpWrite, BytesAfter: 4200}
 
 // process lifecycle
 &tools.ProcessEffect{Command: "go build ./...", PID: 8921, Background: true}

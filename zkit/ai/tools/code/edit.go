@@ -10,9 +10,12 @@ import (
 	"github.com/zarldev/zarlmono/zkit/filesystem"
 )
 
-// EditTool performs a string replacement in a workspace file. Without
-// replace_all, old_string must appear exactly once — otherwise the edit is
-// rejected to prevent accidental whole-file rewrites.
+// EditTool performs an exact-string replacement in a workspace file. It is
+// retained for legacy consumers and focused tests; the standard coderunner /
+// zarlcode tool surface now exposes EditFileHLTool under the same `edit` name.
+//
+// Without replace_all, old_string must appear exactly once — otherwise the
+// edit is rejected to prevent accidental whole-file rewrites.
 //
 // # Whitespace-tolerant fallback
 //
@@ -37,8 +40,7 @@ import (
 // characters inside multi-KB streaming tool-call JSON, which is why
 // this cap exists at all. The cap is tighter than write's because
 // edit always carries two such args (old_string + new_string) and
-// the failure mode
-// is per-arg.
+// the failure mode is per-arg.
 type EditTool struct{ ws Workspace }
 
 // EditArgs is the typed argument struct EditTool.Execute decodes
@@ -51,12 +53,12 @@ type EditArgs struct {
 	ReplaceAll bool   `json:"replace_all,omitempty" doc:"Replace every occurrence (default false)."`
 }
 
-// NewEditTool returns the in-place line-replacement tool bound to ws.
+// NewEditTool returns the legacy exact-string edit tool bound to ws.
 func NewEditTool(ws Workspace) *EditTool { return &EditTool{ws: ws} }
 
-// Definition advertises edit with path, old_string, new_string, and
-// replace_all parameters; Mutates is true because a successful edit
-// rewrites the file in place.
+// Definition advertises the legacy exact-string edit shape: path,
+// old_string, new_string, and replace_all. Mutates is true because a
+// successful edit rewrites the file in place.
 func (t *EditTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolNameEdit,
@@ -72,6 +74,9 @@ func (t *EditTool) Definition() tools.ToolSpec {
 // is set, falling back to a single-hit whitespace-normalised match
 // when the exact search finds nothing. Ambiguity at either stage is
 // refused with the match count; success emits a FileModify effect.
+//
+// This legacy exact-string path remains useful for narrow consumers, but
+// the standard coding surface prefers EditFileHLTool's anchored workflow.
 func (t *EditTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
 	var args EditArgs
 	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {

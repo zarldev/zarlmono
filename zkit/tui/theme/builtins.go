@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -20,10 +22,14 @@ var (
 
 func init() {
 	themes, dark, err := loadBuiltins()
-	errLoad = err
-	builtins = themes
+	userThemes, userErr := loadUserThemes()
+	errLoad = errors.Join(err, userErr)
+	builtins = mergeThemes(themes, userThemes)
 	darkDefault = dark
-	for _, t := range themes {
+	if darkDefault.Name == "" && len(builtins) > 0 {
+		darkDefault = builtins[0]
+	}
+	for _, t := range builtins {
 		byName[t.Name] = t
 	}
 }
@@ -102,4 +108,42 @@ func DarkDefault() Theme { return darkDefault }
 func ByName(name string) (Theme, bool) {
 	t, ok := byName[name]
 	return t, ok
+}
+
+func loadUserThemes() ([]Theme, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		if err != nil {
+			return nil, fmt.Errorf("theme: resolve user home: %w", err)
+		}
+		return nil, nil
+	}
+	dir := filepath.Join(home, ".zarlcode", "config", "themes")
+	themes, errs := LoadDir(dir)
+	if len(errs) == 0 {
+		return themes, nil
+	}
+	joined := make([]error, 0, len(errs))
+	for _, err := range errs {
+		joined = append(joined, fmt.Errorf("load %s: %w", dir, err))
+	}
+	return themes, errors.Join(joined...)
+}
+
+func mergeThemes(base, extra []Theme) []Theme {
+	merged := make([]Theme, 0, len(base)+len(extra))
+	index := map[string]int{}
+	for _, t := range base {
+		index[t.Name] = len(merged)
+		merged = append(merged, t)
+	}
+	for _, t := range extra {
+		if i, ok := index[t.Name]; ok {
+			merged[i] = t
+			continue
+		}
+		index[t.Name] = len(merged)
+		merged = append(merged, t)
+	}
+	return merged
 }

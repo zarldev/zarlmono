@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -222,15 +224,15 @@ func (helpDialog) draw(scr uv.Screen, area uv.Rectangle) {
 			rows: [][]keyHint{
 				{{"↑↓ / j k", "move / scroll"}, {"pgup / pgdn", "page"}, {"home/end", "top / bottom"}},
 				{{"enter / space", "expand / collapse"}, {"g/home / end", "top / bottom"}, {"i / esc", "compose"}},
-				{{"esc / q / ctrl+l", "return to compose"}},
+				{{"tab / shift+tab / ←→", "switch context tabs"}, {"esc / q / ctrl+l", "return to compose"}},
 			},
 		},
 		{
 			title: "global panes",
 			rows: [][]keyHint{
 				{{"ctrl+g", "toggle this help"}, {"ctrl+f", "file viewer"}, {"ctrl+w", "working set"}},
-				{{"ctrl+e", "model picker"}, {"ctrl+k", "agents & skills"}, {"ctrl+s", "settings"}},
-				{{"ctrl+t", "theme"}, {"ctrl+l", "context dashboard"}, {"ctrl+p", "plan pane"}},
+				{{"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
+				{{"ctrl+t", "theme"}, {"ctrl+l", "context view"}, {"ctrl+p", "plan pane"}},
 				{{"ctrl+y", "execution tray"}, {"ctrl+o", "inspector"}},
 			},
 		},
@@ -370,7 +372,9 @@ func (quitConfirmDialog) handleKey(msg tea.KeyPressMsg) action {
 
 func (quitConfirmDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	lines := []string{
-		palette.Primary.On("quit " + appDisplayName + "?"),
+		overlayTopBar("quit", nil, 0, "confirm", 72),
+		palette.Subtle.On(strings.Repeat("─", 72)),
+		palette.Warning.On("quit " + appDisplayName + "?"),
 		"",
 		palette.Subtle.On("y / enter") + palette.Muted.On("  confirm"),
 		palette.Subtle.On("any other key") + palette.Muted.On("  cancel"),
@@ -396,6 +400,8 @@ func (clearContextConfirmDialog) handleKey(msg tea.KeyPressMsg) action {
 
 func (clearContextConfirmDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	lines := []string{
+		overlayTopBar("clear", nil, 0, "reset", 72),
+		palette.Subtle.On(strings.Repeat("─", 72)),
 		palette.Primary.On("clear conversation context?"),
 		palette.Muted.On("This clears the transcript and what the next turn remembers."),
 		palette.Muted.On("It does not revert files or stop background processes."),
