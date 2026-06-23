@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +27,7 @@ type toolCompletedEffect struct {
 
 type sessionEffect struct {
 	ToastChanged bool
+	Notice       string
 }
 
 func (s *Session) applyTurnSetupFailed(e turnSetupFailedMsg) setupFailedEffect {
@@ -165,9 +169,10 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 		if e.Depth > 0 {
 			return sessionEffect{}
 		}
-		s.SetErrorToast(e.Error)
+		msg := userFacingProviderError(e.Error)
+		s.SetErrorToast(msg)
 		s.Run.Running = false
-		return sessionEffect{ToastChanged: true}
+		return sessionEffect{ToastChanged: true, Notice: palette.Error.On("✗ provider error: ") + msg}
 	}
 
 	if e.Depth == 0 {
@@ -178,6 +183,61 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 	return sessionEffect{}
 }
 
+var quotedProviderJSONRE = regexp.MustCompile(`(\{.*\})$`)
+
+type providerErrorEnvelope struct {
+	Error providerErrorBody `json:"error"`
+}
+
+type providerErrorBody struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Param   string `json:"param"`
+}
+
+func userFacingProviderError(raw string) string {
+	msg := strings.TrimSpace(raw)
+	if msg == "" {
+		return "provider request failed"
+	}
+	if parsed, ok := parseProviderJSONError(msg); ok {
+		return parsed
+	}
+	return msg
+}
+
+func parseProviderJSONError(msg string) (string, bool) {
+	raw := strings.TrimSpace(msg)
+	if i := strings.Index(raw, "{"); i >= 0 {
+		raw = raw[i:]
+	}
+	if unquoted, err := strconv.Unquote(raw); err == nil {
+		raw = unquoted
+	}
+	var env providerErrorEnvelope
+	if err := json.Unmarshal([]byte(raw), &env); err != nil || env.Error.Message == "" {
+		if matches := quotedProviderJSONRE.FindStringSubmatch(msg); len(matches) == 2 {
+			return parseProviderJSONError(matches[1])
+		}
+		return "", false
+	}
+	parts := []string{env.Error.Message}
+	var meta []string
+	if env.Error.Type != "" {
+		meta = append(meta, env.Error.Type)
+	}
+	if env.Error.Code != "" {
+		meta = append(meta, "code "+env.Error.Code)
+	}
+	if env.Error.Param != "" {
+		meta = append(meta, "param "+env.Error.Param)
+	}
+	if len(meta) > 0 {
+		parts = append(parts, "("+strings.Join(meta, "; ")+")")
+	}
+	return strings.Join(parts, " "), true
+}
 func (s *Session) consumeStartedPrompt(prompt string) string {
 	if prompt == "" {
 		return ""

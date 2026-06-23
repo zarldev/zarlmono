@@ -144,7 +144,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if e.Depth > 0 {
 			if sa := m.timeline.subAgent(e.TaskID); sa != nil {
 				if failed {
-					sa.addNotice("✗ " + e.Error)
+					sa.addNotice("✗ " + userFacingProviderError(e.Error))
 				} else if notice := terminalNotice(e.Reason, e.Iterations); notice != "" {
 					sa.addNotice(notice)
 				}
@@ -154,6 +154,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			m.timeline.endTurn(e.TaskID)
 			if failed {
 				m.timeline.closeGroups()
+				if effect.Notice != "" {
+					m.timeline.addNotice(effect.Notice)
+				}
 				if effect.ToastChanged {
 					cmd = m.toastExpiryCmd()
 				}
