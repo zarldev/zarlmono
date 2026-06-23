@@ -259,10 +259,6 @@ func (d *planDialog) drawPlanContent(scr uv.Screen, x, y, w int, footerY int) {
 	drawPaneScrollbar(scr, x+w-1, y, contentH, len(bodyLines), d.scroll)
 }
 
-func (d *planDialog) tabBar() string {
-	return overlayTopBar("plans", []string{"live", "saved"}, int(d.view), d.planSummary(), 200)
-}
-
 // planWrapWidth caps step-text wrapping so a long step doesn't stretch the
 // centered box across an ultrawide terminal.
 const (

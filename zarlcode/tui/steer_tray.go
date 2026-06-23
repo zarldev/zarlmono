@@ -26,8 +26,6 @@ const (
 	steerTrayRowControl
 )
 
-const steerTrayVisibleRows = 12
-
 type steerTrayRow struct {
 	kind  steerTrayRowKind
 	id    int

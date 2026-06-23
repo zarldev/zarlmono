@@ -151,8 +151,6 @@ func (s *Session) SetCockpitExpanded(expanded bool) {
 	s.CockpitExpanded = expanded
 }
 
-func (s *Session) contextViewOpen() bool { return s.CockpitExpanded }
-
 func (s *Session) TogglePlanMode() bool {
 	s.PlanMode = !s.PlanMode
 	return s.PlanMode

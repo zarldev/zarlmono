@@ -555,40 +555,6 @@ func compactionNotice(before, after, bytes int, engine string) string {
 	return s
 }
 
-// lines renders the cockpit as a flat list of sidebar rows — the narrow /
-// degenerate fallback used when the sidebar is too short for the full
-// graphical cockpit (drawSidebar prefers the rich render when it fits).
-func (s *RunState) lines() []string {
-	status := palette.Muted.On("idle")
-	if s.Running {
-		status = palette.Success.On("running")
-	}
-	out := []string{
-		row("status", status),
-		row("iters", strconv.Itoa(s.iterations)),
-	}
-	if s.liveTotal > 0 {
-		out = append(out, row("tokens", fmtCount(s.liveTotal)))
-	}
-	if s.liveCtx > 0 {
-		out = append(out, row("ctx", fmtCount(s.liveCtx)))
-	}
-	tools := strconv.Itoa(s.tools)
-	if s.toolsRunning > 0 {
-		tools += palette.Warning.On(" (+" + strconv.Itoa(s.toolsRunning) + ")")
-	}
-	out = append(out, row("tools", tools))
-	if s.maxDepth > 0 {
-		out = append(out, row("agents", "d"+strconv.Itoa(s.maxDepth)))
-	}
-	return out
-}
-
-// row formats a dim, fixed-width label followed by its value.
-func row(label, value string) string {
-	return palette.Subtle.On(padRight(label, 8)) + value
-}
-
 // itoa is strconv.Itoa under a shorter name — the cockpit renderers call it
 // constantly and the brevity keeps the row builders readable.
 func itoa(n int) string { return strconv.Itoa(n) }

@@ -91,7 +91,6 @@ type UI struct {
 	// invalid workspace-scoped provider config). Non-nil disables the normal
 	// cockpit and exits on enter/esc.
 	startupFailure *startupFailurePane
-
 }
 
 type contextViewTab int
@@ -108,10 +107,8 @@ const (
 var contextViewTabNames = []string{"overview", "context", "prompt", "tools", "events"}
 
 type contextViewState struct {
-	tab         contextViewTab
-	scroll      [contextViewTabCount]int
-	toolSection int
-	eventGroup  int
+	tab    contextViewTab
+	scroll [contextViewTabCount]int
 }
 
 func (s *contextViewState) activeScroll() int {
@@ -150,12 +147,13 @@ func (s *contextViewState) setTab(tab contextViewTab) {
 
 func (s *contextViewState) nextTab() { s.setTab((s.tab + 1) % contextViewTabCount) }
 
-func (s *contextViewState) prevTab() { s.setTab((s.tab + contextViewTabCount - 1) % contextViewTabCount) }
+func (s *contextViewState) prevTab() {
+	s.setTab((s.tab + contextViewTabCount - 1) % contextViewTabCount)
+}
 
 // SetRunFn wires the live-run launcher invoked when the user submits a
 // prompt. The standalone cmd sets this after building the runner factory.
 func (m *UI) SetRunFn(fn func(prompt string) tea.Cmd) { m.runFn = fn }
-
 
 func (m *UI) cancelLiveTurnForQuit() {
 	if m.live != nil {

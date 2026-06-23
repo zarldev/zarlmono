@@ -92,19 +92,19 @@ func dashboardMaxScroll(columns [][]string, visibleH int) int {
 	return maxLines - visibleH
 }
 
-func (m *UI) dashboardGeometry() (int, int, int) {
+func (m *UI) dashboardGeometry() (int, int) {
 	r := m.dashboardRect()
 	innerW, innerH := r.Dx()-4, r.Dy()-2
 	if innerW < cockpitMinWidth || innerH < 1 {
-		return 1, cockpitMinWidth, 0
+		return cockpitMinWidth, 0
 	}
 	cols := dashboardColumnCount(innerW)
 	colW := (innerW - (cols-1)*dashColGap) / cols
-	return cols, colW, innerH
+	return colW, innerH
 }
 
 func (m *UI) dashboardMaxScroll() int {
-	_, colW, visibleH := m.dashboardGeometry()
+	colW, visibleH := m.dashboardGeometry()
 	if visibleH <= 0 {
 		return 0
 	}
@@ -130,7 +130,7 @@ func (m *UI) clampContextViewScroll() {
 }
 
 func (m *UI) dashboardPageStep() int {
-	_, _, visibleH := m.dashboardGeometry()
+	_, visibleH := m.dashboardGeometry()
 	if visibleH <= 2 {
 		return 1
 	}
@@ -162,7 +162,7 @@ func flattenDashboardColumns(columns [][]string, colW int) []string {
 		}
 	}
 	out := make([]string, 0, maxLines)
-	for row := 0; row < maxLines; row++ {
+	for row := range maxLines {
 		parts := make([]string, 0, len(columns))
 		for _, lines := range columns {
 			if row < len(lines) {

@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"strings"
 	"fmt"
 	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"

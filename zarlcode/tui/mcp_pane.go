@@ -318,14 +318,15 @@ func (d *mcpPane) draw(scr uv.Screen, area uv.Rectangle) {
 		drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+2+i, l.Nav.Dx(), 1), ansi.Truncate(line, l.Nav.Dx(), ""))
 	}
 	detail := []string{sectionHead("selection", l.Detail.Dx())}
-	if d.adding {
+	switch {
+	case d.adding:
 		detail = append(detail,
 			palette.Muted.On("status: creating server"),
 			palette.Subtle.On("fill in the transport and endpoint details below"),
 			"",
 		)
 		detail = append(detail, d.addFormLines()...)
-	} else if len(d.servers) > 0 && d.cursor < len(d.servers) {
+	case len(d.servers) > 0 && d.cursor < len(d.servers):
 		srv := d.servers[d.cursor]
 		endpoint := srv.BaseURL
 		if srv.Transport == "stdio" {
@@ -337,7 +338,7 @@ func (d *mcpPane) draw(scr uv.Screen, area uv.Rectangle) {
 			palette.Subtle.On("source: ")+palette.Muted.On(endpoint),
 			palette.Subtle.On("actions: ")+palette.Muted.On("enter edit · x delete · s startup toggle"),
 		)
-	} else {
+	default:
 		detail = append(detail,
 			palette.Muted.On("status: no server selected"),
 			palette.Subtle.On("press n to add your first MCP server"),

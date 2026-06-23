@@ -256,7 +256,7 @@ func (v *fileViewer) selectedHook() (catalog.Hook, bool) {
 	return v.hooks[v.cursor], true
 }
 
-func (v *fileViewer) selectedCatalogPreview() (title string, meta []string, body string, ok bool) {
+func (v *fileViewer) selectedCatalogPreview() (string, []string, string, bool) {
 	switch v.mode {
 	case fileViewerSkills:
 		if s, ok := v.selectedSkill(); ok {
@@ -713,23 +713,6 @@ func (v *fileViewer) fileViewerSummary() string {
 	}
 }
 
-// tabBar renders the mode tabs in the shared overlay style (the inspector's):
-// the active tab bracketed in the primary tone, the rest subtle.
-func (v *fileViewer) tabBar() string {
-	parts := make([]string, len(fileViewerModeNames))
-	for i, name := range fileViewerModeNames {
-		if fileViewerMode(i) == v.mode {
-			parts[i] = palette.Primary.On("[ " + name + " ]")
-		} else {
-			parts[i] = palette.Subtle.On(name)
-		}
-	}
-	return strings.Join(parts, "  ")
-}
-
-// drawNavStrip paints the per-mode summary row at the top of the nav rail and
-// returns the list area below it. The context row belongs to the tab bar (as
-// in the inspector), so mode-specific chrome lives inside the rail instead.
 func drawNavStrip(scr uv.Screen, nav uv.Rectangle, text string) uv.Rectangle {
 	if nav.Dx() < 1 || nav.Dy() < 1 {
 		return nav

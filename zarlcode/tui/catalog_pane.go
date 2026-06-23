@@ -483,15 +483,3 @@ func (d *catalogDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	hint := pane.footerHint() + "  " + keyLegend(keyHint{"tab", "switch"}, keyHint{"esc", "close"})
 	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+hint), "")
 }
-
-func (d *catalogDialog) title() string {
-	counts := make([]int, len(d.panes))
-	for i, p := range d.panes {
-		for _, r := range p.rows {
-			if r.name != "" {
-				counts[i]++
-			}
-		}
-	}
-	return fmt.Sprintf(" catalog  %d agents · %d skills · %d hooks ", counts[0], counts[1], counts[2])
-}

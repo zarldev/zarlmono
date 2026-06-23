@@ -229,7 +229,6 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "shift+tab":
 		m.togglePlan()
 		return nil, true
-
 	}
 	return nil, false
 }

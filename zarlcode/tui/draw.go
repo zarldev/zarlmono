@@ -275,10 +275,6 @@ func bracketed(inner string) string {
 
 // drawPaneHRule paints a standard horizontal divider inside a pane. jointAt is
 // an offset from x; pass -1 for a plain rule.
-func drawPaneHRule(scr uv.Screen, x, y, w, jointAt int, joint string) {
-	drawPaneHRuleColored(scr, x, y, w, jointAt, joint, palette.Border)
-}
-
 func drawPaneHRuleColored(scr uv.Screen, x, y, w, jointAt int, joint string, col theme.Color) {
 	for i := range w {
 		ch := "─"

@@ -210,18 +210,6 @@ func (d *inspector) scrollLines(n int) {
 	}
 }
 
-func (d *inspector) tabBar() string {
-	parts := make([]string, len(inspectorTabNames))
-	for i, name := range inspectorTabNames {
-		if i == d.cursor {
-			parts[i] = palette.Primary.On("[ " + name + " ]")
-		} else {
-			parts[i] = palette.Subtle.On(name)
-		}
-	}
-	return strings.Join(parts, "  ")
-}
-
 func (d *inspector) contentLines(width int) []string {
 	switch inspectorTab(d.cursor) {
 	case inspectorTabPrompt:

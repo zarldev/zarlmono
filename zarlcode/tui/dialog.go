@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"

@@ -240,7 +240,8 @@ func (m *UI) contextToolsLines(width int) []string {
 	return out
 }
 
-func groupContextTools(specs []tools.ToolSpec, plan bool) (available, hidden []tools.ToolSpec) {
+func groupContextTools(specs []tools.ToolSpec, plan bool) ([]tools.ToolSpec, []tools.ToolSpec) {
+	var available, hidden []tools.ToolSpec
 	for _, spec := range specs {
 		if plan && !engine.PlanAllows(spec.Name) {
 			hidden = append(hidden, spec)
@@ -251,6 +252,32 @@ func groupContextTools(specs []tools.ToolSpec, plan bool) (available, hidden []t
 	slices.SortFunc(available, func(a, b tools.ToolSpec) int { return cmp.Compare(a.Name, b.Name) })
 	slices.SortFunc(hidden, func(a, b tools.ToolSpec) int { return cmp.Compare(a.Name, b.Name) })
 	return available, hidden
+}
+
+func (m *UI) planStateLines(width int) []string {
+	plan := m.session.Plan
+	if plan.IsEmpty() {
+		return []string{palette.Muted.On("no structured plan yet")}
+	}
+	steps := plan.Steps
+	out := []string{palette.Muted.On(fmt.Sprintf("%d steps", len(steps)))}
+	for _, status := range []code.StepStatus{code.StepStatuses.INPROGRESS, code.StepStatuses.PENDING, code.StepStatuses.COMPLETED} {
+		for _, step := range steps {
+			if step.Status != status {
+				continue
+			}
+			bullet := "•"
+			switch status {
+			case code.StepStatuses.INPROGRESS:
+				bullet = "▶"
+			case code.StepStatuses.COMPLETED:
+				bullet = "✓"
+			}
+			line := ansi.Truncate(fmt.Sprintf("%s %s", bullet, step.Text), width, "")
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 func renderToolSpecRows(specs []tools.ToolSpec) []string {
@@ -304,118 +331,6 @@ func groupContextEvents(events []EventRingEntry) []contextEventGroup {
 
 func formatContextEventRow(e EventRingEntry) string {
 	return fmt.Sprintf("  %s  %s  %s", palette.Subtle.On(e.At.Format("15:04:05")), palette.Primary.On(e.Kind), palette.Muted.On(e.Detail))
-}
-
-func (m *UI) toolsPaneLines(width, _ int) []string {
-	tools := m.session.Run.topTools()
-	if len(tools) == 0 {
-		return []string{palette.Muted.On("no tool calls yet")}
-	}
-	out := []string{sectionHead("tools", width), m.session.Run.toolsSummaryLine()}
-	out = append(out, "")
-	out = append(out, toolHistogram(tools, width, max(12, len(tools)))...)
-	return out
-}
-
-func (m *UI) runPaneLines(width, height int) []string {
-	s := &m.session.Run
-	if len(s.history) == 0 {
-		return []string{
-			palette.Muted.On("no verified run active"),
-			palette.Subtle.On("headless REDRIVE traces will appear here"),
-		}
-	}
-	out := []string{sectionHead("run", width), m.cockpitStatusLine()}
-	if s.lastTotal > 0 || s.lastIn > 0 {
-		out = append(out, s.lastTurnSummary())
-		if tp := s.throughputLine(width); tp != "" {
-			out = append(out, tp)
-		}
-	}
-	if tail := min(len(s.history), 6); tail > 0 {
-		out = append(out, "")
-		out = append(out, sectionHead("history", width))
-		start := len(s.history) - tail
-		for i, h := range s.history[start:] {
-			cachePct := 0
-			if h.tokIn > 0 {
-				cachePct = h.cached * 100 / h.tokIn
-			}
-			line := fmt.Sprintf("• turn %d · %s in · %s out · %d%% cache", start+i+1, fmtCount(h.tokIn), fmtCount(h.tokOut), cachePct)
-			if h.compacted {
-				line += " · compacted"
-			}
-			out = append(out, palette.Muted.On(ansi.Truncate(line, width, "…")))
-		}
-	}
-	return out
-}
-
-func (m *UI) planStateLines(width int) []string {
-	p := m.session.Plan
-	done, doing, pending := planCounts(p)
-	out := []string{palette.Muted.On(itoa(len(p.Steps)) + " steps · " + itoa(done) + " done · " + itoa(doing) + " active · " + itoa(pending) + " pending")}
-	prioritized := prioritizedPlanPreviewSteps(p.Steps)
-	shown := 0
-	for _, step := range prioritized {
-		if shown >= 3 {
-			break
-		}
-		glyph, style := planStepDecor(step.Status)
-		line := glyph + " " + ansi.Truncate(step.Text, max(1, width-ansi.StringWidth(glyph)-1), "…")
-		out = append(out, style(line))
-		shown++
-	}
-	if hidden := len(p.Steps) - shown; hidden > 0 {
-		out = append(out, palette.Subtle.On("… "+itoa(hidden)+" more plan items"))
-	}
-	return out
-}
-
-func prioritizedPlanPreviewSteps(steps []code.PlanStep) []code.PlanStep {
-	ordered := make([]code.PlanStep, 0, len(steps))
-	appendStatus := func(status code.StepStatus) {
-		for _, step := range steps {
-			if step.Status == status {
-				ordered = append(ordered, step)
-			}
-		}
-	}
-	appendStatus(code.StepStatuses.INPROGRESS)
-	appendStatus(code.StepStatuses.PENDING)
-	appendStatus(code.StepStatuses.COMPLETED)
-	return ordered
-}
-
-func (m *UI) modeLabel() string {
-	if m.session.PlanMode {
-		return palette.PlanMode.On("PLAN")
-	}
-	return palette.Success.On("BUILD")
-}
-
-func (m *UI) compactModelLine() string {
-	provider := m.session.Provider
-	model := m.session.Model
-	if provider == "" {
-		provider = "not configured"
-	}
-	if model == "" {
-		return palette.Fg.On(provider)
-	}
-	return palette.Fg.On(provider) + palette.Muted.On("/") + palette.Subtle.On(model)
-}
-
-func (m *UI) workspaceLine() string {
-	line := palette.Fg.On(m.session.Workspace)
-	if m.session.Branch != "" {
-		line += palette.Muted.On(" · ") + palette.Secondary.On(m.session.Branch)
-	}
-	return line
-}
-
-func kvLine(label, value string) string {
-	return palette.Subtle.On(padRight(label, 10)) + value
 }
 
 // llmStateLines renders the sidebar's top card. This is deliberately not a

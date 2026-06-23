@@ -20,6 +20,8 @@ const (
 	ReadBeforeWriteOff ReadBeforeWriteMode = iota
 	ReadBeforeWriteAdvisory
 	ReadBeforeWriteStrict
+
+	readBeforeWriteVerbWrite = "write"
 )
 
 // ReadBeforeWriteGuardrail refuses blind write/edit calls unless the task has
@@ -168,7 +170,7 @@ func normalizeEvidencePath(path string) string {
 func readBeforeWriteReason(tool tools.ToolName, path string, mode ReadBeforeWriteMode) string {
 	verb := "modify"
 	if tool == code.ToolNameWrite {
-		verb = "write"
+		verb = readBeforeWriteVerbWrite
 	}
 	prefix := ""
 	if mode == ReadBeforeWriteAdvisory {

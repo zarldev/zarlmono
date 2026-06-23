@@ -47,7 +47,7 @@ func TestSidebar_StateCardShowsChangesAndSessionTotals(t *testing.T) {
 	workspaceAt := strings.Index(out, "workspace ~/proj")
 	branchAt := strings.Index(out, "branch    feat/sidebar")
 	prAt := strings.Index(out, "pr        #4")
-	if workspaceAt < 0 || branchAt < 0 || prAt < 0 || !(workspaceAt < branchAt && branchAt < prAt) {
+	if workspaceAt < 0 || branchAt < 0 || prAt < 0 || workspaceAt >= branchAt || branchAt >= prAt {
 		t.Fatalf("expected workspace, then branch, then pr ordering:\n%s", out)
 	}
 }

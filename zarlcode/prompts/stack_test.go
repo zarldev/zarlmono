@@ -1,11 +1,15 @@
-package prompts
+package prompts_test
 
-import "testing"
+import (
+	"testing"
+
+	prompts "github.com/zarldev/zarlmono/zarlcode/prompts"
+)
 
 func TestNewFragmentMeasuresText(t *testing.T) {
-	f := NewFragment(FragmentSkill, "review", "/tmp/review.md", "selected", 2, "first line\nsecond line has words", true)
+	f := prompts.NewFragment(prompts.FragmentSkill, "review", "/tmp/review.md", "selected", 2, "first line\nsecond line has words", true)
 
-	if f.Kind != FragmentSkill || f.Name != "review" || f.Source != "/tmp/review.md" || f.Reason != "selected" || f.Order != 2 || !f.Contributes {
+	if f.Kind != prompts.FragmentSkill || f.Name != "review" || f.Source != "/tmp/review.md" || f.Reason != "selected" || f.Order != 2 || !f.Contributes {
 		t.Fatalf("fragment metadata mismatch: %#v", f)
 	}
 	if f.Bytes != len([]byte("first line\nsecond line has words")) {
@@ -20,13 +24,13 @@ func TestNewFragmentMeasuresText(t *testing.T) {
 }
 
 func TestNewStackTotalsContributingFragmentsWithoutRenderedTotal(t *testing.T) {
-	fragments := []Fragment{
-		NewFragment(FragmentSystem, "system", "embedded", "active", 0, "system words", true),
-		NewFragment(FragmentSkill, "catalogued", "skill.md", "loaded on demand", 1, "skill words ignored", false),
-		NewFragment(FragmentRenderedTotal, "rendered", "rendered prompt", "total", 2, "system words plus rendered", true),
+	fragments := []prompts.Fragment{
+		prompts.NewFragment(prompts.FragmentSystem, "system", "embedded", "active", 0, "system words", true),
+		prompts.NewFragment(prompts.FragmentSkill, "catalogued", "skill.md", "loaded on demand", 1, "skill words ignored", false),
+		prompts.NewFragment(prompts.FragmentRenderedTotal, "rendered", "rendered prompt", "total", 2, "system words plus rendered", true),
 	}
 
-	stack := NewStack(fragments)
+	stack := prompts.NewStack(fragments)
 	if len(stack.Fragments) != len(fragments) {
 		t.Fatalf("fragments = %d, want %d", len(stack.Fragments), len(fragments))
 	}
@@ -42,7 +46,7 @@ func TestNewStackTotalsContributingFragmentsWithoutRenderedTotal(t *testing.T) {
 }
 
 func TestNewFragmentEmptyTextHasZeroLines(t *testing.T) {
-	f := NewFragment(FragmentSystem, "empty", "test", "empty", 0, "", true)
+	f := prompts.NewFragment(prompts.FragmentSystem, "empty", "test", "empty", 0, "", true)
 	if f.Bytes != 0 || f.Words != 0 || f.Lines != 0 {
 		t.Fatalf("empty fragment measured as bytes=%d words=%d lines=%d", f.Bytes, f.Words, f.Lines)
 	}

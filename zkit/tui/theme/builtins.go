@@ -110,7 +110,6 @@ func ByName(name string) (Theme, bool) {
 	return t, ok
 }
 
-
 func loadUserThemes() ([]Theme, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {

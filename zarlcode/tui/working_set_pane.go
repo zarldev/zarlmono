@@ -324,7 +324,7 @@ func (p *workingSetPane) viewSummary() string {
 			}
 		}
 		return fmt.Sprintf("%d/%d running", running, len(procs))
-		default:
+	default:
 		return fmt.Sprintf("%d files", len(p.files()))
 	}
 }
@@ -386,7 +386,7 @@ func (p *workingSetPane) drawNav(scr uv.Screen, r uv.Rectangle) {
 			break
 		}
 		primary := fmt.Sprintf("%s  %s", file.Path, statBadge(file.Additions, file.Deletions))
-		secondary := palette.Subtle.On("    "+countLabel(file.Mutations, "mutation", "mutations")+" · "+timeRange(file.FirstChangedAt, file.LastChangedAt))
+		secondary := palette.Subtle.On("    " + countLabel(file.Mutations, "mutation", "mutations") + " · " + timeRange(file.FirstChangedAt, file.LastChangedAt))
 		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), primary, i == p.cursor, true)
 		if screenY+1 < r.Max.Y {
 			drawLine(scr, uv.Rect(r.Min.X, screenY+1, r.Dx(), 1), ansi.Truncate(secondary, r.Dx(), ""))
@@ -408,7 +408,7 @@ func (p *workingSetPane) drawTurnNav(scr uv.Screen, r uv.Rectangle) {
 			break
 		}
 		primary := fmt.Sprintf("turn #%d  %s", turn.Ordinal, statBadge(turn.Additions, turn.Deletions))
-		secondary := palette.Subtle.On("    "+countLabel(turn.Files, "file", "files")+" · "+countLabel(turn.Mutations, "edit", "edits")+" · "+turn.ID)
+		secondary := palette.Subtle.On("    " + countLabel(turn.Files, "file", "files") + " · " + countLabel(turn.Mutations, "edit", "edits") + " · " + turn.ID)
 		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), primary, i == p.cursor, true)
 		if screenY+1 < r.Max.Y {
 			drawLine(scr, uv.Rect(r.Min.X, screenY+1, r.Dx(), 1), ansi.Truncate(secondary, r.Dx(), ""))

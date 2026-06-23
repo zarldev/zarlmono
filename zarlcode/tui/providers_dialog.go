@@ -601,11 +601,12 @@ func (d *providersDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		palette.Muted.On("manage provider credentials, active provider, and custom openai-compatible definitions"),
 		"",
 	}
-	if d.oauthBusy {
+	switch {
+	case d.oauthBusy:
 		detail = append(detail, d.signInLines(l.Detail.Dx())...)
-	} else if d.adding {
+	case d.adding:
 		detail = append(detail, d.addFormLines()...)
-	} else if d.cursor < len(d.defs) {
+	case d.cursor < len(d.defs):
 		def := d.cur()
 		detail = append(detail,
 			palette.Subtle.On("name ")+palette.Muted.On(def.Name),
@@ -617,7 +618,7 @@ func (d *providersDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		if def.DefaultModel != "" {
 			detail = append(detail, palette.Subtle.On("default model ")+palette.Muted.On(def.DefaultModel))
 		}
-	} else {
+	default:
 		detail = append(detail, palette.Muted.On("create a new custom provider definition"))
 	}
 	for i, line := range detail {

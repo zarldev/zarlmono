@@ -2,9 +2,10 @@ package teasink
 
 import "github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 
-// (write / edit). Diff is a unified diff. It is NOT a
-// runner EventSink event — it's dispatched through the same pump
-// (Sink.Diff) so it stays ordered with the tool events around it.
+// DiffMsg reports a file diff emitted around a mutating tool call
+// (write / edit). Diff is a unified diff. It is NOT a runner EventSink
+// event — it's dispatched through the same pump (Sink.Diff) so it stays
+// ordered with the tool events around it.
 type DiffMsg struct {
 	Path          string
 	Diff          string
