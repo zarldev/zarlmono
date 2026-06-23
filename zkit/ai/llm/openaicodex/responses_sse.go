@@ -181,6 +181,13 @@ type sseState struct {
 	// output_item.added event.
 	toolCallByIdx map[int]*pendingToolCall
 	toolCallByID  map[string]*pendingToolCall
+	// reasoningEmitted records whether any reasoning delta has been
+	// yielded on the Thinking channel. The summary streams as discrete
+	// parts (a *.summary_part.added event precedes each), so we use this
+	// to insert a paragraph break between parts — without it, the last
+	// delta of one part and the first of the next concatenate with no
+	// space ("...poll.Need check..."), running the whole summary together.
+	reasoningEmitted bool
 }
 
 type pendingToolCall struct {
@@ -222,7 +229,6 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 	//                                             (some ChatGPT-account
 	//                                             models bypass the
 	//                                             summary entirely)
-	//   response.reasoning_part.added             part metadata; ignored
 	// All variants funnel through the same handler and route to the
 	// runner's out-of-band Thinking channel.
 	case "response.reasoning_summary_text.delta",
@@ -236,7 +242,20 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		if ev.Delta == "" {
 			return false
 		}
+		s.reasoningEmitted = true
 		if !yield(llm.CompletionChunk{Thinking: ev.Delta}, nil) {
+			return true
+		}
+	// A new summary part begins. The summary is split into parts whose
+	// text deltas carry no leading separator, so emit a paragraph break
+	// before the part's deltas start — but only once a prior part has
+	// already streamed, so the first part isn't prefixed with blank lines.
+	case "response.reasoning_summary_part.added",
+		"response.reasoning_part.added":
+		if !s.reasoningEmitted {
+			return false
+		}
+		if !yield(llm.CompletionChunk{Thinking: "\n\n"}, nil) {
 			return true
 		}
 	case "response.reasoning_summary_text.done",

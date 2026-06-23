@@ -262,8 +262,7 @@ func buildPrompt(req llm.CompletionRequest) string {
 		}
 		fmt.Fprintf(&b, "<%s>\n%s\n</%s>\n\n", role, content, role)
 		if len(m.ToolCalls) > 0 {
-			raw, _ := json.Marshal(m.ToolCalls)
-			fmt.Fprintf(&b, "<assistant_tool_calls>\n%s\n</assistant_tool_calls>\n\n", raw)
+			fmt.Fprintf(&b, "<assistant_tool_calls>\n%s\n</assistant_tool_calls>\n\n", renderToolCalls(m.ToolCalls))
 		}
 	}
 	if len(req.Tools) > 0 {
@@ -277,6 +276,43 @@ func buildPrompt(req llm.CompletionRequest) string {
 	}
 	b.WriteString(responseFormatDirective(req.ResponseFormat))
 	return b.String()
+}
+
+// renderToolCalls serializes prior assistant tool calls into the same flat
+// {id, name, arguments} shape the tool-calling protocol directive documents,
+// with arguments as a live JSON object rather than a stringified blob.
+//
+// The transport ToolCall is the OpenAI nesting (a "function" wrapper whose
+// "arguments" is a JSON-*encoded string*). Echoing that verbatim into the
+// prompt taught the model a format that contradicts the directive, and the
+// model — priming on the rendered history over the instruction — copied the
+// double-stringified arguments and routinely fumbled the inner escaping,
+// producing invalid JSON that toolparse can't recover, so the call leaked
+// back as visible text. Rendering the documented shape removes the conflict
+// and the escaping hazard; toolparse.ParseArtifact recovers it either way.
+func renderToolCalls(calls []llm.ToolCall) string {
+	type flatCall struct {
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	out := make([]flatCall, 0, len(calls))
+	for _, c := range calls {
+		args := strings.TrimSpace(c.Function.Arguments)
+		if args == "" || !json.Valid([]byte(args)) {
+			args = "{}"
+		}
+		out = append(out, flatCall{
+			ID:        c.ID,
+			Name:      c.Function.Name,
+			Arguments: json.RawMessage(args),
+		})
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
 }
 
 // responseFormatDirective is claudecode's best-effort honoring of

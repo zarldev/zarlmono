@@ -15,6 +15,17 @@ import (
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
+// stubBrowser replaces the package's openBrowser with a no-op for the
+// duration of the test and restores it after. Without this, runManual /
+// RunLogin shell out to the real xdg-open, spawning a ChatGPT login tab
+// every time the package's tests run.
+func stubBrowser(t *testing.T) {
+	t.Helper()
+	prev := openBrowser
+	openBrowser = func(context.Context, string) {}
+	t.Cleanup(func() { openBrowser = prev })
+}
+
 // TestMakeOAuthHandler_HappyPath drives the callback handler with the
 // canonical "code + correct state" callback the browser would send.
 func TestMakeOAuthHandler_HappyPath(t *testing.T) {
@@ -73,6 +84,7 @@ func TestMakeOAuthHandler_StateMismatchRejectsWithoutUnblocking(t *testing.T) {
 // end-to-end: builds a fresh flow, pretends the user pasted the
 // matching code+state, and verifies the persisted credential.
 func TestRunOAuthLoginManual_EndToEnd(t *testing.T) {
+	stubBrowser(t)
 	store, v := openTestStoreAndVault(t)
 
 	jwt := makeJWTPayload(t, "acct_manual")
@@ -128,6 +140,7 @@ func TestRunOAuthLoginManual_EndToEnd(t *testing.T) {
 // proceed if the pasted state doesn't match the flow we generated —
 // even if the code looks plausible.
 func TestRunOAuthLoginManual_StateMismatch(t *testing.T) {
+	stubBrowser(t)
 	store, v := openTestStoreAndVault(t)
 	flow, err := openaicodex.CreateAuthorizationFlow()
 	if err != nil {
@@ -142,6 +155,7 @@ func TestRunOAuthLoginManual_StateMismatch(t *testing.T) {
 }
 
 func TestRunOAuthLoginManual_RawCodeRejected(t *testing.T) {
+	stubBrowser(t)
 	store, v := openTestStoreAndVault(t)
 	flow, err := openaicodex.CreateAuthorizationFlow()
 	if err != nil {

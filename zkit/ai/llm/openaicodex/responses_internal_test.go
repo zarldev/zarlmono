@@ -100,6 +100,41 @@ func TestParseSSEStream_ReasoningRoutesToThinkingChannel(t *testing.T) {
 	}
 }
 
+func TestParseSSEStream_ReasoningSummaryPartsSeparated(t *testing.T) {
+	t.Parallel()
+	// A multi-part summary: each part is bracketed by a *.part.added /
+	// *.text.done pair and its deltas carry no leading separator. The
+	// parser must inject a paragraph break at each part boundary so the
+	// concatenated thinking reads "part one.\n\npart two." rather than
+	// running together as "part one.part two."
+	stream := strings.Join([]string{
+		`data: {"type":"response.reasoning_summary_part.added","summary_index":0}`,
+		``,
+		`data: {"type":"response.reasoning_summary_text.delta","delta":"Checked CI."}`,
+		``,
+		`data: {"type":"response.reasoning_summary_text.done"}`,
+		``,
+		`data: {"type":"response.reasoning_summary_part.added","summary_index":1}`,
+		``,
+		`data: {"type":"response.reasoning_summary_text.delta","delta":"Now pushing the fix."}`,
+		``,
+		`data: {"type":"response.completed","response":{"usage":{}}}`,
+		``,
+	}, "\n")
+	chunks, err := collectChunks(t, stream)
+	if err != nil {
+		t.Fatalf("parseSSEStream: %v", err)
+	}
+	var thinking strings.Builder
+	for _, c := range chunks {
+		thinking.WriteString(c.Thinking)
+	}
+	const want = "Checked CI.\n\nNow pushing the fix."
+	if got := thinking.String(); got != want {
+		t.Errorf("thinking = %q, want %q", got, want)
+	}
+}
+
 func TestParseSSEStream_ToolCall(t *testing.T) {
 	t.Parallel()
 	stream := strings.Join([]string{
