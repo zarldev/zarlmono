@@ -207,11 +207,6 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	case "ctrl+e":
 		return m.openModelQuickPick(), true
-	case "ctrl+k":
-		if m.settings != nil {
-			m.overlay.push(newCatalogDialog(m.settings))
-		}
-		return nil, true
 	case "ctrl+g":
 		m.overlay.push(newHelpDialog())
 		return nil, true
@@ -272,11 +267,6 @@ func (m *UI) handleDashboardShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	case "ctrl+e":
 		return m.openModelQuickPick(), true
-	case "ctrl+k":
-		if m.settings != nil {
-			m.overlay.push(newCatalogDialog(m.settings))
-		}
-		return nil, true
 	}
 	return nil, false
 }

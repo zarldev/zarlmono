@@ -126,7 +126,6 @@ Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls
 |-----|--------|
 | `Ctrl+F` | File viewer — browse the workspace tree |
 | `Ctrl+E` | Model quick picker — switch provider/model |
-| `Ctrl+K` | Agents & skills catalog |
 | `Ctrl+S` | Settings — edit persisted prefs |
 | `Ctrl+T` | Theme picker |
 | `Ctrl+P` | Plan pane — structured step list with status tracking |

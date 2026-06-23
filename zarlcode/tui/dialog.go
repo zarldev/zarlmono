@@ -231,7 +231,7 @@ func (helpDialog) draw(scr uv.Screen, area uv.Rectangle) {
 			title: "global panes",
 			rows: [][]keyHint{
 				{{"ctrl+g", "toggle this help"}, {"ctrl+f", "file viewer"}, {"ctrl+w", "working set"}},
-				{{"ctrl+e", "model picker"}, {"ctrl+k", "agents & skills"}, {"ctrl+s", "settings"}},
+				{{"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
 				{{"ctrl+t", "theme"}, {"ctrl+l", "context view"}, {"ctrl+p", "plan pane"}},
 				{{"ctrl+y", "execution tray"}, {"ctrl+o", "inspector"}},
 			},
