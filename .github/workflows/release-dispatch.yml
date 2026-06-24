@@ -192,6 +192,13 @@ jobs:
             printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")"
           } >> "$GITHUB_OUTPUT"
 
+      - name: preflight system deps (zarlai)
+        if: ${{ contains(steps.plan.outputs.modules, 'zarlai') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdlib-dev libatlas-base-dev libblas-dev liblapack-dev libjpeg-dev
+
       - name: preflight checks
         env:
           MODULES: ${{ steps.plan.outputs.modules }}
@@ -199,7 +206,9 @@ jobs:
           set -euo pipefail
           IFS=',' read -r -a modules <<< "$MODULES"
           for module in "${modules[@]}"; do
+            echo "::group::go build ${module} ./..."
             go build -C "$module" ./...
+            echo "::endgroup::"
           done
 
       - name: stop after dry-run
