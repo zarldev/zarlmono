@@ -69,6 +69,18 @@ First public release of `zarlmono` — the Zarldev monorepo.
 
 ---
 
+## [v0.1.3] — 2026-06-24
+
+### Added
+
+- File viewer image previews for PNG, JPEG, and GIF files.
+- Ghostty/Kitty terminal-graphics image rendering when supported, with ANSI block fallback elsewhere.
+
+### Fixed
+
+- Provider startup/runtime errors now surface as user-visible notices instead of silently failing.
+- Release-dispatch follow-up verification and zarlcode packaging behavior.
+
 ## [v0.1.2] — 2025-06-21
 
 ### Added
@@ -104,6 +116,7 @@ First public release of `zarlmono` — the Zarldev monorepo.
 
 - Initial public release of the Zarldev monorepo
 
+[v0.1.3]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.3
 [v0.1.2]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.2
 [v0.1.1]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.1
 [v0.1.0]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.0
