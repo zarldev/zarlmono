@@ -470,5 +470,10 @@ func (m *UI) View() tea.View {
 	canvas.Method = m.widthMethod // match the renderer's negotiated width method
 	m.Draw(canvas, canvas.Bounds())
 	v.Content = strings.ReplaceAll(canvas.Render(), "\r\n", "\n")
+	if m.overlay.active() {
+		if fv, ok := m.overlay.top().(*fileViewer); ok {
+			v.Content += fv.kittyGraphicsOverlay()
+		}
+	}
 	return v
 }
