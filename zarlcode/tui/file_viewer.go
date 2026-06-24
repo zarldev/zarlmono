@@ -968,9 +968,9 @@ func renderFileViewerImage(img image.Image, maxW, maxH int) []string {
 	outH := (outPixelH + 1) / 2
 
 	lines := make([]string, 0, outH)
-	for row := 0; row < outH; row++ {
+	for row := range outH {
 		var line strings.Builder
-		for col := 0; col < outW; col++ {
+		for col := range outW {
 			top := sampleImageColor(img, b, col, row*2, outW, outPixelH)
 			bottom := top
 			if row*2+1 < outPixelH {
@@ -1001,8 +1001,8 @@ func sampleImageColor(img image.Image, bounds image.Rectangle, x, y, outW, outH 
 }
 
 func colorRGB(c color.Color) (uint8, uint8, uint8) {
-	r, g, b, _ := c.RGBA()
-	return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)
+	rgba := color.NRGBAModel.Convert(c).(color.NRGBA)
+	return rgba.R, rgba.G, rgba.B
 }
 
 func (v *fileViewer) drawContent(scr uv.Screen, x, y, w, footerY int) {
