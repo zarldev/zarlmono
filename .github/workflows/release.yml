@@ -57,18 +57,12 @@ jobs:
           VERSION="${TAG#zarlcode/}"   # zarlcode/v1.2.3 -> v1.2.3
           ldflags="-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version=${VERSION}"
           bin="zarlcode"
-          [ "${GOOS}" = "windows" ] && bin="zarlcode.exe"
           mkdir -p dist
           go build -trimpath -ldflags "${ldflags}" -o "dist/${bin}" ./zarlcode/cmd
 
           base="zarlcode_${VERSION}_${GOOS}_${GOARCH}"
-          if [ "${GOOS}" = "windows" ]; then
-            archive="${base}.zip"
-            zip -q "dist/${archive}" "dist/${bin}"
-          else
-            archive="${base}.tar.gz"
-            tar -czf "dist/${archive}" "dist/${bin}"
-          fi
+          archive="${base}.tar.gz"
+          tar -czf "dist/${archive}" "dist/${bin}"
           ( cd dist && sha256sum "${archive}" > "${archive}.sha256" )
           echo "packaged dist/${archive}"
       - name: upload build artifact

@@ -199,23 +199,7 @@ jobs:
           set -euo pipefail
           IFS=',' read -r -a modules <<< "$MODULES"
           for module in "${modules[@]}"; do
-            case "$module" in
-              zkit)
-                go build -C zkit ./...
-                ;;
-              zarlcode)
-                go build -C zarlcode ./...
-                ;;
-              zarlai)
-                go build -C zarlai ./...
-                ;;
-              swebench-eval)
-                go build -C swebench-eval ./...
-                ;;
-              examples)
-                go build -C examples ./...
-                ;;
-            esac
+            go build -C "$module" ./...
           done
 
       - name: stop after dry-run
@@ -243,3 +227,29 @@ jobs:
               echo "- pushed \\`$tag\\`"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: verify zarlcode release workflow
+        if: ${{ inputs.mode == 'publish' && contains(steps.plan.outputs.modules, 'zarlcode') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "waiting for release.yml to pick up zarlcode/${VERSION}…"
+          for i in $(seq 1 30); do
+            sleep 10
+            run_id=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?per_page=5&event=push" \
+              --jq '.workflow_runs[] | select(.head_branch == "zarlcode/'"${VERSION}"'") | .id' \
+              2>/dev/null || true)
+            if [ -n "$run_id" ]; then
+              echo "found run ${run_id} — waiting for completion"
+              gh run watch "$run_id" --exit-status && \
+                echo "release.yml completed successfully" && \
+                exit 0
+              echo "release.yml failed" >&2
+              exit 1
+            fi
+            echo "waiting for workflow to appear… (${i}/30)"
+          done
+          echo "timed out waiting for release.yml to pick up zarlcode/${VERSION}" >&2
+          exit 1
