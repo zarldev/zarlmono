@@ -137,3 +137,37 @@ func TestSession_ConversationEndedErrorSubagentDoesNotSetRootToast(t *testing.T)
 		t.Fatal("Run.Running = false, want parent run unchanged")
 	}
 }
+
+func TestUserFacingProviderErrorParsesJSONBlob(t *testing.T) {
+	raw := `stream: POST "https://api.example/v1/chat/completions": 400 Bad Request {"error":{"message":"This model's maximum context length is 128000 tokens. However, your messages resulted in 140000 tokens.","type":"invalid_request_error","code":"context_length_exceeded","param":"messages"}}`
+
+	got := userFacingProviderError(raw)
+
+	if strings.Contains(got, `{"error"`) || strings.Contains(got, "POST") {
+		t.Fatalf("got raw provider blob: %q", got)
+	}
+	for _, want := range []string{"maximum context length", "invalid_request_error", "context_length_exceeded", "messages"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSession_ConversationEndedErrorAddsPersistentNotice(t *testing.T) {
+	s := NewSession("~", t.TempDir(), "")
+	raw := `completion: {"error":{"message":"token budget exceeded","type":"invalid_request_error","code":"context_length_exceeded"}}`
+
+	effect := s.applyConversationEnded(teasink.ConversationEndedMsg{
+		TaskID: "task-1",
+		Depth:  0,
+		Reason: runner.TerminalError,
+		Error:  raw,
+	}, time.Now())
+
+	if effect.Notice == "" {
+		t.Fatal("Notice empty, want persistent provider error notice")
+	}
+	if !strings.Contains(s.Toast, "token budget exceeded") || strings.Contains(s.Toast, `{"error"`) {
+		t.Fatalf("Toast = %q, want parsed provider message", s.Toast)
+	}
+}

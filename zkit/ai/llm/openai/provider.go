@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"net/http"
@@ -294,7 +295,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	}
 
 	if err := stream.Err(); err != nil {
-		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("stream: %w", err))
+		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("stream: %w", userFacingAPIError(err)))
 		return
 	}
 
@@ -427,6 +428,42 @@ func extractReasoningFromMessage(msg openai.ChatCompletionMessage) string {
 	return probeReasoningFromRaw(msg.RawJSON())
 }
 
+// userFacingAPIError converts SDK API errors into concise messages while
+// preserving non-API errors unchanged for wrapping and cancellation checks.
+func userFacingAPIError(err error) error {
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) || apiErr.Message == "" {
+		return err
+	}
+	msg := apiErr.Message
+	if apiErr.Type != "" {
+		msg += " (" + apiErr.Type
+		if apiErr.Code != "" {
+			msg += "; code " + apiErr.Code
+		}
+		if apiErr.Param != "" {
+			msg += "; param " + apiErr.Param
+		}
+		msg += ")"
+	} else if apiErr.Code != "" || apiErr.Param != "" {
+		msg += " ("
+		if apiErr.Code != "" {
+			msg += "code " + apiErr.Code
+		}
+		if apiErr.Code != "" && apiErr.Param != "" {
+			msg += "; "
+		}
+		if apiErr.Param != "" {
+			msg += "param " + apiErr.Param
+		}
+		msg += ")"
+	}
+	if apiErr.StatusCode > 0 {
+		msg = fmt.Sprintf("provider rejected request (%d %s): %s", apiErr.StatusCode, http.StatusText(apiErr.StatusCode), msg)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 // nonStreamCompletion handles non-streaming responses using the official OpenAI SDK.
 func (p *Provider) nonStreamCompletion(
 	ctx context.Context,
@@ -464,7 +501,7 @@ func (p *Provider) nonStreamCompletion(
 	completion, err := p.client.Chat.Completions.New(ctx, params,
 		p.extraJSONOptions(req)...)
 	if err != nil {
-		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("completion: %w", err))
+		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("completion: %w", userFacingAPIError(err)))
 		return
 	}
 
