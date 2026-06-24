@@ -3,6 +3,9 @@ package tui
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,6 +123,111 @@ func TestFileViewerSkipsBinaryPreview(t *testing.T) {
 	v := newFileViewer(root)
 	if !strings.Contains(v.fileContent, "binary file preview skipped") {
 		t.Fatalf("file content = %q, want binary preview skip notice", v.fileContent)
+	}
+}
+
+func TestFileViewerPreviewsImages(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "preview.png")
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(1, 0, color.RGBA{G: 255, A: 255})
+	img.Set(0, 1, color.RGBA{B: 255, A: 255})
+	img.Set(1, 1, color.RGBA{R: 255, G: 255, A: 255})
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create image: %v", err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		_ = f.Close()
+		t.Fatalf("encode image: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close image: %v", err)
+	}
+
+	v := newFileViewer(root)
+	if v.imagePreview == nil {
+		t.Fatalf("image preview was not loaded; fileContent=%q", v.fileContent)
+	}
+	if v.imagePreview.format != "png" || v.imagePreview.width != 2 || v.imagePreview.height != 2 {
+		t.Fatalf("image metadata = format %q %dx%d, want png 2x2", v.imagePreview.format, v.imagePreview.width, v.imagePreview.height)
+	}
+	if v.fileContent != "" {
+		t.Fatalf("image preview should not use text content, got %q", v.fileContent)
+	}
+	lines := renderFileViewerImage(v.imagePreview.image, 8, 4)
+	if len(lines) == 0 {
+		t.Fatal("rendered image preview is empty")
+	}
+	if !strings.Contains(lines[0], "\x1b[38;2;") || !strings.Contains(lines[0], "▀") {
+		t.Fatalf("rendered image line missing colour half-block escapes: %q", lines[0])
+	}
+}
+
+func TestFileViewerAsciiFallbackDoesNotPrepareGraphicsPayload(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "")
+	t.Setenv("TERM", "xterm-256color")
+	root := t.TempDir()
+	path := filepath.Join(root, "preview.png")
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create image: %v", err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		_ = f.Close()
+		t.Fatalf("encode image: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close image: %v", err)
+	}
+
+	v := newFileViewer(root)
+	if v.imagePreview == nil || v.imagePreview.image == nil {
+		t.Fatalf("ascii fallback should still decode a preview image")
+	}
+	if len(v.imagePreview.data) != 0 {
+		t.Fatalf("unsupported terminals should not prepare graphics payload, got %d bytes", len(v.imagePreview.data))
+	}
+	if got := v.kittyGraphicsOverlay(); got != "" {
+		t.Fatalf("unsupported terminal overlay = %q, want empty", got)
+	}
+}
+
+func TestKittyGraphicsOverlay(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	v := &fileViewer{
+		imagePreview: &fileViewerImagePreview{
+			width:  20,
+			height: 10,
+			data:   []byte("png-data"),
+		},
+		imagePlacement: fileViewerImagePlacement{x: 2, y: 3, w: 40, h: 20},
+	}
+
+	out := v.kittyGraphicsOverlay()
+	if !strings.Contains(out, "\x1b_Ga=T") {
+		t.Fatalf("overlay missing kitty transmit escape: %q", out)
+	}
+	if !strings.Contains(out, "f=100") || !strings.Contains(out, "c=40") || !strings.Contains(out, "r=10") {
+		t.Fatalf("overlay missing sizing metadata: %q", out)
+	}
+	if !strings.Contains(out, "cG5nLWRhdGE=") {
+		t.Fatalf("overlay missing base64 image payload: %q", out)
+	}
+}
+
+func TestKittyGraphicsOverlayDisabledOutsideSupportedTerminals(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "")
+	t.Setenv("TERM", "xterm-256color")
+	v := &fileViewer{
+		imagePreview:   &fileViewerImagePreview{width: 1, height: 1, data: []byte("x")},
+		imagePlacement: fileViewerImagePlacement{x: 1, y: 1, w: 1, h: 1},
+	}
+	if got := v.kittyGraphicsOverlay(); got != "" {
+		t.Fatalf("overlay = %q, want disabled outside kitty/ghostty", got)
 	}
 }
 

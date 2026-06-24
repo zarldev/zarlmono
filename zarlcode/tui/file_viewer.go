@@ -3,9 +3,16 @@ package tui
 import (
 	"bytes"
 	"cmp"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,16 +31,18 @@ import (
 // content preview on the right. Pushed over the main cockpit; Esc/ctrl+f/q
 // pops back.
 type fileViewer struct {
-	workspaceDir string // root for relative-path display
-	currentDir   string // absolute path of the displayed directory
-	entries      []os.DirEntry
-	cursor       int // selected entry index
-	scroll       int // content scroll offset
-	viewingFile  string
-	fileContent  string // cached content of the previewed file
-	dirPreview   fileViewerDirPreview
-	height       int
-	width        int
+	workspaceDir   string // root for relative-path display
+	currentDir     string // absolute path of the displayed directory
+	entries        []os.DirEntry
+	cursor         int // selected entry index
+	scroll         int // content scroll offset
+	viewingFile    string
+	fileContent    string // cached content of the previewed file
+	imagePreview   *fileViewerImagePreview
+	imagePlacement fileViewerImagePlacement
+	dirPreview     fileViewerDirPreview
+	height         int
+	width          int
 
 	mode   fileViewerMode
 	skills []catalog.Skill
@@ -72,6 +81,21 @@ type fileViewerDirPreview struct {
 type fileViewerPreviewEntry struct {
 	name  string
 	isDir bool
+}
+
+type fileViewerImagePreview struct {
+	path   string
+	format string
+	width  int
+	height int
+	size   int64
+	data   []byte
+	image  image.Image
+}
+
+type fileViewerImagePlacement struct {
+	x, y int
+	w, h int
 }
 
 func newFileViewer(workspaceDir string) *fileViewer {
@@ -417,6 +441,7 @@ func (v *fileViewer) tryPreviewFile() {
 	if e.IsDir() {
 		v.viewingFile = ""
 		v.fileContent = ""
+		v.imagePreview = nil
 		v.scroll = 0
 		v.loadDirPreview(filepath.Join(v.currentDir, e.Name()))
 		return
@@ -429,9 +454,16 @@ func (v *fileViewer) tryPreviewFile() {
 	v.scroll = 0
 	data, truncated, size, err := readFileViewerPreview(fullPath)
 	if err != nil {
+		v.imagePreview = nil
 		v.fileContent = fmt.Sprintf("could not read: %v", err)
 		return
 	}
+	if preview, ok := loadFileViewerImagePreview(fullPath, data, size); ok {
+		v.imagePreview = preview
+		v.fileContent = ""
+		return
+	}
+	v.imagePreview = nil
 	if fileViewerLooksBinary(data) {
 		v.fileContent = fmt.Sprintf("binary file preview skipped (%s)", humanBytes(size))
 		return
@@ -453,11 +485,13 @@ func (v *fileViewer) tryPreviewFile() {
 func (v *fileViewer) tryPreviewSkill() {
 	if v.cursor < 0 || v.cursor >= len(v.skills) {
 		v.fileContent = ""
+		v.imagePreview = nil
 		return
 	}
 	s := v.skills[v.cursor]
 	v.viewingFile = s.Source
 	v.scroll = 0
+	v.imagePreview = nil
 	c := s.Body
 	if c == "" {
 		c = "(empty)"
@@ -476,11 +510,13 @@ func (v *fileViewer) tryPreviewSkill() {
 func (v *fileViewer) tryPreviewAgent() {
 	if v.cursor < 0 || v.cursor >= len(v.agents) {
 		v.fileContent = ""
+		v.imagePreview = nil
 		return
 	}
 	a := v.agents[v.cursor]
 	v.viewingFile = a.Source
 	v.scroll = 0
+	v.imagePreview = nil
 	c := a.Body
 	if c == "" {
 		c = "(empty)"
@@ -499,11 +535,13 @@ func (v *fileViewer) tryPreviewAgent() {
 func (v *fileViewer) tryPreviewHook() {
 	if v.cursor < 0 || v.cursor >= len(v.hooks) {
 		v.fileContent = ""
+		v.imagePreview = nil
 		return
 	}
 	h := v.hooks[v.cursor]
 	v.viewingFile = h.Source
 	v.scroll = 0
+	v.imagePreview = nil
 	// Lead with the trigger config so the script below reads in context.
 	meta := []string{"event: " + string(h.Event)}
 	if h.Matcher != "" {
@@ -554,6 +592,79 @@ func (v *fileViewer) loadDirPreview(dirPath string) {
 	v.dirPreview.entries = make([]fileViewerPreviewEntry, 0, len(entries))
 	for _, e := range entries {
 		v.dirPreview.entries = append(v.dirPreview.entries, fileViewerPreviewEntry{name: e.Name(), isDir: e.IsDir()})
+	}
+}
+
+func loadFileViewerImagePreview(path string, sample []byte, size int64) (*fileViewerImagePreview, bool) {
+	format := fileViewerImageFormat(sample, path)
+	if format == "" {
+		return nil, false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return &fileViewerImagePreview{path: path, format: format, size: size}, true
+	}
+	defer f.Close()
+
+	var (
+		img           image.Image
+		decodedFormat string
+		data          []byte
+	)
+	if fileViewerTerminalGraphicsEnabled() {
+		var readErr error
+		data, readErr = io.ReadAll(f)
+		if readErr != nil {
+			return &fileViewerImagePreview{path: path, format: format, size: size}, true
+		}
+		img, decodedFormat, err = image.Decode(bytes.NewReader(data))
+	} else {
+		img, decodedFormat, err = image.Decode(f)
+	}
+	if err != nil {
+		return &fileViewerImagePreview{path: path, format: format, size: size}, true
+	}
+	if decodedFormat != "" {
+		format = decodedFormat
+	}
+	if len(data) > 0 {
+		var encoded bytes.Buffer
+		if err := png.Encode(&encoded, img); err == nil {
+			format = "png"
+			data = encoded.Bytes()
+		}
+	}
+	b := img.Bounds()
+	return &fileViewerImagePreview{
+		path:   path,
+		format: format,
+		width:  b.Dx(),
+		height: b.Dy(),
+		size:   size,
+		data:   append([]byte(nil), data...),
+		image:  img,
+	}, true
+}
+
+func fileViewerImageFormat(data []byte, path string) string {
+	if len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
+		return "png"
+	}
+	if len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff {
+		return "jpeg"
+	}
+	if len(data) >= 6 && (bytes.Equal(data[:6], []byte("GIF87a")) || bytes.Equal(data[:6], []byte("GIF89a"))) {
+		return "gif"
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "png"
+	case ".jpg", ".jpeg":
+		return "jpeg"
+	case ".gif":
+		return "gif"
+	default:
+		return ""
 	}
 }
 
@@ -684,6 +795,8 @@ func (v *fileViewer) draw(scr uv.Screen, area uv.Rectangle) {
 	}
 
 	switch {
+	case v.imagePreview != nil:
+		v.drawImageContent(scr, l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), l.Body.Max.Y)
 	case v.fileContent != "":
 		v.drawContent(scr, l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), l.Body.Max.Y)
 	case v.mode == fileViewerFiles && v.cursor >= 0 && v.cursor < len(v.entries) && v.entries[v.cursor].IsDir():
@@ -722,6 +835,174 @@ func drawNavStrip(scr uv.Screen, nav uv.Rectangle, text string) uv.Rectangle {
 		drawLine(scr, uv.Rect(nav.Min.X, nav.Min.Y+1, nav.Dx(), 1), palette.Border.On(strings.Repeat("─", nav.Dx())))
 	}
 	return uv.Rect(nav.Min.X, nav.Min.Y+2, nav.Dx(), max(0, nav.Dy()-2))
+}
+
+func (v *fileViewer) drawImageContent(scr uv.Screen, x, y, w, footerY int) {
+	preview := v.imagePreview
+	if preview == nil {
+		return
+	}
+	relPath, _ := filepath.Rel(v.workspaceDir, preview.path)
+	meta := fmt.Sprintf("%s · %s · %s", relPath, strings.ToUpper(preview.format), humanBytes(preview.size))
+	if preview.width > 0 && preview.height > 0 {
+		meta = fmt.Sprintf("%s · %dx%d", meta, preview.width, preview.height)
+	}
+	drawLine(scr, uv.Rect(x, y, w, 1), headerLine(meta, w, palette.Info.On))
+	y++
+
+	contentH := footerY - y
+	if contentH <= 0 {
+		return
+	}
+	cw := w - scrollbarWidth
+	v.imagePlacement = fileViewerImagePlacement{x: x, y: y, w: cw, h: contentH}
+	if fileViewerTerminalGraphicsEnabled() && preview.data != nil {
+		drawLine(scr, uv.Rect(x, y, cw, 1), palette.Subtle.On(" rendering image with terminal graphics"))
+		return
+	}
+	if preview.image == nil {
+		drawLine(scr, uv.Rect(x, y, cw, 1), palette.Muted.On(" image preview unavailable: could not decode image"))
+		return
+	}
+	lines := renderFileViewerImage(preview.image, cw, contentH)
+	v.scroll = clampScrollOffset(v.scroll, len(lines), contentH)
+	for i := v.scroll; i < len(lines) && (i-v.scroll) < contentH; i++ {
+		drawLine(scr, uv.Rect(x, y+i-v.scroll, cw, 1), lines[i])
+	}
+	drawPaneScrollbar(scr, x+w-1, y, contentH, len(lines), v.scroll)
+}
+
+func (v *fileViewer) kittyGraphicsOverlay() string {
+	if v == nil || v.imagePreview == nil || !fileViewerTerminalGraphicsEnabled() {
+		return ""
+	}
+	p := v.imagePlacement
+	if p.w <= 0 || p.h <= 0 || len(v.imagePreview.data) == 0 {
+		return ""
+	}
+	cols, rows := fileViewerImageCells(v.imagePreview.width, v.imagePreview.height, p.w, p.h)
+	if cols <= 0 || rows <= 0 {
+		return ""
+	}
+	// Center within the preview body. Terminal cursor positions are 1-based.
+	x := p.x + max(0, (p.w-cols)/2) + 1
+	y := p.y + max(0, (p.h-rows)/2) + 1
+	return kittyGraphicsAt(x, y, cols, rows, v.imagePreview.data)
+}
+
+func fileViewerTerminalGraphicsEnabled() bool {
+	termProgram := strings.ToLower(os.Getenv("TERM_PROGRAM"))
+	term := strings.ToLower(os.Getenv("TERM"))
+	return strings.Contains(termProgram, "ghostty") || strings.Contains(term, "kitty") || strings.Contains(termProgram, "kitty")
+}
+
+func fileViewerImageCells(width, height, maxCols, maxRows int) (int, int) {
+	if width <= 0 || height <= 0 || maxCols <= 0 || maxRows <= 0 {
+		return 0, 0
+	}
+	// Kitty/Ghostty graphics are sized in terminal cells. A cell is roughly twice
+	// as tall as it is wide, so convert row budget to a 2x pixel-height budget.
+	scale := math.Min(float64(maxCols)/float64(width), float64(maxRows*2)/float64(height))
+	if scale <= 0 {
+		return 0, 0
+	}
+	cols := max(1, min(maxCols, int(math.Round(float64(width)*scale))))
+	rows := max(1, min(maxRows, int(math.Round(float64(height)*scale/2))))
+	return cols, rows
+}
+
+func kittyGraphicsAt(x, y, cols, rows int, data []byte) string {
+	if x <= 0 || y <= 0 || cols <= 0 || rows <= 0 || len(data) == 0 {
+		return ""
+	}
+	encoded := base64.StdEncoding.EncodeToString(data)
+	const chunkSize = 4096
+	var b strings.Builder
+	b.WriteString("\x1b7")
+	// Clear any previous zarlcode image placement before drawing the current one.
+	b.WriteString("\x1b_Ga=d,d=A\x1b\\")
+	fmt.Fprintf(&b, "\x1b[%d;%dH", y, x)
+	for offset := 0; offset < len(encoded); offset += chunkSize {
+		end := min(len(encoded), offset+chunkSize)
+		more := 0
+		if end < len(encoded) {
+			more = 1
+		}
+		if offset == 0 {
+			fmt.Fprintf(&b, "\x1b_Ga=T,f=100,c=%d,r=%d,m=%d;%s\x1b\\", cols, rows, more, encoded[offset:end])
+		} else {
+			fmt.Fprintf(&b, "\x1b_Gm=%d;%s\x1b\\", more, encoded[offset:end])
+		}
+	}
+	b.WriteString("\x1b8")
+	return b.String()
+}
+
+func renderFileViewerImage(img image.Image, maxW, maxH int) []string {
+	if img == nil || maxW <= 0 || maxH <= 0 {
+		return nil
+	}
+	b := img.Bounds()
+	srcW, srcH := b.Dx(), b.Dy()
+	if srcW <= 0 || srcH <= 0 {
+		return nil
+	}
+	// Each terminal cell is roughly twice as tall as it is wide, and the half-block
+	// renderer packs two sampled pixels into one row.
+	cellW := maxW
+	cellH := maxH
+	if cellW > srcW {
+		cellW = srcW
+	}
+	if cellH*2 > srcH {
+		cellH = max(1, (srcH+1)/2)
+	}
+	scaleW := float64(cellW) / float64(srcW)
+	scaleH := float64(cellH*2) / float64(srcH)
+	scale := min(scaleW, scaleH)
+	if scale <= 0 {
+		scale = 1
+	}
+	outW := max(1, min(maxW, int(float64(srcW)*scale)))
+	outPixelH := max(1, min(maxH*2, int(float64(srcH)*scale)))
+	outH := (outPixelH + 1) / 2
+
+	lines := make([]string, 0, outH)
+	for row := 0; row < outH; row++ {
+		var line strings.Builder
+		for col := 0; col < outW; col++ {
+			top := sampleImageColor(img, b, col, row*2, outW, outPixelH)
+			bottom := top
+			if row*2+1 < outPixelH {
+				bottom = sampleImageColor(img, b, col, row*2+1, outW, outPixelH)
+			}
+			tr, tg, tb := colorRGB(top)
+			br, bg, bb := colorRGB(bottom)
+			fmt.Fprintf(&line, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m", tr, tg, tb, br, bg, bb)
+		}
+		lines = append(lines, line.String())
+	}
+	return lines
+}
+
+func sampleImageColor(img image.Image, bounds image.Rectangle, x, y, outW, outH int) color.Color {
+	if outW <= 1 && outH <= 1 {
+		return img.At(bounds.Min.X, bounds.Min.Y)
+	}
+	sx := bounds.Min.X
+	if outW > 1 {
+		sx += int(float64(x) * float64(bounds.Dx()-1) / float64(outW-1))
+	}
+	sy := bounds.Min.Y
+	if outH > 1 {
+		sy += int(float64(y) * float64(bounds.Dy()-1) / float64(outH-1))
+	}
+	return img.At(sx, sy)
+}
+
+func colorRGB(c color.Color) (uint8, uint8, uint8) {
+	r, g, b, _ := c.RGBA()
+	return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)
 }
 
 func (v *fileViewer) drawContent(scr uv.Screen, x, y, w, footerY int) {
