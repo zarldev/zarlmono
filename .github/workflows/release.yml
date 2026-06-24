@@ -144,6 +144,7 @@ jobs:
       - name: create homebrew tap app token
         id: homebrew-app-token
         if: ${{ env.HOMEBREW_APP_ID != '' && env.HOMEBREW_APP_PRIVATE_KEY != '' }}
+        continue-on-error: true
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.HOMEBREW_APP_ID }}
@@ -151,7 +152,7 @@ jobs:
           owner: zarldev
           repositories: homebrew-tap
       - name: update homebrew tap
-        if: ${{ steps.homebrew-app-token.outputs.token != '' }}
+        if: ${{ steps.homebrew-app-token.outcome == 'success' && steps.homebrew-app-token.outputs.token != '' }}
         env:
           HOMEBREW_TAP_APP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
