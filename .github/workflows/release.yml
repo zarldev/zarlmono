@@ -118,15 +118,22 @@ jobs:
         run: |
           set -euo pipefail
           # The release keeps the full submodule tag; the title is the bare version.
-          gh release create "${TAG}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "zarlcode ${TAG#zarlcode/}" \
-            --generate-notes \
-            artifacts/*
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber \
+              artifacts/*
+          else
+            gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "zarlcode ${TAG#zarlcode/}" \
+              --generate-notes \
+              artifacts/*
+          fi
 
       - name: generate homebrew formula
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           python3 scripts/generate_homebrew_formula.py \
@@ -147,6 +154,7 @@ jobs:
         if: ${{ steps.homebrew-app-token.outputs.token != '' }}
         env:
           HOMEBREW_TAP_APP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           repo_url="https://x-access-token:${HOMEBREW_TAP_APP_TOKEN}@github.com/zarldev/homebrew-tap.git"
@@ -162,5 +170,5 @@ jobs:
           git -C "$tmpdir" config user.name "github-actions[bot]"
           git -C "$tmpdir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$tmpdir" add Formula/zarlcode.rb
-          git -C "$tmpdir" commit -m "zarlcode ${GITHUB_REF_NAME#zarlcode/}"
+          git -C "$tmpdir" commit -m "zarlcode ${TAG#zarlcode/}"
           git -C "$tmpdir" push
