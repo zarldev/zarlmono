@@ -1001,7 +1001,12 @@ func sampleImageColor(img image.Image, bounds image.Rectangle, x, y, outW, outH 
 }
 
 func colorRGB(c color.Color) (uint8, uint8, uint8) {
-	rgba := color.NRGBAModel.Convert(c).(color.NRGBA)
+	converted := color.NRGBAModel.Convert(c)
+	rgba, ok := converted.(color.NRGBA)
+	if !ok {
+		r, g, b, _ := c.RGBA()
+		return uint8(r / 0x101), uint8(g / 0x101), uint8(b / 0x101)
+	}
 	return rgba.R, rgba.G, rgba.B
 }
 
