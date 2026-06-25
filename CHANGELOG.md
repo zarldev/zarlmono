@@ -69,6 +69,12 @@ First public release of `zarlmono` — the Zarldev monorepo.
 
 ---
 
+## [v0.1.4] — 2026-06-25
+
+### Fixed
+
+- `zarlcode upgrade` now ignores and clears legacy local source path configuration, falling back to GitHub release upgrades instead of requiring a source checkout.
+
 ## [v0.1.3] — 2026-06-24
 
 ### Added
@@ -116,6 +122,7 @@ First public release of `zarlmono` — the Zarldev monorepo.
 
 - Initial public release of the Zarldev monorepo
 
+[v0.1.4]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.4
 [v0.1.3]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.3
 [v0.1.2]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.2
 [v0.1.1]: https://github.com/zarldev/zarlmono/releases/tag/zarlcode/v0.1.1

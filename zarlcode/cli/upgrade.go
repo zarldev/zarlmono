@@ -229,6 +229,10 @@ func resolveUpgradeRepo(ctx context.Context, svc *prefs.Service) (string, error)
 	} else if ok && strings.TrimSpace(v.Value) != "" {
 		repo := strings.TrimSpace(v.Value)
 		if err := validateUpgradeSource(repo); err != nil {
+			if looksLikeLegacyUpgradeSourcePath(repo) {
+				_ = svc.DeleteSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource)
+				return defaultUpgradeRepo, nil
+			}
 			return "", fmt.Errorf("configured source %q: %w", repo, err)
 		}
 		return repo, nil
@@ -278,6 +282,20 @@ func validateUpgradeSource(repo string) error {
 		return errors.New(`want a GitHub repository slug "owner/repo"`)
 	}
 	return nil
+}
+
+func looksLikeLegacyUpgradeSourcePath(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if filepath.IsAbs(value) || strings.HasPrefix(value, "~") || strings.HasPrefix(value, ".") {
+		return true
+	}
+	if strings.Contains(value, string(filepath.Separator)) {
+		return true
+	}
+	return strings.Contains(value, `\`)
 }
 
 // normalizeUpgradeSource canonicalizes a repo slug, also accepting a full

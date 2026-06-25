@@ -188,6 +188,27 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 	}
 }
 
+func TestResolveUpgradeRepoMigratesLegacySourcePath(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	svc := prefs.NewService(store, nil, "")
+	legacyPath := filepath.Join(t.TempDir(), "zarlmono")
+	if err := svc.SetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource, legacyPath); err != nil {
+		t.Fatalf("set legacy source: %v", err)
+	}
+
+	repo, err := resolveUpgradeRepo(ctx, svc)
+	if err != nil {
+		t.Fatalf("resolve repo: %v", err)
+	}
+	if repo != defaultUpgradeRepo {
+		t.Fatalf("repo = %q, want default %q", repo, defaultUpgradeRepo)
+	}
+	if _, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource); err != nil || ok {
+		t.Fatalf("legacy source not cleared: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestRunUpgradeDryRunDoesNotDownload(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
