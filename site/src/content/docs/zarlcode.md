@@ -3,10 +3,11 @@ title: zarlcode
 description: Install and use the terminal coding agent built on zkit.
 ---
 
-zarlcode is a terminal-native coding agent. It streams an LLM into your
-workspace so it can read files, edit with anchored patches, run commands,
-search the web, connect MCP tools, and delegate to sub-agents while you steer
-from a keyboard-driven TUI.
+zarlcode is a terminal coding agent. It runs in the workspace you launched it
+from, shows every model turn and tool call in a TUI, and lets you switch
+between read-only planning and file-changing build work. It can read and edit
+files, run commands, search the web, connect MCP tools, and delegate focused
+work to sub-agents.
 
 ![zarlcode in action](/zarlmono/zarlcode-hero2.gif)
 

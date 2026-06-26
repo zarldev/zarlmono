@@ -9,9 +9,9 @@
                            ╲________╱╲___╱____╱╲____╱___╱╲________╱╲________╱╲________╱╲________╱╲_______╱
 ```
 
-**Terminal-native coding agent for people who want the agent in their repo, not their browser tab.**
+**zarlcode is a terminal coding agent.**
 
-zarlcode streams an LLM into a workspace-scoped TUI. It reads files, edits with anchored patches, runs commands, searches the web, connects MCP tools, and delegates focused work to sub-agents while you steer from the keyboard. Sessions, settings, plans, and encrypted keys live locally under `~/.zarlcode`.
+It runs in the workspace you launched it from, shows every model turn and tool call in a TUI, and lets you switch between read-only planning and file-changing build work. It can read and edit files, run commands, search the web, connect MCP tools, and delegate focused work to sub-agents. Sessions, settings, plans, and encrypted keys live locally under `~/.zarlcode`.
 
 Built on [`zkit`](../zkit/), the reusable Go agent toolkit in this repo.
 
