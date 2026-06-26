@@ -4,7 +4,7 @@
 
 # zarlmono
 
-**zarlmono is a Go-native agent stack with a real coding agent on top.**
+**zarlmono is the monorepo for zarlcode, zkit, zarlai, and the eval/examples that keep them honest.**
 
 - **[`zarlcode`](zarlcode/)** — a terminal coding agent/TUI that reads, edits, runs commands, searches the web, and delegates to sub-agents while keeping sessions local and resumable.
 - **[`zkit`](zkit/)** — the reusable Go toolkit underneath: streaming runner, tool registry, provider adapters, guardrails, compaction, MCP, sandboxing, and small foundation packages.
@@ -115,8 +115,8 @@ and verified completion as options when you need them.
 ## Why this repo exists
 
 Most agent frameworks make the demo easy and the production edges vague.
-zarlmono is shaped the other way around: the abstractions are small because they
-are shared by multiple real consumers.
+This monorepo is shaped the other way around: the abstractions are small because
+they are shared by multiple real consumers.
 
 - **Terminal-first coding workflow.** zarlcode is not just an example app; it is
   the product surface for the coding agent.
