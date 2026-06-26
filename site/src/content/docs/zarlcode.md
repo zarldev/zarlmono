@@ -55,15 +55,20 @@ For a screen-by-screen tour of the TUI — timeline, cockpit, working set, file
 viewer, plan mode, model picker, settings, and every key that opens them — see
 [the interface reference](/zarlmono/zarlcode-interface/).
 
-## What it does
+## How it works
 
-- Runs an interactive agent loop in a full terminal UI.
-- Reads, writes, edits, and patches files through workspace-bounded tools.
-- Executes foreground and background shell commands through a tracked process manager.
-- Uses guardrails for schema repair, shell policy, fan-out caps, and verifier feedback.
-- Persists sessions, settings, plans, and encrypted API keys locally.
-- Spawns read-only, verify-only, or implementation sub-agents for focused work.
-- Runs headless for scripts, CI jobs, and eval harnesses.
+zarlcode runs from the current workspace and keeps the run visible. The timeline
+shows model output, tool calls, command results, diffs, plans, and sub-agent
+summaries as they happen.
+
+The core tools are the ones a coding agent needs every day: read files, make
+anchored edits, search the tree, and run commands. Shell commands go through a
+tracked process manager, so long-running commands can be inspected or stopped
+instead of blocking the UI.
+
+For larger tasks, zarlcode can split off focused sub-agents, compact older
+history, and resume prior sessions from local SQLite state. Provider keys and
+settings are stored locally under `~/.zarlcode`.
 
 ## Plan mode and build mode
 

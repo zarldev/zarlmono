@@ -160,14 +160,11 @@ zarlcode has two main work modes:
 | **Plan** | Read-only investigation. The agent can inspect files and propose a plan, but cannot edit or run shell commands. |
 | **Build** | Full tool surface: read, edit, patch, bash, web, MCP, plans, and sub-agent dispatch, subject to guardrails. |
 
-Useful features:
-
-- workspace-scoped file tools with anchored edits;
-- shell process manager for foreground and background commands;
-- plan pane, working set, file viewer, model picker, settings, and themes;
-- sub-agents with `explore`, `verify`, and `implement` modes;
-- resumable SQLite sessions in `~/.zarlcode/state.db`;
-- headless mode for scripts and eval harnesses.
+The TUI shows the run as it happens: model output, tool calls, command results,
+diffs, plan state, and the files changed this session. File and shell tools are
+workspace-scoped and routed through guardrails. Sub-agents handle focused side
+work without flooding the parent context. Sessions persist locally, so
+`zarlcode -continue` resumes the last run for the current repo.
 
 See [`zarlcode/README.md`](zarlcode/README.md) and the
 [interface tour](https://zarldev.github.io/zarlmono/zarlcode-interface/).
