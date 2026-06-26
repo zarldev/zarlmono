@@ -7,11 +7,57 @@
                             ╱-        ╱    ╱    ╱     ╱   ╱      ╱  ╱      ___╱     ╱   ╱     ╱   ╱       _╱
                            ╱        _╱         ╱        _╱      ╱__╱         ╱         ╱         ╱       _╱
                            ╲________╱╲___╱____╱╲____╱___╱╲________╱╲________╱╲________╱╲________╱╲_______╱
- 
+```
 
-Terminal-native coding agent. Stream an LLM into your workspace — it reads, writes, runs commands, searches the web, and spawns sub-agents while you steer from a keyboard-driven TUI.
+**Terminal-native coding agent for people who want the agent in their repo, not their browser tab.**
 
-Built on [`zkit`](../zkit/). Plan first, execute second, rewind anytime.
+zarlcode streams an LLM into a workspace-scoped TUI. It reads files, edits with anchored patches, runs commands, searches the web, connects MCP tools, and delegates focused work to sub-agents while you steer from the keyboard. Sessions, settings, plans, and encrypted keys live locally under `~/.zarlcode`.
+
+Built on [`zkit`](../zkit/), the reusable Go agent toolkit in this repo.
+
+![zarlcode in action](https://zarldev.github.io/zarlmono/zarlcode-hero2.gif)
+
+## Install
+
+```bash
+# latest tagged release
+go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.4
+
+# or Homebrew
+brew install zarldev/tap/zarlcode
+
+# or from a checkout
+go tool task zarlcode
+```
+
+First run:
+
+```bash
+zarlcode init
+zarlcode keys set <provider>   # anthropic, openai, gemini, deepseek, ...
+zarlcode
+```
+
+Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and `openai-codex`. Run `zarlcode keys --help` for provider-specific setup.
+
+## Why use it
+
+- **Plan before mutation.** Toggle into read-only Plan mode for investigation and structured plans, then back to Build mode when you are ready.
+- **Workspace-bounded tools.** File reads, edits, grep/glob, shell commands, and process management are rooted in the current workspace and tracked in the timeline.
+- **Sub-agents without context mess.** Dispatch researcher/reviewer/coder-style subtasks in parallel; the parent sees summaries instead of fifty extra tool calls.
+- **Long sessions survive.** SQLite persistence, context compaction, background process tracking, and `-continue` make multi-hour work practical.
+- **Local-first configuration.** Provider keys live in an encrypted local vault; workspace settings override global defaults.
+- **Scriptable when needed.** Headless mode runs the same agent loop from CI, scripts, and eval harnesses.
+
+## Common commands
+
+```bash
+zarlcode                               # launch interactive TUI
+zarlcode -continue                     # resume last session in this workspace
+zarlcode --headless --prompt-file t.md # run one task without the TUI
+zarlcode keys list                     # view stored provider keys, masked
+zarlcode upgrade                       # self-update from GitHub Releases
+```
 
 ## Concepts
 

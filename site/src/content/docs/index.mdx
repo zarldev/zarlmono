@@ -1,10 +1,10 @@
 ---
-title: zkit
-description: zkit — Go packages for building agents.
+title: zarlmono
+description: zarlcode and zkit — a terminal coding agent and the Go agent toolkit behind it.
 template: splash
 head:
   - tag: title
-    content: zkit — Go packages for agents
+    content: zarlmono — zarlcode and zkit
   - tag: style
     content: 'main > .content-panel:first-of-type:has(h1#_top) { display: none; }'
 ---
@@ -12,59 +12,61 @@ head:
 <div class="zm-hero">
 
   <div class="zm-hero-copy">
-    <h1>zkit</h1>
-    <p class="zm-tagline">Go packages for building agents: a streaming loop, tool dispatch, guardrails, compaction, and provider adapters.</p>
+    <h1>zarlcode + zkit</h1>
+    <p class="zm-tagline">A terminal coding agent built on a Go-native agent toolkit: streaming runner, tools, guardrails, compaction, providers, MCP, and sandboxing.</p>
     <div class="zm-actions">
-      <a class="zm-primary" href="/zarlmono/getting-started/">Get started</a>
-      <a href="/zarlmono/architecture/">Architecture</a>
+      <a class="zm-primary" href="/zarlmono/zarlcode/">Try zarlcode</a>
+      <a href="/zarlmono/getting-started/">Use zkit</a>
       <a href="https://github.com/zarldev/zarlmono">GitHub</a>
     </div>
   </div>
 
   <div class="zm-install">
-    <span class="zm-install-label">Install</span>
-    <pre class="zm-prompt"><code>go get github.com/zarldev/zarlmono/zkit@v0.1.2</code></pre>    <p>Import what you need. Compose the rest.</p>
+    <span class="zm-install-label">Install zarlcode</span>
+    <pre class="zm-prompt"><code>go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.4</code></pre>
+    <p>Or import the toolkit: <code>go get github.com/zarldev/zarlmono/zkit@v0.1.3</code></p>
   </div>
 
 </div>
 
-## What is zkit?
+![zarlcode in action](/zarlmono/zarlcode-hero2.gif)
 
-zkit is a set of small Go packages for building agents. Take the pieces you need
-and ignore the rest. Each package has a narrow interface and no framework
-ceremony.
+## What is this?
 
-The **runner** is the streaming, tool-calling agent loop. Around it are tools,
-guardrails, compaction, providers, verified completion, and the foundation
-packages underneath.
+**zarlcode** is the product surface: a terminal-native coding agent that reads,
+edits, runs commands, searches the web, connects MCP servers, and spawns focused
+sub-agents while keeping sessions local and resumable.
 
-```go
-package main
+**zkit** is the Go toolkit underneath. It gives you the pieces to build your own
+agents without adopting a framework runtime: a streaming loop, tool dispatch,
+provider adapters, guardrails, compaction, verified completion, and small
+foundation packages.
 
-import (
-	"context"
-	"time"
+The same packages power the TUI, the local assistant, and the SWE-bench eval
+harness. That is the design constraint: interfaces stay small because more than
+one real consumer has to use them.
 
-	"github.com/zarldev/zarlmono/zkit/agent/runner"
-	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
-)
+<p class="zm-section-label">Start here</p>
 
-func main() {
-	provider, _ := anthropic.NewProvider(apiKey)
+<div class="zm-grid">
+  <a href="/zarlmono/zarlcode/">
+    <span class="zm-card-kicker">Use the agent</span>
+    <h3>zarlcode</h3>
+    <p>Install the terminal coding agent, configure a provider, and run your first workspace task.</p>
+  </a>
+  <a href="/zarlmono/zarlcode-interface/">
+    <span class="zm-card-kicker">TUI tour</span>
+    <h3>Interface guide</h3>
+    <p>Timeline, cockpit, working set, file viewer, plan mode, model picker, and keybindings.</p>
+  </a>
+  <a href="/zarlmono/getting-started/">
+    <span class="zm-card-kicker">Build with Go</span>
+    <h3>Use zkit</h3>
+    <p>Wire a provider, a tool registry, and the runner in about thirty lines of Go.</p>
+  </a>
+</div>
 
-	r := runner.New(runner.ClientFromProvider(provider),
-		runner.WithPromptText("You are a helpful coding assistant."),
-		runner.WithMaxIterations(20),
-		runner.WithToolTimeout(60*time.Second),
-	)
-
-	_, _ = r.Run(context.Background(), runner.TaskSpec{
-		Prompt: "Refactor the auth package to use context everywhere.",
-	})
-}
-```
-
-<p class="zm-section-label">Core packages</p>
+<p class="zm-section-label">Core zkit packages</p>
 
 <div class="zm-grid zm-grid-3">
   <a href="/zarlmono/runner/">
@@ -101,13 +103,11 @@ func main() {
 
 <p class="zm-section-label">Built with zkit</p>
 
-These products share the same repo and the same packages.
-
 <div class="zm-grid">
   <a href="/zarlmono/zarlcode/">
     <span class="zm-card-kicker">TUI agent</span>
     <h3>zarlcode</h3>
-    <p>A terminal coding agent: runner, guardrails, sandboxed shell, sub-agents, SQLite sessions.</p>
+    <p>The terminal coding agent: runner, guardrails, sandboxed shell, sub-agents, SQLite sessions.</p>
   </a>
   <a href="/zarlmono/zarlai/">
     <span class="zm-card-kicker">Local assistant</span>
@@ -123,6 +123,6 @@ These products share the same repo and the same packages.
 
 ## Where to go next
 
-- <a href="/zarlmono/getting-started/">**Getting started**</a> — install zkit and run your first agent.
+- <a href="/zarlmono/zarlcode/">**Try zarlcode**</a> — install and configure the coding agent.
+- <a href="/zarlmono/getting-started/">**Use zkit**</a> — build a minimal agent loop in Go.
 - <a href="/zarlmono/architecture/">**Architecture**</a> — see how the packages layer.
-- <a href="/zarlmono/runner/">**Runner**</a> — understand the loop.
