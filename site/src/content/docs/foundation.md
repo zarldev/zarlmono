@@ -59,6 +59,11 @@ on the runner itself:
 | `diffrecorder` | Captures workspace diffs between tool calls. Reads `FileEffect` from tool results and builds per-turn and cumulative diffs for eval harnesses and audit trails. |
 | `sourcechain` | Composes multiple `ToolSource` implementations with fallback semantics — primary source first, then fallbacks. Merges built-in, dynamic, and MCP tools into one surface. |
 | `scheduler` | Cron-based task scheduling via `robfig/cron/v3`. Drives recurring background tasks with the same runner loop as interactive sessions. |
+| `retrieval` | Agent-facing RAG glue: render retrieved docs as prompt context or expose a retriever as a tool. Core document/vector interfaces live in `ai/retrieval`. |
+| `workflow` | Typed graph/workflow composition with conditional routing, events, and workflow-as-tool adapters. |
+| `checkpoint` | Transport-neutral run snapshots and in-memory storage for resumable workflows. |
+| `hitl` | Human-in-the-loop request/review/policy primitives. |
+| `trace` | Normalized runner/workflow traces, exporters, and JSONL output. |
 
 ## The applications
 

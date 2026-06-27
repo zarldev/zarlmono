@@ -245,8 +245,7 @@ func (t *BashTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Too
 
 	exitCode := 0
 	if waitErr != nil {
-		var ee *exec.ExitError
-		if errors.As(waitErr, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](waitErr); ok {
 			exitCode = ee.ExitCode()
 		} else if !timedOut {
 			fmt.Fprintf(&b, "\n[wait error: %v]\n", waitErr)

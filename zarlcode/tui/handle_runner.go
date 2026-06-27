@@ -144,7 +144,11 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if e.Depth > 0 {
 			if sa := m.timeline.subAgent(e.TaskID); sa != nil {
 				if failed {
-					sa.addNotice("✗ " + userFacingProviderError(e.Error))
+					detail := userFacingProviderError(e.Error)
+					if e.RateLimit != nil {
+						detail = formatRateLimit(e.RateLimit)
+					}
+					sa.addNotice("✗ " + detail)
 				} else if notice := terminalNotice(e.Reason, e.Iterations); notice != "" {
 					sa.addNotice(notice)
 				}

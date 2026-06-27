@@ -21,7 +21,7 @@ import (
 // bare toast for a turn that never appeared to start.
 func (r *Runner) publishSetupFailed(ctx context.Context, spec TaskSpec, start time.Time, err error) {
 	r.publishConversationStarted(ctx, spec)
-	r.publishConversationEnded(ctx, spec, TerminalError, err.Error(), time.Since(start), 0, nil)
+	r.publishConversationEnded(ctx, spec, TerminalError, err, time.Since(start), 0, nil)
 }
 
 // --- event publishing helpers ---
@@ -43,7 +43,7 @@ func (r *Runner) publishConversationEnded(
 	_ context.Context,
 	spec TaskSpec,
 	reason TerminalReason,
-	errStr string,
+	err error,
 	dur time.Duration,
 	iterations int,
 	total *llm.Usage,
@@ -51,11 +51,23 @@ func (r *Runner) publishConversationEnded(
 	if r.sink == nil {
 		return
 	}
+	// Flatten to a string for the generic Error field and, in the same
+	// place, pull out a structured rate-limit error so subscribers don't
+	// have to re-parse the message text.
+	var errStr string
+	var rateLimit *llm.RateLimitError
+	if err != nil {
+		errStr = err.Error()
+		if rle, ok := errors.AsType[*llm.RateLimitError](err); ok {
+			rateLimit = rle
+		}
+	}
 	r.sink.OnConversationEnded(ConversationEnded{
 		TaskID:           spec.ID,
 		Depth:            spec.Depth,
 		Reason:           reason,
 		Error:            errStr,
+		RateLimit:        rateLimit,
 		Duration:         dur,
 		Iterations:       iterations,
 		TotalUsage:       total,

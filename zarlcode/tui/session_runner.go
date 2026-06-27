@@ -10,6 +10,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
 type setupFailedEffect struct {
@@ -170,6 +171,9 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 			return sessionEffect{}
 		}
 		msg := userFacingProviderError(e.Error)
+		if e.RateLimit != nil {
+			msg = formatRateLimit(e.RateLimit)
+		}
 		s.SetErrorToast(msg)
 		s.Run.Running = false
 		return sessionEffect{ToastChanged: true, Notice: palette.Error.On("✗ provider error: ") + msg}
@@ -205,6 +209,59 @@ func userFacingProviderError(raw string) string {
 		return parsed
 	}
 	return msg
+}
+
+// formatRateLimit renders a rate-limit error for the user directly from its
+// structured fields — no re-parsing of Error() text. Permanent quota
+// exhaustion reads as a usage-limit notice; otherwise it appends a concrete
+// "try again" hint and the provider's human message (never raw JSON).
+func formatRateLimit(e *llm.RateLimitError) string {
+	out := "rate limit"
+	if e.Permanent {
+		out = "usage limit reached"
+	}
+	if when := rateLimitWhen(e); when != "" {
+		out += " — " + when
+	}
+	if detail := strings.TrimSpace(e.Message); detail != "" {
+		out += ": " + detail
+	}
+	return out
+}
+
+// rateLimitWhen renders the "try again" hint. A clock time is only clear for
+// a reset within the day; for longer windows a humanized duration ("resets
+// in 2 days") reads better than a bare time-of-day.
+func rateLimitWhen(e *llm.RateLimitError) string {
+	switch {
+	case !e.ResetAt.IsZero():
+		if d := time.Until(e.ResetAt); d > 12*time.Hour {
+			return "resets in " + humanizeDuration(d)
+		}
+		return "resets at " + e.ResetAt.Format(time.Kitchen)
+	case e.RetryAfter > 0:
+		return "retry in " + humanizeDuration(e.RetryAfter)
+	default:
+		return ""
+	}
+}
+
+// humanizeDuration renders d in the largest sensible unit for a wait hint.
+func humanizeDuration(d time.Duration) string {
+	switch {
+	case d >= 48*time.Hour:
+		return fmt.Sprintf("%d days", int(d.Hours())/24)
+	case d >= time.Hour:
+		d = d.Round(time.Minute)
+		if m := int(d.Minutes()) % 60; m > 0 {
+			return fmt.Sprintf("%dh%dm", int(d.Hours()), m)
+		}
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d >= time.Minute:
+		return fmt.Sprintf("%dm", int(d.Round(time.Minute).Minutes()))
+	default:
+		return fmt.Sprintf("%ds", int(d.Round(time.Second).Seconds()))
+	}
 }
 
 func parseProviderJSONError(msg string) (string, bool) {

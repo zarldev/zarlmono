@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'zarlmono/zkit',
 			description:
-				'A Go toolkit for building AI agents: the runner loop, verified completion, tools, guardrails, and compaction.',
+				'A Go toolkit for building AI agents: the runner loop, tools, guardrails, compaction, retrieval, workflows, HITL, and tracing.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/zarldev/zarlmono' },
 			],
@@ -52,6 +52,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Runner', slug: 'runner' },
 						{ label: 'Verified completion', slug: 'pursue' },
+						{ label: 'Shared infrastructure', slug: 'shared-infra' },
 					],
 				},
 				{

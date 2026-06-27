@@ -26,6 +26,9 @@ ones above it, and dependencies only ever point **downward**.
   <div class="arch-cells">
     <a class="arch-cell arch-cell-key" href="/zarlmono/runner/">runner<small>the loop</small></a>
     <a class="arch-cell" href="/zarlmono/pursue/">pursue<small>verified completion</small></a>
+    <a class="arch-cell" href="/zarlmono/shared-infra/">workflow<small>graph composition</small></a>
+    <a class="arch-cell" href="/zarlmono/shared-infra/">retrieval<small>prompt + tool adapters</small></a>
+    <a class="arch-cell" href="/zarlmono/shared-infra/">checkpoint · hitl · trace<small>resume + observe</small></a>
     <a class="arch-cell" href="/zarlmono/guardrails/">guardrails<small>dispatch middleware</small></a>
     <a class="arch-cell" href="/zarlmono/compaction/">compact<small>history shrinking</small></a>
     <a class="arch-cell" href="/zarlmono/spawn/">tools/spawn<small>sub-agents</small></a>
@@ -49,6 +52,7 @@ ones above it, and dependencies only ever point **downward**.
     <a class="arch-cell arch-cell-sub" href="/zarlmono/providers/#the-backends-registry">backends<small>name → provider</small></a>
     <a class="arch-cell arch-cell-sub" href="/zarlmono/providers/#provider-side-recovery">repair<small>JSON recovery</small></a>
     <a class="arch-cell arch-cell-sub" href="/zarlmono/providers/#chat-template-adapters">templates<small>chat formats</small></a>
+    <a class="arch-cell" href="/zarlmono/shared-infra/">ai/retrieval<small>RAG primitives</small></a>
     <a class="arch-cell" href="/zarlmono/tools/">ai/tools<small>registry + dispatch</small></a>
     <a class="arch-cell arch-cell-sub" href="/zarlmono/code-tools/">code<small>read · edit · bash · …</small></a>
     <a class="arch-cell arch-cell-sub" href="/zarlmono/tool-ecosystem/">dynamic<small>authored tools + MCP</small></a>
@@ -158,6 +162,11 @@ runner takes it without changes:
 | `pursue.Goal` (+ `Watcher`) | decide + early-stop | a new completion oracle |
 | `spawn.AgentResolver` | name → runner | routing sub-agents to different models |
 | `runner.EventSink` | six typed sub-sinks (embed `NopSink`) | a new observability surface |
+| `retrieval.Embedder` / `VectorStore` | embed text + search vectors | a new RAG backend |
+| `workflow.Node` / `Route` | run typed step + pick next node | deterministic graph orchestration |
+| `checkpoint.Store` | save/load/list snapshots | durable run state |
+| `hitl.Policy` | approve/deny/defer review requests | human approval routing |
+| `trace.Exporter` | export normalized events | JSONL, OpenTelemetry, Langfuse, timeline UIs |
 
 `EventSink` is compile-time exhaustive: add an event method and every
 implementer fails to build until it handles the new kind, so a UI

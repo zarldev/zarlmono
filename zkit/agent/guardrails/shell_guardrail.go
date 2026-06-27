@@ -54,6 +54,18 @@ func WithShellPolicyEngine(e *shellpolicy.PolicyEngine) options.Option[ShellGuar
 	return func(g *ShellGuardrail) { g.engine = e }
 }
 
+// WithShellLenient selects the relaxed shell-policy profile when lenient is
+// true: the ergonomic `cd` and output-redirect blocks step aside. zarlcode
+// arms it when the kernel sandbox is OFF — with no kernel boundary the
+// operator has chosen an unconfined, high-trust mode, so the static blocks
+// only provoke evasion. The verify profile stays strict regardless. False
+// keeps the strict default.
+func WithShellLenient(lenient bool) options.Option[ShellGuardrail] {
+	return func(g *ShellGuardrail) {
+		g.engine = shellpolicy.NewPolicyEngine(shellpolicy.WithRelaxed(lenient))
+	}
+}
+
 // Name returns the guardrail's identifier — surfaces in the failed
 // ToolResult's Error string as `guardrail "shell_policy": …`.
 func (g *ShellGuardrail) Name() string { return "shell_policy" }

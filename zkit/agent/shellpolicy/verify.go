@@ -62,7 +62,10 @@ var verifyDeniedCommands = map[string]bool{
 // requires deliberate evasion" — consistent with the code package's own
 // "powerful and intentionally not a sandbox" stance.
 func (e PolicyEngine) DecideVerify(ir ParsedIR, writeTargets []string) Decision {
-	d := e.Decide(ir)
+	// Verify is always strict: a verify sub-agent must not mutate the
+	// workspace whether or not a kernel sandbox confines it, so the
+	// ergonomic cd/redirect blocks apply even on a relaxed engine.
+	d := e.decide(ir, false)
 	if d.IsBlocked {
 		return d
 	}

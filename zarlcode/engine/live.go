@@ -13,6 +13,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -563,6 +564,18 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 			}
 		}
 		deps.ReadBeforeWriteMode = l.settings.ReadBeforeWriteMode(l.parentContext())
+		// Strict profile follows the sandbox: ON (the kernel is the real
+		// boundary) keeps the static shell/read-before-write blocks; OFF is
+		// the operator's opt-in to an unconfined, high-trust mode, so they
+		// relax rather than provoke python-based evasion. Gated on the
+		// setting (not whether Landlock materialised) so a sandbox that
+		// failed to start stays strict. The ZARLCODE_SANDBOX env override
+		// wins where set, matching the launch path.
+		sandboxOn := l.settings.ShellSandbox(l.parentContext())
+		if enabled, ok := sandbox.EnvOverride(); ok {
+			sandboxOn = enabled
+		}
+		deps.ShellLenient = !sandboxOn
 	}
 	return deps
 }

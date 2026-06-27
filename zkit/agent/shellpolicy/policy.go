@@ -2,18 +2,48 @@ package shellpolicy
 
 import "fmt"
 
-// PolicyEngine converts a ParsedIR into a Decision. The engine has
-// no fields today — decisions are driven entirely by the IR's
-// RiskFlags — but the type stays a struct so a future allow-list
-// (per-workspace overrides, per-skill rules) can slot in without
-// changing every call site.
+// PolicyEngine converts a ParsedIR into a Decision. Decisions are driven
+// by the IR's RiskFlags plus the engine's profile flags (see relaxed);
+// the type stays a struct so future per-workspace / per-skill rules can
+// slot in without changing every call site.
 //
-// The zero value is usable.
-type PolicyEngine struct{}
+// The zero value is usable (strict profile).
+type PolicyEngine struct {
+	// relaxed drops the ERGONOMIC blocks — `cd` and output redirection —
+	// that exist to steer the model toward workspace-aware tools rather
+	// than to enforce safety. The kernel sandbox (zkit/agent/sandbox) is
+	// the real filesystem boundary; when the operator turns it OFF they
+	// have chosen an unconfined, high-trust mode, so these static nags no
+	// longer protect anything and only provoke evasion (e.g. writing
+	// files through `python3 -c`), burning iterations and tokens. When the
+	// sandbox is ON these blocks stay in force as the strict profile.
+	//
+	// Version and syntax blocks are correctness, not nannying, so they
+	// hold in both profiles. The verify profile (DecideVerify) is always
+	// strict regardless of relaxed — a verify sub-agent must not mutate
+	// the workspace whether or not a kernel sandbox confines it.
+	relaxed bool
+}
 
-// NewPolicyEngine returns a ready-to-use engine. The zero value is
-// equivalent; the constructor exists for symmetry.
-func NewPolicyEngine() *PolicyEngine { return &PolicyEngine{} }
+// Option configures a PolicyEngine at construction.
+type Option func(*PolicyEngine)
+
+// WithRelaxed selects the relaxed profile: the ergonomic `cd` and output
+// redirect blocks step aside. Pass when the kernel sandbox is OFF. See
+// PolicyEngine.relaxed.
+func WithRelaxed(relaxed bool) Option {
+	return func(e *PolicyEngine) { e.relaxed = relaxed }
+}
+
+// NewPolicyEngine returns a ready-to-use engine. With no options it is the
+// strict profile, equivalent to the zero value.
+func NewPolicyEngine(opts ...Option) *PolicyEngine {
+	e := &PolicyEngine{}
+	for _, o := range opts {
+		o(e)
+	}
+	return e
+}
 
 // Decide converts an IR into a Decision. Block rules are evaluated
 // in priority order; the first match wins. ReasonCodes always echo
@@ -34,7 +64,17 @@ func NewPolicyEngine() *PolicyEngine { return &PolicyEngine{} }
 //
 // Anything else passes. Operator / Expansion / Subshell flags are
 // informational only; the agent is meant to be capable, not nannied.
-func (PolicyEngine) Decide(ir ParsedIR) Decision {
+//
+// In the relaxed profile the ergonomic `cd` and redirect blocks step
+// aside (the kernel sandbox is off; see PolicyEngine.relaxed).
+func (e PolicyEngine) Decide(ir ParsedIR) Decision {
+	return e.decide(ir, e.relaxed)
+}
+
+// decide is the shared rule body. relaxed drops the ergonomic blocks;
+// callers pass e.relaxed for the standard profile and false for verify,
+// which must stay strict regardless of the engine's profile.
+func (PolicyEngine) decide(ir ParsedIR, relaxed bool) Decision {
 	d := Decision{ReasonCodes: append([]ReasonCode(nil), ir.RiskFlags...)}
 
 	if ir.Version != IRVersion {
@@ -53,6 +93,12 @@ func (PolicyEngine) Decide(ir ParsedIR) Decision {
 		if len(ir.ParseErrors) > 0 {
 			d.BlockReason += " (parser said: " + ir.ParseErrors[0] + ")"
 		}
+		return d
+	}
+
+	// cd and redirect are ergonomic steering, not safety. With the kernel
+	// sandbox off (relaxed) they only provoke evasion, so let them pass.
+	if relaxed {
 		return d
 	}
 

@@ -3,6 +3,7 @@ package openaicodex_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -261,8 +262,60 @@ func TestProvider_HTTPErrorSurfacesAsChunkError(t *testing.T) {
 	if lastErr == nil {
 		t.Fatalf("expected error chunk")
 	}
-	if !strings.Contains(lastErr.Error(), "429") {
-		t.Errorf("err = %v, want 429 in message", lastErr)
+	if !llm.IsRateLimitError(lastErr) {
+		t.Errorf("err = %v, want a typed rate-limit error", lastErr)
+	}
+	// The clean body message is surfaced; the raw JSON / status code is not.
+	if !strings.Contains(lastErr.Error(), "rate limit") {
+		t.Errorf("err = %v, want the provider's body message", lastErr)
+	}
+	if strings.Contains(lastErr.Error(), "{") {
+		t.Errorf("err = %v, should not contain raw JSON", lastErr)
+	}
+}
+
+// A Codex usage-limit 429 carries its reset window and human message in the
+// JSON body (not headers). The provider must extract them into the typed
+// error and never leak the raw JSON.
+func TestProvider_UsageLimitBodyParsedIntoRateLimitError(t *testing.T) {
+	t.Parallel()
+	const body = `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"prolite","resets_at":1782686042,"eligible_promo":null,"resets_in_seconds":203391}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	p, _ := openaicodex.NewProvider(
+		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
+		openaicodex.WithBaseURL(srv.URL),
+		openaicodex.WithNoRetry(),
+	)
+	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+		Messages: []llm.Message{{Role: "user", Content: "x"}},
+		Stream:   true,
+	})
+	var lastErr error
+	for _, cerr := range seq {
+		if cerr != nil {
+			lastErr = cerr
+		}
+	}
+	rle, ok := errors.AsType[*llm.RateLimitError](lastErr)
+	if !ok {
+		t.Fatalf("err = %v, want *llm.RateLimitError", lastErr)
+	}
+	if rle.Message != "The usage limit has been reached" {
+		t.Errorf("Message = %q, want the clean body message", rle.Message)
+	}
+	if want := time.Unix(1782686042, 0); !rle.ResetAt.Equal(want) {
+		t.Errorf("ResetAt = %v, want %v", rle.ResetAt, want)
+	}
+	if rle.RetryAfter != 203391*time.Second {
+		t.Errorf("RetryAfter = %v, want %v", rle.RetryAfter, 203391*time.Second)
+	}
+	if strings.Contains(rle.Error(), "{") || strings.Contains(rle.Error(), "resets_at") {
+		t.Errorf("error string leaks raw JSON: %q", rle.Error())
 	}
 }
 

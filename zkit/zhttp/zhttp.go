@@ -103,8 +103,7 @@ func DecodeJSON(r *http.Request, v any, maxBytes int64) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			return fmt.Errorf("request body exceeds %d-byte limit", maxBytes)
 		}
 		return fmt.Errorf("decode body: %w", err)
