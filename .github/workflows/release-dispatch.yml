@@ -48,6 +48,11 @@ concurrency:
 
 permissions:
   contents: write
+  # The "verify zarlcode release workflow" step calls `gh workflow run
+  # release.yml`, which the GITHUB_TOKEN can only do with actions: write.
+  # Without it that dispatch returns HTTP 403 (Resource not accessible by
+  # integration) and the publisher never runs off a dispatch.
+  actions: write
 
 jobs:
   plan-and-release:
