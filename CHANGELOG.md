@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.0] — 2026-06-27
+
+`zkit/v0.2.0`
+
+### Added
+
+- New agent subsystems: `workflow` (graph executor for multi-node flows), `retrieval` (chunking, embedding, and vector-store search), `hitl` (human-in-the-loop review and steering), `checkpoint` (run state store), and `trace` (JSONL event exporter).
+- LLM provider rate-limit classification across anthropic, openai, openai-codex, google, and claude-code, surfacing reset/retry timing to the runner.
+
+### Fixed
+
+- Malformed tool-call JSON emitted as text (transposed or missing brackets) is now recovered by a balanced-bracket fast path in `toolparse`, and a runner guardrail re-prompts the model for anything unrecoverable — instead of the call leaking into the transcript as prose.
+
+## [v0.1.5] — 2026-06-27
+
+`zarlcode/v0.1.5`
+
+### Changed
+
+- Bumped the `zkit` dependency to `v0.2.0`, picking up the malformed tool-call recovery and provider rate-limit handling.
+
+### Added
+
+- TUI rate-limit display showing provider reset/retry state.
+
 ## [v0.1.0] — 2025-XX-XX
 
 ### Initial release
