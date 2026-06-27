@@ -3,8 +3,8 @@ title: Getting started
 description: Install zkit and run your first agent loop in about thirty lines of Go.
 ---
 
-zkit is a set of building blocks for AI applications, shipped as
-plain Go packages — no framework, no codegen step, no YAML. You pick
+zkit is the reusable Go agent toolkit underneath zarlcode. It ships as
+plain Go packages — no framework runtime, no codegen step, no YAML. You pick
 the pieces you need and wire them together. The smallest useful
 composition is an LLM provider, a tool registry, and a runner; the
 runner drives the loop.
@@ -12,7 +12,8 @@ runner drives the loop.
 ## Install
 
 ```sh
-go get github.com/zarldev/zarlmono/zkit@v0.1.2```
+go get github.com/zarldev/zarlmono/zkit@v0.1.3
+```
 
 Go 1.26 or later. Everything below imports from `zkit/...`.
 

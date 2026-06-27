@@ -9,7 +9,9 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/options"
@@ -245,6 +247,9 @@ func (p *Provider) postResponses(
 		// the provider's complete error body.
 		return nil, fmt.Errorf("openaicodex: status %d (error body truncated: %w): %s", resp.StatusCode, readErr, msg)
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, codexRateLimitError(msg, resp.Header)
+	}
 	return nil, fmt.Errorf("openaicodex: status %d: %s", resp.StatusCode, msg)
 }
 
@@ -278,4 +283,73 @@ func stripSystemMessages(msgs []llm.Message) []llm.Message {
 		out = append(out, m)
 	}
 	return out
+}
+
+// codexErrorBody is the Codex JSON error envelope. The rate-limit window
+// rides in the body (resets_at unix seconds / resets_in_seconds) rather than
+// in response headers, and message is a clean human string.
+type codexErrorBody struct {
+	Error struct {
+		Type            string `json:"type"`
+		Message         string `json:"message"`
+		ResetsAt        int64  `json:"resets_at"`
+		ResetsInSeconds int64  `json:"resets_in_seconds"`
+	} `json:"error"`
+}
+
+// codexRateLimitError builds a *llm.RateLimitError from a Codex 429 response.
+// It parses the JSON body for the human message and reset window so the raw
+// JSON is never surfaced to the user, falling back to the standard headers
+// when the body carries no timing.
+func codexRateLimitError(body string, header http.Header) *llm.RateLimitError {
+	rle := &llm.RateLimitError{Message: "codex: usage limit reached"}
+
+	var parsed codexErrorBody
+	if err := json.Unmarshal([]byte(body), &parsed); err == nil {
+		if m := strings.TrimSpace(parsed.Error.Message); m != "" {
+			rle.Message = m
+		}
+		if parsed.Error.ResetsAt > 0 {
+			rle.ResetAt = time.Unix(parsed.Error.ResetsAt, 0)
+		}
+		if parsed.Error.ResetsInSeconds > 0 {
+			rle.RetryAfter = time.Duration(parsed.Error.ResetsInSeconds) * time.Second
+		}
+		// A usage-limit verdict with no reset window is a hard stop; one
+		// that resets is transient.
+		rle.Permanent = parsed.Error.Type == "usage_limit_reached" &&
+			rle.ResetAt.IsZero() && rle.RetryAfter == 0
+	}
+
+	if rle.RetryAfter == 0 {
+		if ra := header.Get("Retry-After"); ra != "" {
+			rle.RetryAfter = parseRetryAfter(ra)
+		}
+	}
+	if rle.ResetAt.IsZero() {
+		if rls := header.Get("X-Ratelimit-Reset"); rls != "" {
+			rle.ResetAt = parseRateLimitReset(rls)
+		}
+	}
+	return rle
+}
+
+func parseRetryAfter(v string) time.Duration {
+	if d, err := strconv.Atoi(v); err == nil && d > 0 {
+		return time.Duration(d) * time.Second
+	}
+	if t, err := time.Parse(time.RFC1123, v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+func parseRateLimitReset(v string) time.Time {
+	sec, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }

@@ -63,6 +63,28 @@ func TestShellGuardrail_RedirectRejectsWithGuidance(t *testing.T) {
 	}
 }
 
+func TestShellGuardrail_LenientPassesCdAndRedirect(t *testing.T) {
+	t.Parallel()
+	g := guardrails.NewShellGuardrail("bash", guardrails.WithShellLenient(true))
+	for _, cmd := range []string{"cd /tmp", "echo hi > /tmp/x"} {
+		if err := g.Before(t.Context(), bashCall(cmd)); err != nil {
+			t.Errorf("lenient %q: want pass, got %v", cmd, err)
+		}
+	}
+	// Correctness still holds even when lenient.
+	if err := g.Before(t.Context(), bashCall("echo 'unterminated")); err == nil {
+		t.Error("lenient: syntax error must still reject")
+	}
+}
+
+func TestShellGuardrail_LenientFalseKeepsStrict(t *testing.T) {
+	t.Parallel()
+	g := guardrails.NewShellGuardrail("bash", guardrails.WithShellLenient(false))
+	if err := g.Before(t.Context(), bashCall("echo hi > /tmp/x")); err == nil {
+		t.Error("lenient=false: redirect must still reject")
+	}
+}
+
 func TestShellGuardrail_OtherToolsUntouched(t *testing.T) {
 	t.Parallel()
 	g := guardrails.NewShellGuardrail("bash")

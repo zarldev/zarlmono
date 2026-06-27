@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -430,9 +431,12 @@ func extractReasoningFromMessage(msg openai.ChatCompletionMessage) string {
 
 // userFacingAPIError converts SDK API errors into concise messages while
 // preserving non-API errors unchanged for wrapping and cancellation checks.
+// For rate-limit (429) and quota errors it returns a *RateLimitError with
+// retry-after / reset timing parsed from the HTTP response headers so the
+// caller can surface countdowns or permanent-billing notices.
 func userFacingAPIError(err error) error {
-	var apiErr *openai.Error
-	if !errors.As(err, &apiErr) || apiErr.Message == "" {
+	apiErr, ok := errors.AsType[*openai.Error](err)
+	if !ok || apiErr.Message == "" {
 		return err
 	}
 	msg := apiErr.Message
@@ -461,7 +465,70 @@ func userFacingAPIError(err error) error {
 	if apiErr.StatusCode > 0 {
 		msg = fmt.Sprintf("provider rejected request (%d %s): %s", apiErr.StatusCode, http.StatusText(apiErr.StatusCode), msg)
 	}
+
+	// Surface rate-limit / quota details when available so the caller
+	// can show a countdown rather than a bare error string.
+	if isRateLimitAPIError(apiErr) {
+		rle := &llm.RateLimitError{
+			Message:   msg,
+			Permanent: isPermanentQuotaError(apiErr),
+		}
+		if resp := apiErr.Response; resp != nil {
+			rle.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
+			rle.ResetAt = parseRateLimitReset(resp.Header.Get("X-Ratelimit-Reset"))
+		}
+		return rle
+	}
+
 	return fmt.Errorf("%s", msg)
+}
+
+// isRateLimitAPIError reports whether apiErr is a rate limit — driven by the
+// HTTP status code, the authoritative signal. OpenAI returns 429 for both
+// transient rate limits and quota/billing exhaustion. (The old code scanned
+// the free-form Message for "rate"/"limit"/"quota", which misfired:
+// "generate" contains "rate", many messages contain "limit".)
+func isRateLimitAPIError(apiErr *openai.Error) bool {
+	return apiErr.StatusCode == http.StatusTooManyRequests
+}
+
+// isPermanentQuotaError distinguishes a hard quota/billing stop (waiting
+// won't clear it) from a transient 429. The status code can't express this —
+// both are 429 — so it reads OpenAI's stable insufficient_quota type/code
+// enum, not the message text.
+func isPermanentQuotaError(apiErr *openai.Error) bool {
+	return strings.EqualFold(apiErr.Code, "insufficient_quota") ||
+		strings.EqualFold(apiErr.Type, "insufficient_quota")
+}
+
+// parseRetryAfter parses the Retry-After header value which is either
+// a decimal number of seconds or an HTTP-date (RFC 1123).
+func parseRetryAfter(v string) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if d, err := strconv.Atoi(v); err == nil && d > 0 {
+		return time.Duration(d) * time.Second
+	}
+	if t, err := time.Parse(time.RFC1123, v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// parseRateLimitReset parses the X-RateLimit-Reset header as a Unix
+// timestamp (integer seconds).
+func parseRateLimitReset(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	sec, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
 
 // nonStreamCompletion handles non-streaming responses using the official OpenAI SDK.

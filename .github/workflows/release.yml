@@ -136,7 +136,7 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          python3 scripts/generate_homebrew_formula.py \
+          go run ./tools/genformula/cmd/genformula \
             --version "${TAG#zarlcode/}" \
             --checksums artifacts/checksums.txt \
             --output homebrew/zarlcode.rb

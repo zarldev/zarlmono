@@ -8,7 +8,6 @@ import (
 	"iter"
 	"log/slog"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -202,7 +201,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			} else {
 				slog.ErrorContext(ctx, "google stream", "error", streamErr, "attempt", attempt)
 			}
-			yield(llm.CompletionChunk{Done: true}, fmt.Errorf("gemini stream: %w", streamErr))
+			yield(llm.CompletionChunk{Done: true}, rateLimitError(streamErr, fmt.Errorf("gemini stream: %w", streamErr)))
 			return
 		}
 		wait := backoffWithRetryAfter(streamErr, backoff)
@@ -307,28 +306,24 @@ func emitPart(part *genai.Part, st *streamAttempt, yield func(llm.CompletionChun
 	return true
 }
 
-// isRateLimit returns true when err carries a 429 from the genai SDK.
-// Strings are searched as a fallback for transports that don't surface
-// the typed APIError.
+// isRateLimit returns true when err carries a 429 from the genai SDK. It
+// keys off the typed APIError's HTTP status code — the authoritative signal —
+// rather than scanning the message text for "429"/"rate limit", which is
+// fragile (ordinary messages can contain those substrings).
 func isRateLimit(err error) bool {
 	if err == nil {
 		return false
 	}
-	var apiErr genai.APIError
-	if errors.As(err, &apiErr) && apiErr.Code == 429 {
-		return true
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "429") || strings.Contains(strings.ToLower(msg), "rate limit") ||
-		strings.Contains(strings.ToLower(msg), "resource_exhausted")
+	apiErr, ok := errors.AsType[genai.APIError](err)
+	return ok && apiErr.Code == 429
 }
 
 // backoffWithRetryAfter returns the sleep duration to wait before the
 // next retry. Honours a Retry-After hint inside the genai APIError when
 // present; falls back to the caller-supplied exponential value.
 func backoffWithRetryAfter(err error, fallback time.Duration) time.Duration {
-	var apiErr genai.APIError
-	if !errors.As(err, &apiErr) {
+	apiErr, ok := errors.AsType[genai.APIError](err)
+	if !ok {
 		return fallback
 	}
 	for _, d := range apiErr.Details {
@@ -444,5 +439,22 @@ func WithClient(client *genai.Client) options.Option[Provider] {
 		if client != nil {
 			p.client = client
 		}
+	}
+}
+
+// rateLimitError wraps a genai stream error as a *llm.RateLimitError when
+// the error is a rate-limit (429), extracting the retry delay from the SDK's
+// APIError details. Otherwise returns fallback unchanged.
+func rateLimitError(err error, fallback error) error {
+	if !isRateLimit(err) {
+		return fallback
+	}
+	msg := "gemini rate limit"
+	if apiErr, ok := errors.AsType[genai.APIError](err); ok && apiErr.Message != "" {
+		msg = apiErr.Message
+	}
+	return &llm.RateLimitError{
+		Message:    msg,
+		RetryAfter: backoffWithRetryAfter(err, 0),
 	}
 }

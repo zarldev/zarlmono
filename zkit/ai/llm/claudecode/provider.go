@@ -220,6 +220,9 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	}
 	if waitErr != nil {
 		if stderrText != "" {
+			if rle := claudeRateLimitFromStderr(waitErr, stderrText); rle != nil {
+				return rle
+			}
 			return fmt.Errorf("claudecode: claude exited: %w: %s", waitErr, stderrText)
 		}
 		return fmt.Errorf("claudecode: claude exited: %w", waitErr)
@@ -744,4 +747,20 @@ func thinkingText(v any) string {
 		}
 	}
 	return b.String()
+}
+
+// claudeRateLimitFromStderr checks whether the CLI stderr output
+// indicates a rate limit and, if so, returns a *llm.RateLimitError.
+// Claude Code CLI rate-limit messages typically mention "rate limit"
+// or "too many requests" and may include a retry duration.
+func claudeRateLimitFromStderr(waitErr error, stderrText string) *llm.RateLimitError {
+	lo := strings.ToLower(stderrText)
+	if !strings.Contains(lo, "rate limit") &&
+		!strings.Contains(lo, "too many requests") &&
+		!strings.Contains(lo, "usage limit") {
+		return nil
+	}
+	return &llm.RateLimitError{
+		Message: fmt.Sprintf("claude exited: %v — %s", waitErr, stderrText),
+	}
 }

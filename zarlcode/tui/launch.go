@@ -171,6 +171,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		model := New()
 		model.SetWorkspace(root, "")
 		model.SetStartupFailure(root, "provider startup", fmt.Sprintf("provider %q: %v", spec.Name, err))
+		model.SetSettings(settings)
 		return &Zarlcode{
 			root:  root,
 			ws:    ws,

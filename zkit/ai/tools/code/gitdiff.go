@@ -79,8 +79,7 @@ func untrackedPaths(ctx context.Context, workspace string) []string {
 func untrackedDiff(ctx context.Context, workspace, path string) (string, error) {
 	out, err := exec.CommandContext(ctx, "git", "-C", workspace, "diff", "--no-index", "/dev/null", path).Output()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && len(out) > 0 {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 && len(out) > 0 {
 			return string(out), nil
 		}
 		return "", err

@@ -316,6 +316,23 @@ func DefaultEmptyResponseDetector() runner.EmptyResponseDetector {
 	}
 }
 
+// DefaultMalformedToolCallDetector returns the production guard for a tool call
+// the model emitted as malformed JSON that no recovery path could parse — one
+// re-emit correction per run before the turn is allowed to stand as prose.
+func DefaultMalformedToolCallDetector() runner.MalformedToolCallDetector {
+	return runner.MalformedToolCallDetector{MaxCorrections: 1}
+}
+
+// DefaultTurnQuality is the canonical content-side guardrail chain: catch a
+// malformed/unrecovered tool call first (re-emit), then a fully empty turn
+// (make progress). Both are bounded per run.
+func DefaultTurnQuality() runner.TurnQuality {
+	return runner.ChainTurnQuality{
+		DefaultMalformedToolCallDetector(),
+		DefaultEmptyResponseDetector(),
+	}
+}
+
 // StandardOptions returns the canonical loop-behaviour options every
 // consumer shares: chat template, iteration cap, tool concurrency,
 // adaptive keep-recent, the per-iteration watchdogs, the empty-turn
@@ -336,7 +353,7 @@ func DefaultEmptyResponseDetector() runner.EmptyResponseDetector {
 func StandardOptions(t Tuning) []options.Option[runner.Runner] {
 	opts := []options.Option[runner.Runner]{
 		runner.WithAdaptiveKeepRecent(AdaptiveKeepTargetTokens, AdaptiveKeepMin, AdaptiveKeepMax),
-		runner.WithTurnQuality(DefaultEmptyResponseDetector()),
+		runner.WithTurnQuality(DefaultTurnQuality()),
 		runner.WithFinalizeWarn(runner.FinalizeWarn{RemainingThreshold: FinalizeWarnThreshold}),
 		runner.WithIterationTimeout(IterationTimeout),
 		runner.WithStreamIdleTimeout(StreamIdleTimeout),

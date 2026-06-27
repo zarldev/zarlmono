@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -249,7 +252,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		// canonical terminal chunk; the error rides the second yield value.
 		yield(llm.CompletionChunk{
 			Done: true,
-		}, fmt.Errorf("stream error: %w", err))
+		}, anthropicRateLimitError(err, fmt.Errorf("stream error: %w", err)))
 		return
 	}
 
@@ -335,7 +338,7 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 		// canonical terminal chunk; the error rides the second yield value.
 		yield(llm.CompletionChunk{
 			Done: true,
-		}, fmt.Errorf("anthropic sdk: %w", err))
+		}, anthropicRateLimitError(err, fmt.Errorf("anthropic sdk: %w", err)))
 		return
 	}
 
@@ -590,4 +593,52 @@ func WithAnthropicModel(model anthropic.Model) options.Option[Provider] {
 	return func(p *Provider) {
 		p.model = model
 	}
+}
+
+// anthropicRateLimitError checks whether err is an Anthropic 429 and, if so,
+// returns a *llm.RateLimitError with RetryAfter / ResetAt parsed from the
+// response headers. Otherwise returns fallback unchanged.
+func anthropicRateLimitError(err error, fallback error) error {
+	apiErr, ok := errors.AsType[*anthropic.Error](err)
+	if !ok || apiErr.StatusCode != http.StatusTooManyRequests {
+		return fallback
+	}
+	rle := &llm.RateLimitError{
+		Message: fmt.Sprintf("anthropic: %s", http.StatusText(apiErr.StatusCode)),
+	}
+	if resp := apiErr.Response; resp != nil {
+		rle.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
+		rle.ResetAt = parseRateLimitReset(resp.Header.Get("X-Ratelimit-Reset"))
+	}
+	return rle
+}
+
+// parseRetryAfter parses the Retry-After header value which is either
+// a decimal number of seconds or an HTTP-date (RFC 1123).
+func parseRetryAfter(v string) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if d, err := strconv.Atoi(v); err == nil && d > 0 {
+		return time.Duration(d) * time.Second
+	}
+	if t, err := time.Parse(time.RFC1123, v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// parseRateLimitReset parses the X-RateLimit-Reset header as a Unix
+// timestamp (integer seconds).
+func parseRateLimitReset(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	sec, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }

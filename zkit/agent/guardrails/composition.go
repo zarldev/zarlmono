@@ -21,6 +21,16 @@ type Deps struct {
 	ReadBeforeWriteMode ReadBeforeWriteMode
 	ExtraEvidence       TaskCallLedger
 
+	// ShellLenient relaxes the static guardrails that exist to steer the
+	// model rather than to enforce safety: the shell policy's ergonomic
+	// cd/redirect blocks step aside and a strict read-before-write mode is
+	// softened to advisory. The zarlcode engine sets it when the kernel
+	// sandbox setting is OFF — with no kernel boundary the operator has
+	// chosen an unconfined, high-trust mode, so these blocks only provoke
+	// evasion (file writes through `python3 -c`) and burn tokens. Off
+	// (strict) by default; the sandbox-on path keeps every block in force.
+	ShellLenient bool
+
 	// Optional override. Nil keeps the decompose guardrail's deterministic path.
 	DecomposeJudge VerdictJudge
 
@@ -66,12 +76,19 @@ func PostSchemaGuardrails(deps Deps) []Guardrail {
 	}
 
 	guards := []Guardrail{
-		NewShellGuardrail(code.ToolNameBash),
+		NewShellGuardrail(code.ToolNameBash, WithShellLenient(deps.ShellLenient)),
 		NewSkillHintGuardrail(deps.SkillLookup),
 		decompose,
 		NewFanoutGuardrail(deps.FanoutLimits),
 	}
-	if rbw := NewReadBeforeWriteGuardrail(deps.ExtraEvidence, deps.ReadBeforeWriteMode); rbw != nil {
+	// With the sandbox off, soften a strict read-before-write to advisory:
+	// strict mode blocks edit/write tool calls, which only pushes the model
+	// to write through bash/python where this guardrail can't see it.
+	rbwMode := deps.ReadBeforeWriteMode
+	if deps.ShellLenient && rbwMode == ReadBeforeWriteStrict {
+		rbwMode = ReadBeforeWriteAdvisory
+	}
+	if rbw := NewReadBeforeWriteGuardrail(deps.ExtraEvidence, rbwMode); rbw != nil {
 		guards = append(guards, rbw)
 	}
 	if deps.TestEdit != nil {

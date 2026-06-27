@@ -80,7 +80,7 @@ type taskRun struct {
 // completed builds the TerminalCompleted result: the model emitted no more
 // tool calls and the run ended on its own terms.
 func (t *taskRun) completed(ctx context.Context) TaskResult {
-	t.r.publishConversationEnded(ctx, t.spec, TerminalCompleted, "", time.Since(t.start), t.iter+1, t.totalUsage)
+	t.r.publishConversationEnded(ctx, t.spec, TerminalCompleted, nil, time.Since(t.start), t.iter+1, t.totalUsage)
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalCompleted,
@@ -97,7 +97,7 @@ func (t *taskRun) completed(ctx context.Context) TaskResult {
 // maxedOut builds the TerminalMaxIterations result: the loop exhausted its
 // iteration cap without a terminal condition.
 func (t *taskRun) maxedOut(ctx context.Context) TaskResult {
-	t.r.publishConversationEnded(ctx, t.spec, TerminalMaxIterations, "", time.Since(t.start), t.maxIter, t.totalUsage)
+	t.r.publishConversationEnded(ctx, t.spec, TerminalMaxIterations, nil, time.Since(t.start), t.maxIter, t.totalUsage)
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalMaxIterations,
@@ -122,7 +122,7 @@ func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
 	// so the terminal event carries the run's context — the publish path
 	// is cancellation-driven, so the original ctx is already Done. A sink
 	// that honors ctx cancellation would otherwise drop this event.
-	t.r.publishConversationEnded(context.WithoutCancel(ctx), t.spec, TerminalCancelled, "", time.Since(t.start), t.iter, t.totalUsage)
+	t.r.publishConversationEnded(context.WithoutCancel(ctx), t.spec, TerminalCancelled, nil, time.Since(t.start), t.iter, t.totalUsage)
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalCancelled,
@@ -144,7 +144,7 @@ func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
 // path. Unlike the other exits it leaves SystemPrompt empty (long-standing
 // shape; consumers of error results read Err, not the prompt).
 func (t *taskRun) errored(ctx context.Context, err error) TaskResult {
-	t.r.publishConversationEnded(ctx, t.spec, TerminalError, err.Error(), time.Since(t.start), t.iter+1, t.totalUsage)
+	t.r.publishConversationEnded(ctx, t.spec, TerminalError, err, time.Since(t.start), t.iter+1, t.totalUsage)
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalError,

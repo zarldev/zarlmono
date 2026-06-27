@@ -7,11 +7,65 @@
                             ╱-        ╱    ╱    ╱     ╱   ╱      ╱  ╱      ___╱     ╱   ╱     ╱   ╱       _╱
                            ╱        _╱         ╱        _╱      ╱__╱         ╱         ╱         ╱       _╱
                            ╲________╱╲___╱____╱╲____╱___╱╲________╱╲________╱╲________╱╲________╱╲_______╱
- 
+```
 
-Terminal-native coding agent. Stream an LLM into your workspace — it reads, writes, runs commands, searches the web, and spawns sub-agents while you steer from a keyboard-driven TUI.
+**zarlcode is a terminal coding agent.**
 
-Built on [`zkit`](../zkit/). Plan first, execute second, rewind anytime.
+It runs in the workspace you launched it from, shows every model turn and tool call in a TUI, and lets you switch between read-only planning and file-changing build work. It can read and edit files, run commands, search the web, connect MCP tools, and delegate focused work to sub-agents. Sessions, settings, plans, and encrypted keys live locally under `~/.zarlcode`.
+
+Built on [`zkit`](../zkit/), the reusable Go agent toolkit in this repo.
+
+![zarlcode in action](https://zarldev.github.io/zarlmono/zarlcode-hero2.gif)
+
+## Install
+
+```bash
+# latest tagged release
+go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.4
+
+# or Homebrew
+brew install zarldev/tap/zarlcode
+
+# or from a checkout
+go tool task zarlcode
+```
+
+First run:
+
+```bash
+zarlcode init
+zarlcode keys set <provider>   # anthropic, openai, gemini, deepseek, ...
+zarlcode
+```
+
+Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and `openai-codex`. Run `zarlcode keys --help` for provider-specific setup.
+
+## Why use it
+
+zarlcode is built around a simple loop: inspect the workspace, make the change,
+show the evidence, and keep the whole run recoverable.
+
+Use **Plan** mode when you want the agent to read and reason without touching the
+workspace. Switch to **Build** mode when it is time to edit files, run commands,
+or call external tools. The same session can move between both modes.
+
+The TUI is there to keep the run legible. Tool calls, command output, diffs,
+sub-agent results, context pressure, and changed files are visible while the
+model works, instead of disappearing into a log stream.
+
+Sessions are local and resumable. Provider keys live in the local vault,
+workspace settings can override global defaults, and `zarlcode -continue` picks
+up the last session for the current repo.
+
+## Common commands
+
+```bash
+zarlcode                               # launch interactive TUI
+zarlcode -continue                     # resume last session in this workspace
+zarlcode --headless --prompt-file t.md # run one task without the TUI
+zarlcode keys list                     # view stored provider keys, masked
+zarlcode upgrade                       # self-update from GitHub Releases
+```
 
 ## Concepts
 
@@ -42,13 +96,30 @@ zarlcode -continue             # Resume last session
 
 Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and `openai-codex`. Run `zarlcode keys --help` for provider-specific setup.
 
-## Capabilities
+## What it can do
 
-**File tools.** Read, write, and edit files, plus `grep` and `glob` for search. All file ops are workspace-bounded and tracked.
+### Work in the repo
 
-**Shell.** `bash` with foreground (blocking, 600s max) and background (detached process) modes. Long output is spooled to disk and tail-summarised. Guardrail policies block destructive patterns.
+zarlcode uses workspace-scoped tools for file reads, anchored edits, search, and
+shell commands. Long-running commands are tracked as background processes, so a
+dev server or slow test run does not freeze the session. Output is capped in the
+conversation and spooled to disk when it gets large.
 
-**Web.** `web_search` via a local SearXNG instance, `web_fetch` with headless Chrome fallback for JS-heavy pages.
+### Reach outside the repo when asked
+
+`web_search` uses a configured SearXNG instance. `web_fetch` reads page text and
+can fall back to a real browser for JavaScript-heavy pages. MCP servers can add
+extra tools to the same flat tool list once connected.
+
+### Keep large tasks manageable
+
+Sub-agents run focused child tasks in fresh context and return summaries to the
+parent run. Long sessions compact older history when context gets tight. Skills
+and agent profiles let a workspace carry its own operating notes without baking
+them into the binary.
+
+Dynamic tool authoring also exists, but it is opt-in rather than part of the
+default TUI surface.
 
 ### Browser-backed `web_fetch`
 
@@ -89,16 +160,6 @@ Common fixes for browser fallback warnings:
 - Browser warnings while HTTP content is still returned: the fast HTTP path
   succeeded, but the optional browser fallback failed; fix Chrome setup only if
   you need rendered JavaScript content.
-
-**MCP servers.** Connect to Model Context Protocol servers (`mcp_connect` / `mcp_disconnect`) — their tools register on the flat tool list and are callable like any other registered tool. stdio (subprocess) and HTTP transports.
-
-**Sub-agents.** `spawn_agent` dispatches focused sub-tasks to fresh agents — run a researcher, reviewer, and coder in parallel without polluting your main context. Mode enforcement (`explore` / `verify` / `implement`) keeps sub-agents within bounds.
-
-**Dynamic tools.** Optional dynamic-tool support can author Go tools from within a session via `new_tool`, compile them, and register them immediately. It is not part of the default TUI tool surface unless explicitly enabled.
-
-**Compaction.** Long sessions auto-compact: older messages are summarised, context stays lean, the agent keeps working. Structural, summary, and executive compaction strategies.
-
-**Skills.** Hot-reloadable capability guides from workspace, home, and source-tree directories. Load a skill mid-session when the task matches.
 
 ## TUI
 

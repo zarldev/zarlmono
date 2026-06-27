@@ -96,10 +96,14 @@ type ConversationStartedMsg struct {
 // (Depth > 0) whose token cost is otherwise invisible at the parent's
 // session counters.
 type ConversationEndedMsg struct {
-	TaskID           string
-	Depth            int
-	Reason           runner.TerminalReason
-	Error            string
+	TaskID string
+	Depth  int
+	Reason runner.TerminalReason
+	Error  string
+	// RateLimit carries structured rate-limit timing when the terminal
+	// error was a rate limit; nil otherwise. The consumer renders from
+	// these fields rather than re-parsing Error.
+	RateLimit        *llm.RateLimitError
 	Duration         time.Duration
 	Iterations       int
 	TotalUsage       *llm.Usage

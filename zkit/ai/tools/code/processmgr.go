@@ -369,8 +369,7 @@ func (m *ProcessManager) waitAndReap(proc *managedProcess, drainWG *sync.WaitGro
 	proc.exitedAt = time.Now()
 	proc.reapAt = proc.exitedAt.Add(m.reapAfter)
 	if waitErr != nil {
-		var ee *exec.ExitError
-		if errors.As(waitErr, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](waitErr); ok {
 			proc.exitCode = ee.ExitCode()
 		} else {
 			// Non-exit error (pipe closed, etc.). Surface -1 so the

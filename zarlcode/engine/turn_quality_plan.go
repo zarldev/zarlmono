@@ -22,12 +22,14 @@ type planAwareTurnQuality struct {
 	mu sync.Mutex
 
 	base         runner.EmptyResponseDetector
+	malformed    runner.MalformedToolCallDetector
 	store        *livePlanStore
 	isPlan       func() bool
 	startVersion uint64
 
-	emptyCorrectionSent bool
-	planCorrectionSent  bool
+	malformedCorrectionSent bool
+	emptyCorrectionSent     bool
+	planCorrectionSent      bool
 }
 
 func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool) runner.TurnQuality {
@@ -37,6 +39,7 @@ func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool) runner.Tu
 	}
 	return &planAwareTurnQuality{
 		base:         coderunner.DefaultEmptyResponseDetector(),
+		malformed:    coderunner.DefaultMalformedToolCallDetector(),
 		store:        store,
 		isPlan:       isPlan,
 		startVersion: startVersion,
@@ -47,6 +50,9 @@ func (q *planAwareTurnQuality) Inspect(content string, toolCalls []llm.ToolCall)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if decision := q.inspectMalformed(content, toolCalls); decision.Correction != "" {
+		return decision
+	}
 	if decision := q.inspectEmpty(content, toolCalls); decision.Correction != "" {
 		return decision
 	}
@@ -62,6 +68,19 @@ func (q *planAwareTurnQuality) Inspect(content string, toolCalls []llm.ToolCall)
 	}
 	q.planCorrectionSent = true
 	return runner.TurnQualityDecision{Correction: finalizePlanCorrection}
+}
+
+func (q *planAwareTurnQuality) inspectMalformed(content string, toolCalls []llm.ToolCall) runner.TurnQualityDecision {
+	if q.malformedCorrectionSent {
+		return runner.TurnQualityDecision{}
+	}
+	decision := q.malformed.Inspect(content, toolCalls)
+	if decision.Correction == "" {
+		return runner.TurnQualityDecision{}
+	}
+	q.malformedCorrectionSent = true
+	decision.MaxCorrections = 0
+	return decision
 }
 
 func (q *planAwareTurnQuality) inspectEmpty(content string, toolCalls []llm.ToolCall) runner.TurnQualityDecision {

@@ -433,6 +433,7 @@ func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
 		Depth:            e.Depth,
 		Reason:           e.Reason,
 		Error:            e.Error,
+		RateLimit:        e.RateLimit,
 		Duration:         e.Duration,
 		Iterations:       e.Iterations,
 		TotalUsage:       e.TotalUsage,

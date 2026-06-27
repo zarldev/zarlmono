@@ -116,10 +116,15 @@ type ConversationStarted struct {
 // ParentToolCallID empty; sub-agents echo the field they received on the
 // matching ConversationStarted.
 type ConversationEnded struct {
-	TaskID           taskscope.ID
-	Depth            int
-	Reason           TerminalReason
-	Error            string
+	TaskID taskscope.ID
+	Depth  int
+	Reason TerminalReason
+	Error  string
+	// RateLimit is set when the terminal error is (or wraps) a
+	// *llm.RateLimitError, so subscribers can render structured timing
+	// (retry-after / reset / permanent-quota) without re-parsing Error.
+	// Nil for every non-rate-limit outcome.
+	RateLimit        *llm.RateLimitError
 	Duration         time.Duration
 	Iterations       int
 	TotalUsage       *llm.Usage

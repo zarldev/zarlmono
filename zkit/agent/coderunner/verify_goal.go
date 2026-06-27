@@ -126,8 +126,7 @@ func CommandGoal(root, command string, worktreeState func() string, opts VerifyO
 }
 
 func exitCode(err error) *int {
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		code := exitErr.ExitCode()
 		return &code
 	}

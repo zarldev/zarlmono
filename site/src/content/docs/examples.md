@@ -1,10 +1,10 @@
 ---
 title: Examples
-description: Six runnable demonstrations, each isolating one pattern — most run deterministically with no LLM at all.
+description: Runnable demonstrations, each isolating one pattern — most run deterministically with no LLM at all.
 ---
 
 The [`examples/`](https://github.com/zarldev/zarlmono/tree/main/examples)
-module contains six small, runnable harnesses. Each isolates one
+module contains small, runnable harnesses. Each isolates one
 pattern; each has its own README; most accept `-scripted` and run a
 deterministic fake client so you can watch the machinery without an
 API key.
@@ -17,12 +17,16 @@ API key.
 | `spawn_worker` | Hierarchical decomposition: a coordinator delegates to researcher / reviewer / coder sub-agents with per-mode tool gating and a depth cap. |
 | `stuck_recovery` | The decompose guardrail's graduated response — pass, advisory, fatal — as an agent repeats a failing search, then recovers by delegating. |
 | `long_conversation` | Compactor integration: a pressure-gated compactor keeps a long exploration inside the context window without orphaning tool calls. |
+| `shared_infra` | Shared infrastructure without an LLM: retrieval indexing/search, workflow graph execution, checkpoints, HITL review, and JSONL traces. |
 
 ## Running them
 
 ```sh
 # deterministic, no LLM
 go run ./examples/healthcheck -scripted
+
+# shared infra tour, no LLM or external services
+go run ./examples/shared_infra
 
 # real provider — flags are uniform across examples
 go run ./examples/healthcheck -provider anthropic -model claude-sonnet-4-6
@@ -37,7 +41,7 @@ overrides endpoints.
 
 ## Reading order
 
-Start with `healthcheck` — it's the smallest complete loop with a
+Start with `shared_infra` for the non-LLM infrastructure pieces, then `healthcheck` — it's the smallest complete loop with a
 real goal. Then `releasegate` for guardrails as policy, and
 `stuck_recovery` for what graduated advisories look like in
 practice. `hnupvote` is the one to read when you want to see pursue

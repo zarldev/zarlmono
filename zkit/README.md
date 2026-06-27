@@ -146,6 +146,7 @@ ai/tools/toolkit
 agent/compact
 agent/guardrails
 agent/runner
+ai/retrieval
 cache
 messagebus
 ```
@@ -155,12 +156,17 @@ messagebus
 Useful shared packages that are still shaped by downstream product pressure:
 
 ```text
+agent/checkpoint
 agent/diffrecorder
+agent/hitl
 agent/pursue
+agent/retrieval
 agent/sandbox
 agent/scheduler
 agent/sensor
+agent/trace
 agent/tools/spawn
+agent/workflow
 ai/tools/code
 ai/tools/fetch
 ai/tools/search
@@ -199,6 +205,11 @@ because the local implementation is considered low quality.
 | `agent/compact` | Conversation compaction strategies: structural trimming, LLM summaries, adaptive pressure handling, and executive orchestration. |
 | `agent/coderunner` | Production code-agent toolset assembly shared by TUI, headless, and eval surfaces. |
 | `agent/mcp` | Bridge formatting MCP server-pushed notifications into the runner's inject queue. |
+| `agent/checkpoint` | Transport-neutral run checkpoints plus in-memory storage. |
+| `agent/hitl` | Human-in-the-loop review requests, decisions, risk levels, and approval policies. |
+| `agent/retrieval` | Agent-facing retrieval adapters: prompt-context rendering and retriever-as-tool. |
+| `agent/trace` | Normalized trace events plus runner/workflow exporters such as JSONL. |
+| `agent/workflow` | Typed graph/workflow composition with static edges, conditional routing, events, and graph-as-tool. |
 | `agent/profile` | Code-defined agent execution profiles: persona prompt prefix, model, iteration budget. |
 | `agent/pursue` | Deterministic re-drive harness for oracle-backed agent attempts. |
 | `agent/sandbox` | Kernel-enforced shell confinement: Landlock filesystem allow-list plus optional empty network namespace. |
@@ -227,6 +238,7 @@ because the local implementation is considered low quality.
 | `ai/llm/providertest` | Provider conformance test harness. |
 | `ai/llm/repair` | Tool-call JSON repair helpers. |
 | `ai/llm/templates` | Chat-template metadata and thinking-tag helpers. |
+| `ai/retrieval` | Dependency-light RAG primitives: documents, chunking, embedders, vector stores, retrievers, rerankers, in-memory search, and indexing pipeline. |
 | `ai/tools` | Tool registry, tool-call/result types, typed handlers, schemas, redaction, fallback, and MCP bridge. |
 | `ai/tools/code` | Workspace-scoped file, patch, shell, process, and plan tools. |
 | `ai/tools/dynamic` | Runtime dynamic/binary tool registration and MCP connection tools. |
