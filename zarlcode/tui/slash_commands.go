@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/zarldev/zarlmono/zarlcode/prompts"
 )
 
 type slashCommand struct {
@@ -14,6 +16,7 @@ type slashCommand struct {
 var slashCommands = []slashCommand{
 	{name: "/clear", desc: "clear the conversation"},
 	{name: "/help", desc: "open key help"},
+	{name: "/init", desc: "create or update AGENTS.md"},
 }
 
 func slashStatusHint(input string) string {
@@ -44,6 +47,12 @@ func (m *UI) handleSlashSubmit(text string) tea.Cmd {
 	case "/help":
 		m.overlay.push(newHelpDialog())
 		return nil
+	case "/init":
+		if m.runFn != nil {
+			return m.runFn(prompts.Init)
+		}
+		m.session.SetErrorToast("session not ready — run a turn first")
+		return m.toastExpiryCmd()
 	default:
 		m.session.SetErrorToast("unknown slash command: " + name[0])
 		return m.toastExpiryCmd()

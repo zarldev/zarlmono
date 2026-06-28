@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -233,9 +234,11 @@ func (s *Session) SetActiveModel(model string) {
 // *backends.ProviderRegistry. Defined consumer-side so the cockpit stays
 // decoupled from the registry's full surface.
 type modelMeta interface {
-	// Cost returns the per-1k USD (input, output) rate; ok=false when the
-	// backend isn't metered per token (local / subscription / unknown).
-	Cost(provider, model string) (float64, float64, bool)
+	// ResolveCost returns the per-1k USD (input, output) rate, consulting
+	// the live models.dev snapshot between the per-provider override and
+	// the static table; ok=false when the backend isn't metered per token
+	// (local / subscription / unknown).
+	ResolveCost(ctx context.Context, provider, model string) (float64, float64, bool)
 	IsLocal(provider string) bool
 	IsSubscription(provider string) bool
 }
@@ -257,7 +260,15 @@ func (s *Session) refreshCostBasis() {
 	}
 	s.Run.local = s.meta.IsLocal(s.Provider)
 	s.Run.subscription = s.meta.IsSubscription(s.Provider)
-	if in, out, ok := s.meta.Cost(s.Provider, s.Model); ok {
+	// The models.dev snapshot is pre-warmed and file-cached at startup, so
+	// this is normally an instant cache hit. The short timeout is a
+	// cold-start backstop: if the very first refresh races the warm
+	// goroutine, we degrade to an unmetered basis rather than block the UI
+	// on an HTTP fetch — the next refresh (on a provider/model change)
+	// picks up the now-warm cache.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if in, out, ok := s.meta.ResolveCost(ctx, s.Provider, s.Model); ok {
 		s.Run.inCostPer1k, s.Run.outCostPer1k = in, out
 	} else {
 		s.Run.inCostPer1k, s.Run.outCostPer1k = 0, 0

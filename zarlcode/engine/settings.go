@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
+	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/oauth/codex"
 	"github.com/zarldev/zarlmono/zkit/prefs"
@@ -35,6 +39,14 @@ type Settings struct {
 	Svc      *prefs.Service
 	Registry *backends.ProviderRegistry
 	wsRoot   string
+
+	// modelsDev is the live model-info source wired into Registry. The
+	// warm goroutine (started by OpenSettings, cancelled in Close)
+	// populates its cache off the hot path so the first cost lookup is
+	// a cache hit rather than a blocking HTTP fetch.
+	modelsDev  *modelsdev.Source
+	warmCancel context.CancelFunc
+	warmDone   chan struct{}
 }
 
 // providerKeyResolver adapts prefs.Service to the registry's tiny
@@ -97,6 +109,7 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 		}
 	}
 	s := NewSettings(ctx, store, v, wsRoot)
+	s.startModelsDevWarm()
 	if legacyOff {
 		if n, derr := s.Svc.DisableCredentialProtection(ctx, passphrase); derr != nil {
 			_ = store.Close()
@@ -121,16 +134,67 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 // own store/vault without going through the db.Open path.
 func NewSettings(ctx context.Context, store *db.Store, v *vault.Vault, wsRoot string) *Settings {
 	svc := prefs.NewService(store, v, wsRoot)
-	reg := backends.NewRegistry(backends.WithStore(store), backends.WithSettingsService(providerKeyResolver{svc: svc}))
+	src := newModelsDevSource()
+	reg := backends.NewRegistry(
+		backends.WithStore(store),
+		backends.WithSettingsService(providerKeyResolver{svc: svc}),
+		backends.WithModelsDevSource(src),
+	)
 	if err := reg.Reload(ctx); err != nil {
 		slog.WarnContext(ctx, "provider registry reload (custom providers)", "err", err)
 	}
-	return &Settings{Store: store, Svc: svc, Registry: reg, wsRoot: wsRoot}
+	return &Settings{Store: store, Svc: svc, Registry: reg, wsRoot: wsRoot, modelsDev: src}
 }
 
-// Close releases the underlying store.
+// newModelsDevSource builds a file-cached models.dev source. The cache
+// lives under ~/.zarlcode/cache/modelsdev for cross-restart persistence;
+// if that directory can't be resolved it downgrades to a per-process
+// temp cache (NewFileCache never fails).
+func newModelsDevSource() *modelsdev.Source {
+	var store cache.Cache[string, modelsdev.Snapshot]
+	if dir, err := home.CacheDir(); err == nil {
+		store = cache.NewFileCache[string, modelsdev.Snapshot](
+			cache.WithOSFileSystem[string, modelsdev.Snapshot](filepath.Join(dir, "modelsdev")),
+		)
+	} else {
+		store = cache.NewFileCache[string, modelsdev.Snapshot]()
+	}
+	return modelsdev.New(store)
+}
+
+// startModelsDevWarm primes the models.dev snapshot cache off the hot
+// path so the first ResolveCost / ResolveCapabilities lookup is a cache
+// hit instead of a blocking HTTP fetch. The goroutine is owned by the
+// Settings handle and cancelled in Close — not fire-and-forget. Called
+// only from OpenSettings (real startup), never from the NewSettings
+// injection seam, so tests don't reach for the network.
+func (s *Settings) startModelsDevWarm() {
+	if s == nil || s.modelsDev == nil {
+		return
+	}
+	warmCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := s.modelsDev.Warm(warmCtx); err != nil {
+			slog.WarnContext(warmCtx, "models.dev warm", "err", err)
+		}
+	}()
+	s.warmCancel = cancel
+	s.warmDone = done
+}
+
+// Close cancels the models.dev warm goroutine (if running) and releases
+// the underlying store.
 func (s *Settings) Close() error {
-	if s == nil || s.Store == nil {
+	if s == nil {
+		return nil
+	}
+	if s.warmCancel != nil {
+		s.warmCancel()
+		<-s.warmDone
+	}
+	if s.Store == nil {
 		return nil
 	}
 	return s.Store.Close()
