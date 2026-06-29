@@ -97,7 +97,7 @@ func TestMCPRegistryConnectPolicyRunsBeforeTransport(t *testing.T) {
 		}
 		return errors.New("blocked by policy")
 	}))
-	_, err := mcpReg.connect(context.Background(), "blocked", MCPConnSpec{Type: Transports.TRANSPORTSTDIO, Command: "/does/not/exist"})
+	_, err := mcpReg.connect(t.Context(), "blocked", MCPConnSpec{Type: Transports.TRANSPORTSTDIO, Command: "/does/not/exist"})
 	if err == nil || !strings.Contains(err.Error(), "blocked by policy") {
 		t.Fatalf("connect error = %v, want policy rejection", err)
 	}
@@ -107,7 +107,7 @@ func TestDefaultMCPPolicyRejectsRelativeAndShellStdio(t *testing.T) {
 	t.Parallel()
 
 	if err := DefaultMCPConnectPolicy.ValidateMCPConnect(
-		context.Background(),
+		t.Context(),
 		"rel",
 		MCPConnSpec{Type: Transports.TRANSPORTSTDIO, Command: "server"},
 	); err == nil ||
@@ -116,7 +116,7 @@ func TestDefaultMCPPolicyRejectsRelativeAndShellStdio(t *testing.T) {
 	}
 	shell := filepath.Join(t.TempDir(), "sh")
 	err := DefaultMCPConnectPolicy.ValidateMCPConnect(
-		context.Background(),
+		t.Context(),
 		"shell",
 		MCPConnSpec{Type: Transports.TRANSPORTSTDIO, Command: shell},
 	)
@@ -126,7 +126,7 @@ func TestDefaultMCPPolicyRejectsRelativeAndShellStdio(t *testing.T) {
 
 	server := filepath.Join(t.TempDir(), "server")
 	if err := DefaultMCPConnectPolicy.ValidateMCPConnect(
-		context.Background(),
+		t.Context(),
 		"ok",
 		MCPConnSpec{Type: Transports.TRANSPORTSTDIO, Command: server},
 	); err != nil {

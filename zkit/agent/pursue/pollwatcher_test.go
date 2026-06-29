@@ -22,7 +22,7 @@ func closedWithin(ch <-chan struct{}, d time.Duration) bool {
 func TestPollWatcher_FiresWhenProbeTrueImmediately(t *testing.T) {
 	t.Parallel()
 	w := pursue.PollWatcher(func(context.Context) bool { return true }, time.Millisecond)
-	ch := w(context.Background())
+	ch := w(t.Context())
 	if !closedWithin(ch, time.Second) {
 		t.Fatal("watcher should fire immediately when probe is already true")
 	}
@@ -35,7 +35,7 @@ func TestPollWatcher_FiresAfterProbeFlips(t *testing.T) {
 	// check) is exercised.
 	probe := func(context.Context) bool { return calls.Add(1) >= 3 }
 	w := pursue.PollWatcher(probe, time.Millisecond)
-	ch := w(context.Background())
+	ch := w(t.Context())
 	if !closedWithin(ch, time.Second) {
 		t.Fatal("watcher should fire once the probe flips true")
 	}
@@ -48,7 +48,7 @@ func TestPollWatcher_NeverFiresWhenProbeFalse_ExitsOnCancel(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
 	probe := func(context.Context) bool { calls.Add(1); return false }
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	w := pursue.PollWatcher(probe, time.Millisecond)
 	ch := w(ctx)
 	// Stays open while the probe keeps saying false.
@@ -68,7 +68,7 @@ func TestPollWatcher_NeverFiresWhenProbeFalse_ExitsOnCancel(t *testing.T) {
 
 func TestPollWatcher_NilProbeNeverFires(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	ch := pursue.PollWatcher(nil, time.Millisecond)(ctx)
 	if closedWithin(ch, 50*time.Millisecond) {
 		t.Fatal("nil-probe watcher must never fire")
@@ -83,7 +83,7 @@ func TestPollWatcher_ZeroIntervalUsesDefault(t *testing.T) {
 	t.Parallel()
 	// interval <= 0 must not panic (NewTicker(0) panics) — it falls back to
 	// DefaultPollInterval. A probe that's true immediately still fires.
-	ch := pursue.PollWatcher(func(context.Context) bool { return true }, 0)(context.Background())
+	ch := pursue.PollWatcher(func(context.Context) bool { return true }, 0)(t.Context())
 	if !closedWithin(ch, time.Second) {
 		t.Fatal("zero interval should use the default, not panic")
 	}

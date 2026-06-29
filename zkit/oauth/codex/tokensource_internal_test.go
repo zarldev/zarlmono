@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -48,7 +47,7 @@ func openTestStoreAndVault(t *testing.T) (*db.Store, *vault.Vault) {
 	// 32-byte key, base64-encoded.
 	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 
-	store, err := db.Open(context.Background(), filepath.Join(dir, "state.db"))
+	store, err := db.Open(t.Context(), filepath.Join(dir, "state.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -103,7 +102,7 @@ func TestCodexTokenSource_ReturnsCachedTokenWhenFresh(t *testing.T) {
 		AccountID:   "acct_fresh",
 	}
 	raw, _ := json.Marshal(cred)
-	if err := prefs.NewService(store, v, "").SetKey(context.Background(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
+	if err := prefs.NewService(store, v, "").SetKey(t.Context(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
 		t.Fatalf("setStoredAPIKey: %v", err)
 	}
 	src := NewTokenSource(prefs.NewService(store, v, ""))
@@ -112,7 +111,7 @@ func TestCodexTokenSource_ReturnsCachedTokenWhenFresh(t *testing.T) {
 	// see an EOF / dial error.
 	redirectOAuthClient(t, mustURL(t, "http://127.0.0.1:1"))
 
-	tok, err := src.Token(context.Background())
+	tok, err := src.Token(t.Context())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
 	}
@@ -135,7 +134,7 @@ func TestCodexTokenSource_RefreshesWhenExpired(t *testing.T) {
 		AccountID:   "acct_old",
 	}
 	raw, _ := json.Marshal(oldCred)
-	if err := prefs.NewService(store, v, "").SetKey(context.Background(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
+	if err := prefs.NewService(store, v, "").SetKey(t.Context(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
 		t.Fatalf("setStoredAPIKey: %v", err)
 	}
 
@@ -162,7 +161,7 @@ func TestCodexTokenSource_RefreshesWhenExpired(t *testing.T) {
 	src := NewTokenSource(prefs.NewService(store, v, ""))
 	redirectOAuthClient(t, mustURL(t, srv.URL))
 
-	tok, err := src.Token(context.Background())
+	tok, err := src.Token(t.Context())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
 	}
@@ -174,7 +173,7 @@ func TestCodexTokenSource_RefreshesWhenExpired(t *testing.T) {
 	}
 
 	// Persisted blob should now carry the new refresh token.
-	stored, ok, err := prefs.NewService(store, v, "").GetKey(context.Background(), prefs.ScopeGlobal, CredProvider)
+	stored, ok, err := prefs.NewService(store, v, "").GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
 	if err != nil || !ok {
 		t.Fatalf("getStoredAPIKey: ok=%v err=%v", ok, err)
 	}
@@ -188,7 +187,7 @@ func TestCodexTokenSource_RefreshesWhenExpired(t *testing.T) {
 
 	// Second call should NOT hit the refresh server again — token now
 	// has a future expiry.
-	if _, err := src.Token(context.Background()); err != nil {
+	if _, err := src.Token(t.Context()); err != nil {
 		t.Fatalf("second Token: %v", err)
 	}
 	if got := refreshCount.Load(); got != 1 {
@@ -207,7 +206,7 @@ func TestCodexTokenSource_RefreshesNearExpiry(t *testing.T) {
 		AccountID:   "acct_near",
 	}
 	raw, _ := json.Marshal(near)
-	if err := prefs.NewService(store, v, "").SetKey(context.Background(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
+	if err := prefs.NewService(store, v, "").SetKey(t.Context(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
 		t.Fatalf("setStoredAPIKey: %v", err)
 	}
 
@@ -223,7 +222,7 @@ func TestCodexTokenSource_RefreshesNearExpiry(t *testing.T) {
 	src := NewTokenSource(prefs.NewService(store, v, ""))
 	redirectOAuthClient(t, mustURL(t, srv.URL))
 
-	tok, err := src.Token(context.Background())
+	tok, err := src.Token(t.Context())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
 	}
@@ -238,7 +237,7 @@ func TestCodexTokenSource_RefreshesNearExpiry(t *testing.T) {
 func TestCodexTokenSource_NoCredReturnsHelpfulError(t *testing.T) {
 	store, v := openTestStoreAndVault(t)
 	src := NewTokenSource(prefs.NewService(store, v, ""))
-	_, err := src.Token(context.Background())
+	_, err := src.Token(t.Context())
 	if err == nil {
 		t.Fatalf("expected error when vault is empty")
 	}
@@ -256,7 +255,7 @@ func TestCodexTokenSource_RefreshFailurePropagates(t *testing.T) {
 		AccountID:   "acct_x",
 	}
 	raw, _ := json.Marshal(expired)
-	if err := prefs.NewService(store, v, "").SetKey(context.Background(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
+	if err := prefs.NewService(store, v, "").SetKey(t.Context(), prefs.ScopeGlobal, CredProvider, string(raw)); err != nil {
 		t.Fatalf("setStoredAPIKey: %v", err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -266,7 +265,7 @@ func TestCodexTokenSource_RefreshFailurePropagates(t *testing.T) {
 	defer srv.Close()
 	src := NewTokenSource(prefs.NewService(store, v, ""))
 	redirectOAuthClient(t, mustURL(t, srv.URL))
-	_, err := src.Token(context.Background())
+	_, err := src.Token(t.Context())
 	if err == nil {
 		t.Fatalf("expected error from failed refresh")
 	}

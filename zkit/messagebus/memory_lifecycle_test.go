@@ -16,7 +16,7 @@ func noopHandler(context.Context, messagebus.Message[int]) error { return nil }
 func TestMemoryBus_UnsubscribeAfterCloseNoPanic(t *testing.T) {
 	t.Parallel()
 	bus := messagebus.NewMemoryBus[int]()
-	sub, err := bus.Subscribe(context.Background(), "x", noopHandler)
+	sub, err := bus.Subscribe(t.Context(), "x", noopHandler)
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestMemoryBus_UnsubscribeAfterCloseNoPanic(t *testing.T) {
 func TestMemoryBus_DoubleUnsubscribeNoPanic(t *testing.T) {
 	t.Parallel()
 	bus := messagebus.NewMemoryBus[int]()
-	sub, err := bus.Subscribe(context.Background(), "x", noopHandler)
+	sub, err := bus.Subscribe(t.Context(), "x", noopHandler)
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestMemoryBus_DoubleUnsubscribeNoPanic(t *testing.T) {
 func TestMemoryBus_CtxCancelAutoUnsubscribes(t *testing.T) {
 	t.Parallel()
 	bus := messagebus.NewMemoryBus[int]()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	sub, err := bus.Subscribe(ctx, "x", noopHandler)
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)

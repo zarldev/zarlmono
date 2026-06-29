@@ -1,7 +1,6 @@
 package tools_test
 
 import (
-	"context"
 	"slices"
 	"testing"
 
@@ -39,7 +38,7 @@ func TestRegistry_EnumerationOrderIsSortedAndStable(t *testing.T) {
 	t.Run("Tools", func(t *testing.T) {
 		t.Parallel()
 		var got []tools.ToolName
-		for tool := range r.Tools(context.Background()) {
+		for tool := range r.Tools(t.Context()) {
 			got = append(got, tool.Definition().Name)
 		}
 		if !slices.Equal(got, want) {

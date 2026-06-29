@@ -45,9 +45,9 @@ func TestMemoSource_PassThroughWhenImpure(t *testing.T) {
 	m := runner.NewMemoSource(inner, runner.PureTools("read")) // bash NOT pure
 
 	call := tools.ToolCall{ID: "1", ToolName: "bash", Arguments: tools.ToolParameters{"command": "ls"}}
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
 	call.ID = "2"
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
 
 	if inner.calls != 2 {
 		t.Errorf("impure tool: dispatch count = %d, want 2 (no caching)", inner.calls)
@@ -59,9 +59,9 @@ func TestMemoSource_CachesPureToolWithinTask(t *testing.T) {
 	m := runner.NewMemoSource(inner, runner.PureTools("read"))
 
 	call := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
-	r1, _ := m.Execute(context.Background(), call)
+	r1, _ := m.Execute(t.Context(), call)
 	call.ID = "2"
-	r2, _ := m.Execute(context.Background(), call)
+	r2, _ := m.Execute(t.Context(), call)
 
 	if inner.calls != 1 {
 		t.Errorf("pure tool: dispatch count = %d, want 1 (second call should hit cache)", inner.calls)
@@ -85,7 +85,7 @@ func TestMemoSource_LoopRejectedOnThirdIdenticalCall(t *testing.T) {
 
 	call := tools.ToolCall{ID: "1", ToolName: "list_skills", Arguments: tools.ToolParameters{}}
 	// 1st call: dispatch (cache miss), success returned.
-	r1, _ := m.Execute(context.Background(), call)
+	r1, _ := m.Execute(t.Context(), call)
 	if r1 == nil || !r1.Success {
 		t.Fatalf("first call: want success, got %+v", r1)
 	}
@@ -93,7 +93,7 @@ func TestMemoSource_LoopRejectedOnThirdIdenticalCall(t *testing.T) {
 	// 2nd call: first cache hit — still silent, model might legitimately
 	// have re-checked. Successful result, no error.
 	call.ID = "2"
-	r2, _ := m.Execute(context.Background(), call)
+	r2, _ := m.Execute(t.Context(), call)
 	if r2 == nil || !r2.Success {
 		t.Fatalf("second call (first repeat): want silent cached success, got %+v", r2)
 	}
@@ -104,7 +104,7 @@ func TestMemoSource_LoopRejectedOnThirdIdenticalCall(t *testing.T) {
 	// 3rd call: second repeat — the loop signal. Validation rejection
 	// pointing at the prior result so the model stops looping.
 	call.ID = "3"
-	r3, _ := m.Execute(context.Background(), call)
+	r3, _ := m.Execute(t.Context(), call)
 	if r3 == nil || r3.Success {
 		t.Fatalf("third call (second repeat): want Validation rejection, got %+v", r3)
 	}
@@ -131,8 +131,8 @@ func TestMemoSource_DifferentArgsDifferentBuckets(t *testing.T) {
 
 	call1 := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
 	call2 := tools.ToolCall{ID: "2", ToolName: "read", Arguments: tools.ToolParameters{"path": "bar.go"}}
-	_, _ = m.Execute(context.Background(), call1)
-	_, _ = m.Execute(context.Background(), call2)
+	_, _ = m.Execute(t.Context(), call1)
+	_, _ = m.Execute(t.Context(), call2)
 
 	if inner.calls != 2 {
 		t.Errorf("different args: dispatch count = %d, want 2", inner.calls)
@@ -144,9 +144,9 @@ func TestMemoSource_DoesNotCacheFailures(t *testing.T) {
 	m := runner.NewMemoSource(failing, runner.PureTools("read"))
 
 	call := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "x"}}
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
 	call.ID = "2"
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
 
 	if failing.calls != 2 {
 		t.Errorf("failed result: dispatch count = %d, want 2 (failures shouldn't be cached)", failing.calls)
@@ -158,8 +158,8 @@ func TestMemoSource_DoesNotCacheExecErrors(t *testing.T) {
 	m := runner.NewMemoSource(erroring, runner.PureTools("read"))
 
 	call := tools.ToolCall{ID: "1", ToolName: "read"}
-	_, _ = m.Execute(context.Background(), call)
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
+	_, _ = m.Execute(t.Context(), call)
 
 	if erroring.calls != 2 {
 		t.Errorf("exec error: dispatch count = %d, want 2 (errors shouldn't be cached)", erroring.calls)
@@ -171,8 +171,8 @@ func TestMemoSource_NilPureFnDisables(t *testing.T) {
 	m := runner.NewMemoSource(inner, nil)
 
 	call := tools.ToolCall{ID: "1", ToolName: "read"}
-	_, _ = m.Execute(context.Background(), call)
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
+	_, _ = m.Execute(t.Context(), call)
 
 	if inner.calls != 2 {
 		t.Errorf("nil PureFn: dispatch count = %d, want 2 (memoization disabled)", inner.calls)
@@ -187,8 +187,8 @@ func TestMemoSource_ArgumentOrderingDoesNotMatter(t *testing.T) {
 
 	a := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"a": 1, "b": 2}}
 	b := tools.ToolCall{ID: "2", ToolName: "read", Arguments: tools.ToolParameters{"b": 2, "a": 1}}
-	_, _ = m.Execute(context.Background(), a)
-	_, _ = m.Execute(context.Background(), b)
+	_, _ = m.Execute(t.Context(), a)
+	_, _ = m.Execute(t.Context(), b)
 
 	if inner.calls != 1 {
 		t.Errorf("equivalent args in different order: dispatch count = %d, want 1", inner.calls)
@@ -200,10 +200,10 @@ func TestMemoSource_ForgetTask(t *testing.T) {
 	m := runner.NewMemoSource(inner, runner.PureTools("read"))
 
 	call := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "x"}}
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
 	// ctx has no TaskID — that "no task" bucket is what got populated.
 	m.ForgetTask("")
-	_, _ = m.Execute(context.Background(), call)
+	_, _ = m.Execute(t.Context(), call)
 
 	if inner.calls != 2 {
 		t.Errorf("after ForgetTask: dispatch count = %d, want 2", inner.calls)
@@ -260,7 +260,7 @@ func TestMemoSource_InvalidatesCacheAfterSuccessfulMutator(t *testing.T) {
 	}
 	m := runner.NewMemoSource(inner, runner.PureTools("read"))
 
-	ctx := context.Background()
+	ctx := t.Context()
 	read := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
 	res1, _ := m.Execute(ctx, read)
 	if res1 == nil || res1.Data != "old contents" {
@@ -303,7 +303,7 @@ func TestMemoSource_InvalidatesCacheAfterSuccessfulBash(t *testing.T) {
 	}
 	m := runner.NewMemoSource(inner, runner.PureTools("read"))
 
-	ctx := context.Background()
+	ctx := t.Context()
 	read := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
 	res1, _ := m.Execute(ctx, read)
 	if res1 == nil || res1.Data != "old contents" {
@@ -340,7 +340,7 @@ func TestMemoSource_LedgerRecordsPureCallsAndClearsOnMutation(t *testing.T) {
 	}
 	ledger := runner.NewMemoryTaskCallLedger()
 	m := runner.NewMemoSourceWithLedger(inner, runner.PureTools("read"), ledger)
-	ctx := context.Background()
+	ctx := t.Context()
 	read := tools.ToolCall{ID: "1", ToolName: "read", Arguments: tools.ToolParameters{"path": "foo.go"}}
 	if _, err := m.Execute(ctx, read); err != nil {
 		t.Fatalf("read: %v", err)

@@ -1,7 +1,6 @@
 package qdrant_test
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +34,7 @@ func TestEnsureCollection_CreatesWhenMissing(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := qdrant.NewClient(srv.URL)
-	if err := c.EnsureCollection(context.Background(), "test_col", 8); err != nil {
+	if err := c.EnsureCollection(t.Context(), "test_col", 8); err != nil {
 		t.Fatalf("EnsureCollection: %v", err)
 	}
 	if gotMethod != http.MethodPut {
@@ -62,7 +61,7 @@ func TestEnsureCollection_NoOpWhenExists(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := qdrant.NewClient(srv.URL)
-	if err := c.EnsureCollection(context.Background(), "exists", 4); err != nil {
+	if err := c.EnsureCollection(t.Context(), "exists", 4); err != nil {
 		t.Fatalf("EnsureCollection: %v", err)
 	}
 	if puts != 0 {
@@ -98,7 +97,7 @@ func TestSearch_DecodesScoredPoints(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := qdrant.NewClient(srv.URL)
-	got, err := c.Search(context.Background(), qdrant.SearchRequest{
+	got, err := c.Search(t.Context(), qdrant.SearchRequest{
 		Collection: "memories",
 		Vector:     []float32{1, 0, 0, 0},
 		Limit:      2,
@@ -128,7 +127,7 @@ func TestUpsert_SerializesPayload(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := qdrant.NewClient(srv.URL)
-	err := c.Upsert(context.Background(), "col", []qdrant.Point{
+	err := c.Upsert(t.Context(), "col", []qdrant.Point{
 		{ID: "1", Vector: []float32{0, 1}, Payload: map[string]any{"kind": "alpha"}},
 	})
 	if err != nil {
@@ -157,7 +156,7 @@ func TestNonSuccessStatusReturnsError(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := qdrant.NewClient(srv.URL)
-	_, err := c.Search(context.Background(), qdrant.SearchRequest{Collection: "x", Limit: 1})
+	_, err := c.Search(t.Context(), qdrant.SearchRequest{Collection: "x", Limit: 1})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -178,7 +177,7 @@ func TestIntegration_EnsureUpsertSearch(t *testing.T) {
 		t.Skip("QDRANT_URL not set; skipping integration test")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	col := "test_integration"
 	c := qdrant.NewClient(url)
 

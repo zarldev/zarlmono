@@ -1,7 +1,6 @@
 package dynamic_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -69,7 +68,7 @@ func TestDefaultMCPConnectPolicy_RejectsBearerOverHTTP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := dynamic.DefaultMCPConnectPolicy.ValidateMCPConnect(
-				context.Background(), "test", dynamic.MCPConnSpec{
+				t.Context(), "test", dynamic.MCPConnSpec{
 					Type:      dynamic.Transports.TRANSPORTHTTP,
 					BaseURL:   tt.baseURL,
 					AuthToken: tt.authToken,
@@ -112,7 +111,7 @@ func TestValidateMCPHTTPBaseURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := dynamic.DefaultMCPConnectPolicy.ValidateMCPConnect(
-				context.Background(), "test", dynamic.MCPConnSpec{
+				t.Context(), "test", dynamic.MCPConnSpec{
 					Type:    dynamic.Transports.TRANSPORTHTTP,
 					BaseURL: tt.raw,
 				})

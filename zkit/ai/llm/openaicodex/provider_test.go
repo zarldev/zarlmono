@@ -1,7 +1,6 @@
 package openaicodex_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -87,7 +86,7 @@ func TestProvider_Streaming_TextResponse(t *testing.T) {
 		t.Fatalf("NewProvider: %v", err)
 	}
 
-	seq, err := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, err := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: "you are a friendly bot"},
 			{Role: "user", Content: "say hi"},
@@ -155,7 +154,7 @@ func TestProvider_PresetModelMapsBaseAndEffort(t *testing.T) {
 		openaicodex.WithBaseURL(cb.srv.URL),
 		openaicodex.WithModel("gpt-5.3-codex-high"),
 	)
-	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},
 		Stream:   true,
 	})
@@ -195,7 +194,7 @@ func TestProvider_ToolCallStream(t *testing.T) {
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 	)
-	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "search foo"}},
 		Tools: []llm.Tool{{
 			Type: "function",
@@ -249,7 +248,7 @@ func TestProvider_HTTPErrorSurfacesAsChunkError(t *testing.T) {
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithNoRetry(),
 	)
-	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -291,7 +290,7 @@ func TestProvider_UsageLimitBodyParsedIntoRateLimitError(t *testing.T) {
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithNoRetry(),
 	)
-	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -344,7 +343,7 @@ func TestProvider_RetriesOn429ThenSucceeds(t *testing.T) {
 		// the backoff at the minimum.
 		openaicodex.WithRetryPolicy(4, 10*time.Millisecond, 50*time.Millisecond),
 	)
-	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -395,7 +394,7 @@ func TestProvider_RetriesHonorRetryAfter(t *testing.T) {
 		// gap shorter than ~1s proves the header didn't win.
 		openaicodex.WithRetryPolicy(4, 10*time.Millisecond, 5*time.Second),
 	)
-	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -425,7 +424,7 @@ func TestProvider_DoesNotRetryOn4xxOtherThan429(t *testing.T) {
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithRetryPolicy(4, 10*time.Millisecond, 50*time.Millisecond),
 	)
-	seq, _ := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -486,7 +485,7 @@ func TestFetchContextWindowUsesBackendAutoCompactLimit(t *testing.T) {
 	defer srv.Close()
 
 	cw, err := openaicodex.FetchContextWindow(
-		context.Background(),
+		t.Context(),
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		srv.URL,
 		"gpt-5.5-high",
@@ -512,7 +511,7 @@ func TestFetchContextWindowDerivesUpstreamAutoCompactDefault(t *testing.T) {
 	defer srv.Close()
 
 	cw, err := openaicodex.FetchContextWindow(
-		context.Background(),
+		t.Context(),
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		srv.URL,
 		"gpt-5.5",
@@ -550,7 +549,7 @@ func TestProvider_NonStreamingCallerStillRequestsSSE(t *testing.T) {
 		t.Fatalf("NewProvider: %v", err)
 	}
 
-	seq, err := p.Complete(context.Background(), llm.CompletionRequest{
+	seq, err := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},
 		Stream:   false,
 	})

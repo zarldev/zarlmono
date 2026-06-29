@@ -1,7 +1,6 @@
 package runner_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -21,7 +20,7 @@ func TestNew_DefaultsToEmptyToolSource(t *testing.T) {
 	}}
 	r := runner.New(runner.ClientFromProvider(provider)) // no WithTools
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "hi",
 	})

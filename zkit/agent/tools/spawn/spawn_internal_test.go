@@ -30,7 +30,7 @@ func (f *fakeSpawnPlanner) Plan(_ context.Context, in SpawnPlanInput) (SpawnPlan
 func TestApplyPlanner_NoPlannerWired_NoOp(t *testing.T) {
 	tool := &Tool{}
 	args := Args{Prompt: "do the thing", Agent: "missing"}
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note != "" {
 		t.Errorf("note = %q, want empty when no planner wired", note)
 	}
@@ -46,7 +46,7 @@ func TestApplyPlanner_EmptyAgentNames_NoOp(t *testing.T) {
 	plan := &fakeSpawnPlanner{plan: SpawnPlan{Agent: "x", Mode: SpawnModeExplore}}
 	tool := &Tool{planner: plan, plannerAgents: nil}
 	args := Args{Prompt: "task"}
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note != "" {
 		t.Errorf("note = %q, want empty for nil agent list", note)
 	}
@@ -64,7 +64,7 @@ func TestApplyPlanner_AgentInRegisteredSet_SkipsPlanner(t *testing.T) {
 	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
 	args := Args{Prompt: "investigate", Agent: "researcher"}
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note != "" {
 		t.Errorf("note = %q, want empty when model picked a registered name", note)
 	}
@@ -85,7 +85,7 @@ func TestApplyPlanner_EmptyAgent_PlannerReroutes(t *testing.T) {
 	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
 	args := Args{Prompt: "find references to Foo", Agent: ""}
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if plan.calls != 1 {
 		t.Errorf("planner.Plan calls = %d, want 1", plan.calls)
 	}
@@ -114,7 +114,7 @@ func TestApplyPlanner_UnknownAgent_PlannerReroutes(t *testing.T) {
 	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
 	args := Args{Prompt: "add a method", Agent: "best-coder-ever"}
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if plan.calls != 1 {
 		t.Errorf("planner.Plan calls = %d, want 1", plan.calls)
 	}
@@ -134,7 +134,7 @@ func TestApplyPlanner_PlannerErrorFallsThrough(t *testing.T) {
 	tool := &Tool{planner: plan, plannerAgents: []string{"researcher"}}
 	args := Args{Prompt: "task", Agent: ""}
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note != "" {
 		t.Errorf("note = %q, want empty on planner error (silent fallback)", note)
 	}
@@ -154,7 +154,7 @@ func TestApplyPlanner_InvalidPlanAgentFallsThrough(t *testing.T) {
 	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
 	args := Args{Prompt: "task", Agent: ""}
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note != "" {
 		t.Errorf("note = %q, want empty when planner returned invalid agent", note)
 	}
@@ -168,7 +168,7 @@ func TestApplyPlanner_InvalidModeFallsThrough(t *testing.T) {
 	tool := &Tool{planner: plan, plannerAgents: []string{"researcher"}}
 	args := Args{Prompt: "task", Agent: ""}
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note != "" {
 		t.Errorf("note = %q, want empty when planner returned invalid mode", note)
 	}
@@ -186,7 +186,7 @@ func TestApplyPlanner_EmptyAgentInPlan_IsValid(t *testing.T) {
 	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
 	args := Args{Prompt: "double-check this works", Agent: ""}
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note == "" {
 		t.Error("note empty; planner should narrate the parent-routing choice")
 	}

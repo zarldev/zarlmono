@@ -1,7 +1,6 @@
 package spawn_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -41,7 +40,7 @@ func TestNew_Definition(t *testing.T) {
 func TestExecute_RefusesEmptyPrompt(t *testing.T) {
 	t.Parallel()
 	tool := spawn.New(nil)
-	res, err := tool.Execute(context.Background(), tools.ToolCall{
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "c1",
 		Arguments: tools.ToolParameters{},
 	})
@@ -59,7 +58,7 @@ func TestExecute_RefusesEmptyPrompt(t *testing.T) {
 func TestExecute_AtZeroMaxDepthRefusesAlways(t *testing.T) {
 	t.Parallel()
 	tool := spawn.New(nil, spawn.WithMaxDepth(0))
-	res, err := tool.Execute(context.Background(), tools.ToolCall{
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "c1",
 		Arguments: tools.ToolParameters{"prompt": "anything"},
 	})
@@ -77,7 +76,7 @@ func TestExecute_AtZeroMaxDepthRefusesAlways(t *testing.T) {
 func TestExecute_RefusesNilParentRunner(t *testing.T) {
 	t.Parallel()
 	tool := spawn.New(nil)
-	res, err := tool.Execute(context.Background(), tools.ToolCall{
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "c1",
 		Arguments: tools.ToolParameters{"prompt": "do a thing"},
 	})
@@ -100,7 +99,7 @@ func TestWithMaxDepth_NegativeIgnored(t *testing.T) {
 	// gate instead, which is the proof that the depth gate didn't
 	// fire.
 	tool := spawn.New(nil, spawn.WithMaxDepth(-5))
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "c1",
 		Arguments: tools.ToolParameters{},
 	})

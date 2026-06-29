@@ -81,7 +81,7 @@ func TestExecute_ModePolicyGatesChild(t *testing.T) {
 		parent := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(5))
 		tool := spawn.New(parent, spawn.WithMaxDepth(1), spawn.WithModeToolPolicy(policy))
 
-		res, err := tool.Execute(context.Background(), tools.ToolCall{
+		res, err := tool.Execute(t.Context(), tools.ToolCall{
 			ID:        "c1",
 			Arguments: tools.ToolParameters{"prompt": "do it", "mode": mode},
 		})

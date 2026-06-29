@@ -10,7 +10,7 @@ Worked examples for building systems on top of the zarlcode runner, tool, guardr
 | [`spawn_worker`](spawn_worker/) | Hierarchical agent decomposition with named workers, mode enforcement (explore/verify/implement), and capability-based tool gating. | LLM backend for default run; none with `-scripted`. |
 | [`stuck_recovery`](stuck_recovery/) | DecomposeGuardrail graduated response (pass → advise → fatal) with VerdictJudge for stuck-agent recovery. | LLM backend for default run; none with `-scripted`. |
 | [`long_conversation`](long_conversation/) | Compactor integration with structural trimming — the agent researches a large codebase and the runner automatically compacts stale context. | LLM backend for default run; none with `-scripted`. |
-| [`shared_infra`](shared_infra/) | No-LLM tour of retrieval indexing/search, agent context formatting, workflow graph execution, checkpoint/HITL review, and JSONL tracing. | None. |
+| [`shared_infra`](shared_infra/) | No-LLM tour of deterministic code understanding (`file_map` AST outline + `retrieve_code` lexical retrieval via go/parser), retrieval indexing/search, agent context formatting, workflow graph execution, checkpoint/HITL review, and JSONL tracing. | None. |
 
 See [`patterns.md`](patterns.md) for the patterns these examples demonstrate and how to apply them in your own systems.
 

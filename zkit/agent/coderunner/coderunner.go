@@ -94,6 +94,8 @@ func RegisterStandardTools(reg *tools.Registry, ws code.Workspace, pm *code.Proc
 	reg.Register(code.NewGrepTool(ws, readOpts...))
 	reg.Register(code.NewLsTool(ws, readOpts...))
 	reg.Register(code.NewGlobTool(ws, readOpts...))
+	reg.Register(code.NewFileMapTool(ws, readOpts...))
+	reg.Register(code.NewRetrieveCodeTool(ws, readOpts...))
 }
 
 // toolsConfig collects RegisterStandardTools options.

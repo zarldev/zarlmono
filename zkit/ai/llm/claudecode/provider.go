@@ -444,11 +444,16 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 			if !yield(llm.CompletionChunk{ToolCalls: calls}, nil) {
 				return usage, false, nil
 			}
-		} else if buffered.Len() > 0 {
+		} else if buffered.Len() > 0 && !toolparse.IsToolCallArtifactPrefix(buffered.String()) {
 			if !yield(llm.CompletionChunk{Content: buffered.String()}, nil) {
 				return usage, false, nil
 			}
 		}
+		// else: the buffer is a tool-call artifact we couldn't recover —
+		// max_tokens truncated the JSON mid-object, or the model fumbled
+		// the escaping past what repair can fix, so parseToolProtocol
+		// returned no calls. Suppress it: emitting an unparsed tool-call
+		// artifact as Content is exactly the leak this guards against.
 	}
 	return usage, true, nil
 }

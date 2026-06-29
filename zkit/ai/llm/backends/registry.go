@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
@@ -26,10 +27,11 @@ type ProviderRegistry struct {
 	svc   SettingsService
 	seeds []ProviderDefinition
 
-	mu         sync.RWMutex
-	merged     []ProviderDefinition
-	byName     map[string]ProviderDefinition
-	activeName string
+	mu              sync.RWMutex
+	merged          []ProviderDefinition
+	byName          map[string]ProviderDefinition
+	activeName      string
+	modelsDevSource *modelsdev.Source
 }
 
 // WithStore wires a Store of custom provider rows. Without it the
@@ -48,6 +50,14 @@ func WithSettingsService(svc SettingsService) options.Option[ProviderRegistry] {
 // is BuiltinDefinitions().
 func WithProviderDefinitions(defs []ProviderDefinition) options.Option[ProviderRegistry] {
 	return func(r *ProviderRegistry) { r.seeds = defs }
+}
+
+// WithModelsDevSource wires an optional live model-info source
+// (e.g. models.dev). When set, ResolveCost / ResolveCapabilities
+// consult it between the per-provider DB override and the static
+// per-package table.
+func WithModelsDevSource(s *modelsdev.Source) options.Option[ProviderRegistry] {
+	return func(r *ProviderRegistry) { r.modelsDevSource = s }
 }
 
 // NewRegistry creates a ProviderRegistry. The zero-option call is the

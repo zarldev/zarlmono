@@ -29,12 +29,12 @@ func TestCommandProbe_NilCmdOrDiffNeverRuns(t *testing.T) {
 	t.Parallel()
 	fr := &fakeRun{}
 	p := newCommandProbe("/root", nil, []string{"go", "test"}, ProbeOpts{}, fr.run, time.Now)
-	if p(context.Background()) {
+	if p(t.Context()) {
 		t.Error("nil diffOf must yield false")
 	}
 	diff := func() string { return "x" }
 	p2 := newCommandProbe("/root", diff, nil, ProbeOpts{}, fr.run, time.Now)
-	if p2(context.Background()) {
+	if p2(t.Context()) {
 		t.Error("empty cmd must yield false")
 	}
 	if fr.calls != 0 {
@@ -47,7 +47,7 @@ func TestCommandProbe_DiffGate(t *testing.T) {
 	fr := &fakeRun{results: []bool{false}} // always "not solved"
 	diff := "v1"
 	p := newCommandProbe("/root", func() string { return diff }, []string{"t"}, ProbeOpts{}, fr.run, time.Now)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	p(ctx) // first call always runs
 	p(ctx) // diff unchanged → skipped
@@ -68,7 +68,7 @@ func TestCommandProbe_FailClosedThenPass(t *testing.T) {
 	n := 0
 	diff := func() string { n++; return string(rune('a' + n)) } // changes every call
 	p := newCommandProbe("/root", diff, []string{"t"}, ProbeOpts{}, fr.run, time.Now)
-	ctx := context.Background()
+	ctx := t.Context()
 	if p(ctx) {
 		t.Error("first run returns false (not solved) → probe false")
 	}
@@ -83,7 +83,7 @@ func TestCommandProbe_MaxRuns(t *testing.T) {
 	n := 0
 	diff := func() string { n++; return string(rune('a' + n)) } // always changing
 	p := newCommandProbe("/root", diff, []string{"t"}, ProbeOpts{MaxRuns: 2}, fr.run, time.Now)
-	ctx := context.Background()
+	ctx := t.Context()
 	for range 5 {
 		p(ctx)
 	}
@@ -100,7 +100,7 @@ func TestCommandProbe_MinInterval(t *testing.T) {
 	clock := time.Unix(0, 0)
 	now := func() time.Time { return clock }
 	p := newCommandProbe("/root", diff, []string{"t"}, ProbeOpts{MinInterval: 10 * time.Second}, fr.run, now)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	p(ctx) // runs at t=0
 	clock = clock.Add(3 * time.Second)

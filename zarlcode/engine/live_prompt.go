@@ -130,6 +130,15 @@ func (l *LiveRunner) instructionSnapshotDocs() []instructions.Document {
 	return append([]instructions.Document(nil), l.instructionDocs...)
 }
 
+func (l *LiveRunner) instructionNestedSnapshot() []instructions.NestedDoc {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]instructions.NestedDoc(nil), l.nestedInstructionIndex...)
+}
+
 func (l *LiveRunner) catalogSnapshotSkills() []catalog.Skill {
 	if l == nil || l.catalog == nil {
 		return nil

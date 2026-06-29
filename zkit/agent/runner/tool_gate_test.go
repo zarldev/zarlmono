@@ -87,7 +87,7 @@ func TestRun_ToolGateHidesAndRefuses(t *testing.T) {
 	reg := newRegistry(mutate, read)
 
 	gate := func(spec tools.ToolSpec) bool { return spec.Name != "mutate" }
-	ctx := runner.WithToolGate(context.Background(), gate)
+	ctx := runner.WithToolGate(t.Context(), gate)
 
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(5))
 	res := r.Run(ctx, runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
@@ -125,7 +125,7 @@ func TestRun_NoGateOffersAndRunsEverything(t *testing.T) {
 	reg := newRegistry(mutate)
 
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(5))
-	if res := r.Run(context.Background(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"}); res.Err != nil {
+	if res := r.Run(t.Context(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"}); res.Err != nil {
 		t.Fatalf("Run: %v", res.Err)
 	}
 	if mutate.calls != 1 {
@@ -169,7 +169,7 @@ func TestRun_ToolGateFailsClosedOnWrapperSource(t *testing.T) {
 
 	// Capability gate: explore mode admits only non-mutating tools.
 	gate := func(spec tools.ToolSpec) bool { return !spec.Mutates }
-	ctx := runner.WithToolGate(context.Background(), gate)
+	ctx := runner.WithToolGate(t.Context(), gate)
 
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(source), runner.WithMaxIterations(5))
 	res := r.Run(ctx, runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})

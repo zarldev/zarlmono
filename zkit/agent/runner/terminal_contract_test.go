@@ -41,7 +41,7 @@ func TestRun_SetupErrorEndsWithError(t *testing.T) {
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
 		runner.WithSink(sink), runner.WithPrompt(failing), runner.WithMaxIterations(3))
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "hi",
 	})
@@ -85,7 +85,7 @@ func TestRun_InvalidIterationsEndsWithError(t *testing.T) {
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
 		runner.WithSink(sink))
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:            taskscope.ID(uuid.NewString()),
 		Prompt:        "hi",
 		MaxIterations: -1,
@@ -129,7 +129,7 @@ func TestRun_ConversationEndedCarriesReason(t *testing.T) {
 		sink := newRecordingSink()
 		r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
 			runner.WithSink(sink), runner.WithMaxIterations(3))
-		if res := r.Run(context.Background(), runner.TaskSpec{
+		if res := r.Run(t.Context(), runner.TaskSpec{
 			ID: taskscope.ID(uuid.NewString()), Prompt: "q",
 		}); res.Err != nil {
 			t.Fatalf("Run: %v", res.Err)
@@ -153,7 +153,7 @@ func TestRun_ConversationEndedCarriesReason(t *testing.T) {
 		sink := newRecordingSink()
 		r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry(stubTool{name: "echo"})),
 			runner.WithSink(sink), runner.WithMaxIterations(3))
-		if res := r.Run(context.Background(), runner.TaskSpec{
+		if res := r.Run(t.Context(), runner.TaskSpec{
 			ID: taskscope.ID(uuid.NewString()), Prompt: "loop",
 		}); res.Err != nil {
 			t.Fatalf("Run: %v", res.Err)
@@ -188,7 +188,7 @@ func TestRun_SystemPromptInResult(t *testing.T) {
 		})
 		r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
 			runner.WithPrompt(prompt), runner.WithMaxIterations(3))
-		res := r.Run(context.Background(), runner.TaskSpec{
+		res := r.Run(t.Context(), runner.TaskSpec{
 			ID: taskscope.ID(uuid.NewString()), Prompt: "hi",
 		})
 		if res.Err != nil {
@@ -211,7 +211,7 @@ func TestRun_SystemPromptInResult(t *testing.T) {
 		}
 		r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
 			runner.WithMaxIterations(3))
-		res := r.Run(context.Background(), runner.TaskSpec{
+		res := r.Run(t.Context(), runner.TaskSpec{
 			ID: taskscope.ID(uuid.NewString()), Prompt: "hi",
 		})
 		if res.Err != nil {
@@ -240,7 +240,7 @@ func TestRun_SystemPromptInResult(t *testing.T) {
 		r := runner.New(runner.ClientFromProvider(provider),
 			runner.WithTools(newRegistry(stubTool{name: "echo"})),
 			runner.WithPrompt(prompt), runner.WithCompactor(c), runner.WithMaxIterations(5))
-		res := r.Run(context.Background(), runner.TaskSpec{
+		res := r.Run(t.Context(), runner.TaskSpec{
 			ID: taskscope.ID(uuid.NewString()), Prompt: "hi",
 		})
 		if res.Err != nil {

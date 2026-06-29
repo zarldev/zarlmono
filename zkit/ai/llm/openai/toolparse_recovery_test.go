@@ -1,7 +1,6 @@
 package openai_test
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -112,7 +111,7 @@ func completeWithFakeOpenAI(t *testing.T, stream bool, response string) []llm.Co
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
-	seq, err := provider.Complete(context.Background(), llm.CompletionRequest{
+	seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "read foo"}},
 		Stream:   stream,
 		Tools: []llm.Tool{{

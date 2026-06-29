@@ -89,7 +89,7 @@ func TestBinaryTool_RoundTripSuccess(t *testing.T) {
 	t.Parallel()
 	binPath := buildEcho(t)
 
-	spec, err := dynamic.DescribeBinary(context.Background(), binPath, 0)
+	spec, err := dynamic.DescribeBinary(t.Context(), binPath, 0)
 	if err != nil {
 		t.Fatalf("DescribeBinary: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestBinaryTool_RoundTripSuccess(t *testing.T) {
 	}
 
 	tool := dynamic.NewBinaryTool(spec, binPath)
-	res, err := tool.Execute(context.Background(), tools.ToolCall{
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "x",
 		ToolName:  spec.Name,
 		Arguments: tools.ToolParameters{"msg": "hi"},
@@ -120,7 +120,7 @@ func TestBinaryTool_BinaryReportedError(t *testing.T) {
 	binPath := buildEcho(t)
 
 	tool := dynamic.NewBinaryTool(tools.ToolSpec{Name: "echo_back"}, binPath)
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "x",
 		ToolName:  "echo_back",
 		Arguments: tools.ToolParameters{"fail": true},
@@ -136,7 +136,7 @@ func TestBinaryTool_BinaryReportedError(t *testing.T) {
 func TestBinaryTool_MissingBinary(t *testing.T) {
 	t.Parallel()
 	tool := dynamic.NewBinaryTool(tools.ToolSpec{Name: "missing"}, "/does/not/exist")
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID:       "x",
 		ToolName: "missing",
 	})
@@ -204,7 +204,7 @@ func TestRegistrar_RegisterUnregisterFlow(t *testing.T) {
 	registry := tools.NewRegistry()
 	reg := dynamic.NewRegistrar(catalog, registry)
 
-	spec, err := dynamic.DescribeBinary(context.Background(), binPath, 0)
+	spec, err := dynamic.DescribeBinary(t.Context(), binPath, 0)
 	if err != nil {
 		t.Fatalf("DescribeBinary: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestRegistrar_RegisterUnregisterFlow(t *testing.T) {
 	if !ok {
 		t.Fatal("registry did not know about registered tool")
 	}
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "x",
 		ToolName:  spec.Name,
 		Arguments: tools.ToolParameters{"msg": "round-trip"},
@@ -363,7 +363,7 @@ func TestUnregisterTool(t *testing.T) {
 	}
 
 	un := dynamic.NewUnregisterTool(reg)
-	res, _ := un.Execute(context.Background(), tools.ToolCall{
+	res, _ := un.Execute(t.Context(), tools.ToolCall{
 		ID:        "x",
 		ToolName:  dynamic.ToolNameUnregisterTool,
 		Arguments: tools.ToolParameters{"name": "echo_back"},
@@ -457,7 +457,7 @@ func TestRegistrar_RestartDurability(t *testing.T) {
 	if !ok {
 		t.Fatal("echo_back not in registry after restart")
 	}
-	res, err := tool.Execute(context.Background(), tools.ToolCall{
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "x",
 		ToolName:  "echo_back",
 		Arguments: tools.ToolParameters{"msg": "still here"},
@@ -642,7 +642,7 @@ func main() {
 		t.Fatalf("build noisy binary: %v\n%s", err, out)
 	}
 
-	_, err := dynamic.DescribeBinary(context.Background(), binPath, 0)
+	_, err := dynamic.DescribeBinary(t.Context(), binPath, 0)
 	if err == nil {
 		t.Fatal("expected DescribeBinary to fail parsing the truncated noisy output")
 	}
@@ -711,13 +711,13 @@ func TestBinaryToolDoesNotInheritParentEnvironment(t *testing.T) {
 	t.Setenv(key, "super-secret")
 	binPath := buildEnvProbe(t)
 
-	spec, err := dynamic.DescribeBinary(context.Background(), binPath, 0)
+	spec, err := dynamic.DescribeBinary(t.Context(), binPath, 0)
 	if err != nil {
 		t.Fatalf("DescribeBinary leaked env or failed: %v", err)
 	}
 	tool := dynamic.NewBinaryTool(spec, binPath)
 	res, err := tool.Execute(
-		context.Background(),
+		t.Context(),
 		tools.ToolCall{ID: "x", ToolName: spec.Name, Arguments: tools.ToolParameters{}},
 	)
 	if err != nil {

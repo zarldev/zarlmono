@@ -1,7 +1,6 @@
 package openai_test
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -153,7 +152,7 @@ func TestRequest_ResponseFormatInjection(t *testing.T) {
 				ResponseFormat: tc.format,
 			}
 
-			seq, err := provider.Complete(context.Background(), req)
+			seq, err := provider.Complete(t.Context(), req)
 			if err != nil {
 				t.Fatalf("Complete: %v", err)
 			}

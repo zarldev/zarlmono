@@ -26,7 +26,7 @@ func TestFunc_EmitsOnlyOnChange(t *testing.T) {
 
 	var got []string
 	for range values {
-		obs, err := s.Poll(context.Background())
+		obs, err := s.Poll(t.Context())
 		if errors.Is(err, sensor.ErrNoChange) {
 			continue
 		}
@@ -49,7 +49,7 @@ func TestFunc_EmitsOnlyOnChange(t *testing.T) {
 func TestRunner_FiresHandlerOnChange(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
 	var tick atomic.Int32

@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -64,6 +65,50 @@ func TestStreamDoesNotDuplicateFinalText(t *testing.T) {
 	if got := b.String(); got != "hello world" {
 		t.Fatalf("content = %q, want %q (terminal assistant event was re-emitted)", got, "hello world")
 	}
+}
+
+// TestUnrecoverableToolArtifactNotLeakedAsText locks the leak guard: when a
+// tool call is emitted as text but the JSON is unrecoverable (here, truncated
+// mid-object by max_tokens), parseToolProtocol recovers no calls. The buffered
+// artifact must be suppressed, not yielded as visible Content.
+func TestUnrecoverableToolArtifactNotLeakedAsText(t *testing.T) {
+	// Truncated tool-call protocol object — repair cannot close it, so
+	// ParseArtifact recovers zero calls.
+	truncated := `{"tool_calls":[{"function":{"name":"bash","arguments":"{\"command\":\"ls`
+	if calls := parseToolProtocol(truncated); len(calls) != 0 {
+		t.Fatalf("precondition: parseToolProtocol recovered %d calls, want 0", len(calls))
+	}
+	stream := `{"type":"stream_event","event":{"delta":{"type":"text_delta","text":` +
+		mustJSONString(truncated) + `}}}`
+
+	var content strings.Builder
+	var toolCalls int
+	yield := func(c llm.CompletionChunk, _ error) bool {
+		content.WriteString(c.Content)
+		toolCalls += len(c.ToolCalls)
+		return true
+	}
+	// toolProtocol=true: tools were offered, so text is buffered and the
+	// recovery/suppression path runs.
+	if _, _, err := parseStream(strings.NewReader(stream), yield, newToolCallState(), true); err != nil {
+		t.Fatalf("parseStream: %v", err)
+	}
+	if content.Len() != 0 {
+		t.Fatalf("leaked artifact as Content: %q", content.String())
+	}
+	if toolCalls != 0 {
+		t.Fatalf("recovered %d tool calls from truncated JSON, want 0", toolCalls)
+	}
+}
+
+// mustJSONString encodes s as a JSON string literal (with surrounding quotes)
+// for embedding in a hand-built stream-json line.
+func mustJSONString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
 }
 
 func TestCompleteDoesNotYieldErrorAfterConsumerStops(t *testing.T) {

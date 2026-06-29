@@ -31,7 +31,7 @@ func TestErr_PromptRender_IsErrPromptRender(t *testing.T) {
 		runner.WithPrompt(errPromptSource{err: errors.New("disk on fire")}),
 	)
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "ping",
 	})
@@ -66,7 +66,7 @@ func TestErr_Compact_IsErrCompact(t *testing.T) {
 		runner.WithMaxIterations(5),
 		runner.WithCompactor(errCompactor{err: errors.New("squeeze failed")}),
 	)
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "go",
 	})
@@ -81,7 +81,7 @@ func TestErr_Compact_IsErrCompact(t *testing.T) {
 func TestErr_InvalidIterations(t *testing.T) {
 	t.Parallel()
 	r := runner.New(nil)
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:            taskscope.ID(uuid.NewString()),
 		Prompt:        "x",
 		MaxIterations: -1,

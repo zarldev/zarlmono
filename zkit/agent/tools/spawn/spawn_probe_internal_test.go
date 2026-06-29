@@ -41,7 +41,7 @@ func TestApplyPlanner_ProbeWarnsOnFailure(t *testing.T) {
 	// Model omitted the agent — the planner's Plan path also runs, but
 	// the probe is what we're asserting on here.
 	args := Args{Prompt: "task"}
-	tool.applyPlanner(context.Background(), &args)
+	tool.applyPlanner(t.Context(), &args)
 
 	if p.probeCalls != 1 {
 		t.Fatalf("Probe calls = %d, want 1", p.probeCalls)
@@ -59,7 +59,7 @@ func TestApplyPlanner_ProbeFiresEvenWhenModelPicksValidName(t *testing.T) {
 	tool := &Tool{planner: p, plannerAgents: []string{"researcher", "coder"}}
 	args := Args{Prompt: "investigate", Agent: "researcher"} // valid → Plan skipped
 
-	note := tool.applyPlanner(context.Background(), &args)
+	note := tool.applyPlanner(t.Context(), &args)
 	if note != "" {
 		t.Errorf("note = %q, want empty (valid name short-circuits Plan)", note)
 	}
@@ -76,7 +76,7 @@ func TestApplyPlanner_ProbeRunsOnce(t *testing.T) {
 	tool := &Tool{planner: p, plannerAgents: []string{"researcher"}}
 	for range 3 {
 		args := Args{Prompt: "task", Agent: "researcher"}
-		tool.applyPlanner(context.Background(), &args)
+		tool.applyPlanner(t.Context(), &args)
 	}
 	if p.probeCalls != 1 {
 		t.Errorf("Probe calls = %d across 3 applyPlanner calls, want 1 (sync.Once)", p.probeCalls)
@@ -89,5 +89,5 @@ func TestApplyPlanner_NonProbingPlanner_NoPanic(t *testing.T) {
 	p := &fakeSpawnPlanner{plan: SpawnPlan{Agent: "researcher", Mode: SpawnModeExplore}}
 	tool := &Tool{planner: p, plannerAgents: []string{"researcher"}}
 	args := Args{Prompt: "task"}
-	tool.applyPlanner(context.Background(), &args) // must not panic
+	tool.applyPlanner(t.Context(), &args) // must not panic
 }

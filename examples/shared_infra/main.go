@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/agent/checkpoint"
@@ -16,6 +17,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/trace"
 	"github.com/zarldev/zarlmono/zkit/agent/workflow"
 	airetrieval "github.com/zarldev/zarlmono/zkit/ai/retrieval"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
 // Request is the workflow input.
@@ -39,6 +42,10 @@ func main() {
 }
 
 func run(ctx context.Context, stdout io.Writer) error {
+	if err := codeUnderstanding(ctx, stdout); err != nil {
+		return err
+	}
+
 	store := airetrieval.NewMemoryVectorStore()
 	embedder := hashEmbedder{}
 	pipe := airetrieval.Pipeline{
@@ -106,6 +113,102 @@ func run(ctx context.Context, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "\nanswer_source=%s checkpoint=%s review=%s reviewer=%s\n%s\n", draft.Query, draft.Checkpoint, draft.Review.Decision, draft.Review.Reviewer, draft.Context)
 	return nil
 }
+
+// codeUnderstanding demonstrates the deterministic, LLM-free code tools.
+// file_map prints a syntax-aware outline (package, imports, declarations with
+// line ranges and signatures); retrieve_code ranks whole funcs/methods/types
+// against a query. Both parse with go/parser+go/ast — no embeddings, no LSP —
+// so the output is fully deterministic. This is the structural counterpart to
+// the embedding-based retrieval shown below.
+func codeUnderstanding(ctx context.Context, stdout io.Writer) error {
+	root, err := os.MkdirTemp("", "shared-infra-code-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(root) }()
+	for name, body := range map[string]string{"store.go": sampleStore, "cache.go": sampleCache} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			return err
+		}
+	}
+
+	ws, err := code.NewWorkspace(root)
+	if err != nil {
+		return err
+	}
+
+	mapRes, err := code.NewFileMapTool(ws).Execute(ctx, tools.ToolCall{Arguments: tools.ToolParameters{}})
+	if err != nil {
+		return err
+	}
+	if !mapRes.Success {
+		return fmt.Errorf("file_map: %s", mapRes.Error)
+	}
+	mapResult, ok := mapRes.Data.(code.FileMapResult)
+	if !ok {
+		return fmt.Errorf("file_map: unexpected result type %T", mapRes.Data)
+	}
+	fmt.Fprintln(stdout, "== file_map ==")
+	fmt.Fprintln(stdout, mapResult.String())
+
+	retRes, err := code.NewRetrieveCodeTool(ws).Execute(ctx, tools.ToolCall{Arguments: tools.ToolParameters{
+		"query": "save value to store",
+		"limit": 2,
+	}})
+	if err != nil {
+		return err
+	}
+	if !retRes.Success {
+		return fmt.Errorf("retrieve_code: %s", retRes.Error)
+	}
+	retResult, ok := retRes.Data.(code.RetrieveCodeResult)
+	if !ok {
+		return fmt.Errorf("retrieve_code: unexpected result type %T", retRes.Data)
+	}
+	fmt.Fprintln(stdout, "\n== retrieve_code: \"save value to store\" ==")
+	fmt.Fprintln(stdout, retResult.String())
+	return nil
+}
+
+const sampleStore = `package sample
+
+// Store keeps key/value pairs in memory.
+type Store struct {
+	data map[string]string
+}
+
+// NewStore returns an empty Store.
+func NewStore() *Store {
+	return &Store{data: map[string]string{}}
+}
+
+// Save writes value under key.
+func (s *Store) Save(key, value string) {
+	s.data[key] = value
+}
+
+// Load returns the value stored under key.
+func (s *Store) Load(key string) (string, bool) {
+	v, ok := s.data[key]
+	return v, ok
+}
+`
+
+const sampleCache = `package sample
+
+import "time"
+
+// Entry is a cached value with an expiry.
+type Entry struct {
+	Value     string
+	ExpiresAt time.Time
+}
+
+// Expired reports whether the entry is past its expiry at now.
+func (e Entry) Expired(now time.Time) bool {
+	return now.After(e.ExpiresAt)
+}
+`
 
 func corpus() []airetrieval.Document {
 	return []airetrieval.Document{

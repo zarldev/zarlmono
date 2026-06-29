@@ -56,18 +56,18 @@ func (p *fakePage) Eval(_ context.Context, _ string) (bool, error) {
 
 func TestLoginTool_AuthenticatesSession(t *testing.T) {
 	sess := NewSession(&fakePage{}, Creds{User: "u", Pass: "p"})
-	res, err := (&login{s: sess}).Execute(context.Background(), tools.ToolCall{})
+	res, err := (&login{s: sess}).Execute(t.Context(), tools.ToolCall{})
 	if err != nil || !res.Success {
 		t.Fatalf("login: success=%v err=%v", res.Success, err)
 	}
-	if !sess.LoggedIn(context.Background()) {
+	if !sess.LoggedIn(t.Context()) {
 		t.Fatal("session not marked logged in after successful login")
 	}
 }
 
 func TestUpvoteTool_VerifiesVote(t *testing.T) {
 	sess := NewSession(&fakePage{}, Creds{})
-	res, err := (&upvoteTop{s: sess}).Execute(context.Background(), tools.ToolCall{})
+	res, err := (&upvoteTop{s: sess}).Execute(t.Context(), tools.ToolCall{})
 	if err != nil || !res.Success {
 		t.Fatalf("upvote: success=%v err=%v", res.Success, err)
 	}
@@ -100,7 +100,7 @@ func TestHNUpvote_DeterministicEndToEnd(t *testing.T) {
 		{runnertest.ChunkText("done — top post upvoted"), runnertest.ChunkDone()},
 	})
 
-	out := RunUpvote(context.Background(), client, sess, 1)
+	out := RunUpvote(t.Context(), client, sess, 1)
 	if out.Err() != nil {
 		t.Fatalf("RunUpvote: %v", out.Err())
 	}

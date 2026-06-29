@@ -13,7 +13,7 @@ func BenchmarkMemoryBus(b *testing.B) {
 		bus := messagebus.NewMemoryBus[TestEvent]()
 		defer bus.Close()
 
-		ctx := context.Background()
+		ctx := b.Context()
 		event := TestEvent{ID: 1, Message: "benchmark"}
 
 		b.ResetTimer()
@@ -26,7 +26,7 @@ func BenchmarkMemoryBus(b *testing.B) {
 		bus := messagebus.NewMemoryBus[TestEvent]()
 		defer bus.Close()
 
-		ctx := context.Background()
+		ctx := b.Context()
 		event := TestEvent{ID: 1, Message: "benchmark"}
 		headers := messagebus.Headers{
 			"user-id": "123",
@@ -43,7 +43,7 @@ func BenchmarkMemoryBus(b *testing.B) {
 		bus := messagebus.NewMemoryBus[TestEvent]()
 		defer bus.Close()
 
-		ctx := context.Background()
+		ctx := b.Context()
 		handler := func(ctx context.Context, msg messagebus.Message[TestEvent]) error {
 			return nil
 		}
@@ -61,7 +61,7 @@ func BenchmarkMemoryBus(b *testing.B) {
 		)
 		defer bus.Close()
 
-		ctx := context.Background()
+		ctx := b.Context()
 		received := 0
 		handler := func(ctx context.Context, msg messagebus.Message[TestEvent]) error {
 			received++
@@ -86,7 +86,7 @@ func BenchmarkMemoryBus(b *testing.B) {
 		bus := messagebus.NewMemoryBus[TestEvent]()
 		defer bus.Close()
 
-		ctx := context.Background()
+		ctx := b.Context()
 
 		// Set up responder
 		responder := func(ctx context.Context, msg messagebus.Message[TestEvent]) error {
@@ -117,7 +117,7 @@ func BenchmarkMemoryBusSynchronous(b *testing.B) {
 	defer bus.Close()
 
 	b.Run("PublishSynchronous", func(b *testing.B) {
-		ctx := context.Background()
+		ctx := b.Context()
 		event := TestEvent{ID: 1, Message: "sync benchmark"}
 
 		// Add subscriber to make publish do work
@@ -171,7 +171,7 @@ func BenchmarkPatternMatching(b *testing.B) {
 	bus := messagebus.NewMemoryBus[TestEvent]()
 	defer bus.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	event := TestEvent{ID: 1, Message: "pattern"}
 
 	// Set up wildcard subscribers
@@ -208,7 +208,7 @@ func BenchmarkConcurrentAccess(b *testing.B) {
 	)
 	defer bus.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	event := TestEvent{ID: 1, Message: "concurrent"}
 
 	// Set up subscriber

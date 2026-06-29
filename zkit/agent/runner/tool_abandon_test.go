@@ -1,7 +1,6 @@
 package runner_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ func TestRun_ToolTimeoutMarksAbandoned(t *testing.T) {
 		runner.WithMaxIterations(3),
 		runner.WithToolTimeout(50*time.Millisecond),
 	)
-	if res := r.Run(context.Background(), runner.TaskSpec{
+	if res := r.Run(t.Context(), runner.TaskSpec{
 		ID: taskscope.ID(uuid.NewString()), Prompt: "go",
 	}); res.Err != nil {
 		t.Fatalf("Run: %v", res.Err)

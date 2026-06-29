@@ -1,7 +1,6 @@
 package code_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -39,7 +38,7 @@ func applyPatchHarness(t *testing.T, fileSeeds map[string]string) (*code.ApplyPa
 // the LLM runtime uses so failures land with the same shape.
 func runPatch(t *testing.T, tool *code.ApplyPatchTool, patch string) *tools.ToolResult {
 	t.Helper()
-	res, err := tool.Execute(context.Background(), tools.ToolCall{
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:        "test",
 		Arguments: tools.ToolParameters{"patch": patch},
 	})
