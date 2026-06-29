@@ -1,7 +1,6 @@
 package runner_test
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -47,7 +46,7 @@ func TestRun_RecoversFromUpstreamToolCallJSONError(t *testing.T) {
 	reg := newRegistry()
 	r := runner.New(runner.ClientFromProvider(prov), runner.WithTools(reg), runner.WithMaxIterations(5))
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "anything",
 	})
@@ -96,7 +95,7 @@ func TestRun_StopsRecoveringAfterCap(t *testing.T) {
 	reg := newRegistry()
 	r := runner.New(runner.ClientFromProvider(prov), runner.WithTools(reg), runner.WithMaxIterations(10))
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "anything",
 	})
@@ -126,7 +125,7 @@ func TestRun_DoesNotRecoverFromUnrelatedStreamError(t *testing.T) {
 	reg := newRegistry()
 	r := runner.New(runner.ClientFromProvider(prov), runner.WithTools(reg), runner.WithMaxIterations(5))
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "anything",
 	})
@@ -158,7 +157,7 @@ func TestRun_RetriesEmptyStream(t *testing.T) {
 		runner.WithMaxIterations(5),
 		runner.WithEmptyStreamBackoff(0)) // immediate retry — keep the test fast
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "anything",
 	})
@@ -199,7 +198,7 @@ func TestRun_StopsRetryingEmptyStreamAfterCap(t *testing.T) {
 		runner.WithMaxIterations(10),
 		runner.WithEmptyStreamBackoff(0))
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "anything",
 	})
@@ -228,7 +227,7 @@ func TestRun_DoesNotTagDecodeErrorAfterContent(t *testing.T) {
 	reg := newRegistry()
 	r := runner.New(runner.ClientFromProvider(prov), runner.WithTools(reg), runner.WithMaxIterations(5))
 
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "anything",
 	})

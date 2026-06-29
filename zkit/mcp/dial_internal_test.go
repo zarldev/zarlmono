@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"net"
 	"net/netip"
 	"strings"
@@ -23,7 +22,7 @@ func TestValidatingDialContext_RejectsByPolicy(t *testing.T) {
 	denyAll := AddrPolicy(func(netip.Addr) bool { return false })
 	dial := validatingDialContext(denyAll)
 
-	_, err := dial(context.Background(), "tcp", "127.0.0.1:9")
+	_, err := dial(t.Context(), "tcp", "127.0.0.1:9")
 	if err == nil {
 		t.Fatalf("expected dial rejection; got nil")
 	}
@@ -47,7 +46,7 @@ func TestValidatingDialContext_AllowsApprovedLiteralIP(t *testing.T) {
 	allowLoopback := AddrPolicy(func(ip netip.Addr) bool { return ip.IsLoopback() })
 	dial := validatingDialContext(allowLoopback)
 
-	conn, err := dial(context.Background(), "tcp", ln.Addr().String())
+	conn, err := dial(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial against allowed listener: %v", err)
 	}
@@ -69,7 +68,7 @@ func TestValidatingDialContext_RejectsResolvedHostname(t *testing.T) {
 	rejectLoopback := AddrPolicy(func(ip netip.Addr) bool { return !ip.IsLoopback() })
 	dial := validatingDialContext(rejectLoopback)
 
-	_, err := dial(context.Background(), "tcp", "localhost:9")
+	_, err := dial(t.Context(), "tcp", "localhost:9")
 	if err == nil {
 		t.Fatalf("expected loopback rejection via hostname resolution; got nil")
 	}

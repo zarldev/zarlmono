@@ -1,7 +1,6 @@
 package google
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -14,7 +13,7 @@ import (
 // request is made.
 func testClient(t *testing.T) *genai.Client {
 	t.Helper()
-	c, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+	c, err := genai.NewClient(t.Context(), &genai.ClientConfig{
 		APIKey:  "test-key",
 		Backend: genai.BackendGeminiAPI,
 	})

@@ -59,7 +59,7 @@ func TestBusImplementations(t *testing.T) {
 }
 
 func testBasicPubSub(t *testing.T, bus messagebus.Bus[TestEvent]) {
-	ctx := context.Background()
+	ctx := t.Context()
 	received := make(chan TestEvent, 1)
 
 	// Subscribe
@@ -92,7 +92,7 @@ func testBasicPubSub(t *testing.T, bus messagebus.Bus[TestEvent]) {
 }
 
 func testHeaders(t *testing.T, bus messagebus.Bus[TestEvent]) {
-	ctx := context.Background()
+	ctx := t.Context()
 	received := make(chan messagebus.Message[TestEvent], 1)
 
 	// Subscribe
@@ -142,7 +142,7 @@ func testHeaders(t *testing.T, bus messagebus.Bus[TestEvent]) {
 }
 
 func testMultipleSubscribers(t *testing.T, bus messagebus.Bus[TestEvent]) {
-	ctx := context.Background()
+	ctx := t.Context()
 	received1 := make(chan TestEvent, 1)
 	received2 := make(chan TestEvent, 1)
 
@@ -191,7 +191,7 @@ func testMultipleSubscribers(t *testing.T, bus messagebus.Bus[TestEvent]) {
 }
 
 func testQueueSubscriptions(t *testing.T, bus messagebus.Bus[TestEvent]) {
-	ctx := context.Background()
+	ctx := t.Context()
 	received1 := make(chan TestEvent, 10)
 	received2 := make(chan TestEvent, 10)
 
@@ -241,7 +241,7 @@ func testQueueSubscriptions(t *testing.T, bus messagebus.Bus[TestEvent]) {
 }
 
 func testRequestReply(t *testing.T, bus messagebus.Bus[TestEvent]) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Set up responder
 	responder := func(ctx context.Context, msg messagebus.Message[TestEvent]) error {
@@ -324,7 +324,7 @@ func TestSubscriptionLifecycle(t *testing.T) {
 	bus := messagebus.NewMemoryBus[TestEvent]()
 	defer bus.Close()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	received := make(chan TestEvent, 1)
 
 	handler := func(ctx context.Context, msg messagebus.Message[TestEvent]) error {
@@ -377,7 +377,7 @@ func TestSyncHandler_ReentrantSubscribeDoesNotDeadlock(t *testing.T) {
 		messagebus.WithSynchronous[TestEvent](),
 	)
 	defer bus.Close()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	gotNested := make(chan struct{}, 1)
 	primary := func(ctx context.Context, _ messagebus.Message[TestEvent]) error {
@@ -421,7 +421,7 @@ func TestSyncHandler_ReentrantSubscribeDoesNotDeadlock(t *testing.T) {
 func TestBusClose(t *testing.T) {
 	bus := messagebus.NewMemoryBus[TestEvent]()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Subscribe before close
 	handler := func(ctx context.Context, msg messagebus.Message[TestEvent]) error {

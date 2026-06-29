@@ -131,7 +131,7 @@ func TestRun_TextOnlyResponseEndsAsCompleted(t *testing.T) {
 
 	sink := newRecordingSink()
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(3), runner.WithSink(sink), runner.WithContextBreakdown())
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "what is the answer",
 	})
@@ -170,7 +170,7 @@ func TestRun_ContextBreakdownOffByDefault(t *testing.T) {
 	sink := newRecordingSink()
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
 		runner.WithMaxIterations(3), runner.WithSink(sink))
-	if res := r.Run(context.Background(), runner.TaskSpec{
+	if res := r.Run(t.Context(), runner.TaskSpec{
 		ID: taskscope.ID(uuid.NewString()), Prompt: "q",
 	}); res.Err != nil {
 		t.Fatalf("Run: %v", res.Err)
@@ -204,7 +204,7 @@ func TestRun_ToolCallThenTextCompletes(t *testing.T) {
 	reg := newRegistry(stubTool{name: "echo", result: "echo-result"})
 
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(5))
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "ping",
 	})
@@ -269,7 +269,7 @@ func TestRun_MaxIterationsCapsLoop(t *testing.T) {
 	reg := newRegistry(stubTool{name: "echo"})
 
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(3))
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "loop",
 	})
@@ -294,7 +294,7 @@ func TestRun_SinkEventsPublished(t *testing.T) {
 
 	sink := newRecordingSink()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	t.Cleanup(cancel)
 
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithSink(sink), runner.WithMaxIterations(3))
@@ -338,7 +338,7 @@ func TestRun_SpawnAgentRunsChildAndReturnsSummary(t *testing.T) {
 
 	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(5))
 	reg.Register(spawn.New(r))
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "delegate",
 	})
@@ -394,7 +394,7 @@ func TestRun_SpawnAgentRespectsDepthCap(t *testing.T) {
 	// would short-circuit this test, which exists specifically to
 	// exercise the cap behaviour at deeper levels.
 	reg.Register(spawn.New(r, spawn.WithMaxDepth(3)))
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "go deep",
 	})
@@ -534,7 +534,7 @@ func TestRun_ToolTimeoutAbandonsUncooperativeTool(t *testing.T) {
 		runner.WithToolTimeout(20*time.Millisecond),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	start := time.Now()
 	res := r.Run(ctx, runner.TaskSpec{
@@ -576,7 +576,7 @@ func TestRun_ZeroTimeoutOptionsDisableStreamGuards(t *testing.T) {
 		runner.WithStreamIdleTimeout(0),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	res := r.Run(ctx, runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
 	if res.Err != nil {

@@ -1,7 +1,6 @@
 package coderunner_test
 
 import (
-	"context"
 	"slices"
 	"testing"
 
@@ -171,7 +170,7 @@ func TestGuardedSourceArmsTheProductionChain(t *testing.T) {
 
 	// The wrapped source still enumerates the underlying tools.
 	saw := false
-	for tool := range src.Tools(context.Background()) {
+	for tool := range src.Tools(t.Context()) {
 		if tool.Definition().Name == code.ToolNameRead {
 			saw = true
 		}

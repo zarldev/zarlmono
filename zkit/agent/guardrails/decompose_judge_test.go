@@ -1,7 +1,6 @@
 package guardrails_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,7 +33,7 @@ func TestLLMVerdictJudge_ParsesEachAction(t *testing.T) {
 			defer srv.Close()
 
 			judge := newTestJudge(t, srv.URL)
-			v, err := judge.Judge(context.Background(), guardrails.VerdictInput{
+			v, err := judge.Judge(t.Context(), guardrails.VerdictInput{
 				Tool:     tools.ToolName("write"),
 				Args:     tools.ToolParameters{"path": "x.go"},
 				Error:    "boom",
@@ -65,7 +64,7 @@ func TestLLMVerdictJudge_RequestCarriesResponseFormat(t *testing.T) {
 	defer srv.Close()
 
 	judge := newTestJudge(t, srv.URL)
-	_, err := judge.Judge(context.Background(), guardrails.VerdictInput{
+	_, err := judge.Judge(t.Context(), guardrails.VerdictInput{
 		Tool:     tools.ToolName("write"),
 		Error:    "boom",
 		Attempts: 3,
@@ -141,7 +140,7 @@ func TestLLMVerdictJudge_StripsThinking(t *testing.T) {
 	defer srv.Close()
 
 	judge := newTestJudge(t, srv.URL)
-	v, err := judge.Judge(context.Background(), guardrails.VerdictInput{
+	v, err := judge.Judge(t.Context(), guardrails.VerdictInput{
 		Tool: "bash", Error: "net err", Attempts: 3,
 	})
 	if err != nil {
@@ -163,7 +162,7 @@ func TestLLMVerdictJudge_RejectsInvalidAction(t *testing.T) {
 	defer srv.Close()
 
 	judge := newTestJudge(t, srv.URL)
-	_, err := judge.Judge(context.Background(), guardrails.VerdictInput{
+	_, err := judge.Judge(t.Context(), guardrails.VerdictInput{
 		Tool: "bash", Error: "x", Attempts: 3,
 	})
 	if err == nil {
@@ -183,7 +182,7 @@ func TestLLMVerdictJudge_RejectsMalformedJSON(t *testing.T) {
 	defer srv.Close()
 
 	judge := newTestJudge(t, srv.URL)
-	_, err := judge.Judge(context.Background(), guardrails.VerdictInput{
+	_, err := judge.Judge(t.Context(), guardrails.VerdictInput{
 		Tool: "bash", Error: "x", Attempts: 3,
 	})
 	if err == nil {

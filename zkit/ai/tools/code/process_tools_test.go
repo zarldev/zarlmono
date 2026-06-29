@@ -1,7 +1,6 @@
 package code_test
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -27,7 +26,7 @@ func newProcMgrForTest(t *testing.T) *code.ProcessManager {
 		code.WithMaxAliveProcesses(4),
 		code.WithProcessOutputBuffer(64),
 	)
-	t.Cleanup(func() { mgr.KillAll(context.Background()) })
+	t.Cleanup(func() { mgr.KillAll(t.Context()) })
 	return mgr
 }
 
@@ -78,7 +77,7 @@ func TestBashOutput_DefaultOutputShape(t *testing.T) {
 	waitForExit(t, mgr, id, 3*time.Second)
 
 	tool := code.NewBashOutputTool(mgr)
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID: "c", ToolName: "bash_output",
 		Arguments: tools.ToolParameters{"process_id": id},
 	})
@@ -111,7 +110,7 @@ func TestBashOutput_JSONOutput(t *testing.T) {
 	waitForExit(t, mgr, id, 3*time.Second)
 
 	tool := code.NewBashOutputTool(mgr)
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID: "c", ToolName: "bash_output",
 		Arguments: tools.ToolParameters{"process_id": id, "output": "json"},
 	})
@@ -135,7 +134,7 @@ func TestBashOutput_MissingProcessRejected(t *testing.T) {
 	t.Parallel()
 	mgr := newProcMgrForTest(t)
 	tool := code.NewBashOutputTool(mgr)
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID: "c", ToolName: "bash_output",
 		Arguments: tools.ToolParameters{"process_id": "p-does-not-exist"},
 	})
@@ -153,7 +152,7 @@ func TestListProcesses_DefaultOutputShape(t *testing.T) {
 	}
 
 	tool := code.NewListProcessesTool(mgr)
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID: "c", ToolName: "list_processes",
 	})
 	if res == nil || !res.Success {
@@ -183,7 +182,7 @@ func TestListProcesses_JSONOutput(t *testing.T) {
 		t.Fatalf("StartProcess: %v", err)
 	}
 	tool := code.NewListProcessesTool(mgr)
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID: "c", ToolName: "list_processes",
 		Arguments: tools.ToolParameters{"output": "json"},
 	})
@@ -206,7 +205,7 @@ func TestListProcesses_EmptySentinel(t *testing.T) {
 	t.Parallel()
 	mgr := newProcMgrForTest(t)
 	tool := code.NewListProcessesTool(mgr)
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID: "c", ToolName: "list_processes",
 	})
 	body := listProcsText(t, res)

@@ -29,7 +29,7 @@ func TestDrive_SucceedsFirstAttempt(t *testing.T) {
 		calls++
 		return completed("done")
 	}
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{Prompt: "go"}, pursue.WithGoal(pursue.AcceptCompleted())))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{Prompt: "go"}, pursue.WithGoal(pursue.AcceptCompleted())))
 	if out.Err() != nil {
 		t.Fatalf("err: %v", out.Err())
 	}
@@ -54,7 +54,7 @@ func TestDrive_RedrivesUntilGoalMet(t *testing.T) {
 		return pursue.Retry(fmt.Sprintf("not yet, retry #%d", attempt.Number))
 	})
 
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{Prompt: "go"}, pursue.WithGoal(goal)), pursue.WithMaxAttempts(5), pursue.WithContextThreader(pursue.ThreadFullTranscript()))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{Prompt: "go"}, pursue.WithGoal(goal)), pursue.WithMaxAttempts(5), pursue.WithContextThreader(pursue.ThreadFullTranscript()))
 	if out.Err() != nil {
 		t.Fatalf("err: %v", out.Err())
 	}
@@ -94,7 +94,7 @@ func TestDrive_DefaultThreaderDropsContext(t *testing.T) {
 	// No WithContextThreader: the conservative ThreadNoContext default
 	// applies, so a re-driven attempt carries only the feedback prompt and
 	// no prior messages — bounding context growth across retries.
-	out := pursue.Drive(context.Background(),
+	out := pursue.Drive(t.Context(),
 		pursue.NewRequest(run, runner.TaskSpec{Prompt: "go"}, pursue.WithGoal(goal)),
 		pursue.WithMaxAttempts(3),
 	)
@@ -118,13 +118,13 @@ func TestDrive_VerifiedWrapperOptsGoalIntoVerified(t *testing.T) {
 	})
 
 	// Bare GoalFunc: not verified.
-	plain := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(base)))
+	plain := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(base)))
 	if plain.Verified {
 		t.Fatal("bare GoalFunc should report Verified == false")
 	}
 
 	// Same goal wrapped with Verified: reported verified on success.
-	wrapped := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(pursue.Verified(base))))
+	wrapped := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(pursue.Verified(base))))
 	if wrapped.Status() != pursue.Statuses.SUCCEEDED || !wrapped.Verified {
 		t.Fatalf("pursue.Verified(goal) success must report Verified; status=%v verified=%v", wrapped.Status(), wrapped.Verified)
 	}
@@ -137,7 +137,7 @@ func TestDrive_GivesUpAtBudget(t *testing.T) {
 	goal := pursue.GoalFunc(func(_ context.Context, _ pursue.Attempt) pursue.Decision {
 		return pursue.Retry("never satisfied")
 	})
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal)), pursue.WithMaxAttempts(2))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal)), pursue.WithMaxAttempts(2))
 	if out.Err() != nil {
 		t.Fatalf("err: %v", out.Err())
 	}
@@ -154,7 +154,7 @@ func TestDrive_ErroredSurfacesAndStops(t *testing.T) {
 		return runner.TaskResult{Reason: runner.TerminalError, Err: want}
 	}
 	var reports []pursue.AttemptReport
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(pursue.AcceptCompleted())), pursue.WithMaxAttempts(3), pursue.WithOnAttempt(func(r pursue.AttemptReport) {
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(pursue.AcceptCompleted())), pursue.WithMaxAttempts(3), pursue.WithOnAttempt(func(r pursue.AttemptReport) {
 		reports = append(reports, r)
 	}))
 	if !errors.Is(out.Err(), want) {
@@ -173,7 +173,7 @@ func TestDrive_TerminalErrorResultSurfacesAsErrored(t *testing.T) {
 	run := func(_ context.Context, _ runner.TaskSpec) runner.TaskResult {
 		return runner.TaskResult{Reason: runner.TerminalError, Err: want}
 	}
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}), pursue.WithMaxAttempts(3))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}), pursue.WithMaxAttempts(3))
 	if !errors.Is(out.Err(), want) {
 		t.Fatalf("err = %v; want %v", out.Err(), want)
 	}
@@ -186,7 +186,7 @@ func TestDrive_NilGoalAcceptsCompleted(t *testing.T) {
 	run := func(_ context.Context, _ runner.TaskSpec) runner.TaskResult {
 		return completed("ok")
 	}
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}))
 	if out.Status() != pursue.Statuses.SUCCEEDED {
 		t.Fatalf("status=%v; want succeeded (nil Goal ⇒ AcceptCompleted)", out.Status())
 	}
@@ -196,7 +196,7 @@ func TestDrive_NilGoalGivesUpOnNonCompleted(t *testing.T) {
 	run := func(_ context.Context, _ runner.TaskSpec) runner.TaskResult {
 		return runner.TaskResult{Reason: runner.TerminalMaxIterations}
 	}
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}))
 	if out.Status() != pursue.Statuses.GAVEUP || out.Result.Reason != runner.TerminalMaxIterations {
 		t.Fatalf("status=%v reason=%v; want gave_up/max_iterations", out.Status(), out.Result.Reason)
 	}
@@ -213,7 +213,7 @@ func TestDrive_OnAttemptFiresPerAttemptWithDecision(t *testing.T) {
 		}
 		return pursue.Retry("again")
 	})
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal)),
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal)),
 		pursue.WithMaxAttempts(3),
 		pursue.WithOnAttempt(func(r pursue.AttemptReport) { got = append(got, r) }),
 	)
@@ -243,7 +243,7 @@ func TestDrive_UntilFuncEarlyStopCancelsAttemptAndSucceeds(t *testing.T) {
 		return "goal intentionally ignored; UntilFunc owns this path"
 	})
 
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal), pursue.WithWatcher(watcher)),
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal), pursue.WithWatcher(watcher)),
 		pursue.WithMaxAttempts(3),
 		pursue.WithOnAttempt(func(r pursue.AttemptReport) { report = r }),
 	)
@@ -272,7 +272,7 @@ func TestDrive_WatcherDoesNotOverrideGoal(t *testing.T) {
 		return pursue.Retry("watcher fired but goal disagrees")
 	})
 
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal), pursue.WithWatcher(watcher)))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal), pursue.WithWatcher(watcher)))
 	if out.Err() != nil {
 		t.Fatalf("err: %v", out.Err())
 	}
@@ -297,7 +297,7 @@ func TestDrive_WatcherTimeoutsWhenAttemptDoesNotDrain(t *testing.T) {
 	goal, watcher := pursue.Until(goalMet.Load, "not done")
 
 	start := time.Now()
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal), pursue.WithWatcher(watcher)),
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal), pursue.WithWatcher(watcher)),
 		pursue.WithCancelDrainTimeout(10*time.Millisecond),
 	)
 	if !errors.Is(out.Err(), pursue.ErrAttemptCancelDrainTimeout) {
@@ -321,7 +321,7 @@ func TestDrive_NoWatcherWaitsForNaturalCompletion(t *testing.T) {
 
 	// No WithWatcher — Drive runs the attempt to natural completion and
 	// only then consults the Goal. Result.Reason stays TerminalCompleted.
-	out := pursue.Drive(context.Background(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal)))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(run, runner.TaskSpec{}, pursue.WithGoal(goal)))
 	if out.Err() != nil {
 		t.Fatalf("err: %v", out.Err())
 	}
@@ -331,7 +331,7 @@ func TestDrive_NoWatcherWaitsForNaturalCompletion(t *testing.T) {
 }
 
 func TestDrive_NilAttemptFuncErrors(t *testing.T) {
-	out := pursue.Drive(context.Background(), pursue.NewRequest(nil, runner.TaskSpec{}))
+	out := pursue.Drive(t.Context(), pursue.NewRequest(nil, runner.TaskSpec{}))
 	if out.Err() == nil {
 		t.Fatal("err = nil; want nil AttemptFunc error")
 	}
@@ -353,7 +353,7 @@ func TestDrive_RetryEmptyFeedbackKeepsPrompt(t *testing.T) {
 		return pursue.Retry("")
 	})
 
-	out := pursue.Drive(context.Background(),
+	out := pursue.Drive(t.Context(),
 		pursue.NewRequest(run, runner.TaskSpec{Prompt: "original"}, pursue.WithGoal(goal)),
 		pursue.WithMaxAttempts(2),
 		pursue.WithContextThreader(pursue.ThreadFullTranscript()),
@@ -393,7 +393,7 @@ func TestDrive_ContextThreaderOverridesRedriveSpec(t *testing.T) {
 		return next
 	}
 
-	out := pursue.Drive(context.Background(),
+	out := pursue.Drive(t.Context(),
 		pursue.NewRequest(run, runner.TaskSpec{Prompt: "original"}, pursue.WithGoal(goal)),
 		pursue.WithMaxAttempts(2),
 		pursue.WithContextThreader(threader),

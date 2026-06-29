@@ -26,7 +26,7 @@ func TestRequestID_GeneratesWhenAbsent(t *testing.T) {
 	})
 
 	req := connect.NewRequest[any](nil)
-	resp, err := handler(context.Background(), req)
+	resp, err := handler(t.Context(), req)
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestRequestID_PropagatesIncoming(t *testing.T) {
 	req := connect.NewRequest[any](nil)
 	req.Header().Set(middleware.RequestIDHeader, incoming)
 
-	resp, err := handler(context.Background(), req)
+	resp, err := handler(t.Context(), req)
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestRecovery_CatchesPanic(t *testing.T) {
 	})
 
 	req := connect.NewRequest[any](nil)
-	_, err := handler(context.Background(), req)
+	_, err := handler(t.Context(), req)
 	if err == nil {
 		t.Fatal("expected error from recovered panic, got nil")
 	}
@@ -103,7 +103,7 @@ func TestRecovery_PassesNonPanicErrors(t *testing.T) {
 	})
 
 	req := connect.NewRequest[any](nil)
-	_, err := handler(context.Background(), req)
+	_, err := handler(t.Context(), req)
 	if !errors.Is(err, want) {
 		t.Errorf("got err = %v, want %v (verbatim)", err, want)
 	}
@@ -123,7 +123,7 @@ func TestRecovery_StreamingHandlerCatchesPanic(t *testing.T) {
 		panic("explosion in streaming handler")
 	})
 
-	err := handler(context.Background(), fakeStreamingConn{})
+	err := handler(t.Context(), fakeStreamingConn{})
 	if err == nil {
 		t.Fatal("expected error from recovered streaming panic, got nil")
 	}
@@ -166,7 +166,7 @@ func TestLogging_DoesNotAlterResult(t *testing.T) {
 	})
 
 	req := connect.NewRequest[any](nil)
-	_, err := handler(context.Background(), req)
+	_, err := handler(t.Context(), req)
 	if !errors.Is(err, want) {
 		t.Errorf("got err = %v, want %v", err, want)
 	}

@@ -62,7 +62,7 @@ func TestRunner_IterationTimeoutBoundsStreamingGeneration(t *testing.T) {
 
 	done := make(chan runner.TaskResult, 1)
 	go func() {
-		done <- r.Run(context.Background(), runner.TaskSpec{
+		done <- r.Run(t.Context(), runner.TaskSpec{
 			ID:     taskscope.ID(uuid.NewString()),
 			Prompt: "go",
 		})
@@ -99,7 +99,7 @@ func TestRunner_ThinkingBudgetCutsStuckReasoning(t *testing.T) {
 
 	done := make(chan runner.TaskResult, 1)
 	go func() {
-		done <- r.Run(context.Background(), runner.TaskSpec{
+		done <- r.Run(t.Context(), runner.TaskSpec{
 			ID:     taskscope.ID(uuid.NewString()),
 			Prompt: "go",
 		})

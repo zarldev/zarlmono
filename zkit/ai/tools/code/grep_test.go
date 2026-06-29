@@ -1,7 +1,6 @@
 package code_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -67,7 +66,7 @@ func TestGrep_DefaultGroupsByFile(t *testing.T) {
 		"a.go": "package a\n\nfunc Hello() string { return \"hi\" }\n",
 		"b.go": "package b\n\n// Hello world\nvar x = \"hi\"\n",
 	})
-	res, _ := g.Execute(context.Background(), grepCall(map[string]any{
+	res, _ := g.Execute(t.Context(), grepCall(map[string]any{
 		"pattern": "Hello",
 	}))
 	if res == nil || !res.Success {
@@ -107,7 +106,7 @@ func TestGrep_JSONOutput(t *testing.T) {
 	g := grepHarness(t, map[string]string{
 		"a.go": "package a\n\nfunc Hello() string { return \"hi\" }\n",
 	})
-	res, _ := g.Execute(context.Background(), grepCall(map[string]any{
+	res, _ := g.Execute(t.Context(), grepCall(map[string]any{
 		"pattern": "Hello",
 		"output":  "json",
 	}))
@@ -134,7 +133,7 @@ func TestGrep_DataCarriesTypedHits(t *testing.T) {
 	g := grepHarness(t, map[string]string{
 		"a.go": "Hello\nHello\n",
 	})
-	res, _ := g.Execute(context.Background(), grepCall(map[string]any{
+	res, _ := g.Execute(t.Context(), grepCall(map[string]any{
 		"pattern": "Hello",
 	}))
 	r, ok := res.Data.(code.GrepResult)
@@ -154,7 +153,7 @@ func TestGrep_DataCarriesTypedHits(t *testing.T) {
 func TestGrep_NoMatchesSentinel(t *testing.T) {
 	t.Parallel()
 	g := grepHarness(t, map[string]string{"a.go": "x"})
-	res, _ := g.Execute(context.Background(), grepCall(map[string]any{
+	res, _ := g.Execute(t.Context(), grepCall(map[string]any{
 		"pattern": "NonexistentSymbol",
 	}))
 	if !res.Success {
@@ -174,7 +173,7 @@ func TestGrep_MaxResultsTruncatesAndAnnounces(t *testing.T) {
 	t.Parallel()
 	lines := strings.Repeat("Hello\n", 50)
 	g := grepHarness(t, map[string]string{"a.go": lines})
-	res, _ := g.Execute(context.Background(), grepCall(map[string]any{
+	res, _ := g.Execute(t.Context(), grepCall(map[string]any{
 		"pattern":     "Hello",
 		"max_results": 5,
 	}))
@@ -190,7 +189,7 @@ func TestGrep_MaxResultsTruncatesAndAnnounces(t *testing.T) {
 func TestGrep_EmptyPatternRejected(t *testing.T) {
 	t.Parallel()
 	g := grepHarness(t, nil)
-	res, _ := g.Execute(context.Background(), grepCall(map[string]any{
+	res, _ := g.Execute(t.Context(), grepCall(map[string]any{
 		"pattern": "",
 	}))
 	if res.Success {
@@ -210,7 +209,7 @@ func TestGrep_GlobScopes(t *testing.T) {
 		"a.md":     "Hello",
 		"docs.txt": "Hello",
 	})
-	res, _ := g.Execute(context.Background(), grepCall(map[string]any{
+	res, _ := g.Execute(t.Context(), grepCall(map[string]any{
 		"pattern": "Hello",
 		"glob":    "*.go",
 	}))

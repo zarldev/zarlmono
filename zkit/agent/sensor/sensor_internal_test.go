@@ -20,7 +20,7 @@ func TestRunnerStartAfterStopIsNoop(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 	r.Stop()
-	r.Start(context.Background()) // must not panic, must not spawn
+	r.Start(t.Context()) // must not panic, must not spawn
 	time.Sleep(50 * time.Millisecond)
 }
 
@@ -36,7 +36,7 @@ func TestRunnerConcurrentStartStop(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); r.Start(context.Background()) }()
+	go func() { defer wg.Done(); r.Start(t.Context()) }()
 	go func() { defer wg.Done(); r.Stop() }()
 	wg.Wait()
 }
@@ -59,7 +59,7 @@ func TestRunnerStopCancelsContextAwarePoll(t *testing.T) {
 	if err := r.Register(s); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	r.Start(context.Background())
+	r.Start(t.Context())
 
 	select {
 	case <-pollStarted:
@@ -109,7 +109,7 @@ func TestRunnerStopBoundedForContextIgnoringPoll(t *testing.T) {
 		default:
 		}
 	})
-	r.Start(context.Background())
+	r.Start(t.Context())
 
 	select {
 	case <-pollStarted:

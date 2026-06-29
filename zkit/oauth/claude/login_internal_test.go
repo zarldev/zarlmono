@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -39,10 +38,10 @@ func TestStoreToken_PersistsParsedCredential(t *testing.T) {
 	defer func() { _ = store.Close() }()
 	svc := prefs.NewService(store, nil, "")
 	out := "note\nCLAUDE_CODE_OAUTH_TOKEN=ccode_ABCdef1234567890token\n"
-	if err := StoreToken(context.Background(), svc, out); err != nil {
+	if err := StoreToken(t.Context(), svc, out); err != nil {
 		t.Fatalf("StoreToken() error = %v", err)
 	}
-	got, ok, err := svc.GetKey(context.Background(), prefs.ScopeGlobal, CredProvider)
+	got, ok, err := svc.GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
 	if err != nil {
 		t.Fatalf("GetKey() error = %v", err)
 	}

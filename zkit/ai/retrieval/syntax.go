@@ -3,16 +3,15 @@ package retrieval
 import (
 	"context"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"strings"
+
+	"github.com/zarldev/zarlmono/zkit/sourcecode"
 )
 
 // SyntaxChunker splits source files by structural AST boundaries. For Go
-// files it uses go/parser+go/ast — zero CGO, zero WASM, stdlib only. Files
-// that fail to parse or whose language is not supported fall back to a
-// TextChunker.
+// files it uses go/parser+go/ast via sourcecode.GoParser — zero CGO, zero
+// WASM, stdlib only. Files that fail to parse or whose language is not
+// supported fall back to a TextChunker.
 //
 // Each chunk's metadata carries:
 //
@@ -23,7 +22,7 @@ import (
 //	end_line     — 1-based line after the last declaration token
 //
 // The chunk Text is the exact source bytes of the declaration, extracted via
-// the token.FileSet byte offsets — no reformatting, no loss.
+// parser offsets — no reformatting, no loss.
 type SyntaxChunker struct {
 	// Size is the per-chunk source-byte target used only by the fallback.
 	// Zero means every structural unit becomes its own chunk (no size-based
@@ -44,6 +43,122 @@ type SyntaxChunker struct {
 	// When Languages is explicitly configured, this field is used
 	// as-is.
 	SkipGenerated bool
+}
+
+// SourceDocument is a typed source file input for syntax chunking.
+type SourceDocument struct {
+	ID       DocumentID
+	Text     string
+	Path     string
+	Ext      string
+	Language sourcecode.Language
+}
+
+// SourceChunk is a typed syntax chunk with sourcecode metadata.
+type SourceChunk struct {
+	ID       DocumentID
+	Text     string
+	Path     string
+	Symbol   sourcecode.Symbol
+	Kind     sourcecode.SymbolKind
+	Receiver string
+}
+
+// ChunkSource splits typed source documents by structural AST boundaries. It
+// returns only parser-backed chunks; unsupported languages and parse errors are
+// reported instead of falling back to opaque text chunks.
+func (c SyntaxChunker) ChunkSource(ctx context.Context, docs []SourceDocument) ([]SourceChunk, error) {
+	useDefaults := c.Languages == nil
+	langs := c.Languages
+	if len(langs) == 0 {
+		langs = []string{"go"}
+	}
+	langSet := make(map[string]struct{}, len(langs))
+	for _, l := range langs {
+		langSet[strings.ToLower(l)] = struct{}{}
+	}
+	skipGen := c.SkipGenerated
+	if useDefaults {
+		skipGen = true
+	}
+
+	var out []SourceChunk
+	for i := range docs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		doc := docs[i]
+		ext := inferSourceExt(doc)
+		if _, ok := langSet[ext]; !ok {
+			continue
+		}
+		if ext == "go" {
+			chunks, err := c.chunkGoSource(doc, skipGen)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, chunks...)
+		}
+	}
+	return out, nil
+}
+
+func inferSourceExt(doc SourceDocument) string {
+	if doc.Ext != "" {
+		return strings.ToLower(strings.TrimPrefix(doc.Ext, "."))
+	}
+	if doc.Language != "" {
+		return strings.ToLower(string(doc.Language))
+	}
+	id := string(doc.ID)
+	if i := strings.LastIndexByte(id, '.'); i >= 0 && i < len(id)-1 {
+		return strings.ToLower(id[i+1:])
+	}
+	return ""
+}
+
+func (c SyntaxChunker) chunkGoSource(doc SourceDocument, skipGen bool) ([]SourceChunk, error) {
+	src := doc.Text
+	if strings.TrimSpace(src) == "" {
+		return nil, nil
+	}
+	path := doc.Path
+	if path == "" {
+		path = string(doc.ID)
+	}
+	parsed, err := (sourcecode.GoParser{}).Parse(path, []byte(src))
+	if err != nil {
+		return nil, err
+	}
+	if skipGen && parsed.Generated {
+		return nil, nil
+	}
+	chunks := make([]SourceChunk, 0, len(parsed.Symbols))
+	for _, sym := range parsed.Symbols {
+		if !syntaxChunkableKind(sym.Kind) {
+			continue
+		}
+		if sym.StartOffset < 0 || sym.EndOffset > len(src) || sym.StartOffset >= sym.EndOffset {
+			continue
+		}
+		kind := sym.Kind
+		if kind.IsType() {
+			kind = sourcecode.SymbolKindType
+		}
+		id := doc.ID
+		if id != "" {
+			id = DocumentID(fmt.Sprintf("%s:%s:%d-%d", doc.ID, sym.Name, sym.StartLine, sym.EndLine))
+		}
+		chunks = append(chunks, SourceChunk{
+			ID:       id,
+			Text:     src[sym.StartOffset:sym.EndOffset],
+			Path:     path,
+			Symbol:   sym,
+			Kind:     kind,
+			Receiver: sym.Receiver,
+		})
+	}
+	return chunks, nil
 }
 
 // Chunk splits each document by structural AST boundaries.
@@ -92,7 +207,7 @@ func (c SyntaxChunker) Chunk(ctx context.Context, docs []Document) ([]Document, 
 
 		switch ext {
 		case "go":
-			chunks, err := c.chunkGo(ctx, *doc, skipGen)
+			chunks, err := c.chunkGo(*doc, skipGen)
 			if err != nil {
 				fb, fbErr := fallback.Chunk(ctx, []Document{*doc})
 				if fbErr != nil {
@@ -130,152 +245,62 @@ func (c SyntaxChunker) inferExt(doc *Document) string {
 	return ""
 }
 
-// parseMode is the mode passed to parser.ParseFile. ParseComments gives us
-// doc comments (needed for ast.IsGenerated); SkipObjectResolution skips the
-// deprecated identifier-resolution pass — faster, and we don't use Scopes.
-const parseMode = parser.ParseComments | parser.SkipObjectResolution
-
 // chunkGo parses a single Go source document and returns one chunk per
 // top-level func, method, or named type declaration.
-func (c SyntaxChunker) chunkGo(_ context.Context, doc Document, skipGen bool) ([]Document, error) {
+func (c SyntaxChunker) chunkGo(doc Document, skipGen bool) ([]Document, error) {
 	src := doc.Text
 	if strings.TrimSpace(src) == "" {
 		return nil, nil
 	}
 
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, string(doc.ID), []byte(src), parseMode)
+	parsed, err := (sourcecode.GoParser{}).Parse(string(doc.ID), []byte(src))
 	if err != nil {
-		return nil, fmt.Errorf("parse go: %w", err)
+		return nil, err
 	}
-
-	// Skip generated files — mechanically produced code is rarely useful
-	// for semantic retrieval. ast.IsGenerated was added in Go 1.26.
-	if skipGen && ast.IsGenerated(f) {
+	if skipGen && parsed.Generated {
 		return nil, nil
 	}
 
-	var chunks []Document
-	for _, decl := range f.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			chunk := c.funcChunk(doc, src, fset, d)
-			if chunk != nil {
-				chunks = append(chunks, *chunk)
-			}
-		case *ast.GenDecl:
-			n := len(d.Specs)
-			for i, spec := range d.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				chunk := c.typeChunk(doc, src, fset, d, ts, i, n)
-				if chunk != nil {
-					chunks = append(chunks, *chunk)
-				}
-			}
+	chunks := make([]Document, 0, len(parsed.Symbols))
+	for _, sym := range parsed.Symbols {
+		if !syntaxChunkableKind(sym.Kind) {
+			continue
 		}
+		if sym.StartOffset < 0 || sym.EndOffset > len(src) || sym.StartOffset >= sym.EndOffset {
+			continue
+		}
+		chunk := doc.Clone()
+		chunk.Text = src[sym.StartOffset:sym.EndOffset]
+		chunk.Score = 0
+		if chunk.Metadata == nil {
+			chunk.Metadata = Metadata{}
+		}
+		kind := retrievalKind(sym.Kind)
+		chunk.Metadata["kind"] = kind
+		chunk.Metadata["name"] = sym.Name
+		chunk.Metadata["start_line"] = sym.StartLine
+		chunk.Metadata["end_line"] = sym.EndLine
+		if sym.Receiver != "" {
+			chunk.Metadata["receiver"] = sym.Receiver
+		}
+		if doc.ID != "" {
+			chunk.Metadata["parent_id"] = string(doc.ID)
+			chunk.ID = DocumentID(fmt.Sprintf("%s:%s:%d-%d", doc.ID, sym.Name, sym.StartLine, sym.EndLine))
+		}
+		chunks = append(chunks, chunk)
 	}
 	return chunks, nil
 }
 
-// funcChunk builds a chunk for *ast.FuncDecl.
-func (c SyntaxChunker) funcChunk(doc Document, src string, fset *token.FileSet, fn *ast.FuncDecl) *Document {
-	if fn.Body == nil {
-		return nil // forward declaration — no body to chunk.
-	}
-	start := fset.Position(fn.Pos())
-	end := fset.Position(fn.End())
-
-	chunk := doc.Clone()
-	chunk.Text = src[start.Offset:end.Offset]
-	chunk.Score = 0
-	if chunk.Metadata == nil {
-		chunk.Metadata = Metadata{}
-	}
-	chunk.Metadata["start_line"] = start.Line
-	chunk.Metadata["end_line"] = end.Line
-
-	name := fn.Name.Name
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		chunk.Metadata["kind"] = "method"
-		chunk.Metadata["name"] = name
-		chunk.Metadata["receiver"] = c.exprName(fn.Recv.List[0].Type)
-	} else {
-		chunk.Metadata["kind"] = "func"
-		chunk.Metadata["name"] = name
-	}
-
-	if doc.ID != "" {
-		chunk.Metadata["parent_id"] = string(doc.ID)
-		chunk.ID = DocumentID(fmt.Sprintf("%s:%s:%d-%d", doc.ID, name, start.Line, end.Line))
-	}
-	return &chunk
+func syntaxChunkableKind(kind sourcecode.SymbolKind) bool {
+	return kind == sourcecode.SymbolKindFunc || kind == sourcecode.SymbolKindMethod || kind.IsType()
 }
 
-// typeChunk builds a chunk for *ast.TypeSpec. i is the spec's 0-based index
-// within the parent GenDecl, n is len(GenDecl.Specs). For an ungrouped
-// declaration (type Foo struct{...}) it starts at the enclosing GenDecl's
-// TokPos so the chunk text includes the "type" keyword. For a grouped
-// declaration (type ( A ...; B ... )) the first spec includes the "type ("
-// prefix and the last includes the trailing ")" so the source is fully
-// covered with no overlap.
-func (c SyntaxChunker) typeChunk(doc Document, src string, fset *token.FileSet, gd *ast.GenDecl, ts *ast.TypeSpec, i, n int) *Document {
-	if ts.Type == nil {
-		return nil
+func retrievalKind(kind sourcecode.SymbolKind) string {
+	if kind.IsType() {
+		return string(sourcecode.SymbolKindType)
 	}
-
-	startPos := ts.Pos()
-	endPos := ts.End()
-
-	if gd.Lparen.IsValid() {
-		// Grouped: type ( A ...; B ... ). First spec owns the
-		// "type (" prefix; last spec owns the trailing ")".
-		if i == 0 {
-			startPos = gd.TokPos
-		}
-		if i == n-1 {
-			endPos = gd.End()
-		}
-	} else {
-		// Ungrouped: include the "type" keyword.
-		startPos = gd.TokPos
-	}
-
-	start := fset.Position(startPos)
-	end := fset.Position(endPos)
-
-	chunk := doc.Clone()
-	chunk.Text = src[start.Offset:end.Offset]
-	chunk.Score = 0
-	if chunk.Metadata == nil {
-		chunk.Metadata = Metadata{}
-	}
-	chunk.Metadata["kind"] = "type"
-	chunk.Metadata["name"] = ts.Name.Name
-	chunk.Metadata["start_line"] = start.Line
-	chunk.Metadata["end_line"] = end.Line
-
-	if doc.ID != "" {
-		chunk.Metadata["parent_id"] = string(doc.ID)
-		chunk.ID = DocumentID(fmt.Sprintf("%s:%s:%d-%d", doc.ID, ts.Name.Name, start.Line, end.Line))
-	}
-	return &chunk
-}
-
-// exprName returns a best-effort name for an ast.Expr.
-func (c SyntaxChunker) exprName(e ast.Expr) string {
-	switch t := e.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return "*" + c.exprName(t.X)
-	case *ast.SelectorExpr:
-		return c.exprName(t.X) + "." + t.Sel.Name
-	default:
-		return fmt.Sprintf("%T", e)
-	}
+	return string(kind)
 }
 
 // compile-time check that SyntaxChunker implements Chunker.

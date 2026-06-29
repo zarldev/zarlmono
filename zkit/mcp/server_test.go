@@ -81,7 +81,7 @@ func TestServer_HTTPRoundTrip_ToolsList(t *testing.T) {
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "")
-	defs, err := client.Discover(context.Background())
+	defs, err := client.Discover(t.Context())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestServer_HTTPRoundTrip_ToolsCall(t *testing.T) {
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "")
-	res, err := client.Call(context.Background(), "echo", map[string]any{"text": "hello"})
+	res, err := client.Call(t.Context(), "echo", map[string]any{"text": "hello"})
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestServer_HTTPRoundTrip_ToolError(t *testing.T) {
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "")
-	_, err := client.Call(context.Background(), "boom", nil)
+	_, err := client.Call(t.Context(), "boom", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -229,7 +229,7 @@ func TestServer_HTTPRoundTrip_UnknownTool(t *testing.T) {
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "")
-	_, err := client.Call(context.Background(), "nope", nil)
+	_, err := client.Call(t.Context(), "nope", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown tool, got nil")
 	}
@@ -427,7 +427,7 @@ func TestHTTPClient_SSEMultiLineDataIsConcatenated(t *testing.T) {
 	// is what we constructed above. We don't care about the returned
 	// tools beyond "the call returned successfully" — the fact that
 	// the decoder didn't choke on the split JSON is the proof.
-	tools, err := client.Discover(context.Background())
+	tools, err := client.Discover(t.Context())
 	if err != nil {
 		t.Fatalf("Discover through multi-line SSE: %v", err)
 	}

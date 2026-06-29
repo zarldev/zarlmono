@@ -70,7 +70,7 @@ func TestExecutive_FullBriefingShape(t *testing.T) {
 		{Role: "user", Content: "thing 3"},
 		{Role: "assistant", Content: "done"},
 	}
-	res, err := e.Compact(context.Background(), history, 2)
+	res, err := e.Compact(t.Context(), history, 2)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestExecutive_NoState_NarrativeOnly(t *testing.T) {
 		{Role: "user", Content: "more"},
 		{Role: "assistant", Content: "done"},
 	}
-	res, err := e.Compact(context.Background(), history, 1)
+	res, err := e.Compact(t.Context(), history, 1)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestExecutive_HistoryShorterThanKeep(t *testing.T) {
 	history := []llm.Message{
 		{Role: "user", Content: "only one"},
 	}
-	res, err := e.Compact(context.Background(), history, 8)
+	res, err := e.Compact(t.Context(), history, 8)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestExecutive_ProviderFailure(t *testing.T) {
 		{Role: "user", Content: "c"},
 		{Role: "assistant", Content: "d"},
 	}
-	_, err := e.Compact(context.Background(), history, 1)
+	_, err := e.Compact(t.Context(), history, 1)
 	if err == nil {
 		t.Error("expected error from failing provider")
 	}
@@ -162,7 +162,7 @@ func TestExecutive_ProviderFailure(t *testing.T) {
 func TestExecutive_NilProvider(t *testing.T) {
 	t.Parallel()
 	e := &compact.Executive{}
-	_, err := e.Compact(context.Background(), []llm.Message{{Role: "user", Content: "x"}}, 0)
+	_, err := e.Compact(t.Context(), []llm.Message{{Role: "user", Content: "x"}}, 0)
 	if err == nil {
 		t.Error("expected error for nil provider")
 	}
@@ -189,7 +189,7 @@ func TestExecutive_TopToolsTrimmedToFive(t *testing.T) {
 		{Role: "user", Content: "c"},
 		{Role: "assistant", Content: "d"},
 	}
-	res, _ := e.Compact(context.Background(), history, 1)
+	res, _ := e.Compact(t.Context(), history, 1)
 	briefing := res.History[0].Content
 	// Top 5 by count desc: b(9), g(8), d(7), c(5), f(4) — a/e shouldn't appear.
 	for _, want := range []string{"b × 9", "g × 8", "d × 7"} {

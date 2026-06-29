@@ -85,7 +85,7 @@ func TestRun_CompactorSkippedOnFirstIteration(t *testing.T) {
 		runner.WithMaxIterations(3),
 		runner.WithCompactor(c),
 	)
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "ping",
 	})
@@ -117,7 +117,7 @@ func TestRun_CompactorInvokedBetweenIterations(t *testing.T) {
 		runner.WithCompactor(c),
 		runner.WithSink(sink),
 	)
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "go",
 	})
@@ -153,7 +153,7 @@ func TestRun_CompactorAppliesAndPublishesEvent(t *testing.T) {
 		runner.WithCompactor(c),
 		runner.WithSink(sink),
 	)
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "go",
 	})
@@ -199,7 +199,7 @@ func TestRun_InPlaceCompactionIsAdopted(t *testing.T) {
 		runner.WithCompactor(c),
 		runner.WithSink(sink),
 	)
-	res := r.Run(context.Background(), runner.TaskSpec{
+	res := r.Run(t.Context(), runner.TaskSpec{
 		ID:     taskscope.ID(uuid.NewString()),
 		Prompt: "go",
 	})

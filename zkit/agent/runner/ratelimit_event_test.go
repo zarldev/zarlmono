@@ -26,7 +26,7 @@ func TestRun_RateLimitErrorPopulatesConversationEnded(t *testing.T) {
 	}
 	sink := newRecordingSink()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	t.Cleanup(cancel)
 
 	r := runner.New(
@@ -69,7 +69,7 @@ func TestRun_NonRateLimitErrorLeavesRateLimitNil(t *testing.T) {
 	}
 	sink := newRecordingSink()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	t.Cleanup(cancel)
 
 	r := runner.New(

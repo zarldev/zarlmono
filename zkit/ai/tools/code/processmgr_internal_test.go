@@ -179,7 +179,7 @@ func TestProcessManager_KillAllOnShutdown(t *testing.T) {
 		t.Fatalf("StartProcess: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	m.KillAll(ctx)
 	info, _ := m.Info(id)
@@ -261,7 +261,7 @@ var _ = strings.TrimSpace // keep import alive for future formatters
 func TestWaitForOrContextReturnsOnCancelledContext(t *testing.T) {
 	t.Parallel()
 	done := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	start := time.Now()
 	if waitForOrContext(done, ctx, time.Minute) {

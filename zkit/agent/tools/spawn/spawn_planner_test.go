@@ -1,7 +1,6 @@
 package spawn_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,7 +35,7 @@ func TestLLMSpawnPlanner_ParsesPlan(t *testing.T) {
 			defer srv.Close()
 
 			planner := newTestPlanner(t, srv.URL)
-			out, err := planner.Plan(context.Background(), spawn.SpawnPlanInput{
+			out, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 				Prompt:          "do the thing",
 				AvailableAgents: []string{"researcher", "coder", "reviewer"},
 			})
@@ -68,7 +67,7 @@ func TestLLMSpawnPlanner_RequestCarriesDynamicEnum(t *testing.T) {
 	defer srv.Close()
 
 	planner := newTestPlanner(t, srv.URL)
-	_, err := planner.Plan(context.Background(), spawn.SpawnPlanInput{
+	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "trace request flow",
 		AvailableAgents: []string{"researcher", "coder", "reviewer"},
 	})
@@ -132,7 +131,7 @@ func TestLLMSpawnPlanner_RejectsUnknownAgent(t *testing.T) {
 	defer srv.Close()
 
 	planner := newTestPlanner(t, srv.URL)
-	_, err := planner.Plan(context.Background(), spawn.SpawnPlanInput{
+	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "x",
 		AvailableAgents: []string{"researcher", "coder"},
 	})
@@ -152,7 +151,7 @@ func TestLLMSpawnPlanner_RejectsInvalidMode(t *testing.T) {
 	defer srv.Close()
 
 	planner := newTestPlanner(t, srv.URL)
-	_, err := planner.Plan(context.Background(), spawn.SpawnPlanInput{
+	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "x",
 		AvailableAgents: []string{"researcher"},
 	})
@@ -172,7 +171,7 @@ func TestLLMSpawnPlanner_StripsThinking(t *testing.T) {
 	defer srv.Close()
 
 	planner := newTestPlanner(t, srv.URL)
-	out, err := planner.Plan(context.Background(), spawn.SpawnPlanInput{
+	out, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "x",
 		AvailableAgents: []string{"researcher"},
 	})
@@ -189,7 +188,7 @@ func TestLLMSpawnPlanner_StripsThinking(t *testing.T) {
 // out before calling Plan, but the planner defends in depth.
 func TestLLMSpawnPlanner_RejectsEmptyAgentList(t *testing.T) {
 	planner := newTestPlanner(t, "http://localhost:65535")
-	_, err := planner.Plan(context.Background(), spawn.SpawnPlanInput{
+	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "x",
 		AvailableAgents: nil,
 	})

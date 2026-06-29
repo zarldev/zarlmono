@@ -44,7 +44,7 @@ func TestConversationLock_WaitReturnsImmediatelyWhenInactive(t *testing.T) {
 
 	lock := runner.NewConversationLock()
 	// No goroutines, no time involved — Wait sees !active and returns nil.
-	if err := lock.Wait(context.Background()); err != nil {
+	if err := lock.Wait(t.Context()); err != nil {
 		t.Errorf("Wait on inactive lock returned error: %v", err)
 	}
 }

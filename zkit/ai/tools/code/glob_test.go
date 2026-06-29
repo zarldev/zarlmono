@@ -1,7 +1,6 @@
 package code_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -88,7 +87,7 @@ func TestGlob_BasenamePatternMatchesRecursively(t *testing.T) {
 		"docs/readme.md":   "# docs",
 		"pkg/foo/notes.md": "notes",
 	})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{"pattern": "*.go"}))
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{"pattern": "*.go"}))
 	if res == nil || !res.Success {
 		t.Fatalf("Execute: %+v", res)
 	}
@@ -119,7 +118,7 @@ func TestGlob_PathPatternIsRooted(t *testing.T) {
 		"pkg/other/run.go": "3",
 		"cmd/main.go":      "4",
 	})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{"pattern": "pkg/agent/**/*.go"}))
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{"pattern": "pkg/agent/**/*.go"}))
 	if res == nil || !res.Success {
 		t.Fatalf("Execute: %+v", res)
 	}
@@ -142,7 +141,7 @@ func TestGlob_ExcludesDotfilesByDefault(t *testing.T) {
 		".git/HEAD":      "ref",
 		"docs/.draft.md": "draft",
 	})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{"pattern": "**"}))
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{"pattern": "**"}))
 	body := globText(t, res)
 	if strings.Contains(body, ".git") || strings.Contains(body, ".draft") || strings.Contains(body, ".gitignore") {
 		t.Errorf("dotfile leaked: %q", body)
@@ -158,7 +157,7 @@ func TestGlob_ExcludesDotfilesByDefault(t *testing.T) {
 func TestGlob_DefaultIsLabelledNotJSON(t *testing.T) {
 	t.Parallel()
 	g := globHarness(t, map[string]string{"a.go": "x"})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{"pattern": "*.go"}))
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{"pattern": "*.go"}))
 	body := globText(t, res)
 	for _, forbid := range []string{"{", "}", "[", "]", "\":\"", "\",\"", "\"a.go\""} {
 		if strings.Contains(body, forbid) {
@@ -180,7 +179,7 @@ func TestGlob_MaxResultsTruncatesAndAnnounces(t *testing.T) {
 		files[string(i)+".go"] = "x"
 	}
 	g := globHarness(t, files)
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{
 		"pattern":     "*.go",
 		"max_results": 5,
 	}))
@@ -196,7 +195,7 @@ func TestGlob_MaxResultsTruncatesAndAnnounces(t *testing.T) {
 func TestGlob_EmptyPatternRejected(t *testing.T) {
 	t.Parallel()
 	g := globHarness(t, nil)
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{"pattern": ""}))
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{"pattern": ""}))
 	if res == nil || res.Success {
 		t.Fatalf("empty pattern: want failure, got %+v", res)
 	}
@@ -210,7 +209,7 @@ func TestGlob_EmptyPatternRejected(t *testing.T) {
 func TestGlob_NoMatchesSentinel(t *testing.T) {
 	t.Parallel()
 	g := globHarness(t, map[string]string{"a.go": "x"})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{"pattern": "*.nonsense"}))
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{"pattern": "*.nonsense"}))
 	body := globText(t, res)
 	if !res.Success {
 		t.Fatalf("want success even with zero matches, got %+v", res)
@@ -229,7 +228,7 @@ func TestGlob_RootScopesTheWalk(t *testing.T) {
 		"pkg/agent/x_test.go": "1",
 		"pkg/other/y_test.go": "2",
 	})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{
 		"pattern": "*_test.go",
 		"root":    "pkg/agent",
 	}))
@@ -249,7 +248,7 @@ func TestGlob_IncludeDirsAddsDirectoryEntries(t *testing.T) {
 		"pkg/other/y.go":   "x",
 		"cmd/main.go":      "x",
 	})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{
 		"pattern":      "pkg/*",
 		"include_dirs": true,
 	}))
@@ -272,7 +271,7 @@ func TestGlob_JSONOutputShape(t *testing.T) {
 		"pkg/foo/foo.go": "x",
 		"docs/readme.md": "x",
 	})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{
 		"pattern": "*.go",
 		"output":  "json",
 	}))
@@ -311,7 +310,7 @@ func TestGlob_JSONTruncatedFlag(t *testing.T) {
 		files[string(i)+".go"] = "x"
 	}
 	g := globHarness(t, files)
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{
 		"pattern": "*.go", "max_results": 5, "output": "json",
 	}))
 	p := decodePayload(t, globText(t, res))
@@ -327,7 +326,7 @@ func TestGlob_JSONTruncatedFlag(t *testing.T) {
 func TestGlob_DataCarriesTypedEntries(t *testing.T) {
 	t.Parallel()
 	g := globHarness(t, map[string]string{"main.go": "x", "pkg/foo.go": "x"})
-	res, _ := g.Execute(context.Background(), globCall(map[string]any{"pattern": "*.go"}))
+	res, _ := g.Execute(t.Context(), globCall(map[string]any{"pattern": "*.go"}))
 	r, ok := res.Data.(code.GlobResult)
 	if !ok {
 		t.Fatalf("Data is %T, want code.GlobResult", res.Data)

@@ -46,7 +46,7 @@ func TestExecute_PlantsWorkModeOnChildCtx(t *testing.T) {
 		if mode != "" {
 			args["mode"] = mode
 		}
-		if _, err := tool.Execute(context.Background(), tools.ToolCall{ID: "c1", Arguments: args}); err != nil {
+		if _, err := tool.Execute(t.Context(), tools.ToolCall{ID: "c1", Arguments: args}); err != nil {
 			t.Fatalf("Execute(mode=%q): %v", mode, err)
 		}
 		if len(probe.seen) != 1 {

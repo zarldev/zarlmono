@@ -18,6 +18,8 @@ const (
 	ToolNameSavePlanAppend tools.ToolName = "save_plan_append"
 	ToolNameApplyPatch     tools.ToolName = "apply_patch"
 	ToolNameUpdatePlan     tools.ToolName = "update_plan"
+	ToolNameFileMap        tools.ToolName = "file_map"
+	ToolNameRetrieveCode   tools.ToolName = "retrieve_code"
 
 	// Long-running process management — paired with bash background=true.
 	ToolNameBashOutput    tools.ToolName = "bash_output"

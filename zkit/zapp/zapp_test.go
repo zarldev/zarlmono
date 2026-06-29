@@ -78,7 +78,7 @@ func TestRunCreatesRunsAndCleansUp(t *testing.T) {
 		},
 	}
 
-	code := zapp.New(program).Run(context.Background())
+	code := zapp.New(program).Run(t.Context())
 
 	if code != zapp.ExitOK {
 		t.Fatalf("Run() = %d, want %d", code, zapp.ExitOK)
@@ -106,7 +106,7 @@ func TestCreateFailureStillCleansPartialResources(t *testing.T) {
 		},
 	}
 
-	code := zapp.New(program, zapp.WithCreateFailureExitCode[*testInstance](7)).Run(context.Background())
+	code := zapp.New(program, zapp.WithCreateFailureExitCode[*testInstance](7)).Run(t.Context())
 
 	if code != 7 {
 		t.Fatalf("Run() = %d, want %d", code, 7)
@@ -119,7 +119,7 @@ func TestCreateFailureStillCleansPartialResources(t *testing.T) {
 func TestRunPreservesNonZeroExitCodeWhenCleanupSucceeds(t *testing.T) {
 	program := testProgram{name: "test-app", runCode: 42}
 
-	code := zapp.New(program).Run(context.Background())
+	code := zapp.New(program).Run(t.Context())
 
 	if code != 42 {
 		t.Fatalf("Run() = %d, want %d", code, 42)
@@ -136,7 +136,7 @@ func TestCleanupFailureChangesSuccessfulRunToFailure(t *testing.T) {
 		},
 	}
 
-	code := zapp.New(program, zapp.WithCleanupFailureExitCode[*testInstance](9)).Run(context.Background())
+	code := zapp.New(program, zapp.WithCleanupFailureExitCode[*testInstance](9)).Run(t.Context())
 
 	if code != 9 {
 		t.Fatalf("Run() = %d, want %d", code, 9)
@@ -154,7 +154,7 @@ func TestCleanupFailurePreservesNonZeroRunCode(t *testing.T) {
 		runCode: 11,
 	}
 
-	code := zapp.New(program, zapp.WithCleanupFailureExitCode[*testInstance](9)).Run(context.Background())
+	code := zapp.New(program, zapp.WithCleanupFailureExitCode[*testInstance](9)).Run(t.Context())
 
 	if code != 11 {
 		t.Fatalf("Run() = %d, want %d", code, 11)
@@ -173,7 +173,7 @@ func TestCloseRunsInReverseRegistrationOrder(t *testing.T) {
 		}
 	}
 
-	if err := app.Close(context.Background()); err != nil {
+	if err := app.Close(t.Context()); err != nil {
 		t.Fatalf("Close(): %v", err)
 	}
 
@@ -189,7 +189,7 @@ func TestCloseErrorIncludesAppAndResourceName(t *testing.T) {
 		t.Fatalf("AddCloser(): %v", err)
 	}
 
-	err := app.Close(context.Background())
+	err := app.Close(t.Context())
 	if err == nil {
 		t.Fatal("Close() error = nil, want error")
 	}
@@ -239,7 +239,7 @@ func TestPanicInCreateIsRecoveredAndCleansUp(t *testing.T) {
 		program,
 		zapp.WithPanicExitCode[*testInstance](12),
 		zapp.WithPanicHandler[*testInstance](func(appName string, got any) { recovered = got }),
-	).Run(context.Background())
+	).Run(t.Context())
 
 	if code != 12 {
 		t.Fatalf("Run() = %d, want %d", code, 12)
@@ -270,7 +270,7 @@ func TestPanicInRunIsRecoveredAndCleansUp(t *testing.T) {
 		},
 	}
 
-	code := zapp.New(program).Run(context.Background())
+	code := zapp.New(program).Run(t.Context())
 
 	if code != zapp.ExitPanic {
 		t.Fatalf("Run() = %d, want %d", code, zapp.ExitPanic)
@@ -289,7 +289,7 @@ func TestCloseContextCancellationBetweenClosers(t *testing.T) {
 		t.Fatalf("AddCloser(second): %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	err := app.Close(ctx)
 	if err == nil {
@@ -301,7 +301,7 @@ func TestCloseContextCancellationBetweenClosers(t *testing.T) {
 }
 
 func TestNilProgramReturnsCreateFailureCode(t *testing.T) {
-	code := zapp.New(nil, zapp.WithCreateFailureExitCode[*testInstance](8)).Run(context.Background())
+	code := zapp.New(nil, zapp.WithCreateFailureExitCode[*testInstance](8)).Run(t.Context())
 	if code != 8 {
 		t.Fatalf("Run() = %d, want %d", code, 8)
 	}
