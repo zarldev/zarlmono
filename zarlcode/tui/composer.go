@@ -65,10 +65,7 @@ func (c *composer) displayLines(width int) []string {
 	// Reserve the 2-column prompt prefix ("› " / "  ") that every wrapped
 	// line is rendered with below, so a filled line isn't clipped when the
 	// prefix is prepended and the whole thing is padded back to innerW.
-	wrapW := innerW - 2
-	if wrapW < 1 {
-		wrapW = 1
-	}
+	wrapW := max(innerW-2, 1)
 
 	// Build a plain-text display string with an unstyled cursor marker, wrap it,
 	// then style the cursor and prefix after wrapping so ANSI codes don't throw
@@ -208,7 +205,7 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "ctrl+e":
 		return m.openModelQuickPick(), true
 	case "ctrl+g":
-		m.overlay.push(newHelpDialog())
+		m.overlay.push(m.newHelpDialog())
 		return nil, true
 	case "ctrl+t":
 		m.overlay.push(newThemePicker())

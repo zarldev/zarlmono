@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -15,6 +14,33 @@ const (
 	ToolListFiles tools.ToolName = "list_files"
 	ToolPushDocs  tools.ToolName = "push_docs"
 )
+
+type readFileArgs struct {
+	Path string `json:"path" doc:"File path to read."`
+}
+
+type pushDocsArgs struct {
+	Title   string `json:"title" doc:"Document title."`
+	Content string `json:"content" doc:"Document body in markdown."`
+}
+
+type readFileResult struct {
+	Path      string   `json:"path"`
+	Content   string   `json:"content"`
+	Lines     int      `json:"lines"`
+	Functions []string `json:"functions"`
+}
+
+type listFilesResult struct {
+	Files []string `json:"files"`
+	Count int      `json:"count"`
+}
+
+type pushDocsResult struct {
+	Title  string `json:"title"`
+	Length int    `json:"length"`
+	Index  int    `json:"index"`
+}
 
 // readFileTool reads a file and tracks it for research context.
 type readFileTool struct {
@@ -26,37 +52,26 @@ func (t *readFileTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolReadFile,
 		Description: "Read the content of a file",
-		Parameters: llm.SchemaFromMap(map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "File path to read",
-				},
-			},
-			"required":             []string{"path"},
-			"additionalProperties": false,
-		}),
-		Mutates: false,
+		Parameters:  tools.SchemaFor[readFileArgs](),
+		Mutates:     false,
 	}
 }
 
 func (t *readFileTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	pathVal, ok := call.Arguments["path"]
-	if !ok {
-		return tools.Failure(call.ID, tools.Validation(string(ToolReadFile), "path is required")), nil
+	args, err := tools.DecodeArgs[readFileArgs](call.Arguments)
+	if err != nil {
+		return tools.Failure(call.ID, err), nil
 	}
-	path, _ := pathVal.(string)
 
-	content, found := t.fs.Read(path)
+	content, found := t.fs.Read(args.Path)
 	if !found {
 		return tools.Failure(call.ID, tools.NotFound(string(ToolReadFile),
-			fmt.Sprintf("file not found: %s", path))), nil
+			fmt.Sprintf("file not found: %s", args.Path))), nil
 	}
 
 	// Record file was read
 	lines := countLines(content)
-	t.rc.RecordFile(path, lines)
+	t.rc.RecordFile(args.Path, lines)
 
 	// Extract function names
 	funcs := extractFunctions(content)
@@ -64,12 +79,7 @@ func (t *readFileTool) Execute(_ context.Context, call tools.ToolCall) (*tools.T
 		t.rc.RecordFunction(f)
 	}
 
-	return tools.Success(call.ID, map[string]any{
-		"path":      path,
-		"content":   content,
-		"lines":     lines,
-		"functions": funcs,
-	}), nil
+	return tools.Success(call.ID, readFileResult{Path: args.Path, Content: content, Lines: lines, Functions: funcs}), nil
 }
 
 // listFilesTool lists all files.
@@ -82,21 +92,14 @@ func (t *listFilesTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolListFiles,
 		Description: "List all files in the project",
-		Parameters: llm.SchemaFromMap(map[string]any{
-			"type":                 "object",
-			"properties":           map[string]any{},
-			"additionalProperties": false,
-		}),
-		Mutates: false,
+		Parameters:  tools.SchemaFor[struct{}](),
+		Mutates:     false,
 	}
 }
 
 func (t *listFilesTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
 	files := t.fs.List()
-	return tools.Success(call.ID, map[string]any{
-		"files": files,
-		"count": len(files),
-	}), nil
+	return tools.Success(call.ID, listFilesResult{Files: files, Count: len(files)}), nil
 }
 
 // pushDocsTool publishes research findings as documentation.
@@ -109,39 +112,20 @@ func (t *pushDocsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolPushDocs,
 		Description: "Publish research findings as documentation",
-		Parameters: llm.SchemaFromMap(map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"title": map[string]any{
-					"type":        "string",
-					"description": "Document title",
-				},
-				"content": map[string]any{
-					"type":        "string",
-					"description": "Document body in markdown",
-				},
-			},
-			"required":             []string{"title", "content"},
-			"additionalProperties": false,
-		}),
-		Mutates: true,
+		Parameters:  tools.SchemaFor[pushDocsArgs](),
+		Mutates:     true,
 	}
 }
 
 func (t *pushDocsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	titleVal, _ := call.Arguments["title"]
-	title, _ := titleVal.(string)
-	contentVal, _ := call.Arguments["content"]
-	content, _ := contentVal.(string)
-
-	doc := fmt.Sprintf("# %s\n\n%s", title, content)
+	args, err := tools.DecodeArgs[pushDocsArgs](call.Arguments)
+	if err != nil {
+		return tools.Failure(call.ID, err), nil
+	}
+	doc := fmt.Sprintf("# %s\n\n%s", args.Title, args.Content)
 	*t.docsWritten = append(*t.docsWritten, doc)
 
-	return tools.Success(call.ID, map[string]any{
-		"title":  title,
-		"length": len(doc),
-		"index":  len(*t.docsWritten),
-	}), nil
+	return tools.Success(call.ID, pushDocsResult{Title: args.Title, Length: len(doc), Index: len(*t.docsWritten)}), nil
 }
 
 // Helper functions

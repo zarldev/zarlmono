@@ -45,7 +45,7 @@ func (m *UI) handleSlashSubmit(text string) tea.Cmd {
 	case "/clear":
 		return m.clearContextAndTimeline()
 	case "/help":
-		m.overlay.push(newHelpDialog())
+		m.overlay.push(m.newHelpDialog())
 		return nil
 	case "/init":
 		if m.runFn != nil {

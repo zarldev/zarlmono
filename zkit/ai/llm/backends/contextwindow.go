@@ -52,6 +52,15 @@ func (r *ProviderRegistry) ContextWindow(name, model string) int {
 // provider's own default). Returns 0 when undeterminable, so the caller can
 // keep its current default rather than show a wrong number.
 func (r *ProviderRegistry) ResolveContextWindow(ctx context.Context, name, baseURL, model string) int {
+	def, err := r.Parse(name)
+	if err == nil && def.ContextWindow > 0 {
+		return def.ContextWindow
+	}
+	if r.modelsDevSource != nil {
+		if e, ok := r.modelsDevSource.Lookup(ctx, name, model); ok && e.ContextWindow > 0 {
+			return e.ContextWindow
+		}
+	}
 	if cw := r.ContextWindow(name, model); cw > 0 {
 		return cw
 	}

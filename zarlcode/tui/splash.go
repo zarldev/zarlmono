@@ -21,7 +21,7 @@ func drawSplash(scr uv.Screen, area uv.Rectangle, logoCol theme.Color, infoBlock
 
 	logo := strings.Trim(introLogoLarge, "\n")
 	logoBlock := make([]string, 0, len(strings.Split(logo, "\n"))+1)
-	for _, l := range strings.Split(logo, "\n") {
+	for l := range strings.SplitSeq(logo, "\n") {
 		logoBlock = append(logoBlock, logoCol.On(l))
 	}
 	logoBlock = append(logoBlock, palette.Muted.On(appDisplayName+" "+version.String()))
@@ -39,26 +39,17 @@ func drawSplash(scr uv.Screen, area uv.Rectangle, logoCol theme.Color, infoBlock
 	logoH := len(logoBlock)
 	totalH := logoH + infoH
 
-	startY := area.Min.Y + (h-totalH)/2
-	if startY < area.Min.Y {
-		startY = area.Min.Y
-	}
+	startY := max(area.Min.Y+(h-totalH)/2, area.Min.Y)
 
 	y := startY
 	for _, line := range logoBlock {
 		lw := ansi.StringWidth(line)
-		x := area.Min.X + (w-lw)/2
-		if x < area.Min.X {
-			x = area.Min.X
-		}
+		x := max(area.Min.X+(w-lw)/2, area.Min.X)
 		drawLine(scr, uv.Rect(x, y, lw, 1), line)
 		y++
 	}
 
-	infoX := area.Min.X + (w-infoW)/2
-	if infoX < area.Min.X {
-		infoX = area.Min.X
-	}
+	infoX := max(area.Min.X+(w-infoW)/2, area.Min.X)
 	for i, line := range infoBlock {
 		if y+i >= area.Max.Y {
 			break
@@ -75,18 +66,12 @@ func drawSplash(scr uv.Screen, area uv.Rectangle, logoCol theme.Color, infoBlock
 // splash screens. body is called with the usable text width inside the box and
 // should return one or more already-styled display lines.
 func splashPromptBoxLines(width int, border, accent theme.Color, body func(textWidth int) []string) []string {
-	boxW := width - 8
-	if boxW > 96 {
-		boxW = 96
-	}
+	boxW := min(width-8, 96)
 	if boxW < 34 {
 		boxW = 34
 	}
 	inner := boxW - 2
-	textWidth := inner - 2
-	if textWidth < 1 {
-		textWidth = 1
-	}
+	textWidth := max(inner-2, 1)
 	display := body(textWidth)
 	if len(display) == 0 {
 		display = []string{""}

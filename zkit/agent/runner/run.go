@@ -205,7 +205,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			MaxTokens:          r.maxTokens,
 			Temperature:        r.temperature,
 			Thinking:           llm.ThinkingConfig{Enabled: t.thinking},
-			ChatTemplateKwargs: r.template.ThinkingKwargs(t.thinking).AsMap(),
+			ChatTemplateKwargs: r.template.ThinkingKwargs(t.thinking),
 		}
 
 		// Per-iteration ctx so we can bail cleanly on

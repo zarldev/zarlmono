@@ -41,10 +41,7 @@ func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
 	drawLine(scr, uv.Rect(x0, y0+2, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
 
 	contentY := y0 + 3
-	contentH := innerH - 4
-	if contentH < 1 {
-		contentH = 1
-	}
+	contentH := max(innerH-4, 1)
 	cw := innerW
 	contentLines := m.activeContextViewLines(cw)
 	m.clampContextViewScroll()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -58,12 +59,12 @@ func PatchPaths(text string) []string {
 		return nil
 	}
 	var out []string
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		var p string
 		if _, path, ok := matchFileHeader(line); ok {
 			p = path
-		} else if strings.HasPrefix(line, "*** Move to: ") {
-			p = strings.TrimSpace(strings.TrimPrefix(line, "*** Move to: "))
+		} else if after, ok0 := strings.CutPrefix(line, "*** Move to: "); ok0 {
+			p = strings.TrimSpace(after)
 		} else {
 			continue
 		}
@@ -72,13 +73,7 @@ func PatchPaths(text string) []string {
 		}
 		// De-dup so an Add then Update of the same file (illegal
 		// patch but cheap to defend against) doesn't double-snapshot.
-		seen := false
-		for _, existing := range out {
-			if existing == p {
-				seen = true
-				break
-			}
-		}
+		seen := slices.Contains(out, p)
 		if !seen {
 			out = append(out, p)
 		}
@@ -102,8 +97,8 @@ func (t *ApplyPatchTool) Definition() tools.ToolSpec {
 // Execute parses the patch, plans all file mutations, then commits
 // them in one pass. Errors at any stage abort the whole operation.
 func (t *ApplyPatchTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args ApplyPatchArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[ApplyPatchArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Patch == "" {
@@ -370,11 +365,11 @@ var fileHeaderForms = []struct {
 // trimmed target path, and whether the line was a header at all.
 func matchFileHeader(line string) (fileOpKind, string, bool) {
 	for _, f := range fileHeaderForms {
-		if strings.HasPrefix(line, f.canonical) {
-			return f.kind, strings.TrimSpace(strings.TrimPrefix(line, f.canonical)), true
+		if after, ok := strings.CutPrefix(line, f.canonical); ok {
+			return f.kind, strings.TrimSpace(after), true
 		}
-		if strings.HasPrefix(line, f.lenient) {
-			return f.kind, strings.TrimSpace(strings.TrimPrefix(line, f.lenient)), true
+		if after, ok := strings.CutPrefix(line, f.lenient); ok {
+			return f.kind, strings.TrimSpace(after), true
 		}
 	}
 	return 0, "", false

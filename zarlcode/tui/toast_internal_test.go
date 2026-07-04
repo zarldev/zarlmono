@@ -19,8 +19,7 @@ func TestStatusToastUsesThemeSurfaceAndSemanticForeground(t *testing.T) {
 	t.Cleanup(func() { UseTheme(old) })
 
 	s := NewSession("~", "/tmp", "")
-	p := newStatusPane(s)
-
+	p := newStatusPane(s, nil)
 	s.SetSuccessToast("saved settings")
 	got := p.statusToast()
 	if want := theme.Color("#222222").BG(); !strings.Contains(got, want) {

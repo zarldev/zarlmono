@@ -79,7 +79,7 @@ func (j *LLMVerdictJudge) Judge(ctx context.Context, in VerdictInput) (Verdict, 
 		// JSON starts — observed live as finish_reason=length with empty
 		// content, which silently demotes every verdict to the
 		// deterministic fallback. Providers without the kwarg ignore it.
-		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
+		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
 	chunks, err := j.provider.Complete(ctx, req)

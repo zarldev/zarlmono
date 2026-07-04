@@ -108,8 +108,8 @@ func (r RetrieveCodeResult) String() string {
 
 // Execute scans files, syntax-chunks them, ranks chunks deterministically, and returns the top matches.
 func (t *RetrieveCodeTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args RetrieveCodeArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[RetrieveCodeArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	args.Query = strings.TrimSpace(args.Query)

@@ -517,10 +517,7 @@ func applyThinking(params *anthropic.MessageNewParams, tc llm.ThinkingConfig) {
 	if !tc.Enabled {
 		return
 	}
-	budget := int64(tc.BudgetTokens)
-	if budget < 1024 {
-		budget = 1024
-	}
+	budget := max(int64(tc.BudgetTokens), 1024)
 	if params.MaxTokens <= budget {
 		params.MaxTokens = budget + 4096
 	}

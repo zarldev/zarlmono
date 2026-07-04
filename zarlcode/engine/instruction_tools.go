@@ -109,8 +109,8 @@ func (t *loadInstructionTool) Definition() tools.ToolSpec {
 }
 
 func (t *loadInstructionTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args loadInstructionArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[loadInstructionArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	path := strings.TrimSpace(args.Path)

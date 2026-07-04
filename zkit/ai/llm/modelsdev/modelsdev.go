@@ -16,6 +16,7 @@ import (
 
 const (
 	defaultBaseURL = "https://models.dev/api.json"
+	providerGoogle = "google"
 	snapshotKey    = "models.dev"
 	defaultTTL     = 6 * time.Hour
 )
@@ -136,7 +137,7 @@ func (s *Source) ensureSnapshot(ctx context.Context) (Snapshot, bool, error) {
 func providerAlias(name string) string {
 	switch name {
 	case "gemini", "google-vertex":
-		return "google"
+		return providerGoogle
 	default:
 		return name
 	}

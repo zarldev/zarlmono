@@ -75,7 +75,7 @@ type ProcessInfo struct {
 	CWD         string    `json:"cwd"`
 	StartedAt   time.Time `json:"started_at"`
 	Running     bool      `json:"running"`
-	ExitedAt    time.Time `json:"exited_at,omitempty"`
+	ExitedAt    time.Time `json:"exited_at"`
 	ExitCode    int       `json:"exit_code,omitempty"`
 	StdoutLines int       `json:"stdout_lines"`
 	StderrLines int       `json:"stderr_lines"`

@@ -102,8 +102,8 @@ func (r FileMapResult) String() string {
 
 // Execute parses matching files and returns their deterministic outlines.
 func (t *FileMapTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args FileMapArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[FileMapArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if strings.TrimSpace(args.Pattern) == "" {

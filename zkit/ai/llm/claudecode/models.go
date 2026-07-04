@@ -7,6 +7,7 @@ func ListPresetModels() []string {
 	return []string{
 		"sonnet",
 		"opus",
+		"fable",
 		"claude-sonnet-4-6",
 		"claude-opus-4-7",
 		"claude-haiku-4-5",

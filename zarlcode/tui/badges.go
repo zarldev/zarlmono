@@ -79,8 +79,13 @@ func rowLayout(left, right string, width int) string {
 	if width < 1 {
 		return ""
 	}
+	rightW := ansi.StringWidth(right)
+	if rightW >= width {
+		return ansi.Truncate(right, width, "…")
+	}
+	leftW := width - rightW - 1
 	return lg.JoinHorizontal(lg.Top,
-		lg.NewStyle().Width(width-ansi.StringWidth(right)-1).Align(lg.Left).Render(left),
+		lg.NewStyle().Width(leftW).Align(lg.Left).Render(ansi.Truncate(left, leftW, "…")),
 		lg.NewStyle().Align(lg.Right).Render(right),
 	)
 }

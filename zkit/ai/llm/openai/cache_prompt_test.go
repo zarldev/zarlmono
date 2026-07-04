@@ -118,7 +118,7 @@ func TestRequest_ChatTemplateKwargsGating(t *testing.T) {
 			seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages:           []llm.Message{{Role: "user", Content: "hi"}},
 				Stream:             true,
-				ChatTemplateKwargs: map[string]any{"enable_thinking": true},
+				ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: true},
 			})
 			if err != nil {
 				t.Fatalf("Complete: %v", err)

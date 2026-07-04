@@ -32,8 +32,7 @@ const goalPrompt = "Check all endpoints and confirm the farm is healthy."
 // a single check_endpoint tool, SchemaGuardrail + FanoutGuardrail, a runner,
 // and a harness oracle that verifies all endpoints are healthy.
 func RunHealthCheck(ctx context.Context, client runner.Client, farm *ServerFarm, maxAttempts int) pursue.Outcome {
-	reg := tools.NewRegistry(&checkEndpointTool{f: farm})
-
+	reg := tools.NewRegistry(newCheckEndpointTool(farm))
 	source := guardrails.NewGuardedSource(reg,
 		guardrails.NewSchemaGuardrail(reg),
 		guardrails.NewFanoutGuardrail(map[tools.ToolName]int{

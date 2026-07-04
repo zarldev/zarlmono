@@ -199,7 +199,7 @@ func (m *UI) contextPromptLines(width int) []string {
 
 func promptPreviewLines(prompt string, width int) []string {
 	var out []string
-	for _, ln := range strings.Split(prompt, "\n") {
+	for ln := range strings.SplitSeq(prompt, "\n") {
 		trimmed := strings.TrimSpace(ln)
 		if trimmed == "" || trimmed == "---" {
 			continue
@@ -444,10 +444,7 @@ func (s *RunState) contextSummary() string {
 	disp := palette.Fg.On(fmtCount(used)) + palette.Muted.On(" / ") + palette.Fg.On(fmtCount(s.window))
 	line := head + palette.Muted.On(" · ") + disp
 	if s.window > 0 {
-		free := s.window - used
-		if free < 0 {
-			free = 0
-		}
+		free := max(s.window-used, 0)
 		line += palette.Muted.On(" · ") + palette.Subtle.On(fmtCount(free)+" free")
 	}
 	return line
@@ -462,10 +459,7 @@ func (s *RunState) compactionThreshold() (int, int, bool) {
 	if threshold <= 0 || threshold >= s.pressureWindow {
 		return 0, 0, false
 	}
-	remaining = threshold - s.effectiveUsed()
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining = max(threshold-s.effectiveUsed(), 0)
 	return threshold, remaining, true
 }
 
@@ -577,10 +571,7 @@ func contextSplitBar(s *RunState, width int) string {
 
 // contextSplitLegend labels the cached/fresh/free bar with counts.
 func contextSplitLegend(s *RunState) string {
-	fresh := s.effectiveUsed() - s.lastCached
-	if fresh < 0 {
-		fresh = 0
-	}
+	fresh := max(s.effectiveUsed()-s.lastCached, 0)
 	return palette.Primary.On("█") + palette.Subtle.On(" cached "+fmtCount(s.lastCached)) +
 		palette.Muted.On("  ") +
 		palette.Assistant.On("█") + palette.Subtle.On(" fresh "+fmtCount(fresh)) +
@@ -761,10 +752,9 @@ func (s *RunState) cacheSavedLine() string {
 // ├─[label]────────────────────────────────
 func sectionHead(label string, width int) string {
 	head := bracketed(palette.Primary.On(strings.ToLower(label)))
-	fill := width - ansi.StringWidth(label) - 4 // ├─[ + label + ]
-	if fill < 0 {
-		fill = 0
-	}
+	fill := max(
+		// ├─[ + label + ]
+		width-ansi.StringWidth(label)-4, 0)
 	return palette.Border.On("├─") + head + palette.Border.On(strings.Repeat("─", fill))
 }
 
@@ -784,10 +774,7 @@ func (s *RunState) contextHeadline() string {
 // labelledSpark renders "label <sparkline>" sized so the sparkline fills the
 // remaining width after the label.
 func labelledSpark(label string, vals []float64, width int, normMax float64, c, markC theme.Color, marks []bool) string {
-	sw := width - ansi.StringWidth(label) - 1
-	if sw < 1 {
-		sw = 1
-	}
+	sw := max(width-ansi.StringWidth(label)-1, 1)
 	return palette.Subtle.On(label) + " " + sparkline(vals, sw, normMax, c, markC, marks)
 }
 

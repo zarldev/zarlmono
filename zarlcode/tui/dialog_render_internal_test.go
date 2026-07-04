@@ -38,7 +38,7 @@ func TestModelQuickPick_RendersFramedBox(t *testing.T) {
 	p := newModelQuickPick(
 		[]string{"openai", "anthropic"},
 		map[string][]string{"openai": {"gpt-5.5", "gpt-5-mini"}, "anthropic": {"claude-opus"}},
-		"openai", "gpt-5.5", func(string, string) {},
+		"openai", "gpt-5.5", func(string, string) {}, nil,
 	)
 	scr := uv.NewScreenBuffer(120, 40)
 	p.draw(scr, uv.Rect(0, 0, 120, 40))
@@ -63,7 +63,7 @@ func TestModelQuickPick_SelectedVisibleWhenScrolled(t *testing.T) {
 	p := newModelQuickPick(
 		[]string{"openai"},
 		map[string][]string{"openai": models},
-		"openai", "model-00", func(string, string) {},
+		"openai", "model-00", func(string, string) {}, nil,
 	)
 	p.cursor = len(models) - 1 // select the last model
 

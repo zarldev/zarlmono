@@ -334,8 +334,8 @@ func resolveGlob(ws Workspace, allowOutsideWorkspace bool, args GlobArgs) (strin
 // returns every path matching the pattern, in lexical order, in the
 // tool's configured output format (labelled text by default).
 func (t *GlobTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args GlobArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[GlobArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	rootAbs, maxResults, err := resolveGlob(t.ws, t.allowOutsideWorkspace, args)

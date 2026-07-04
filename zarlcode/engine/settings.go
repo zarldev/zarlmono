@@ -336,6 +336,18 @@ func (s *Settings) Editor(ctx context.Context) string {
 	return strings.TrimSpace(s.setting(ctx, prefs.KeyEditor, ""))
 }
 
+// PprofAddr returns the optional pprof/runtime-metrics listen address. Empty
+// disables the profiling HTTP server.
+func (s *Settings) PprofAddr(ctx context.Context) string {
+	return strings.TrimSpace(s.setting(ctx, prefs.KeyPprofAddr, ""))
+}
+
+// TraceFile returns the optional runtime trace output path. Empty disables
+// full-run trace capture.
+func (s *Settings) TraceFile(ctx context.Context) string {
+	return strings.TrimSpace(s.setting(ctx, prefs.KeyTraceFile, ""))
+}
+
 // ActiveProvider resolves the active ProviderSpec from settings, falling
 // back to fb (caller's env-derived defaults) for any unset field. The env
 // BaseURL/APIKey overrides only apply to the fallback provider itself; for

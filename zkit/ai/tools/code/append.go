@@ -69,8 +69,8 @@ func (t *WriteAppendTool) Definition() tools.ToolSpec {
 // and opens O_APPEND|O_CREATE through the workspace root handle.
 // Success reports the running file size and emits a FileAppend effect.
 func (t *WriteAppendTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args WriteAppendArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[WriteAppendArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Path == "" {

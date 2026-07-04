@@ -51,10 +51,7 @@ func (h *headerPane) Draw(scr uv.Screen, area uv.Rectangle) {
 	if rightSeg != "" {
 		rightSeg += " "
 	}
-	gap := area.Dx() - lg.Width(leftSeg) - lg.Width(rightSeg)
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(area.Dx()-lg.Width(leftSeg)-lg.Width(rightSeg), 1)
 	bar := leftSeg + strings.Repeat(" ", gap) + rightSeg
 	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y, area.Dx(), 1), bar)
 }

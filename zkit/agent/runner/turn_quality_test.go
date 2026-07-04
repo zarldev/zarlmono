@@ -189,10 +189,10 @@ func TestRunner_TurnQualityCanDisableThinkingForCorrection(t *testing.T) {
 	if len(reqs) != 2 {
 		t.Fatalf("requests = %d, want 2", len(reqs))
 	}
-	if got := reqs[0].ChatTemplateKwargs["enable_thinking"]; got != true {
+	if got := reqs[0].ChatTemplateKwargs.EnableThinking; got != true {
 		t.Fatalf("request 1 enable_thinking = %v, want true", got)
 	}
-	if reqs[1].ChatTemplateKwargs != nil {
+	if !reqs[1].ChatTemplateKwargs.IsZero() {
 		t.Fatalf("request 2 ChatTemplateKwargs = %#v, want nil after thinking disabled", reqs[1].ChatTemplateKwargs)
 	}
 }

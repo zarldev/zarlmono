@@ -45,10 +45,7 @@ func unifiedDiff(a, b string) string {
 	blines := strings.Split(b, "\n")
 	// Simple line-by-line diff for test output.
 	var out strings.Builder
-	maxN := len(alines)
-	if len(blines) > maxN {
-		maxN = len(blines)
-	}
+	maxN := max(len(blines), len(alines))
 	for i := range maxN {
 		var aLine, bLine string
 		if i < len(alines) {

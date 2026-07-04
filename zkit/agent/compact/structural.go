@@ -141,10 +141,7 @@ func (s Structural) WouldReduceBytes(history []llm.Message, keepRecent int) int 
 		switch msg.Role {
 		case llm.RoleAssistant:
 			if len(msg.Content) > asstAt {
-				head := asstAt - len(elisionTail)
-				if head < 64 {
-					head = 64
-				}
+				head := max(asstAt-len(elisionTail), 64)
 				savable += len(msg.Content) - (head + len(elisionTail))
 			}
 		case llm.RoleTool:
@@ -179,10 +176,7 @@ func (s Structural) structuralTrim(msg llm.Message) (llm.Message, int) {
 		if len(msg.Content) <= threshold {
 			return out, 0
 		}
-		head := threshold - len(elisionTail)
-		if head < 64 {
-			head = 64
-		}
+		head := max(threshold-len(elisionTail), 64)
 		out.Content = clipToRune(msg.Content, head) + elisionTail
 		return out, len(msg.Content) - len(out.Content)
 	case llm.RoleTool:

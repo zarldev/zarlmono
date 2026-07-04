@@ -3,6 +3,7 @@ package runner_test
 import (
 	"context"
 	"iter"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -191,10 +192,5 @@ func TestRun_ToolGateFailsClosedOnWrapperSource(t *testing.T) {
 }
 
 func containsStr(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }

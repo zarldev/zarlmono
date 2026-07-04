@@ -83,10 +83,7 @@ func (g *themeGallery) preview() {
 // handleKey drives grid navigation with live preview; enter commits. Returns
 // true when a commit happened so the host can toast + refresh.
 func (g *themeGallery) handleKey(msg tea.KeyPressMsg) bool {
-	cols := g.cols
-	if cols < 1 {
-		cols = 1
-	}
+	cols := max(g.cols, 1)
 	switch msg.String() {
 	case "up", "k":
 		if g.cursor-cols >= 0 {
@@ -141,10 +138,7 @@ func (g *themeGallery) commit(name string) {
 // grid is taller than the detail region (a narrow terminal yields few columns,
 // hence many rows). height <= 0, or a grid that fits, renders from the top.
 func (g *themeGallery) detailLines(width, height int) []string {
-	cols := width / themeCellW
-	if cols < 1 {
-		cols = 1
-	}
+	cols := max(width/themeCellW, 1)
 	g.cols = cols
 	totalRows := (len(g.names) + cols - 1) / cols
 

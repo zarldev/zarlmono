@@ -29,6 +29,19 @@ func TestReadBeforeWriteGuardrail_AllowsEditAfterRead(t *testing.T) {
 	}
 }
 
+func TestReadBeforeWriteGuardrail_AllowsFollowUpEditAfterEdit(t *testing.T) {
+	ctx := t.Context()
+	ledger := runner.NewMemoryTaskCallLedger()
+	// A prior successful edit is recorded as evidence; a follow-up edit to the
+	// same file must not be nagged to re-read (the read → edit → read → edit loop).
+	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameEdit, tools.ToolParameters{"path": "pkg/foo.go"})
+	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
+	call := tools.ToolCall{ToolName: code.ToolNameEdit, Arguments: tools.ToolParameters{"path": "pkg/foo.go"}}
+	if err := g.Before(ctx, call); err != nil {
+		t.Fatalf("want prior edit to unlock follow-up edit, got %v", err)
+	}
+}
+
 func TestReadBeforeWriteGuardrail_AllowsWriteAfterDirContext(t *testing.T) {
 	ctx := t.Context()
 	ledger := runner.NewMemoryTaskCallLedger()

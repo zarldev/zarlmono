@@ -19,10 +19,15 @@ type listPicker struct {
 	items  []string
 	cursor int
 	onPick func(string)
+	right  func(string) string
 }
 
 func newListPicker(title string, items []string, current string, onPick func(string)) *listPicker {
-	p := &listPicker{title: title, items: items, onPick: onPick}
+	return newListPickerWithRight(title, items, current, onPick, nil)
+}
+
+func newListPickerWithRight(title string, items []string, current string, onPick func(string), right func(string) string) *listPicker {
+	p := &listPicker{title: title, items: items, onPick: onPick, right: right}
 	for i, it := range items {
 		if it == current {
 			p.cursor = i
@@ -57,10 +62,7 @@ func (p *listPicker) draw(scr uv.Screen, area uv.Rectangle) {
 	if p.cursor >= listPickerVisible {
 		start = p.cursor - listPickerVisible + 1
 	}
-	end := start + listPickerVisible
-	if end > len(p.items) {
-		end = len(p.items)
-	}
+	end := min(start+listPickerVisible, len(p.items))
 	boxW := min(72, area.Dx()-4)
 	boxH := min(listPickerVisible+5, area.Dy()-2)
 	lay, ok := drawDialogPane(scr, area, p.title, boxW, boxH, palette.Border, palette.Primary)
@@ -72,10 +74,14 @@ func (p *listPicker) draw(scr uv.Screen, area uv.Rectangle) {
 	drawPaddedLine(scr, uv.Rect(innerX, lay.Body.Min.Y, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
 	y := lay.Body.Min.Y + 1
 	for i := start; i < end && y < lay.Footer.Min.Y; i++ {
+		right := ""
+		if p.right != nil {
+			right = p.right(p.items[i])
+		}
 		if i == p.cursor {
-			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Primary.On("▸ "+p.items[i]))
+			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), rowLayout(palette.Primary.On("▸ "+p.items[i]), right, innerW))
 		} else {
-			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), "  "+palette.Subtle.On(p.items[i]))
+			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), rowLayout("  "+palette.Subtle.On(p.items[i]), right, innerW))
 		}
 		y++
 	}

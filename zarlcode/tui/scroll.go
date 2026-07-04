@@ -21,10 +21,7 @@ func paneScrollbarGeom(total, height, off int) scrollbarGeom {
 	if height <= 0 || total <= height {
 		return scrollbarGeom{Height: height}
 	}
-	thumbH := height * height / total
-	if thumbH < 1 {
-		thumbH = 1
-	}
+	thumbH := max(height*height/total, 1)
 	maxOff := total - height
 	if off > maxOff {
 		off = maxOff
@@ -65,10 +62,7 @@ func drawPaneScrollbar(scr uv.Screen, x, top, height, total, off int) {
 
 // clampScrollOffset keeps off within [0, max(0, total-height)].
 func clampScrollOffset(off, total, height int) int {
-	maxOff := total - height
-	if maxOff < 0 {
-		maxOff = 0
-	}
+	maxOff := max(total-height, 0)
 	if off > maxOff {
 		off = maxOff
 	}

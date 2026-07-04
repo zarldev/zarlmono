@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -378,12 +379,7 @@ func (c *Client) shouldRetry(resp *http.Response, err error, p RetryPolicy) bool
 	if resp == nil {
 		return false
 	}
-	for _, code := range p.RetryableStatusCodes {
-		if resp.StatusCode == code {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(p.RetryableStatusCodes, resp.StatusCode)
 }
 
 // nextBackoff computes the sleep before the next attempt. Respects

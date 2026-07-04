@@ -45,7 +45,7 @@ func (d *diffItem) counts() (int, int) {
 
 func diffLineCounts(diff string) (int, int) {
 	add, del := 0, 0
-	for _, ln := range strings.Split(diff, "\n") {
+	for ln := range strings.SplitSeq(diff, "\n") {
 		switch {
 		case strings.HasPrefix(ln, "+") && !strings.HasPrefix(ln, "+++"):
 			add++

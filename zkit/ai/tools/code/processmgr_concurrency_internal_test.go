@@ -28,9 +28,7 @@ func TestStartProcess_CapHoldsUnderConcurrentStarts(t *testing.T) {
 		started = make(chan struct{})
 	)
 	for range 64 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-started // release everyone at once to maximise the race
 			id, err := m.StartProcess(`sleep 30`)
 			if err != nil {
@@ -39,7 +37,7 @@ func TestStartProcess_CapHoldsUnderConcurrentStarts(t *testing.T) {
 			mu.Lock()
 			ids = append(ids, id)
 			mu.Unlock()
-		}()
+		})
 	}
 	close(started)
 	wg.Wait()

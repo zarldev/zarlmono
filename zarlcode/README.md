@@ -38,7 +38,9 @@ zarlcode keys set <provider>   # anthropic, openai, gemini, deepseek, ...
 zarlcode
 ```
 
-Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and `openai-codex`. Run `zarlcode keys --help` for provider-specific setup.
+Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and `openai-codex`. Run `zarlcode keys --help` for provider-specific setup. zarlcode configures model endpoints but does not start or manage model servers; for local inference, run Ollama, llama.cpp, LM Studio, or another OpenAI-compatible server yourself and select or add it in Settings → Providers.
+
+Optional local services are controlled from **Settings → integrations → local web_search service**. Use that action to install/start the bundled SearXNG Docker Compose service for `web_search`, inspect health, or view recent logs. If you already run SearXNG elsewhere, set `search_searxng_url` under integrations instead.
 
 ## Why use it
 
@@ -66,6 +68,30 @@ zarlcode --headless --prompt-file t.md # run one task without the TUI
 zarlcode keys list                     # view stored provider keys, masked
 zarlcode upgrade                       # self-update from GitHub Releases
 ```
+
+## Performance profiling
+
+Profiling is opt-in so normal TUI runs stay quiet:
+
+```bash
+zarlcode -pprof 127.0.0.1:6060
+zarlcode -trace /tmp/zarlcode.trace --headless --prompt-text "profile this task"
+```
+
+With `-pprof`, standard Go pprof endpoints are available under
+`http://127.0.0.1:6060/debug/pprof/`, including CPU profiles and short execution
+traces:
+
+```bash
+go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=30
+go tool trace 'http://127.0.0.1:6060/debug/pprof/trace?seconds=5'
+curl http://127.0.0.1:6060/debug/metrics/runtime
+```
+
+`/debug/metrics/runtime` exports a JSON snapshot of `runtime/metrics` so memory,
+GC, scheduler, goroutine, and mutex counters can be scraped during longer runs.
+The `-trace` flag writes a full Go execution trace until zarlcode exits; inspect
+it with `go tool trace /tmp/zarlcode.trace`.
 
 ## Concepts
 
@@ -231,7 +257,6 @@ Exit codes: 0 = completed, 1 = max iterations / cancelled, 2 = error, 4 = bad in
 |---------|-------------|
 | `zarlcode init` | Materialise `~/.zarlcode/` (prompt.md, skills, tools, config skeleton) |
 | `zarlcode keys` | Manage credentials: `list`, `set`, `delete`, `oauth`, `protect status/on/off` |
-| `zarlcode serve` | Exec `llama-server` with zarlcode's canonical local-model defaults |
 | `zarlcode upgrade` | Self-upgrade — download and replace the zarlcode binary |
 | `zarlcode --askpass` | Internal: sudo `SUDO_ASKPASS` shim used when `sudo_askpass` is enabled |
 
@@ -245,7 +270,7 @@ zarlcode/
 ├── tui/           # Bubble Tea UI: timeline, cockpit, dialogs, composer, theming
 ├── engine/        # TUI-to-runner bridge: LiveRunner, headless mode, settings
 ├── catalog/       # Agent and skill catalogue (load, scaffold, validate)
-├── cli/           # Operational subcommands: init, keys, serve, upgrade, --askpass
+├── cli/           # Operational subcommands: init, keys, upgrade, --askpass
 ├── hooks/         # Workspace lifecycle hooks (OnToolResult, OnCompaction)
 ├── instructions/  # Workspace instruction loading (AGENTS.md, CLAUDE.md, etc.)
 ├── prompts/       # System prompt templates (system.md, plan.md, init.md)

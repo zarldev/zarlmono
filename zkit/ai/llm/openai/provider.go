@@ -652,8 +652,8 @@ func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestO
 	if p.cachePrompt {
 		opts = append(opts, option.WithJSONSet("cache_prompt", true))
 	}
-	if p.chatTemplateKwargs && len(req.ChatTemplateKwargs) > 0 {
-		opts = append(opts, option.WithJSONSet("chat_template_kwargs", req.ChatTemplateKwargs))
+	if p.chatTemplateKwargs && !req.ChatTemplateKwargs.IsZero() {
+		opts = append(opts, option.WithJSONSet("chat_template_kwargs", req.ChatTemplateKwargs.AsMap()))
 	}
 	if rf, ok := buildResponseFormat(req.ResponseFormat); ok {
 		opts = append(opts, option.WithJSONSet("response_format", rf))

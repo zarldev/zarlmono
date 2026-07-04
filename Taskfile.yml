@@ -102,7 +102,7 @@ tasks:
     desc: Build and install the zarlcode TUI
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -trimpath -ldflags='-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version={{.ZARLCODE_VERSION}}' -o {{.ZARLCODE}} ./zarlcode/cmd
+      - GOAMD64="${GOAMD64:-v3}" go build -trimpath -ldflags='-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version={{.ZARLCODE_VERSION}}' -o {{.ZARLCODE}} ./zarlcode/cmd
       - echo "installed{{":"}} {{.ZARLCODE}} (version {{.ZARLCODE_VERSION}})"
 
   zarlcode:install:

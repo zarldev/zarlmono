@@ -82,8 +82,8 @@ func pathExists(path string) bool {
 // go.mod stays untouched), then validates the binary's --describe spec
 // and registers it with the registrar.
 func (t *BuildTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args BuildToolArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[BuildToolArgs](call.Arguments)
+	if derr != nil {
 		return failureResult(call.ID, derr.Error()), nil
 	}
 	dir := args.Directory

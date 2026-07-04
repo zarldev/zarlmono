@@ -95,8 +95,8 @@ func (r GrepResult) String() string {
 // hits at max_results (grepDefaultMaxResults = 100 when unset). rg's
 // exit 1 on zero matches is treated as success with an empty hit list.
 func (t *GrepTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args GrepArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[GrepArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	hits, truncated, err := runGrep(ctx, t.ws, t.allowOutsideWorkspace, args)

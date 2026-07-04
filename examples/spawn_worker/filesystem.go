@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,9 +113,7 @@ func (fs *FileSystem) Checkpoint() map[string]string {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	out := make(map[string]string, len(fs.files))
-	for k, v := range fs.files {
-		out[k] = v
-	}
+	maps.Copy(out, fs.files)
 	return out
 }
 

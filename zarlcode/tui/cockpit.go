@@ -429,10 +429,7 @@ func (s *RunState) hasPricing() bool {
 // cost prices an (input, cached, output) token triple, charging cached
 // input at cacheReadRate of the normal input price.
 func (s *RunState) cost(in, cached, out int) float64 {
-	fresh := in - cached
-	if fresh < 0 {
-		fresh = 0
-	}
+	fresh := max(in-cached, 0)
 	return float64(fresh)/1000*s.inCostPer1k +
 		float64(cached)/1000*s.inCostPer1k*cacheReadRate +
 		float64(out)/1000*s.outCostPer1k

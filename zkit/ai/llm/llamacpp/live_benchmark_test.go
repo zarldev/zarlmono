@@ -30,7 +30,7 @@ func TestLiveToolCall(t *testing.T) {
 				Parameters:  objectSchema(map[string]any{"path": map[string]any{"type": "string"}}, []string{"path"}),
 			},
 		}},
-		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
+		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	})
 	calls := liveToolCalls(chunks)
 	if len(calls) == 0 {
@@ -59,7 +59,7 @@ func TestLiveReasoningSeparatedFromContent(t *testing.T) {
 		},
 		Stream:             true,
 		MaxTokens:          128,
-		ChatTemplateKwargs: map[string]any{"enable_thinking": true},
+		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: true},
 	})
 	content := liveContent(chunks)
 	if strings.Contains(content, "<think>") || strings.Contains(content, "</think>") {
@@ -88,7 +88,7 @@ func TestLiveProtocolEchoFallback(t *testing.T) {
 				Parameters:  objectSchema(map[string]any{"path": map[string]any{"type": "string"}}, []string{"path"}),
 			},
 		}},
-		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
+		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	})
 	calls := liveToolCalls(chunks)
 	if len(calls) == 0 {

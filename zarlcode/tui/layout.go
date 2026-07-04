@@ -38,20 +38,14 @@ func computeLayoutWithEditorLines(w, h int, editorLines int) uiLayout {
 	}
 	var l uiLayout
 	l.header = uv.Rect(0, 0, w, headerHeight)
-	editorHeight := editorLines + 2
-	if editorHeight < editorMinHeight {
-		editorHeight = editorMinHeight
-	}
+	editorHeight := max(editorLines+2, editorMinHeight)
 	if editorHeight > editorMaxHeight {
 		editorHeight = editorMaxHeight
 	}
 
 	bottom := editorHeight + statusHeight
 	midTop := headerHeight
-	midH := h - midTop - bottom
-	if midH < 0 {
-		midH = 0
-	}
+	midH := max(h-midTop-bottom, 0)
 
 	if w >= sidebarMinWidth && midH > 0 {
 		l.main = uv.Rect(0, midTop, w-sidebarWidth, midH)

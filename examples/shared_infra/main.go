@@ -230,7 +230,7 @@ func (hashEmbedder) Embed(_ context.Context, texts []string) ([]airetrieval.Vect
 
 func embed(text string) airetrieval.Vector {
 	vec := make(airetrieval.Vector, 8)
-	for _, word := range strings.Fields(strings.ToLower(text)) {
+	for word := range strings.FieldsSeq(strings.ToLower(text)) {
 		h := fnv.New32a()
 		_, _ = h.Write([]byte(word))
 		vec[int(h.Sum32())%len(vec)]++

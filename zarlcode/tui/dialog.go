@@ -170,6 +170,8 @@ func (m *UI) handleAction(a action) tea.Cmd {
 		return m.editFileCmd(a.path)
 	case actionRollback:
 		return m.rollback(a.turnID, a.path)
+	case serviceAction:
+		return m.handleServiceAction(a)
 	case actionKillProcess:
 		return m.killProcessCmd(a.processID, a.signal)
 	case actionAskpassReply:
@@ -190,9 +192,24 @@ func (m *UI) handleAction(a action) tea.Cmd {
 
 // --- help dialog ---
 
-type helpDialog struct{}
+type helpDialog struct {
+	sections []helpSection
+}
 
-func newHelpDialog() *helpDialog { return &helpDialog{} }
+func newHelpDialog() *helpDialog { return &helpDialog{sections: composeHelpSections()} }
+
+func (m *UI) newHelpDialog() *helpDialog {
+	switch {
+	case m.intro != nil:
+		return &helpDialog{sections: startupHelpSections()}
+	case m.session.CockpitExpanded:
+		return &helpDialog{sections: dashboardHelpSections()}
+	case m.timeline.browsing:
+		return &helpDialog{sections: browseHelpSections()}
+	default:
+		return &helpDialog{sections: composeHelpSections()}
+	}
+}
 
 func (helpDialog) handleKey(msg tea.KeyPressMsg) action {
 	switch msg.String() {
@@ -202,16 +219,42 @@ func (helpDialog) handleKey(msg tea.KeyPressMsg) action {
 	return actionNone{}
 }
 
-func (helpDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	sections := []helpSection{
+func (d helpDialog) draw(scr uv.Screen, area uv.Rectangle) {
+	sections := d.sections
+	if len(sections) == 0 {
+		sections = composeHelpSections()
+	}
+	lines := helpLines(sections)
+	drawDialogBox(scr, area, "keys", lines)
+}
+
+func composeHelpSections() []helpSection {
+	return []helpSection{
 		{
-			title: "main",
+			title: "compose",
 			rows: [][]keyHint{
 				{{"enter", "submit prompt"}, {"shift+enter", "newline"}, {"tab", "browse transcript"}},
-				{{"ctrl+l", "context dashboard"}, {"pgup / pgdn", "scroll transcript"}, {"esc", "stop current turn"}},
-				{{"shift+tab", "plan ⇄ build"}, {"ctrl+q", "clear context"}, {"ctrl+c", "quit"}},
+				{{"shift+tab", "plan ⇄ build"}, {"ctrl+l", "context dashboard"}, {"esc", "stop current turn"}},
 			},
 		},
+		{
+			title: "quick panes",
+			rows: [][]keyHint{
+				{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
+				{{"ctrl+p", "plan pane"}, {"ctrl+w", "working set"}, {"ctrl+o", "inspector"}},
+			},
+		},
+		{
+			title: "slash commands",
+			rows: [][]keyHint{
+				slashCommandHints(),
+			},
+		},
+		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+q", "clear context"}, {"ctrl+c", "quit"}}}}}
+}
+
+func startupHelpSections() []helpSection {
+	return []helpSection{
 		{
 			title: "startup",
 			rows: [][]keyHint{
@@ -219,52 +262,36 @@ func (helpDialog) draw(scr uv.Screen, area uv.Rectangle) {
 				{{"↑↓ / j k", "select session"}, {"pgup / pgdn", "page sessions"}, {"home/end", "top / bottom"}},
 			},
 		},
-		{
-			title: "browse / dashboard",
-			rows: [][]keyHint{
-				{{"↑↓ / j k", "move / scroll"}, {"pgup / pgdn", "page"}, {"home/end", "top / bottom"}},
-				{{"enter / space", "expand / collapse"}, {"g/home / end", "top / bottom"}, {"i / esc", "compose"}},
-				{{"tab / shift+tab / ←→", "switch context tabs"}, {"esc / q / ctrl+l", "return to compose"}},
-			},
-		},
-		{
-			title: "global panes",
-			rows: [][]keyHint{
-				{{"ctrl+g", "toggle this help"}, {"ctrl+f", "file viewer"}, {"ctrl+w", "working set"}},
-				{{"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
-				{{"ctrl+t", "theme"}, {"ctrl+l", "context view"}, {"ctrl+p", "plan pane"}},
-				{{"ctrl+y", "execution tray"}, {"ctrl+o", "inspector"}},
-			},
-		},
-		{
-			title: "settings",
-			rows: [][]keyHint{
-				{{"tab", "nav ⇄ detail"}, {"↑↓ / j k", "move"}, {"enter / space", "edit / select"}},
-				{{"←→ / h l", "back / cycle"}, {"p", "promote global"}, {"ctrl+s", "close"}},
-				{{"n/e/x/r", "new / edit / delete / reload"}, {"a/m/t", "active / models / toggle"}},
-			},
-		},
-		{
-			title: "viewers / pickers",
-			rows: [][]keyHint{
-				{{"file tab", "switch tabs"}, {"enter", "open"}, {"e", "edit"}},
-				{{"file ←/backspace", "parent dir"}, {"pgup / pgdn", "scroll preview"}},
-				{{"tab / ←→", "switch provider"}, {"↑↓ / j k", "choose model"}, {"type", "custom model"}},
-				{{"theme ↑↓", "preview"}, {"enter", "select / apply"}, {"esc / q", "close / revert"}},
-				{{"working set tab", "files ⇄ turns"}, {"o", "open file"}, {"r", "rollback"}},
-				{{"ctrl+w / ctrl+o / ctrl+y", "close matching pane"}, {"esc / q", "close"}},
-			},
-		},
-		{
-			title: "slash / close",
-			rows: [][]keyHint{
-				slashCommandHints(),
-				{{"esc / q", "close dialog or dashboard"}, {"ctrl+c", "quit"}},
-			},
-		},
+		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+c", "quit"}}}},
 	}
-	lines := helpLines(sections)
-	drawDialogBox(scr, area, "keys", lines)
+}
+
+func browseHelpSections() []helpSection {
+	return []helpSection{
+		{
+			title: "browse transcript",
+			rows: [][]keyHint{
+				{{"↑↓ / j k", "move"}, {"pgup / pgdn", "page"}, {"g/home / end", "top / bottom"}},
+				{{"enter / space", "expand / collapse"}, {"i / esc", "back to compose"}},
+			},
+		},
+		{title: "quick panes", rows: [][]keyHint{{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}}}},
+		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+c", "quit"}}}},
+	}
+}
+
+func dashboardHelpSections() []helpSection {
+	return []helpSection{
+		{
+			title: "context dashboard",
+			rows: [][]keyHint{
+				{{"tab / shift+tab / ←→", "switch tabs"}, {"↑↓ / j k", "scroll"}},
+				{{"pgup / pgdn", "page"}, {"home/end", "top / bottom"}, {"esc / q / ctrl+l", "compose"}},
+			},
+		},
+		{title: "quick panes", rows: [][]keyHint{{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}}}},
+		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+c", "quit"}}}},
+	}
 }
 
 type helpSection struct {

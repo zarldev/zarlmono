@@ -56,6 +56,18 @@ r := retrieval.VectorRetriever{
 docs, err := r.Retrieve(ctx, "how does checkpointing work?")
 ```
 
+Use typed metadata filters when callers need a constrained subset:
+
+```go
+docs, err := r.Retrieve(ctx, "deployment rollback",
+	retrieval.WithFilter(retrieval.Filter{
+		Must: []retrieval.Condition{
+			retrieval.Eq("source", "README.md"),
+		},
+	}),
+)
+```
+
 The in-memory store uses cosine similarity. It is useful for examples,
 tests, and small local corpora; production backends should implement
 `VectorStore` against Qdrant, pgvector, SQLite, or a hosted service.

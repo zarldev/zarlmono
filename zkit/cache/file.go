@@ -328,7 +328,7 @@ func (c *FileCache[K, V]) Len(ctx context.Context) (int, error) {
 func (c *FileCache[K, V]) makeFilename(key K) string {
 	keyBytes, err := json.Marshal(key)
 	if err != nil {
-		keyBytes = []byte(fmt.Sprintf("%v", key))
+		keyBytes = fmt.Appendf(nil, "%v", key)
 	}
 	sum := sha256.Sum256(keyBytes)
 	return hex.EncodeToString(sum[:]) + ".cache"

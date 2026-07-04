@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -66,8 +65,7 @@ func (*upvoteTop) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolUpvoteTop,
 		Description: "Upvote the current top post on Hacker News.",
-		Parameters:  llm.SchemaFromMap(map[string]any{"type": "object", "properties": map[string]any{}}),
-	}
+		Parameters:  tools.SchemaFor[struct{}]()}
 }
 
 func (t *upvoteTop) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
@@ -116,8 +114,7 @@ func (*login) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolLogin,
 		Description: "Log in to Hacker News with the configured account.",
-		Parameters:  llm.SchemaFromMap(map[string]any{"type": "object", "properties": map[string]any{}}),
-	}
+		Parameters:  tools.SchemaFor[struct{}]()}
 }
 
 func (t *login) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {

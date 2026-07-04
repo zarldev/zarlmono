@@ -40,8 +40,8 @@ func (t Tool) Definition() tools.ToolSpec {
 
 // Execute runs retrieval and returns both formatted text and raw documents.
 func (t Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args retrieveArgs
-	if err := tools.DecodeArgs(call.Arguments, &args); err != nil {
+	args, err := tools.DecodeArgs[retrieveArgs](call.Arguments)
+	if err != nil {
 		return nil, err
 	}
 	opts := []airetrieval.RetrieveOption(nil)

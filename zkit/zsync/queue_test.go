@@ -283,9 +283,7 @@ func TestQueue_Concurrent(t *testing.T) {
 	)
 
 	for range numConsumers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				item, err := q.Pop()
 				if errors.Is(err, zsync.ErrQueueClosed) {
@@ -296,7 +294,7 @@ func TestQueue_Concurrent(t *testing.T) {
 				consumedItems = append(consumedItems, item)
 				consumeMu.Unlock()
 			}
-		}()
+		})
 	}
 
 	// producer goroutines
@@ -335,11 +333,9 @@ func TestQueue_BlockingPop(t *testing.T) {
 	var err error
 
 	// blocking consumer
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		result, err = q.Pop()
-	}()
+	})
 
 	// let consumer block first
 	time.Sleep(10 * time.Millisecond)
@@ -366,11 +362,9 @@ func TestQueue_CloseUnblocksConsumers(t *testing.T) {
 	var err error
 
 	// blocking consumer
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, err = q.Pop()
-	}()
+	})
 
 	// let consumer block first
 	time.Sleep(10 * time.Millisecond)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,7 +126,7 @@ func Score(ctx context.Context, r *Results, cfg ScoreConfig) error {
 		}
 		for _, rec := range recs {
 			if v, ok := verdicts[rec.InstanceID]; ok {
-				rec.Resolved = boolPtr(v.Resolved)
+				rec.Resolved = new(v.Resolved)
 				rec.EvaluatorError = v.Reason()
 			}
 		}
@@ -165,9 +166,7 @@ func mergeRebuildRetry(ctx context.Context, cfg ScoreConfig, driver, workDir str
 			"driver", driver, "err", err)
 		return
 	}
-	for id, v := range fresh {
-		verdicts[id] = v
-	}
+	maps.Copy(verdicts, fresh)
 }
 
 func writePredictions(path, driver string, recs []*TaskResult) error {
@@ -212,5 +211,3 @@ func invokeEvaluator(ctx context.Context, cfg ScoreConfig, driver, predsPath, wo
 	summaryPath := filepath.Join(workDir, fmt.Sprintf("%s.%s.json", driver, runID))
 	return evaluator.ParseSummary(summaryPath)
 }
-
-func boolPtr(b bool) *bool { return &b }

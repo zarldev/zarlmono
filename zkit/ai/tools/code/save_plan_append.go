@@ -73,8 +73,8 @@ func (t *SavePlanAppendTool) Definition() tools.ToolSpec {
 // directory and file when the scaffold step was skipped. Success
 // reports the running file size.
 func (t *SavePlanAppendTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args SavePlanAppendArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[SavePlanAppendArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Content == "" {

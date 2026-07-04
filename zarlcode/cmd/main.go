@@ -4,7 +4,7 @@
 // library package (zarlcode).
 //
 // See package zarlcode for the full command reference and the
-// behaviour of subcommands (init, keys, serve, upgrade) and flags
+// behaviour of subcommands (init, keys, upgrade) and flags
 // (-continue, -headless, --askpass, …).
 package main
 

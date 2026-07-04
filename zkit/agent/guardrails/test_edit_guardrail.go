@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/agent/shellpolicy"
@@ -170,12 +171,7 @@ func matchesTestEditTool(names []tools.ToolName, name tools.ToolName) bool {
 		_, ok := defaultTestEditTools[name]
 		return ok
 	}
-	for _, n := range names {
-		if n == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(names, name)
 }
 
 func firstMatchingPath(paths []string, matches func(string) bool) string {

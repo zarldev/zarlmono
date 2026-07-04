@@ -19,10 +19,11 @@ type mainToastMsg struct{}
 // on the right. Read-only — no keyboard event handling.
 type statusPane struct {
 	session *Session
+	input   func() string
 }
 
-func newStatusPane(session *Session) *statusPane {
-	return &statusPane{session: session}
+func newStatusPane(session *Session, input func() string) *statusPane {
+	return &statusPane{session: session, input: input}
 }
 
 // Draw implements Pane.
@@ -44,10 +45,7 @@ func (s *statusPane) Draw(scr uv.Screen, area uv.Rectangle) {
 	toast := s.statusToast()
 	if toast != "" {
 		tw := ansi.StringWidth(toast)
-		x := area.Min.X + area.Dx() - tw
-		if x < area.Min.X {
-			x = area.Min.X
-		}
+		x := max(area.Min.X+area.Dx()-tw, area.Min.X)
 		drawLine(scr, uv.Rect(x, area.Min.Y, area.Min.X+area.Dx()-x, 1), toast)
 	}
 }
@@ -59,6 +57,11 @@ func (s *statusPane) Update(msg tea.Msg) tea.Cmd { return nil }
 
 func (s *statusPane) statusHint() string {
 	stopKey := "ctrl+c quit  ·  ctrl+q clear"
+	if s.input != nil {
+		if hint := slashStatusHint(s.input()); hint != "" {
+			return hint
+		}
+	}
 	if s.session.Run.Running {
 		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q clear"
 	}

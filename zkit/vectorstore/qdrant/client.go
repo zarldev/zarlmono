@@ -32,11 +32,25 @@ const (
 // exceeds [qdrantResponseCapBytes].
 var ErrResponseTooLarge = errors.New("qdrant: response exceeded size cap")
 
+// Payload carries Qdrant point metadata. The underlying representation remains
+// JSON-shaped for Qdrant compatibility, but the semantic type keeps payloads
+// distinct from arbitrary option/argument maps in zkit APIs.
+type Payload map[string]any
+
+// Set adds or updates a payload value. Values should be JSON-serialisable.
+func (p Payload) Set(key string, value any) { p[key] = value }
+
+// Get retrieves a payload value.
+func (p Payload) Get(key string) (any, bool) {
+	v, ok := p[key]
+	return v, ok
+}
+
 // Point is a vector with an ID and optional metadata.
 type Point struct {
 	ID      string
 	Vector  []float32
-	Payload map[string]any
+	Payload Payload
 }
 
 // ScoredPoint is a Point returned from a search with a similarity score.
@@ -235,9 +249,9 @@ func (c *Client) EnsureCollection(ctx context.Context, name string, vectorSize i
 }
 
 type wirePoint struct {
-	ID      string         `json:"id"`
-	Vector  []float32      `json:"vector"`
-	Payload map[string]any `json:"payload,omitempty"`
+	ID      string    `json:"id"`
+	Vector  []float32 `json:"vector"`
+	Payload Payload   `json:"payload,omitempty"`
 }
 
 // Upsert inserts or updates points in the collection.
@@ -268,10 +282,10 @@ type searchRequest struct {
 
 type searchResult struct {
 	Result []struct {
-		ID      string         `json:"id"`
-		Score   float32        `json:"score"`
-		Payload map[string]any `json:"payload"`
-		Vector  []float32      `json:"vector"`
+		ID      string    `json:"id"`
+		Score   float32   `json:"score"`
+		Payload Payload   `json:"payload"`
+		Vector  []float32 `json:"vector"`
 	} `json:"result"`
 }
 
@@ -363,8 +377,8 @@ type scrollRequest struct {
 type scrollResult struct {
 	Result struct {
 		Points []struct {
-			ID      string         `json:"id"`
-			Payload map[string]any `json:"payload"`
+			ID      string  `json:"id"`
+			Payload Payload `json:"payload"`
 		} `json:"points"`
 		NextPageOffset any `json:"next_page_offset"`
 	} `json:"result"`

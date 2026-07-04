@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"maps"
 	"reflect"
 	"strings"
 
@@ -93,17 +94,14 @@ func structSchema(t reflect.Type) llm.Schema {
 		AdditionalProperties: false,
 	}
 
-	for i := range t.NumField() {
-		f := t.Field(i)
+	for f := range t.Fields() {
 		if !f.IsExported() {
 			continue
 		}
 		// Embedded structs flatten their fields into the parent.
 		if f.Anonymous && f.Type.Kind() == reflect.Struct {
 			child := structSchema(f.Type)
-			for k, v := range child.Properties {
-				s.Properties[k] = v
-			}
+			maps.Copy(s.Properties, child.Properties)
 			s.Required = append(s.Required, child.Required...)
 			continue
 		}

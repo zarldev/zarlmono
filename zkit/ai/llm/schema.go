@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"slices"
 )
 
@@ -115,9 +116,7 @@ func (s Schema) IsZero() bool {
 // down first so the typed keys always win on the (illegal) chance of overlap.
 func (s Schema) toMap() map[string]any {
 	m := make(map[string]any, len(s.Extra)+6)
-	for k, v := range s.Extra {
-		m[k] = v
-	}
+	maps.Copy(m, s.Extra)
 	if s.Type != "" {
 		m[schemaKeyType] = s.Type
 	}

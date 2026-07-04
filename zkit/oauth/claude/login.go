@@ -42,7 +42,7 @@ func RunLogin(ctx context.Context, svc *prefs.Service, stdin io.Reader, stdout i
 
 func extractToken(out string) string {
 	var candidates []string
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

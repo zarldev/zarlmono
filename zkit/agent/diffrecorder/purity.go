@@ -1,6 +1,8 @@
 package diffrecorder
 
 import (
+	"maps"
+
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -62,9 +64,7 @@ func NewClassifier() Classifier {
 // their diffs.
 func (c Classifier) WithOverride(name tools.ToolName, p Purity) Classifier {
 	out := Classifier{overrides: make(map[tools.ToolName]Purity, len(c.overrides)+1)}
-	for k, v := range c.overrides {
-		out.overrides[k] = v
-	}
+	maps.Copy(out.overrides, c.overrides)
 	out.overrides[name] = p
 	return out
 }

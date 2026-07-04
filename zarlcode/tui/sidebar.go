@@ -51,10 +51,7 @@ func sidebarSectionRule(line string, width int) string {
 	if lineW >= width {
 		return ansi.Truncate(line, width, "")
 	}
-	fill := width - lineW - 1
-	if fill < 0 {
-		fill = 0
-	}
+	fill := max(width-lineW-1, 0)
 	return line + palette.Border.On(strings.Repeat("─", fill)+"┤")
 }
 

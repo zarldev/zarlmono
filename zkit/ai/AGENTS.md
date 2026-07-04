@@ -60,7 +60,7 @@ Repository style, applied throughout:
 
 ## Tools
 
-Tool handlers take a typed-parameter struct (`tools.SchemaFor[Args]` + `tools.DecodeArgs[Args]`) — don't reach for `map[string]any` unless the args are genuinely unconstrained. `tools.Error` carries a `Kind` (`Validation`, `NotFound`, `Permission`, `Budget`, `Fatal`); downstream policy (guardrail decomposition, escalation) routes on `Kind`, so tag errors correctly via the constructors. Visibility and execution flow through three interfaces: `Iterable` (enumerate, cheap, no I/O), `Executor` (dispatch a call), and `Source` (both).
+Tool handlers take a typed-parameter struct (`tools.SchemaFor[Args]` + `args, err := tools.DecodeArgs[Args](call.Arguments)`) or, for new tools, `tools.NewTyped` so handler logic receives `Args` and returns a typed result — don't reach for `map[string]any` unless the args are genuinely unconstrained. `tools.Error` carries a `Kind` (`Validation`, `NotFound`, `Permission`, `Budget`, `Fatal`); downstream policy (guardrail decomposition, escalation) routes on `Kind`, so tag errors correctly via the constructors. Visibility and execution flow through three interfaces: `Iterable` (enumerate, cheap, no I/O), `Executor` (dispatch a call), and `Source` (both).
 
 ## Testing
 

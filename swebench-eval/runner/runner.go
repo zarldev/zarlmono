@@ -33,7 +33,7 @@ func splitTestList(s string) []string {
 	}
 	s = strings.Trim(s, "[]")
 	var out []string
-	for _, raw := range strings.Split(s, "\n") {
+	for raw := range strings.SplitSeq(s, "\n") {
 		v := strings.TrimSpace(strings.Trim(raw, `",`))
 		if v != "" {
 			out = append(out, v)
@@ -106,9 +106,7 @@ func Run(ctx context.Context, cfg Config) (Results, error) {
 
 	var wg sync.WaitGroup
 	for range concurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for s := range work {
 				rec := runOne(ctx, cfg, s.spec, s.driver)
 				if cfg.OnTaskComplete != nil {
@@ -116,7 +114,7 @@ func Run(ctx context.Context, cfg Config) (Results, error) {
 				}
 				resultsCh <- rec
 			}
-		}()
+		})
 	}
 
 	go func() {

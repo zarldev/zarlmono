@@ -16,6 +16,8 @@
 // dev hosts, not native Windows shells.
 package shellpolicy
 
+import "slices"
+
 // IRVersion is the schema version for ParsedIR. Adapters MUST set
 // this field; consumers MUST reject any payload whose version does
 // not match. Bump when the IR shape changes incompatibly so stale
@@ -162,12 +164,7 @@ var tier2Commands = map[string]bool{
 
 // hasRisk reports whether the IR carries the given risk code.
 func hasRisk(ir ParsedIR, code ReasonCode) bool {
-	for _, r := range ir.RiskFlags {
-		if r == code {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ir.RiskFlags, code)
 }
 
 // emptyIR returns a freshly-initialised IR with non-nil maps/slices

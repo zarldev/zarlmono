@@ -232,6 +232,9 @@ func TestFetchModelsOAuthBuiltinsReturnPresets(t *testing.T) {
 			if len(models) == 0 {
 				t.Fatalf("FetchModels(%q) = empty, want preset models", name)
 			}
+			if name == "claude-code" && !slices.Contains(models, "fable") {
+				t.Fatalf("FetchModels(%q) = %v, want fable", name, models)
+			}
 		})
 	}
 }

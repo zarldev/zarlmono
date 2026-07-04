@@ -191,7 +191,7 @@ func TestRenderContentBlock_DiffDropsRecorderHeaderAndPrefixesBody(t *testing.T)
 	if strings.Contains(joined, "@@ foo.go @@") {
 		t.Fatalf("diff body should drop recorder header:\n%s", joined)
 	}
-	for _, line := range strings.Split(joined, "\n") {
+	for line := range strings.SplitSeq(joined, "\n") {
 		if !strings.HasPrefix(line, "  ") {
 			t.Fatalf("diff body line missing prefix: %q", line)
 		}

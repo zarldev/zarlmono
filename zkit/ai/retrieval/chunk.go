@@ -48,10 +48,7 @@ func (c TextChunker) Chunk(ctx context.Context, docs []Document) ([]Document, er
 		runes := []rune(text)
 		step := c.Size - c.Overlap
 		for start, idx := 0, 0; start < len(runes); start, idx = start+step, idx+1 {
-			end := start + c.Size
-			if end > len(runes) {
-				end = len(runes)
-			}
+			end := min(start+c.Size, len(runes))
 			chunk := doc.Clone()
 			chunk.Text = string(runes[start:end])
 			chunk.Score = 0

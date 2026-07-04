@@ -63,8 +63,8 @@ func (t *ReadFileHLTool) Definition() tools.ToolSpec {
 // are computed over displayed line content only; LF and CRLF terminators are
 // not included, while other whitespace is.
 func (t *ReadFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args ReadFileHLArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[ReadFileHLArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Path == "" {
@@ -144,8 +144,8 @@ func (t *EditFileHLTool) Definition() tools.ToolSpec {
 // content never has to be reproduced in the arguments; stale anchors are
 // refused before any write occurs.
 func (t *EditFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args EditFileHLArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[EditFileHLArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Path == "" {
@@ -288,8 +288,8 @@ func hashlineLines(body string) []hashlineLine {
 }
 
 func hashlineLineContent(line string) string {
-	if strings.HasSuffix(line, "\n") {
-		line = strings.TrimSuffix(line, "\n")
+	if before, ok := strings.CutSuffix(line, "\n"); ok {
+		line = before
 		line = strings.TrimSuffix(line, "\r")
 	}
 	return line

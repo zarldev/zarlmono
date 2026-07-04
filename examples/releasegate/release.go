@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -131,13 +132,9 @@ func (r *Release) Snapshot() Snapshot {
 	defer r.mu.Unlock()
 
 	checks := make(map[string]bool, len(r.checks))
-	for k, v := range r.checks {
-		checks[k] = v
-	}
+	maps.Copy(checks, r.checks)
 	evidence := make(map[string]string, len(r.evidence))
-	for k, v := range r.evidence {
-		evidence[k] = v
-	}
+	maps.Copy(evidence, r.evidence)
 	events := append([]string(nil), r.events...)
 
 	var missing []string

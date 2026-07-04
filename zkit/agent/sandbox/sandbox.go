@@ -182,7 +182,7 @@ func wslInteropInterpreterFor(path string) (string, bool) {
 		return "", false
 	}
 	var enabled bool
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "enabled" {
 			enabled = true
@@ -275,7 +275,7 @@ func splitPathList(s string) []string {
 		return nil
 	}
 	var paths []string
-	for _, p := range strings.Split(s, string(os.PathListSeparator)) {
+	for p := range strings.SplitSeq(s, string(os.PathListSeparator)) {
 		if p != "" && filepath.IsAbs(p) {
 			paths = append(paths, p)
 		}

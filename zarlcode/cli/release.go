@@ -211,7 +211,7 @@ func authorizeGitHub(req *http.Request) {
 // install an unverified binary.
 func verifyChecksum(archiveName string, archive, manifest []byte) error {
 	want := ""
-	for _, line := range strings.Split(string(manifest), "\n") {
+	for line := range strings.SplitSeq(string(manifest), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
 			continue

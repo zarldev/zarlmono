@@ -451,8 +451,8 @@ func TestUserContentParts_MultimodalImage(t *testing.T) {
 // Regression: gpt-5 family models default to medium reasoning effort
 // so the Responses API emits reasoning_summary deltas. Without this
 // the server returned an empty summary and zarlcode's transcript
-// stayed empty of the thinking child — user-visible as "I see
-// thinking for Qwen llama but not GPT 5.5".
+// stayed empty of the thinking child. Spark models are excluded because
+// they reject reasoning.summary even while accepting reasoning.effort.
 func TestDefaultReasoningEffort_GPT5Family(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -478,6 +478,38 @@ func TestDefaultReasoningEffort_GPT5Family(t *testing.T) {
 				t.Errorf("defaultReasoningEffort(%q) = %q, want %q", c.model, got, c.want)
 			}
 		})
+	}
+}
+
+func TestBuildRequest_SparkOmitsReasoningSummary(t *testing.T) {
+	t.Parallel()
+	req := llm.CompletionRequest{
+		Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	}
+	body := buildRequest(req, "gpt-5.3-codex-spark", "")
+	if body.Reasoning == nil || body.Reasoning.Effort != reasoningEffortLow {
+		t.Fatalf("reasoning = %+v, want low effort", body.Reasoning)
+	}
+	if body.Reasoning.Summary != "" {
+		t.Fatalf("spark reasoning.summary = %q, want omitted", body.Reasoning.Summary)
+	}
+}
+
+func TestBuildRequest_SparkOptionOmitsReasoningSummary(t *testing.T) {
+	t.Parallel()
+	req := llm.CompletionRequest{
+		Messages: []llm.Message{{Role: "user", Content: "hi"}},
+		Options: llm.ModelOptions{
+			"reasoning_effort":  "high",
+			"reasoning_summary": "concise",
+		},
+	}
+	body := buildRequest(req, "gpt-5.3-codex-spark", "")
+	if body.Reasoning == nil || body.Reasoning.Effort != reasoningEffortHigh {
+		t.Fatalf("reasoning = %+v, want high effort", body.Reasoning)
+	}
+	if body.Reasoning.Summary != "" {
+		t.Fatalf("spark option reasoning.summary = %q, want omitted", body.Reasoning.Summary)
 	}
 }
 

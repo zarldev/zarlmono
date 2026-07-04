@@ -186,10 +186,7 @@ func (s *Summary) Compact(ctx context.Context, history []llm.Message, keepRecent
 	for _, m := range older {
 		olderBytes += len(m.Content)
 	}
-	trimmed := olderBytes - len(body)
-	if trimmed < 0 {
-		trimmed = 0
-	}
+	trimmed := max(olderBytes-len(body), 0)
 	warning := fmt.Sprintf("compacted via summary: %d older msgs → 1 summary msg (~%d chars); %d recent kept verbatim",
 		len(older), len(body), len(recent))
 	return Result{History: out, Warning: warning, Engine: EngineSummary, BytesTrimmed: trimmed}, nil
@@ -219,10 +216,7 @@ func splitForSummary(history []llm.Message, keepRecent int) ([]llm.Message, []ll
 		cut++
 	}
 	leading = history[:cut]
-	tail := len(history) - keepRecent
-	if tail < cut {
-		tail = cut
-	}
+	tail := max(len(history)-keepRecent, cut)
 	// Bounds clamp: keepRecent == 0 lands tail at len(history); the
 	// snap loop below dereferences history[tail], which would panic
 	// in that case. Drop to len-1 so the loop has something to look

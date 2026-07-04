@@ -327,7 +327,7 @@ func TestMemoSource_InvalidatesCacheAfterSuccessfulBash(t *testing.T) {
 	}
 }
 
-func TestMemoSource_LedgerRecordsPureCallsAndClearsOnMutation(t *testing.T) {
+func TestMemoSource_LedgerRecordsReadsAndMutationsAsEvidence(t *testing.T) {
 	inner := &sequenceSource{
 		results: []*tools.ToolResult{
 			{Success: true, Data: "old contents"},
@@ -353,7 +353,11 @@ func TestMemoSource_LedgerRecordsPureCallsAndClearsOnMutation(t *testing.T) {
 	if _, err := m.Execute(ctx, mutate); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
-	if calls := ledger.Calls(ctx); len(calls) != 0 {
-		t.Fatalf("ledger after mutation = %+v, want cleared", calls)
+	// A mutation must not wipe read-before-write evidence: the read still
+	// counts and the edit is recorded as its own evidence, so a follow-up
+	// edit to the same file is never nagged to re-read.
+	calls = ledger.Calls(ctx)
+	if len(calls) != 2 || calls[0].ToolName != "read" || calls[1].ToolName != "edit" {
+		t.Fatalf("ledger after mutation = %+v, want [read edit]", calls)
 	}
 }
