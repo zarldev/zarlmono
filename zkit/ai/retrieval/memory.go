@@ -39,9 +39,9 @@ func (s *MemoryVectorStore) Index(ctx context.Context, docs []IndexedDocument) e
 	return nil
 }
 
-// Search returns the highest cosine-similarity matches. Query.Limit <= 0 means
-// all indexed documents are considered. Query.Filter requires exact equality on
-// document metadata keys.
+// Search returns the nearest indexed documents. When Query.Filter is nil, all
+// indexed documents are considered. Query.Filter requires exact equality on
+// document metadata keys for equality conditions.
 func (s *MemoryVectorStore) Search(ctx context.Context, query Query) ([]Document, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (s *MemoryVectorStore) Search(ctx context.Context, query Query) ([]Document
 	defer s.mu.RUnlock()
 	hits := make([]Document, 0, len(s.docs))
 	for _, indexed := range s.docs {
-		if !metadataMatches(indexed.Document.Metadata, query.Filter) {
+		if !query.Filter.Match(indexed.Document.Metadata) {
 			continue
 		}
 		score, ok := cosine(query.Vector, indexed.Vector)
@@ -77,15 +77,6 @@ func cloneIndexed(doc IndexedDocument) IndexedDocument {
 		out.Vector = append(Vector(nil), doc.Vector...)
 	}
 	return out
-}
-
-func metadataMatches(metadata Metadata, filter map[string]any) bool {
-	for k, want := range filter {
-		if metadata == nil || metadata[k] != want {
-			return false
-		}
-	}
-	return true
 }
 
 func cosine(a, b Vector) (float64, bool) {

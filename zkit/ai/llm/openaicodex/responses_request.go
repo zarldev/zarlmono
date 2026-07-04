@@ -167,12 +167,15 @@ func buildRequest(req llm.CompletionRequest, model, instructions string) respons
 	// Override via options when a caller actually wants the heuristic
 	// behaviour.
 	if effort := optionString(req.Options, "reasoning_effort"); effort != "" {
-		rr.Reasoning = &reasoningConfig{
-			Effort:  reasoningEffort(effort),
-			Summary: optionStringOr(req.Options, "reasoning_summary", "detailed"),
+		rr.Reasoning = &reasoningConfig{Effort: reasoningEffort(effort)}
+		if supportsReasoningSummary(model) {
+			rr.Reasoning.Summary = optionStringOr(req.Options, "reasoning_summary", "detailed")
 		}
 	} else if defaultEffort := defaultReasoningEffort(model); defaultEffort != "" {
-		rr.Reasoning = &reasoningConfig{Effort: defaultEffort, Summary: "detailed"}
+		rr.Reasoning = &reasoningConfig{Effort: defaultEffort}
+		if supportsReasoningSummary(model) {
+			rr.Reasoning.Summary = "detailed"
+		}
 	}
 	if verb := optionString(req.Options, "text_verbosity"); verb != "" {
 		rr.Text = &textConfig{Verbosity: textVerbosity(verb)}
@@ -364,4 +367,11 @@ func defaultReasoningEffort(model string) reasoningEffort {
 	default:
 		return ""
 	}
+}
+
+// supportsReasoningSummary reports whether Codex accepts the reasoning.summary
+// request knob. Spark models reject it with unsupported_parameter even though
+// they still accept reasoning.effort and stream reasoning events.
+func supportsReasoningSummary(model string) bool {
+	return !strings.HasSuffix(model, "-spark")
 }

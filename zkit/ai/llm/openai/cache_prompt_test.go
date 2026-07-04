@@ -1,7 +1,6 @@
 package openai_test
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -54,7 +53,7 @@ func TestRequest_CachePromptGating(t *testing.T) {
 				t.Fatalf("NewProvider: %v", err)
 			}
 
-			seq, err := provider.Complete(context.Background(), llm.CompletionRequest{
+			seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages: []llm.Message{{Role: "user", Content: "hi"}},
 				Stream:   true,
 			})
@@ -116,10 +115,10 @@ func TestRequest_ChatTemplateKwargsGating(t *testing.T) {
 				t.Fatalf("NewProvider: %v", err)
 			}
 
-			seq, err := provider.Complete(context.Background(), llm.CompletionRequest{
+			seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages:           []llm.Message{{Role: "user", Content: "hi"}},
 				Stream:             true,
-				ChatTemplateKwargs: map[string]any{"enable_thinking": true},
+				ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: true},
 			})
 			if err != nil {
 				t.Fatalf("Complete: %v", err)

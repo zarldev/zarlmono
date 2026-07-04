@@ -67,7 +67,7 @@ func TestSidebar_SectionRulesMeetFrame(t *testing.T) {
 		teasink.ConversationStartedMsg{TaskID: "t1", Prompt: "do the thing"},
 		teasink.IterationCompletedMsg{TaskID: "t1", Iter: 1, Usage: &llm.Usage{PromptTokens: 120, TotalTokens: 200}},
 	)
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if !strings.Contains(line, "├─[context]") {
 			continue
 		}

@@ -82,8 +82,8 @@ func (t *UpdatePlanTool) Definition() tools.ToolSpec {
 // success it replaces the stored plan wholesale and returns per-status
 // counts.
 func (t *UpdatePlanTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args UpdatePlanArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[UpdatePlanArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if len(args.Plan) == 0 {

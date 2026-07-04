@@ -71,7 +71,7 @@ func (g *ReadBeforeWriteGuardrail) Before(ctx context.Context, call tools.ToolCa
 }
 
 func hasSufficientContext(tool tools.ToolName, path string, calls []runner.ObservedCall) bool {
-	if hasReadPath(path, calls) || hasTestPairRead(path, calls) {
+	if hasReadPath(path, calls) || hasWritePath(path, calls) || hasTestPairRead(path, calls) {
 		return true
 	}
 	dir := filepath.Dir(path)
@@ -86,6 +86,23 @@ func hasSufficientContext(tool tools.ToolName, path string, calls []runner.Obser
 func hasReadPath(path string, calls []runner.ObservedCall) bool {
 	for _, call := range calls {
 		if call.ToolName != code.ToolNameRead {
+			continue
+		}
+		if normalizeEvidencePath(call.Arguments.String("path", "")) == path {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWritePath reports whether the task already mutated path via a successful
+// edit/write. Having produced the file's current contents is itself established
+// context, so a follow-up edit to the same path must not trip the
+// read-before-write nudge (otherwise a normal edit → edit sequence degenerates
+// into read → edit → read → edit).
+func hasWritePath(path string, calls []runner.ObservedCall) bool {
+	for _, call := range calls {
+		if call.ToolName != code.ToolNameEdit && call.ToolName != code.ToolNameWrite {
 			continue
 		}
 		if normalizeEvidencePath(call.Arguments.String("path", "")) == path {

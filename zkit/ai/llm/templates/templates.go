@@ -38,37 +38,9 @@ type ChatTemplate interface {
 }
 
 // Kwargs is the typed payload serialized into the chat_template_kwargs
-// request extension. Kept as a concrete type so callers don't reach for
-// map[string]any at the edge.
-//
-// Field semantics (Qwen-team naming, llama.cpp Jinja consumes them):
-//   - EnableThinking: tells the template to allow `<think>` blocks.
-//     The model still chooses whether to use them; this just opens
-//     the gate.
-//   - PreserveThinking: when true, the template keeps `<think>` blocks
-//     visible from prior assistant turns when re-shaping the message
-//     history. Qwen-team explicitly recommends this for agentic loops
-//     so the model sees its own reasoning across iterations.
-type Kwargs struct {
-	EnableThinking   bool `json:"enable_thinking"`
-	PreserveThinking bool `json:"preserve_thinking,omitempty"`
-}
-
-// AsMap renders Kwargs as a generic map for transports that pass
-// chat_template_kwargs through as JSON without a typed view (the
-// OpenAI SDK is one — it accepts arbitrary extra fields via
-// option.WithJSONSet). Returns nil when no fields are set so we
-// don't bloat requests on providers that ignore them.
-func (k Kwargs) AsMap() map[string]any {
-	if !k.EnableThinking && !k.PreserveThinking {
-		return nil
-	}
-	out := map[string]any{"enable_thinking": k.EnableThinking}
-	if k.PreserveThinking {
-		out["preserve_thinking"] = true
-	}
-	return out
-}
+// request extension. It aliases llm.ChatTemplateKwargs so template helpers and
+// completion requests use one provider-neutral typed payload.
+type Kwargs = llm.ChatTemplateKwargs
 
 // prependSystemSentinel returns a copy of messages with sentinel
 // prepended to the first system message's content. When no system

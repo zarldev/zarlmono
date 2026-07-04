@@ -1,7 +1,6 @@
 package mcp_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +40,7 @@ func TestStdioTransportDiscoverAndCall(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	defs, err := c.Discover(context.Background())
+	defs, err := c.Discover(t.Context())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -49,7 +48,7 @@ func TestStdioTransportDiscoverAndCall(t *testing.T) {
 		t.Fatalf("discovered = %+v, want single echo tool", defs)
 	}
 
-	got, err := c.Call(context.Background(), defs[0].Name, map[string]any{"message": "hello stdio"})
+	got, err := c.Call(t.Context(), defs[0].Name, map[string]any{"message": "hello stdio"})
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -73,7 +72,7 @@ func TestStdioTransportDoesNotInheritParentEnvironment(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	got, err := c.Call(context.Background(), "echo", map[string]any{"message": "env:" + key})
+	got, err := c.Call(t.Context(), "echo", map[string]any{"message": "env:" + key})
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -95,7 +94,7 @@ func TestStdioTransportPassesExplicitEnvironment(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	got, err := c.Call(context.Background(), "echo", map[string]any{"message": "env:" + key})
+	got, err := c.Call(t.Context(), "echo", map[string]any{"message": "env:" + key})
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}

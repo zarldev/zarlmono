@@ -171,8 +171,8 @@ func (t *SearxngTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.
 // Returns the typed args on success, or a populated failure ToolResult
 // ready to return to the runner.
 func decodeAndValidate(baseURL string, call tools.ToolCall) (SearxngArgs, *tools.ToolResult) {
-	var args SearxngArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[SearxngArgs](call.Arguments)
+	if derr != nil {
 		return args, tools.Failure(call.ID, derr)
 	}
 	if baseURL == "" {

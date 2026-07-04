@@ -125,8 +125,8 @@ func pollBashOutput(mgr *ProcessManager, args BashOutputArgs) (OutputSnapshot, e
 // NotFound). The result's String() redacts secrets line by line before
 // the model sees the output.
 func (t *BashOutputTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args BashOutputArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[BashOutputArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	snap, err := pollBashOutput(t.mgr, args)
@@ -174,8 +174,8 @@ func (*StopProcessTool) Definition() tools.ToolSpec {
 // to SIGTERM — and delegates to the manager's Kill, returning
 // {process_id, exit_code, killed_at}; unknown ids are NotFound.
 func (t *StopProcessTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args StopProcessArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[StopProcessArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.ProcessID == "" {
@@ -259,8 +259,8 @@ func (r ListProcessesResult) String() string {
 // per the requested output format; nothing past argument decoding can
 // fail.
 func (t *ListProcessesTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args ListProcessesArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[ListProcessesArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	return tools.Success(call.ID, ListProcessesResult{Procs: t.mgr.List(), Output: args.Output.Resolve()}), nil

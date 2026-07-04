@@ -18,9 +18,13 @@ func (t *upvoteTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
     t.session.RecordUpvote(count)
 
     // 3. Return verified result
-    return tools.Success(call.ID, map[string]any{
-        "vote_count": count,
-        "verified":   true,
+    type UpvoteResult struct {
+        VoteCount string `json:"vote_count"`
+        Verified  bool   `json:"verified"`
+    }
+    return tools.Success(call.ID, UpvoteResult{
+        VoteCount: count,
+        Verified:  true,
     }), nil
 }
 ```

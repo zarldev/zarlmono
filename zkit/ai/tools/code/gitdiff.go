@@ -64,7 +64,7 @@ func untrackedPaths(ctx context.Context, workspace string) []string {
 		return nil
 	}
 	var paths []string
-	for _, p := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for p := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if p != "" {
 			paths = append(paths, p)
 		}

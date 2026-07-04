@@ -31,15 +31,10 @@ import (
 // stays available for whatever genuine outliers a model might
 // produce. The cap is enforced at the tool layer because
 // prompt compliance breaks under context pressure.
-//
-// Execute decodes call.Arguments into a typed WriteArgs struct via
-// tools.DecodeArgs at the top of the method, so the body reads
-// args.Path / args.Content directly instead of doing
-// call.Arguments.String("path", "") accessors. The shared
-// DecodeArgs helper routes through repair.Unmarshal, so the same
-// small-model JSON quirks (literal newlines in content, trailing
-// commas, missing closers) get repaired here too.
-type WriteTool struct{ ws Workspace }
+type WriteTool struct {
+	ws   Workspace
+	tool tools.Tool
+}
 
 // WriteArgs is the typed argument shape WriteTool's Execute decodes
 // into. Field tags drive both JSON decoding and SchemaFor schema
@@ -49,17 +44,28 @@ type WriteArgs struct {
 	Content string `json:"content" doc:"Full file contents to write."`
 }
 
-// NewWriteTool returns a workspace-scoped write tool. The returned
-// *WriteTool satisfies tools.Tool directly via its Execute method,
-// which decodes typed WriteArgs at the top through tools.DecodeArgs.
-// Constructor stays concrete so callers retain access to any
-// tool-specific helpers they might add later.
-func NewWriteTool(ws Workspace) *WriteTool { return &WriteTool{ws: ws} }
+// NewWriteTool returns a workspace-scoped write tool. The returned concrete
+// type caches a typed-tool adapter so Execute stays a thin dispatch boundary.
+func NewWriteTool(ws Workspace) *WriteTool {
+	t := &WriteTool{ws: ws}
+	t.tool = tools.NewTyped(
+		writeSpec(),
+		t.executeTyped,
+		tools.WithTypedEffects(func(result WriteResult) []tools.Effect {
+			effect := tools.NewFileEffect(tools.FileCreate, result.Path)
+			effect.File.BytesAfter = int64(result.Bytes)
+			return []tools.Effect{effect}
+		}),
+	)
+	return t
+}
 
 // Definition advertises write with required path and content; Mutates
 // is true because a successful call creates a new file. The spec text
 // routes existing-path retries to edit.
-func (t *WriteTool) Definition() tools.ToolSpec {
+func (t *WriteTool) Definition() tools.ToolSpec { return writeSpec() }
+
+func writeSpec() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameWrite,
 		Description: "Create a NEW file in the workspace. Refuses if the path already exists — " +
@@ -74,13 +80,22 @@ func (t *WriteTool) Definition() tools.ToolSpec {
 // per-path lock — refuses existing paths with an edit recipe and
 // writes through the workspace's os.Root handle, emitting a FileCreate
 // effect carrying the byte count.
-func (t *WriteTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args WriteArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
-		return tools.Failure(call.ID, derr), nil
-	}
+func (t *WriteTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	return t.tool.Execute(ctx, call)
+}
+
+// WriteResult is write's structured success payload.
+type WriteResult struct {
+	Path  string `json:"path"`
+	Bytes int    `json:"bytes"`
+}
+
+// String renders the model-facing success text for WriteResult.
+func (r WriteResult) String() string { return fmt.Sprintf("wrote %d bytes to %s", r.Bytes, r.Path) }
+
+func (t *WriteTool) executeTyped(_ context.Context, args WriteArgs) (WriteResult, error) {
 	if args.Path == "" {
-		return tools.Failure(call.ID, tools.Validation("write", "path required")), nil
+		return WriteResult{}, tools.Validation("write", "path required")
 	}
 	// Reject oversized content before touching the filesystem. See
 	// WriteTool's doc comment — for files larger than the cap, scaffold
@@ -88,16 +103,16 @@ func (t *WriteTool) Execute(_ context.Context, call tools.ToolCall) (*tools.Tool
 	// startup to raise the cap if your model+server can handle larger
 	// streaming args reliably.
 	if maxWriteContentBytes > 0 && len(args.Content) > maxWriteContentBytes {
-		return tools.Failure(call.ID, tools.Validation("write", fmt.Sprintf(
+		return WriteResult{}, tools.Validation("write", fmt.Sprintf(
 			"%q: content too large (%d bytes; cap %d bytes). "+
 				"Scaffold first with write(%q, \"\") then call write_append repeatedly with chunks up to %d bytes each. "+
 				"The cap is the only constraint — chunks well below the cap waste iterations.",
-			args.Path, len(args.Content), maxWriteContentBytes, args.Path, maxWriteContentBytes))), nil
+			args.Path, len(args.Content), maxWriteContentBytes, args.Path, maxWriteContentBytes))
 	}
 
 	abs, err := t.ws.Resolve(args.Path)
 	if err != nil {
-		return tools.Failure(call.ID, tools.Permission("write", err.Error())), nil
+		return WriteResult{}, tools.Permission("write", err.Error())
 	}
 	// Serialise concurrent writers targeting the same path so a parallel
 	// tool batch can't interleave writes and silently drop one update.
@@ -108,24 +123,22 @@ func (t *WriteTool) Execute(_ context.Context, call tools.ToolCall) (*tools.Tool
 	// os.WriteFile. The Reason carries an edit recipe so the model's
 	// next turn lands on the right tool with the right parameter names.
 	if _, statErr := os.Stat(abs); statErr == nil {
-		return tools.Failure(call.ID, tools.Validation("write", fmt.Sprintf(
+		return WriteResult{}, tools.Validation("write", fmt.Sprintf(
 			"%q already exists. write only creates NEW files — use edit to modify it:\n"+
 				"  1) read(path=%q, ...) to get line/hash anchors\n"+
 				"  2) edit(path=%q, start_line=<from read>, start_hash=<from read>, new_string=<replacement> ...)\n"+
 				"If you don't already know the current content, call read first. "+
 				"Use the anchors from read; they usually survive line-number shifts from earlier edits, but if the file changed underneath you then re-read and retry with fresh anchors. "+
 				"For multiple changes, emit one edit per location — do not retry write, it will be refused again.",
-			args.Path, args.Path, args.Path))), nil
+			args.Path, args.Path, args.Path))
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
-		return tools.Failure(call.ID, tools.Fatal("write", fmt.Errorf("stat %q: %w", args.Path, statErr))), nil
+		return WriteResult{}, tools.Fatal("write", fmt.Errorf("stat %q: %w", args.Path, statErr))
 	}
 	// Route through the workspace's [*os.Root] handle so the write
 	// can't escape the boundary even if a parent directory is
 	// swapped for a symlink between Resolve and Write (TOCTOU).
 	if err := t.ws.WriteFileInRoot(abs, []byte(args.Content), filesystem.ModePublicFile); err != nil {
-		return tools.Failure(call.ID, tools.Fatal("write", fmt.Errorf("%q: %w", args.Path, err))), nil
+		return WriteResult{}, tools.Fatal("write", fmt.Errorf("%q: %w", args.Path, err))
 	}
-	effect := tools.NewFileEffect(tools.FileCreate, args.Path)
-	effect.File.BytesAfter = int64(len(args.Content))
-	return tools.Success(call.ID, fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path), effect), nil
+	return WriteResult{Path: args.Path, Bytes: len(args.Content)}, nil
 }

@@ -46,8 +46,6 @@ func Main() {
 			os.Exit(cli.RunInit(os.Stdout))
 		case "keys":
 			os.Exit(cli.RunKeys(os.Args[2:], os.Stdout))
-		case "serve":
-			os.Exit(cli.RunServe(os.Args[2:], os.Stdout))
 		case "upgrade":
 			os.Exit(cli.RunUpgrade(os.Args[2:], os.Stdout))
 		}
@@ -81,6 +79,16 @@ func Main() {
 		0,
 		"override MaxIterations for the headless task (0 = use config default)",
 	)
+	pprofAddr := flag.String(
+		"pprof",
+		"",
+		"serve Go pprof and runtime metrics at this address (for example 127.0.0.1:6060)",
+	)
+	traceFile := flag.String(
+		"trace",
+		"",
+		"write a Go execution trace to this file until zarlcode exits",
+	)
 	flag.Parse()
 
 	if *versionFlag {
@@ -110,5 +118,7 @@ func Main() {
 		Headless:  *headlessFlag,
 		Prompt:    prompt,
 		MaxIter:   *maxIterFlag,
+		PprofAddr: *pprofAddr,
+		TraceFile: *traceFile,
 	}).Run(context.Background()))
 }

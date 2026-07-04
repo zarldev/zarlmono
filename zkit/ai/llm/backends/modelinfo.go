@@ -1,6 +1,8 @@
 package backends
 
 import (
+	"context"
+
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/claudecode"
@@ -100,4 +102,57 @@ func (r *ProviderRegistry) IsSubscription(name string) bool {
 	}
 	return def.AdapterType == AdapterTypes.OAUTHOPENAICODEX ||
 		def.AdapterType == AdapterTypes.OAUTHCLAUDECODE
+}
+
+// ResolveCost returns the per-1k USD (input, output) rate, consulting
+// models.dev between the per-provider DB override and the static
+// per-package table. Keeps the same ok contract as Cost.
+func (r *ProviderRegistry) ResolveCost(ctx context.Context, name, model string) (float64, float64, bool) {
+	if r.IsLocal(name) {
+		return 0, 0, false
+	}
+	def, err := r.Parse(name)
+	if err != nil {
+		return 0, 0, false
+	}
+	// 1. Explicit per-provider DB override wins.
+	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
+		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
+	}
+	// 2. Live models.dev lookup.
+	if r.modelsDevSource != nil {
+		if e, ok := r.modelsDevSource.Lookup(ctx, name, model); ok && (e.InputCostPerMTok > 0 || e.OutputCostPerMTok > 0) {
+			return e.InputCostPerMTok / 1000, e.OutputCostPerMTok / 1000, true
+		}
+	}
+	// 3. Static per-package table.
+	return costForAdapter(def.AdapterType, model)
+}
+
+// ResolveCapabilities consults models.dev before falling back to the
+// static per-package table. Unknown providers/models return the zero
+// value. Unlike ResolveCost, local providers are not short-circuited:
+// they still have capabilities (vision, thinking) — only cost is zero
+// for unmetered providers.
+func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model string) llm.ModelCapabilities {
+	def, err := r.Parse(name)
+	if err != nil {
+		return llm.ModelCapabilities{}
+	}
+	// 1. Live models.dev lookup.
+	if r.modelsDevSource != nil {
+		if e, ok := r.modelsDevSource.Lookup(ctx, name, model); ok {
+			return llm.ModelCapabilities{
+				SupportsTools:    e.SupportsTools,
+				SupportsThinking: e.SupportsThinking,
+				SupportsVision:   e.SupportsVision,
+				// models.dev doesn't track streaming/system support —
+				// those are near-universal for hosted providers.
+				SupportsStreaming: true,
+				SupportsSystem:    true,
+			}
+		}
+	}
+	// 2. Static per-package table.
+	return capabilitiesForAdapter(def.AdapterType, model)
 }

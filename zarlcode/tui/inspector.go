@@ -326,7 +326,7 @@ func (d *inspector) promptLines(width int) []string {
 	if len(d.snapshot.Errors) > 0 {
 		lines = append(lines, "")
 	}
-	for _, ln := range strings.Split(text, "\n") {
+	for ln := range strings.SplitSeq(text, "\n") {
 		lines = append(lines, palette.Muted.On(ln))
 	}
 	return lines

@@ -115,7 +115,7 @@ func TestRunOAuthLoginManual_EndToEnd(t *testing.T) {
 
 	svc := prefs.NewService(store, v, "")
 	var stdout bytes.Buffer
-	if err := runManual(context.Background(), svc, flow, strings.NewReader(input), &stdout); err != nil {
+	if err := runManual(t.Context(), svc, flow, strings.NewReader(input), &stdout); err != nil {
 		t.Fatalf("runManual: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "acct_manual") {
@@ -123,7 +123,7 @@ func TestRunOAuthLoginManual_EndToEnd(t *testing.T) {
 	}
 
 	// Vault should now carry the credential.
-	stored, ok, err := svc.GetKey(context.Background(), prefs.ScopeGlobal, CredProvider)
+	stored, ok, err := svc.GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
 	if err != nil || !ok {
 		t.Fatalf("getStoredAPIKey: ok=%v err=%v", ok, err)
 	}
@@ -148,7 +148,7 @@ func TestRunOAuthLoginManual_StateMismatch(t *testing.T) {
 	}
 	input := "http://localhost:1455/auth/callback?code=x&state=not-our-state\n"
 	svc := prefs.NewService(store, v, "")
-	err = runManual(context.Background(), svc, flow, strings.NewReader(input), io.Discard)
+	err = runManual(t.Context(), svc, flow, strings.NewReader(input), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "state mismatch") {
 		t.Errorf("err = %v, want state mismatch", err)
 	}
@@ -162,7 +162,7 @@ func TestRunOAuthLoginManual_RawCodeRejected(t *testing.T) {
 		t.Fatalf("CreateAuthorizationFlow: %v", err)
 	}
 	svc := prefs.NewService(store, v, "")
-	err = runManual(context.Background(), svc, flow, strings.NewReader("raw-code-only\n"), io.Discard)
+	err = runManual(t.Context(), svc, flow, strings.NewReader("raw-code-only\n"), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "state required") {
 		t.Errorf("err = %v, want state required", err)
 	}

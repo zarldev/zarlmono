@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"maps"
 	"sync"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
@@ -77,8 +78,6 @@ func cloneToolParameters(args tools.ToolParameters) tools.ToolParameters {
 		return nil
 	}
 	out := make(tools.ToolParameters, len(args))
-	for k, v := range args {
-		out[k] = v
-	}
+	maps.Copy(out, args)
 	return out
 }

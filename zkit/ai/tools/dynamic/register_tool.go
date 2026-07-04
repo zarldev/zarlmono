@@ -56,8 +56,8 @@ func (t *UnregisterTool) Definition() tools.ToolSpec {
 // registry. Only the registration goes away — the built binary stays
 // on disk for forensics.
 func (t *UnregisterTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args UnregisterToolArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[UnregisterToolArgs](call.Arguments)
+	if derr != nil {
 		return failureResult(call.ID, derr.Error()), nil
 	}
 	if args.Name == "" {

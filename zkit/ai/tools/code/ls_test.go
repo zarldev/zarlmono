@@ -1,7 +1,6 @@
 package code_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -72,7 +71,7 @@ func TestLs_DefaultOutputShape(t *testing.T) {
 		"cmd/":     "",
 		"notes.md": "x",
 	})
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{}))
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{}))
 	if res == nil || !res.Success {
 		t.Fatalf("Execute: %+v", res)
 	}
@@ -104,7 +103,7 @@ func TestLs_JSONOutput(t *testing.T) {
 		"main.go": "package main",
 		"cmd/":    "",
 	})
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{"output": "json"}))
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{"output": "json"}))
 	if res == nil || !res.Success {
 		t.Fatalf("Execute: %+v", res)
 	}
@@ -134,7 +133,7 @@ func TestLs_JSONOutput(t *testing.T) {
 func TestLs_DataCarriesTypedEntries(t *testing.T) {
 	t.Parallel()
 	g := lsHarness(t, map[string]string{"a.go": "x", "b.go": "x"})
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{}))
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{}))
 	r, ok := res.Data.(code.LsResult)
 	if !ok {
 		t.Fatalf("Data is %T, want code.LsResult", res.Data)
@@ -154,7 +153,7 @@ func TestLs_HidesDotfilesByDefault(t *testing.T) {
 		"main.go":    "x",
 		".gitignore": "x",
 	})
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{}))
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{}))
 	body := lsText(t, res)
 	if strings.Contains(body, ".gitignore") {
 		t.Errorf("dotfile leaked: %q", body)
@@ -170,7 +169,7 @@ func TestLs_ShowHiddenIncludesDotfiles(t *testing.T) {
 		"main.go":    "x",
 		".gitignore": "x",
 	})
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{
 		"show_hidden": true,
 	}))
 	body := lsText(t, res)
@@ -190,7 +189,7 @@ func TestLs_PathScopes(t *testing.T) {
 		"cmd/other.go":   "x",
 		"pkg/foo/foo.go": "x",
 	})
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{
 		"path": "cmd",
 	}))
 	body := lsText(t, res)
@@ -212,7 +211,7 @@ func TestLs_EmptyDirSentinel(t *testing.T) {
 	g := lsHarness(t, map[string]string{
 		"empty/": "",
 	})
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{
 		"path": "empty",
 	}))
 	if !res.Success {
@@ -232,7 +231,7 @@ func TestLs_EmptyDirSentinel(t *testing.T) {
 func TestLs_PathOutsideWorkspaceRejected(t *testing.T) {
 	t.Parallel()
 	g := lsHarness(t, nil)
-	res, _ := g.Execute(context.Background(), lsCall(map[string]any{
+	res, _ := g.Execute(t.Context(), lsCall(map[string]any{
 		"path": "../escape",
 	}))
 	if res.Success {

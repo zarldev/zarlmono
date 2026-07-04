@@ -3,6 +3,7 @@ package sensor
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"time"
 )
 
@@ -66,9 +67,7 @@ func (r *Runner) Stop() {
 	// deadlocking against us.
 	reactives := append([]Reactive(nil), r.reactives...)
 	dones := make(map[string]chan struct{}, len(r.reactiveDone))
-	for k, ch := range r.reactiveDone {
-		dones[k] = ch
-	}
+	maps.Copy(dones, r.reactiveDone)
 	cancel := r.cancel
 	r.mu.Unlock()
 

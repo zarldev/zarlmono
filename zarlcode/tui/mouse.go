@@ -58,10 +58,7 @@ func (m *UI) handleMouse(msg tea.Msg) bool {
 		// to the matching fraction of the scroll range (top = top, bottom =
 		// follow the tail).
 		if mo.X == main.Max.X-2 {
-			denom := innerH - 1
-			if denom < 1 {
-				denom = 1
-			}
+			denom := max(innerH-1, 1)
 			m.timeline.scrollToFraction(float64(mo.Y-top) / float64(denom))
 			return true
 		}

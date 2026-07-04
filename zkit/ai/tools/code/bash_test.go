@@ -94,11 +94,11 @@ func TestBash_Background_LogFileCaptures(t *testing.T) {
 func extractPID(t *testing.T, body string) int {
 	t.Helper()
 	const prefix = "pid="
-	i := strings.Index(body, prefix)
-	if i < 0 {
+	_, after, ok := strings.Cut(body, prefix)
+	if !ok {
 		t.Fatalf("no pid in body: %q", body)
 	}
-	rest := body[i+len(prefix):]
+	rest := after
 	end := strings.IndexAny(rest, " \n\t")
 	if end < 0 {
 		end = len(rest)
@@ -113,11 +113,11 @@ func extractPID(t *testing.T, body string) int {
 func extractLogPath(t *testing.T, body string) string {
 	t.Helper()
 	const prefix = "log: "
-	i := strings.Index(body, prefix)
-	if i < 0 {
+	_, after, ok := strings.Cut(body, prefix)
+	if !ok {
 		t.Fatalf("no log path in body: %q", body)
 	}
-	rest := body[i+len(prefix):]
+	rest := after
 	end := strings.Index(rest, "\n")
 	if end < 0 {
 		end = len(rest)

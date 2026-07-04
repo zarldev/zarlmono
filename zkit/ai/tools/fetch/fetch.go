@@ -198,8 +198,8 @@ func (t *WebFetchTool) browserFetch(ctx context.Context, rawURL, sel string, max
 // checks. Returns the typed args on success, or a populated failure
 // ToolResult ready to return to the runner.
 func decodeAndValidate(call tools.ToolCall) (FetchArgs, *tools.ToolResult) {
-	var args FetchArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[FetchArgs](call.Arguments)
+	if derr != nil {
 		return args, tools.Failure(call.ID, derr)
 	}
 	if args.URL == "" {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -405,13 +406,7 @@ func TestService_ListKeys_Union(t *testing.T) {
 		t.Fatalf("ListKeys effective: got %d providers %v, want 3", len(providers), providers)
 	}
 	for _, want := range []string{"anthropic", "google", "openai"} {
-		found := false
-		for _, p := range providers {
-			if p == want {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(providers, want)
 		if !found {
 			t.Errorf("provider %q missing from effective list %v", want, providers)
 		}

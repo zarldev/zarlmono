@@ -1,7 +1,6 @@
 package docstore_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -100,7 +99,7 @@ func TestStoreImplementations(t *testing.T) {
 }
 
 func testBasicCRUD(t *testing.T, store docstore.Store[*TestDocument]) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test Insert
 	doc := &TestDocument{
@@ -183,7 +182,7 @@ func testBasicCRUD(t *testing.T, store docstore.Store[*TestDocument]) {
 }
 
 func testMetadata(t *testing.T, store docstore.Store[*TestDocument]) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	doc := &TestDocument{
 		Name:  "Jane Doe",
@@ -215,7 +214,7 @@ func testMetadata(t *testing.T, store docstore.Store[*TestDocument]) {
 }
 
 func testQueries(t *testing.T, store docstore.Store[*TestDocument]) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert test documents
 	docs := []*TestDocument{
@@ -297,7 +296,7 @@ func testQueries(t *testing.T, store docstore.Store[*TestDocument]) {
 }
 
 func testSorting(t *testing.T, store docstore.Store[*TestDocument]) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert documents with different ages
 	docs := []*TestDocument{
@@ -340,7 +339,7 @@ func testSorting(t *testing.T, store docstore.Store[*TestDocument]) {
 }
 
 func testPagination(t *testing.T, store docstore.Store[*TestDocument]) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert multiple documents
 	for i := range 10 {
@@ -386,7 +385,7 @@ func testPagination(t *testing.T, store docstore.Store[*TestDocument]) {
 }
 
 func testCursor(t *testing.T, store docstore.Store[*TestDocument]) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert documents
 	docs := []*TestDocument{
@@ -490,7 +489,7 @@ func TestStoreCount(t *testing.T) {
 	store := docstore.NewMemoryStore[*TestDocument]()
 	defer store.Close()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Initially empty
 	count, err := store.Count(ctx)
@@ -524,7 +523,7 @@ func TestStoreUpsertNew(t *testing.T) {
 	store := docstore.NewMemoryStore[*TestDocument]()
 	defer store.Close()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Upsert new document (should insert)
 	doc := &TestDocument{
@@ -556,7 +555,7 @@ func TestErrorCases(t *testing.T) {
 	store := docstore.NewMemoryStore[*TestDocument]()
 	defer store.Close()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test find non-existent document
 	_, err := store.Find(ctx, "nonexistent")

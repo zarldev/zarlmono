@@ -22,10 +22,7 @@ func (r *Runner) loopReactive(ctx context.Context, rc Reactive) {
 }
 
 func (r *Runner) loop(ctx context.Context, s Sensor) {
-	interval := s.Interval()
-	if interval < 100*time.Millisecond {
-		interval = 100 * time.Millisecond
-	}
+	interval := max(s.Interval(), 100*time.Millisecond)
 	// Slight jitter on the first tick so a fleet of sensors doesn't
 	// all fire the instant Start returns. Cap the jitter at the
 	// interval itself so sub-second test sensors aren't starved.

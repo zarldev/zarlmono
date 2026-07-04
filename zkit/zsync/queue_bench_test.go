@@ -173,26 +173,22 @@ func BenchmarkQueue_BlockingPop_New(b *testing.B) {
 	var wg sync.WaitGroup
 
 	// producer goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range b.N {
 			q.Push(i)
 		}
 		q.Close()
-	}()
+	})
 
 	// consumer goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			_, err := q.Pop()
 			if errors.Is(err, zsync.ErrQueueClosed) {
 				break
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 }
@@ -202,26 +198,22 @@ func BenchmarkQueue_BlockingPop_Original(b *testing.B) {
 	var wg sync.WaitGroup
 
 	// producer goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range b.N {
 			q.Push(i)
 		}
 		q.Close()
-	}()
+	})
 
 	// consumer goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			_, err := q.PopOriginal()
 			if errors.Is(err, zsync.ErrQueueClosed) {
 				break
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 }

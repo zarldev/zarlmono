@@ -94,7 +94,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 		// rationale field is the reasoning slot, and a thinking-default
 		// model otherwise burns MaxTokens inside <think> and returns an
 		// empty plan. Providers without the kwarg ignore it.
-		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
+		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
 	chunks, err := p.provider.Complete(ctx, req)

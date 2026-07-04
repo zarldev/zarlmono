@@ -9,6 +9,7 @@ package tui
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -250,9 +251,7 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 	}
 
 	cache := make(map[string][]string, len(m.session.ModelCache))
-	for k, v := range m.session.ModelCache {
-		cache[k] = v
-	}
+	maps.Copy(cache, m.session.ModelCache)
 
 	picker := newModelQuickPick(provNames, cache, current.Name, m.session.Model, func(prov, model string) {
 		active := m.session.ActiveProviderSpec()
@@ -285,7 +284,7 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 			// setModel also updates Session.ProvSpec.Model so maybeRepoint is a no-op.
 			m.setModel(model)
 		}
-	})
+	}, m.settings)
 	m.overlay.push(picker)
 
 	if _, ok := m.session.ModelCache[current.Name]; !ok {
@@ -338,8 +337,9 @@ func New() *UI {
 		timeline:   newTimeline(),
 		session:    s,
 		headerPane: newHeaderPane(s),
-		statusPane: newStatusPane(s),
+		statusPane: newStatusPane(s, nil),
 	}
+	m.statusPane.input = m.composer.text
 	s.Run = RunState{window: engine.LiveContextWindow}
 	return m
 }
@@ -407,6 +407,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.toastExpiryCmd()
 	}
 	if m.handleModelsMsg(msg) {
+		return m, nil
+	}
+	if m.handleServiceResult(msg) {
 		return m, nil
 	}
 	if m.handlePRMsg(msg) {

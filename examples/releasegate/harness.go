@@ -33,10 +33,9 @@ const goalPrompt = "Publish release v1.2.3 to production once it is safe. This i
 func RunReleaseGate(ctx context.Context, client runner.Client, rel *Release, maxAttempts int) pursue.Outcome {
 	reg := tools.NewRegistry(
 		statusTool{r: rel},
-		setCheckTool{r: rel},
-		writeNotesTool{r: rel},
-		publishTool{r: rel},
-	)
+		newSetCheckTool(rel),
+		newWriteNotesTool(rel),
+		newPublishTool(rel))
 
 	source := guardrails.NewGuardedSource(reg,
 		guardrails.NewSchemaGuardrail(reg),

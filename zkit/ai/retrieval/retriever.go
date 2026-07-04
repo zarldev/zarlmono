@@ -8,7 +8,7 @@ import (
 // RetrieveOptions tune a retrieval call.
 type RetrieveOptions struct {
 	Limit  int
-	Filter map[string]any
+	Filter Filter
 }
 
 // RetrieveOption mutates RetrieveOptions.
@@ -19,8 +19,8 @@ func WithLimit(limit int) RetrieveOption {
 	return func(o *RetrieveOptions) { o.Limit = limit }
 }
 
-// WithFilter sets an implementation-defined metadata filter.
-func WithFilter(filter map[string]any) RetrieveOption {
+// WithFilter sets a typed metadata filter.
+func WithFilter(filter Filter) RetrieveOption {
 	return func(o *RetrieveOptions) { o.Filter = filter }
 }
 

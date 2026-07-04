@@ -54,7 +54,7 @@ func AblationArms(spec string) ([]Ablation, error) {
 		byName[a.Name] = a
 	}
 	var out []Ablation
-	for _, raw := range strings.Split(spec, ",") {
+	for raw := range strings.SplitSeq(spec, ",") {
 		name := strings.TrimSpace(raw)
 		if name == "" {
 			continue

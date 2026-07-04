@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -10,7 +9,7 @@ import (
 )
 
 func TestLLMProviderCRUD(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)

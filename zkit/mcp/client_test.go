@@ -1,7 +1,6 @@
 package mcp_test
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -75,7 +74,7 @@ func TestDiscover(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "test-token")
-	defs, err := c.Discover(context.Background())
+	defs, err := c.Discover(t.Context())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -112,7 +111,7 @@ func TestCall(t *testing.T) {
 
 	c := mcp.NewClient(srv.URL, "test-token")
 
-	defs, err := c.Discover(context.Background())
+	defs, err := c.Discover(t.Context())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -120,7 +119,7 @@ func TestCall(t *testing.T) {
 		t.Fatal("no tools discovered")
 	}
 
-	got, err := c.Call(context.Background(), defs[0].Name, map[string]any{"message": "hello"})
+	got, err := c.Call(t.Context(), defs[0].Name, map[string]any{"message": "hello"})
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -157,7 +156,7 @@ func TestCallMultimodalContent(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
-	got, err := c.Call(context.Background(), "render_diagram", nil)
+	got, err := c.Call(t.Context(), "render_diagram", nil)
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -204,7 +203,7 @@ func TestCallIsError(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
-	got, err := c.Call(context.Background(), "doomed", nil)
+	got, err := c.Call(t.Context(), "doomed", nil)
 	if err != nil {
 		// Transport-level error is not how MCP signals tool failure.
 		t.Fatalf("unexpected transport error: %v", err)
@@ -242,7 +241,7 @@ func TestReadResource(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
-	got, err := c.ReadResource(context.Background(), "file:///doc.txt")
+	got, err := c.ReadResource(t.Context(), "file:///doc.txt")
 	if err != nil {
 		t.Fatalf("ReadResource: %v", err)
 	}
@@ -274,7 +273,7 @@ func TestReadResource_Multimodal(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
-	got, err := c.ReadResource(context.Background(), "file:///image.png")
+	got, err := c.ReadResource(t.Context(), "file:///image.png")
 	if err != nil {
 		t.Fatalf("ReadResource: %v", err)
 	}
@@ -307,7 +306,7 @@ func TestCallSkipsUnknownContentType(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
-	got, _ := c.Call(context.Background(), "thing", nil)
+	got, _ := c.Call(t.Context(), "thing", nil)
 	if len(got.Content) != 1 {
 		t.Fatalf("expected unknown type to be skipped; got %d content items", len(got.Content))
 	}
@@ -333,7 +332,7 @@ func TestDiscoverDefaultsEmptyInputSchema(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
-	defs, err := c.Discover(context.Background())
+	defs, err := c.Discover(t.Context())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}

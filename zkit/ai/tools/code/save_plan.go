@@ -79,8 +79,8 @@ func (t *SavePlanTool) Definition() tools.ToolSpec {
 // plan-YYYYMMDD-HHMM timestamp slug, enforces the safePlanName regex,
 // and writes <name>.md under PlansDir while holding the path lock.
 func (t *SavePlanTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args SavePlanArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[SavePlanArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Content == "" {

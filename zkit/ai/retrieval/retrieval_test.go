@@ -38,14 +38,14 @@ func TestVectorRetrieverEmbedsAndSearches(t *testing.T) {
 		}
 		return []retrieval.Vector{{1, 2}}, nil
 	})}
-	docs, err := r.Retrieve(t.Context(), "hello", retrieval.WithLimit(1), retrieval.WithFilter(map[string]any{"k": "v"}))
+	docs, err := r.Retrieve(t.Context(), "hello", retrieval.WithLimit(1), retrieval.WithFilter(retrieval.Filter{Must: []retrieval.Condition{retrieval.Eq("k", "v")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(docs) != 1 || docs[0].ID != "hit" {
 		t.Fatalf("docs = %#v", docs)
 	}
-	if st.query.Limit != 1 || st.query.Filter["k"] != "v" || !reflect.DeepEqual(st.query.Vector, retrieval.Vector{1, 2}) {
+	if st.query.Limit != 1 || !st.query.Filter.Match(retrieval.Metadata{"k": "v"}) || !reflect.DeepEqual(st.query.Vector, retrieval.Vector{1, 2}) {
 		t.Fatalf("query = %#v", st.query)
 	}
 }
@@ -66,7 +66,7 @@ func TestPipelineIndexesIntoMemoryVectorStore(t *testing.T) {
 	if err := pipe.Index(t.Context(), []retrieval.Document{{ID: "doc", Text: "hello world", Metadata: retrieval.Metadata{"kind": "note"}}}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := store.Search(t.Context(), retrieval.Query{Vector: retrieval.Vector{5, 1}, Limit: 1, Filter: map[string]any{"kind": "note"}})
+	hits, err := store.Search(t.Context(), retrieval.Query{Vector: retrieval.Vector{5, 1}, Limit: 1, Filter: retrieval.Filter{Must: []retrieval.Condition{retrieval.Eq("kind", "note")}}})
 	if err != nil {
 		t.Fatal(err)
 	}

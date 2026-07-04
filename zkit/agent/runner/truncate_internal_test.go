@@ -86,11 +86,11 @@ func TestSpillingTruncator_WritesFullPayload(t *testing.T) {
 	got := tr.Truncate(in, "bashy")
 	// Extract the spill path from the footer.
 	const marker = "full output: "
-	i := strings.Index(got, marker)
-	if i < 0 {
+	_, after, ok := strings.Cut(got, marker)
+	if !ok {
 		t.Fatalf("no spill path in footer: %s", got[len(got)-200:])
 	}
-	rest := got[i+len(marker):]
+	rest := after
 	end := strings.IndexAny(rest, " ")
 	if end < 0 {
 		t.Fatalf("malformed footer")

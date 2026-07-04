@@ -84,10 +84,13 @@ func TestReadFileTool_ExtractsFunctions(t *testing.T) {
 	}
 
 	// Verify that the five handler functions were found
-	funcs, _ := result.Data.(map[string]any)["functions"]
-	fnList, ok := funcs.([]string)
+	data, ok := result.Data.(readFileResult)
 	if !ok {
-		t.Fatal("expected functions in result")
+		t.Fatalf("result.Data = %T; want readFileResult", result.Data)
+	}
+	fnList := data.Functions
+	if len(fnList) < 3 { // At least GetUserHandler, CreateUserHandler, UpdateUserHandler
+		t.Errorf("expected at least 3 functions, got %d: %v", len(fnList), fnList)
 	}
 	if len(fnList) < 3 { // At least GetUserHandler, CreateUserHandler, UpdateUserHandler
 		t.Errorf("expected at least 3 functions, got %d: %v", len(fnList), fnList)
@@ -130,11 +133,11 @@ func TestListFilesTool_ReturnsAllFiles(t *testing.T) {
 		t.Fatalf("Execute error: %v", err)
 	}
 
-	files, _ := result.Data.(map[string]any)["files"]
-	fileList, ok := files.([]string)
+	data, ok := result.Data.(listFilesResult)
 	if !ok {
-		t.Fatal("expected files list in result")
+		t.Fatalf("result.Data = %T; want listFilesResult", result.Data)
 	}
+	fileList := data.Files
 	if len(fileList) != 3 {
 		t.Errorf("expected 3 files, got %d: %v", len(fileList), fileList)
 	}

@@ -16,7 +16,7 @@ func authCall(name tools.ToolName) tools.ToolCall {
 func TestRequireAuth_BlocksGuardedWhenNotAuthed(t *testing.T) {
 	g := NewRequireAuth(func(context.Context) bool { return false },
 		"call hn_login first", "hn_upvote_top")
-	err := g.Before(context.Background(), authCall("hn_upvote_top"))
+	err := g.Before(t.Context(), authCall("hn_upvote_top"))
 	if err == nil {
 		t.Fatal("expected guarded call to be blocked when unauthenticated")
 	}
@@ -28,7 +28,7 @@ func TestRequireAuth_BlocksGuardedWhenNotAuthed(t *testing.T) {
 func TestRequireAuth_AllowsGuardedWhenAuthed(t *testing.T) {
 	g := NewRequireAuth(func(context.Context) bool { return true },
 		"call hn_login first", "hn_upvote_top")
-	if err := g.Before(context.Background(), authCall("hn_upvote_top")); err != nil {
+	if err := g.Before(t.Context(), authCall("hn_upvote_top")); err != nil {
 		t.Fatalf("authenticated guarded call should pass, got %v", err)
 	}
 }
@@ -38,14 +38,14 @@ func TestRequireAuth_IgnoresUnguardedTools(t *testing.T) {
 	// be allowed — otherwise the model could never authenticate.
 	g := NewRequireAuth(func(context.Context) bool { return false },
 		"call hn_login first", "hn_upvote_top")
-	if err := g.Before(context.Background(), authCall("hn_login")); err != nil {
+	if err := g.Before(t.Context(), authCall("hn_login")); err != nil {
 		t.Fatalf("unguarded tool should never be blocked, got %v", err)
 	}
 }
 
 func TestRequireAuth_NilCheckFailsClosed(t *testing.T) {
 	g := NewRequireAuth(nil, "log in first", "hn_upvote_top")
-	if err := g.Before(context.Background(), authCall("hn_upvote_top")); err == nil {
+	if err := g.Before(t.Context(), authCall("hn_upvote_top")); err == nil {
 		t.Fatal("nil check should fail closed (block guarded calls)")
 	}
 }

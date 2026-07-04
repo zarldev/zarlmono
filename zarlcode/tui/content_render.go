@@ -373,10 +373,7 @@ func renderCodeContent(width int, b contentBlock) []string {
 }
 
 func addCodeLineNumbers(lines []string) []string {
-	numW := len(strconv.Itoa(len(lines)))
-	if numW < 3 {
-		numW = 3
-	}
+	numW := max(len(strconv.Itoa(len(lines))), 3)
 	out := make([]string, len(lines))
 	for i, line := range lines {
 		line = stripCodeBlockChrome(line)
@@ -712,7 +709,7 @@ func renderDiffContent(diff string, width, maxLines int) []string {
 		// Hard-wrap, not word-wrap: a diff is preformatted, so break at the column
 		// limit and preserve every cell (including the leading marker) instead of
 		// reflowing. Without this a long diff line was silently clipped at draw.
-		for _, seg := range strings.Split(ansi.Hardwrap(ln, width, true), "\n") {
+		for seg := range strings.SplitSeq(ansi.Hardwrap(ln, width, true), "\n") {
 			lines = append(lines, colorize(seg))
 		}
 	}

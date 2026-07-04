@@ -123,11 +123,10 @@ func TestNotesQualityGuardrail_RewritesWeakNotes(t *testing.T) {
 func guardedSource(rel *Release) tools.Source {
 	reg := tools.NewRegistry()
 	reg.Register(statusTool{r: rel})
-	reg.Register(setCheckTool{r: rel})
-	reg.Register(writeNotesTool{r: rel})
-	reg.Register(publishTool{r: rel})
-	return guardrails.NewGuardedSource(reg,
-		guardrails.NewSchemaGuardrail(reg),
+	reg.Register(newSetCheckTool(rel))
+	reg.Register(newWriteNotesTool(rel))
+	reg.Register(newPublishTool(rel))
+	return guardrails.NewGuardedSource(reg, guardrails.NewSchemaGuardrail(reg),
 		releaseReadyGuardrail{r: rel},
 		notesQualityGuardrail{r: rel},
 	)

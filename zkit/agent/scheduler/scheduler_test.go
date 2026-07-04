@@ -62,7 +62,7 @@ func TestScheduler_FiresOnSchedule(t *testing.T) {
 	}
 
 	sch := scheduler.New(src, enq)
-	if err := sch.Start(context.Background()); err != nil {
+	if err := sch.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(sch.Stop)
@@ -100,7 +100,7 @@ func TestScheduler_InvalidScheduleSkipped(t *testing.T) {
 	sch := scheduler.New(src, enq)
 	// Start succeeds even though one entry is malformed — the bad one is
 	// skipped with an error log.
-	if err := sch.Start(context.Background()); err != nil {
+	if err := sch.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(sch.Stop)
@@ -128,7 +128,7 @@ func TestScheduler_StopIsIdempotent(t *testing.T) {
 
 	src := &stubSource{}
 	sch := scheduler.New(src, &stubEnqueuer{})
-	if err := sch.Start(context.Background()); err != nil {
+	if err := sch.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	sch.Stop()
@@ -150,7 +150,7 @@ func TestScheduler_OnFireErrorDoesNotEnqueue(t *testing.T) {
 	}
 
 	sch := scheduler.New(src, enq)
-	if err := sch.Start(context.Background()); err != nil {
+	if err := sch.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(sch.Stop)
@@ -203,7 +203,7 @@ func TestScheduler_StopUnblocksJobBlockedOnContext(t *testing.T) {
 	}}}
 
 	s := scheduler.New(src, enq)
-	if err := s.Start(context.Background()); err != nil {
+	if err := s.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 

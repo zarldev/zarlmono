@@ -1,7 +1,6 @@
 package code_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,7 +76,7 @@ func TestLsTool_UnrestrictedAllowsOutsideWorkspace(t *testing.T) {
 	}
 
 	tool := code.NewLsTool(ws, code.WithUnrestrictedReads())
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID:       "c",
 		ToolName: code.ToolNameLs,
 		Arguments: tools.ToolParameters{
@@ -109,7 +108,7 @@ func TestGrepTool_UnrestrictedAllowsOutsideWorkspace(t *testing.T) {
 	}
 
 	tool := code.NewGrepTool(ws, code.WithUnrestrictedReads())
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID:       "c",
 		ToolName: code.ToolNameGrep,
 		Arguments: tools.ToolParameters{
@@ -141,7 +140,7 @@ func TestGlobTool_UnrestrictedAllowsOutsideWorkspace(t *testing.T) {
 	}
 
 	tool := code.NewGlobTool(ws, code.WithUnrestrictedReads())
-	res, _ := tool.Execute(context.Background(), tools.ToolCall{
+	res, _ := tool.Execute(t.Context(), tools.ToolCall{
 		ID:       "c",
 		ToolName: code.ToolNameGlob,
 		Arguments: tools.ToolParameters{

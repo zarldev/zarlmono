@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -135,7 +134,7 @@ func TestNormalizeUpgradeSource(t *testing.T) {
 }
 
 func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	bin := filepath.Join(t.TempDir(), "zarlcode")
@@ -189,7 +188,7 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 }
 
 func TestResolveUpgradeRepoMigratesLegacySourcePath(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	legacyPath := filepath.Join(t.TempDir(), "zarlmono")
@@ -210,7 +209,7 @@ func TestResolveUpgradeRepoMigratesLegacySourcePath(t *testing.T) {
 }
 
 func TestRunUpgradeDryRunDoesNotDownload(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	fakePlatform(t, "amd64")
@@ -238,7 +237,7 @@ func TestRunUpgradeDryRunDoesNotDownload(t *testing.T) {
 }
 
 func TestRunUpgradeInstallsReleaseBinary(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	fakePlatform(t, "amd64")
@@ -280,7 +279,7 @@ func TestRunUpgradeInstallsReleaseBinary(t *testing.T) {
 }
 
 func TestRunUpgradeRejectsChecksumMismatch(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	fakePlatform(t, "amd64")
@@ -305,7 +304,7 @@ func TestRunUpgradeRejectsChecksumMismatch(t *testing.T) {
 }
 
 func TestRunUpgradeErrorsWhenNoAssetForPlatform(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	fakePlatform(t, "arm64")
@@ -326,7 +325,7 @@ func TestRunUpgradeErrorsWhenNoAssetForPlatform(t *testing.T) {
 }
 
 func TestRunUpgradeInstallsPinnedVersion(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	fakePlatform(t, "amd64")
@@ -358,7 +357,7 @@ func TestRunUpgradeInstallsPinnedVersion(t *testing.T) {
 }
 
 func TestUpgradeRestartExecsInstalledBinary(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := openTestStore(t)
 	svc := prefs.NewService(store, nil, "")
 	fakePlatform(t, "amd64")

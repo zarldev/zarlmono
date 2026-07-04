@@ -292,8 +292,8 @@ func (*Tool) Definition() tools.ToolSpec {
 // with the work mode and mode tool-gate planted on the child ctx. Only the
 // shaped summary (notices + final content + iterations/reason) is returned.
 func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args Args
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[Args](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	depth := taskscope.DepthFrom(ctx)

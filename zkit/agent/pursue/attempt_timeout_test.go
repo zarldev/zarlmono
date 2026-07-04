@@ -28,7 +28,7 @@ func TestDrive_AttemptTimeoutBoundsWedgedAttempt(t *testing.T) {
 
 	done := make(chan pursue.Outcome, 1)
 	go func() {
-		done <- pursue.Drive(context.Background(), req,
+		done <- pursue.Drive(t.Context(), req,
 			pursue.WithAttemptTimeout(50*time.Millisecond),
 			// Keep the post-cancel drain short so the bounded-but-undrainable
 			// attempt resolves quickly to the timeout verdict.
@@ -56,7 +56,7 @@ func TestDrive_AttemptTimeoutLetsFastAttemptThrough(t *testing.T) {
 	fast := func(_ context.Context, _ runner.TaskSpec) runner.TaskResult {
 		return runner.TaskResult{Reason: runner.TerminalCompleted, FinalContent: "ok"}
 	}
-	out := pursue.Drive(context.Background(),
+	out := pursue.Drive(t.Context(),
 		pursue.NewRequest(fast, runner.TaskSpec{Prompt: "go"}),
 		pursue.WithAttemptTimeout(2*time.Second),
 	)
@@ -80,7 +80,7 @@ func TestDrive_AttemptTimeoutCancelsCooperativeAttempt(t *testing.T) {
 		return runner.TaskResult{Reason: runner.TerminalError, Err: ctx.Err()}
 	}
 	start := time.Now()
-	out := pursue.Drive(context.Background(),
+	out := pursue.Drive(t.Context(),
 		pursue.NewRequest(cooperative, runner.TaskSpec{Prompt: "go"}),
 		pursue.WithAttemptTimeout(50*time.Millisecond),
 	)

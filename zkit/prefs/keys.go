@@ -48,17 +48,18 @@ const (
 	// clusters. On by default; turn off to shrink the tool surface for a lean
 	// local-model setup (MCP tools, web_search/web_fetch, background-process
 	// tools + bash background mode respectively).
-	KeyEnableMCP          = "enable_mcp"
-	KeyEnableWeb          = "enable_web"
-	KeyEnableBackground   = "enable_background"
-	KeySearxngURL         = "search_searxng_url"
-	KeyEditor             = "editor"
-	KeyReserveTokens      = "reserve_tokens"
-	KeyMaxIterations      = "max_iterations"
-	KeySpawnMaxIterations = "spawn_max_iterations"
-	KeySpawnMaxDepth      = "spawn_max_depth"
-	KeyCodexEffort        = "codex_reasoning_effort"
-	// Background-process limits for the bash process manager.
+	KeyEnableMCP           = "enable_mcp"
+	KeyEnableWeb           = "enable_web"
+	KeyEnableBackground    = "enable_background"
+	KeyPprofAddr           = "pprof_addr"
+	KeyTraceFile           = "trace_file"
+	KeySearxngURL          = "search_searxng_url"
+	KeyEditor              = "editor"
+	KeyReserveTokens       = "reserve_tokens"
+	KeyMaxIterations       = "max_iterations"
+	KeySpawnMaxIterations  = "spawn_max_iterations"
+	KeySpawnMaxDepth       = "spawn_max_depth"
+	KeyCodexEffort         = "codex_reasoning_effort" // Background-process limits for the bash process manager.
 	KeyMaxAliveProcesses   = "max_alive_processes"
 	KeyProcessOutputBuffer = "process_output_buffer"
 	KeyVerifyTests         = "verify_tests"

@@ -58,6 +58,32 @@ type Provider interface {
 	Name() string
 }
 
+// ChatTemplateKwargs is the typed payload serialized into the non-standard
+// chat_template_kwargs request extension used by llama.cpp/vLLM chat templates.
+// Providers render it to raw JSON only at the transport edge.
+type ChatTemplateKwargs struct {
+	EnableThinking   bool `json:"enable_thinking"`
+	PreserveThinking bool `json:"preserve_thinking,omitempty"`
+}
+
+// IsZero reports whether k carries no template overrides.
+func (k ChatTemplateKwargs) IsZero() bool {
+	return !k.EnableThinking && !k.PreserveThinking
+}
+
+// AsMap renders k as a generic map for transports that pass arbitrary JSON
+// extension fields. It returns nil when no fields are set.
+func (k ChatTemplateKwargs) AsMap() map[string]any {
+	if k.IsZero() {
+		return nil
+	}
+	out := map[string]any{"enable_thinking": k.EnableThinking}
+	if k.PreserveThinking {
+		out["preserve_thinking"] = true
+	}
+	return out
+}
+
 // CompletionRequest represents a request to generate text.
 type CompletionRequest struct {
 	Messages    []Message
@@ -68,11 +94,9 @@ type CompletionRequest struct {
 
 	// ChatTemplateKwargs is the llama.cpp / vLLM extension field that
 	// gets serialised as `chat_template_kwargs` on the wire. Providers
-	// that don't recognise it ignore it. Typical use: pass
-	// `{"enable_thinking": true, "preserve_thinking": true}` for
-	// Qwen3 agentic loops — the runner builds this from the active
-	// ChatTemplate's ThinkingKwargs.AsMap() each request.
-	ChatTemplateKwargs map[string]any
+	// that don't recognise it ignore it. The runner builds this from the
+	// active ChatTemplate's ThinkingKwargs each request.
+	ChatTemplateKwargs ChatTemplateKwargs
 
 	// ResponseFormat constrains the model's output shape. When set to
 	// a JSONSchema variant, llama.cpp converts the schema to a GBNF

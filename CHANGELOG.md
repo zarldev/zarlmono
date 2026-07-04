@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.1] — 2026-06-29
+
+`zkit/v0.2.1`
+
+### Added
+
+- Deterministic Go code-understanding helpers: syntax-aware `file_map`, lexical `retrieve_code`, and shared `sourcecode` parsing utilities for callers that need structured source context without embeddings or LSP.
+- `models.dev` model metadata integration for context-window and pricing hints.
+- Typed tool adapters (`NewTyped`, typed `DecodeArgs`, and effect derivation hooks) so tool implementations can keep typed business logic at the boundary.
+- Typed retrieval metadata filters with equality predicates, plus vector-store/qdrant filter plumbing.
+
+### Changed
+
+- Tool argument decoding is now generic and shared across code, dynamic, fetch, search, and zarlcode catalog/instruction tools.
+- LLM chat-template kwargs stay typed longer instead of round-tripping through unstructured maps.
+
+### Fixed
+
+- Claude Code inline tool-call leakage is guarded before it reaches the transcript.
+- Read-before-write guardrails now treat a prior successful write/edit as established context for follow-up edits to the same file.
+- Test and lint cleanup across the CI-covered modules.
+
+## [v0.1.3] — 2026-06-29
+
+`examples/v0.1.3`
+
+### Changed
+
+- Updated example tools to show the latest typed API patterns: `tools.SchemaFor`, generic `tools.DecodeArgs`, typed result structs, and `tools.NewTyped` for new tool adapters.
+- Removed hand-written `map[string]any` JSON Schema trees from example tool definitions where the arguments are statically shaped.
+
+## [v0.1.6] — 2026-06-29
+
+`zarlcode/v0.1.6`
+
+### Added
+
+- Lazy instruction-loading tools so agents can discover workspace guidance without eagerly flooding context.
+- TUI and headless wiring for the new code-understanding helpers and `models.dev` model metadata.
+- Optional local service management for the bundled SearXNG `web_search` Docker Compose service from settings.
+- Opt-in Go pprof/runtime metrics and execution tracing flags for profiling zarlcode runs.
+
+### Changed
+
+- Removed the `zarlcode serve` llama-server wrapper; zarlcode now configures model endpoints but leaves local model server lifecycle to Ollama, llama.cpp, LM Studio, or another OpenAI-compatible server.
+
+### Fixed
+
+- Release-dispatch now grants `actions: write`, allowing its follow-up `gh workflow run release.yml` publisher dispatch to succeed under `GITHUB_TOKEN`.
+
 ## [v0.2.0] — 2026-06-27
 
 `zkit/v0.2.0`

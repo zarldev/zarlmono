@@ -64,7 +64,7 @@ func (s *fakeStore) DeleteProvider(_ context.Context, name string) error {
 }
 
 func TestRegistryBuildLocalProvidersAreNamed(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	reg := backends.NewRegistry(backends.WithStore(newFakeStore()), backends.WithSettingsService(fakeKeyService{}))
 	for _, name := range []string{"llamacpp", "ollama"} {
 		p, err := reg.Build(ctx, name, "test-model")
@@ -112,7 +112,7 @@ func TestRegistryBuildBuiltinsDoNotPanic(t *testing.T) {
 // here on the unguarded vault check.
 func TestRegistryBuildNilStoreAndService(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-x")
-	ctx := context.Background()
+	ctx := t.Context()
 	reg := backends.NewRegistry()
 	for _, name := range []string{"openai", "llamacpp"} {
 		if _, err := reg.Build(ctx, name, ""); err != nil {
@@ -123,7 +123,7 @@ func TestRegistryBuildNilStoreAndService(t *testing.T) {
 
 func newTestRegistry(t *testing.T, svc backends.SettingsService) (*backends.ProviderRegistry, context.Context) {
 	t.Helper()
-	return backends.NewRegistry(backends.WithStore(newFakeStore()), backends.WithSettingsService(svc)), context.Background()
+	return backends.NewRegistry(backends.WithStore(newFakeStore()), backends.WithSettingsService(svc)), t.Context()
 }
 
 // upsertCustomOAI registers a custom OpenAI-compatible provider pointing at
@@ -231,6 +231,9 @@ func TestFetchModelsOAuthBuiltinsReturnPresets(t *testing.T) {
 			}
 			if len(models) == 0 {
 				t.Fatalf("FetchModels(%q) = empty, want preset models", name)
+			}
+			if name == "claude-code" && !slices.Contains(models, "fable") {
+				t.Fatalf("FetchModels(%q) = %v, want fable", name, models)
 			}
 		})
 	}

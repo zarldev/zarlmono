@@ -1,7 +1,6 @@
 package code_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +39,7 @@ func initRepo(t *testing.T) string {
 }
 
 func TestWorktreeDiff(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	root := initRepo(t)
 	base := code.GitHead(ctx, root)
 	if base == "" {
@@ -81,7 +80,7 @@ func TestWorktreeDiff(t *testing.T) {
 }
 
 func TestWorktreeDiffNotARepo(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	root := t.TempDir()
 	if got := code.WorktreeDiff(ctx, root, "", nil); got != "" {
 		t.Errorf("WorktreeDiff on non-repo = %q, want empty", got)

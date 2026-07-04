@@ -55,8 +55,8 @@ func (t *loadSkillTool) Definition() tools.ToolSpec {
 }
 
 func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args loadSkillArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[loadSkillArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	name := strings.TrimSpace(args.Name)

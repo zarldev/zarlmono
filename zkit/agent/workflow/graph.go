@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 )
 
@@ -88,17 +89,11 @@ func (g *Graph) Compile() (*Runnable, error) {
 		return nil, fmt.Errorf("compile workflow: start target %q is not a node", start)
 	}
 	nodes := map[string]anyNode{}
-	for k, v := range g.nodes {
-		nodes[k] = v
-	}
+	maps.Copy(nodes, g.nodes)
 	edges := map[string]string{}
-	for k, v := range g.edges {
-		edges[k] = v
-	}
+	maps.Copy(edges, g.edges)
 	routes := map[string]Route{}
-	for k, v := range g.routes {
-		routes[k] = v
-	}
+	maps.Copy(routes, g.routes)
 	return &Runnable{nodes: nodes, edges: edges, routes: routes}, nil
 }
 

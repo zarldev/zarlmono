@@ -137,6 +137,12 @@ func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		result, err := m.inner.Execute(ctx, call)
 		if err == nil && result != nil && result.Success && invalidates {
 			m.forgetCurrentTask(ctx)
+			// A successful workspace-changing call (edit/write) establishes
+			// context for its target just as a read does — record it so a
+			// follow-up edit to the same file isn't nagged to re-read.
+			if m.ledger != nil {
+				m.ledger.RecordSuccessfulPureCall(ctx, call.ToolName, call.Arguments)
+			}
 		}
 		return result, err
 	}
@@ -215,15 +221,19 @@ func (m *MemoSource) bumpHit(ctx context.Context, key string) int {
 // forgetCurrentTask clears the memo bucket and hit counters for the task on ctx.
 // Mutating tools call this after a successful execution so later pure reads in
 // the same task observe fresh workspace state.
+//
+// It deliberately does NOT drop the call ledger: the ledger records which files
+// the task has already looked at (read-before-write evidence), and that context
+// is not invalidated by a mutation — having just edited a file is stronger
+// evidence of context than having read it. Wiping it here made every successful
+// edit erase the read that justified it, forcing a read → edit → read → edit
+// loop. The ledger is cleared only at task end, via ForgetTask.
 func (m *MemoSource) forgetCurrentTask(ctx context.Context) {
 	id := taskscope.IDFrom(ctx)
 	m.mu.Lock()
 	delete(m.buckets, id)
 	delete(m.hits, id)
 	m.mu.Unlock()
-	if m.ledger != nil {
-		m.ledger.ForgetTask(id)
-	}
 }
 
 // invalidatesCache reports whether a successful call should drop the current

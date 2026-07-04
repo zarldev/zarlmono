@@ -143,10 +143,10 @@ func parseSSEStream(r io.Reader, yield func(llm.CompletionChunk, error) bool) er
 			// SSE comment / keepalive.
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
 			// SSE may emit multi-line data: blocks. Concatenate them
 			// in order; the dispatch reads the joined JSON.
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			payload := strings.TrimSpace(after)
 			if dataBuf.Len() > 0 {
 				dataBuf.WriteByte('\n')
 			}

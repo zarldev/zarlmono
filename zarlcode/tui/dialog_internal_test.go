@@ -44,25 +44,49 @@ func TestHelpDialog_RendersAndDismisses(t *testing.T) {
 	}
 }
 
-func TestHelpDialog_HasHeadingsAndSingleSlashCommandSection(t *testing.T) {
+func TestHelpDialog_IsTailoredToCompose(t *testing.T) {
 	m := New()
 	step := func(msg tea.Msg) { mm, _ := m.Update(msg); m = mm.(*UI) }
 	step(tea.WindowSizeMsg{Width: 160, Height: 80})
 
-	m.overlay.push(newHelpDialog())
+	m.overlay.push(m.newHelpDialog())
 	out := ansi.Strip(m.View().Content)
 	for _, want := range []string{
-		"main", "startup", "browse / dashboard", "global panes",
-		"settings", "viewers / pickers", "slash / close",
+		"compose", "quick panes", "slash commands", "global", "submit prompt", "file viewer",
 	} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("help dialog missing heading %q:\n%s", want, out)
+			t.Fatalf("compose help missing %q:\n%s", want, out)
+		}
+	}
+	for _, notWant := range []string{
+		"startup", "viewers / pickers", "prompt ⇄ sessions",
+	} {
+		if strings.Contains(out, notWant) {
+			t.Fatalf("compose help should not include %q:\n%s", notWant, out)
 		}
 	}
 	for _, cmd := range slashCommands {
 		if n := strings.Count(out, cmd.name); n != 1 {
 			t.Fatalf("help dialog renders slash command %q %d times, want once:\n%s", cmd.name, n, out)
 		}
+	}
+}
+
+func TestHelpDialog_IsTailoredToBrowse(t *testing.T) {
+	m := New()
+	step := func(msg tea.Msg) { mm, _ := m.Update(msg); m = mm.(*UI) }
+	step(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m.timeline.enterBrowse()
+
+	m.overlay.push(m.newHelpDialog())
+	out := ansi.Strip(m.View().Content)
+	for _, want := range []string{"browse transcript", "expand / collapse", "back to compose"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("browse help missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "submit prompt") || strings.Contains(out, "slash commands") {
+		t.Fatalf("browse help should omit compose-only help:\n%s", out)
 	}
 }
 

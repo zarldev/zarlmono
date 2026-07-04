@@ -136,7 +136,7 @@ func newRedisContractCache(t *testing.T) (cache.Cache[string, int], func()) {
 	)
 
 	cleanup := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 
 		_ = c.Clear(ctx)

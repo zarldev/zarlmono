@@ -150,11 +150,11 @@ func convertPart(p llm.ContentPart) *genai.Part {
 // when the URI doesn't match the expected shape.
 func dataURIBytes(uri string) []byte {
 	const sep = ";base64,"
-	i := strings.Index(uri, sep)
-	if i < 0 {
+	_, after, ok := strings.Cut(uri, sep)
+	if !ok {
 		return nil
 	}
-	encoded := uri[i+len(sep):]
+	encoded := after
 	out, err := decodeBase64(encoded)
 	if err != nil {
 		return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -85,9 +86,7 @@ func clone(cp Checkpoint) Checkpoint {
 	out := cp
 	if cp.State != nil {
 		out.State = map[string]any{}
-		for k, v := range cp.State {
-			out.State[k] = v
-		}
+		maps.Copy(out.State, cp.State)
 	}
 	return out
 }

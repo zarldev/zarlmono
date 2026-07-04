@@ -496,6 +496,9 @@ linters:
       - path: '^zarlcode/tui/catalog_edit\.go'
         text: 'G204:'
         linters: [ gosec ]
+      - path: '^zarlcode/tui/askpass_server\.go'
+        text: 'G117:'
+        linters: [ gosec ]
       - path: 'zkit/zlog/.*\.go'
         text: "import 'log' is not allowed"
         linters: [ depguard ]

@@ -11,9 +11,9 @@ type IndexedDocument struct {
 // Query carries vector-search inputs and optional metadata filters. Store
 // implementations define the supported filter value shapes.
 type Query struct {
-	Vector Vector         `json:"vector"`
-	Limit  int            `json:"limit,omitempty"`
-	Filter map[string]any `json:"filter,omitempty"`
+	Vector Vector `json:"vector"`
+	Limit  int    `json:"limit,omitempty"`
+	Filter Filter `json:"filter"`
 }
 
 // VectorStore persists embedded documents and searches them by vector.

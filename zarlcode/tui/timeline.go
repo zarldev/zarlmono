@@ -713,7 +713,7 @@ func wrapText(s string, width int) []string {
 	}
 	style := lg.NewStyle().Width(width)
 	var out []string
-	for _, para := range strings.Split(s, "\n") {
+	for para := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(para) == "" {
 			out = append(out, "")
 			continue

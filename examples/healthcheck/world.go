@@ -1,6 +1,9 @@
 package main
 
-import "sync"
+import (
+	"maps"
+	"sync"
+)
 
 // Status is the health of a single endpoint.
 type Status string
@@ -84,9 +87,7 @@ func (f *ServerFarm) Snapshot() (map[string]Status, []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	eps := make(map[string]Status, len(f.endpoints))
-	for k, v := range f.endpoints {
-		eps[k] = v
-	}
+	maps.Copy(eps, f.endpoints)
 	chk := make([]string, len(f.checked))
 	copy(chk, f.checked)
 	return eps, chk

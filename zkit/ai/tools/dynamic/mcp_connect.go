@@ -396,8 +396,8 @@ func (t *MCPConnect) Definition() tools.ToolSpec {
 // validated (max 64, capped description/schema sizes, no shadowing of
 // existing tools) and registered under provider "mcp:<name>".
 func (t *MCPConnect) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args MCPConnectArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[MCPConnectArgs](call.Arguments)
+	if derr != nil {
 		return failureResult(call.ID, derr.Error()), nil
 	}
 	if args.Name == "" {
@@ -561,8 +561,8 @@ func (t *MCPDisconnect) Definition() tools.ToolSpec {
 // subscription, unregisters every tool under provider "mcp:<name>", and
 // closes the client (for stdio transports, stopping the subprocess).
 func (t *MCPDisconnect) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args MCPDisconnectArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[MCPDisconnectArgs](call.Arguments)
+	if derr != nil {
 		return failureResult(call.ID, derr.Error()), nil
 	}
 	if args.Name == "" {

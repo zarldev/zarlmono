@@ -142,7 +142,7 @@ func TestResponseFormat_LiveEnumConstraint(t *testing.T) {
 		// Mirrors the production judge/planner: thinking off so a
 		// thinking-default model doesn't burn MaxTokens inside <think>
 		// before the constrained JSON starts.
-		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
+		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)

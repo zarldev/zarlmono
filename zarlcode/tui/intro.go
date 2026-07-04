@@ -315,10 +315,7 @@ func (p *introPane) promptDisplayLines(accent theme.Color, placeholder string, w
 	if cursorDisplay < 0 {
 		return display[:introPromptMaxLines]
 	}
-	start := cursorDisplay - introPromptMaxLines + 1
-	if start < 0 {
-		start = 0
-	}
+	start := max(cursorDisplay-introPromptMaxLines+1, 0)
 	if start+introPromptMaxLines > len(display) {
 		start = len(display) - introPromptMaxLines
 	}
@@ -345,10 +342,7 @@ func (p *introPane) sessionLines() []string {
 	if p.cursor >= introVisibleSessions {
 		start = p.cursor - introVisibleSessions + 1
 	}
-	end := start + introVisibleSessions
-	if end > len(p.sessions) {
-		end = len(p.sessions)
-	}
+	end := min(start+introVisibleSessions, len(p.sessions))
 	for i := start; i < end; i++ {
 		s := p.sessions[i]
 		label := truncateRunes(s.Label, 42)

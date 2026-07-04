@@ -392,8 +392,8 @@ func splitFrontmatter(data []byte) ([]byte, string, error) {
 			return front, body, nil
 		}
 	}
-	if strings.HasSuffix(rest, "\n---") {
-		return []byte(strings.TrimSuffix(rest, "\n---")), "", nil
+	if before, ok := strings.CutSuffix(rest, "\n---"); ok {
+		return []byte(before), "", nil
 	}
 	return nil, "", errors.New("missing closing `---` frontmatter delimiter")
 }

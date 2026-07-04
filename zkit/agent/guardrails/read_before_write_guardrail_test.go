@@ -1,7 +1,6 @@
 package guardrails_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
@@ -14,13 +13,13 @@ func TestReadBeforeWriteGuardrail_RejectsBlindEdit(t *testing.T) {
 	ledger := runner.NewMemoryTaskCallLedger()
 	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
 	call := tools.ToolCall{ToolName: code.ToolNameEdit, Arguments: tools.ToolParameters{"path": "pkg/foo.go"}}
-	if err := g.Before(context.Background(), call); err == nil {
+	if err := g.Before(t.Context(), call); err == nil {
 		t.Fatal("want rejection for blind edit")
 	}
 }
 
 func TestReadBeforeWriteGuardrail_AllowsEditAfterRead(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ledger := runner.NewMemoryTaskCallLedger()
 	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameRead, tools.ToolParameters{"path": "pkg/foo.go"})
 	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
@@ -30,8 +29,21 @@ func TestReadBeforeWriteGuardrail_AllowsEditAfterRead(t *testing.T) {
 	}
 }
 
+func TestReadBeforeWriteGuardrail_AllowsFollowUpEditAfterEdit(t *testing.T) {
+	ctx := t.Context()
+	ledger := runner.NewMemoryTaskCallLedger()
+	// A prior successful edit is recorded as evidence; a follow-up edit to the
+	// same file must not be nagged to re-read (the read → edit → read → edit loop).
+	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameEdit, tools.ToolParameters{"path": "pkg/foo.go"})
+	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
+	call := tools.ToolCall{ToolName: code.ToolNameEdit, Arguments: tools.ToolParameters{"path": "pkg/foo.go"}}
+	if err := g.Before(ctx, call); err != nil {
+		t.Fatalf("want prior edit to unlock follow-up edit, got %v", err)
+	}
+}
+
 func TestReadBeforeWriteGuardrail_AllowsWriteAfterDirContext(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ledger := runner.NewMemoryTaskCallLedger()
 	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameLs, tools.ToolParameters{"path": "pkg"})
 	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
@@ -42,7 +54,7 @@ func TestReadBeforeWriteGuardrail_AllowsWriteAfterDirContext(t *testing.T) {
 }
 
 func TestReadBeforeWriteGuardrail_AllowsGoTestPairFallback(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ledger := runner.NewMemoryTaskCallLedger()
 	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameRead, tools.ToolParameters{"path": "pkg/foo_test.go"})
 	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)

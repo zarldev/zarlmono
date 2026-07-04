@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"maps"
 	"slices"
 	"strconv"
 	"sync"
@@ -48,7 +49,9 @@ const (
 	ToolNameWebFetch  ToolName = "web_fetch"
 )
 
-// ToolParameters are typed arguments passed to a tool execution.
+// ToolParameters are raw model-provided arguments at the tool dispatch
+// boundary. Prefer DecodeArgs or NewTyped in tool implementations so business
+// logic receives a typed argument struct.
 type ToolParameters map[string]any
 
 // String returns the value at key as a string, or defaultValue if missing.
@@ -380,7 +383,7 @@ type ToolPreference struct {
 	Tool       ToolName       `json:"tool"`
 	Enabled    bool           `json:"enabled"`
 	Weight     float64        `json:"weight"`
-	Parameters map[string]any `json:"parameters"`
+	Parameters ToolParameters `json:"parameters"`
 	Reason     string         `json:"reason"`
 }
 
@@ -653,9 +656,7 @@ func (r *Registry) ParseCall(name ToolName, callID string, arguments map[string]
 		return ToolCall{}, fmt.Errorf("tool not found: %s", name)
 	}
 	args := ToolParameters{}
-	for k, v := range arguments {
-		args[k] = v
-	}
+	maps.Copy(args, arguments)
 	return ToolCall{
 		ID:        callID,
 		ToolName:  name,

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 
@@ -96,6 +97,11 @@ type LiveRunner struct {
 	// restarting zarlcode.
 	instructionDocs []instructions.Document
 	instructionErrs []error
+	// nestedInstructionIndex is the lazy-loaded index of nested AGENTS.md /
+	// CLAUDE.md files below the workspace root, enumerable via list_instructions
+	// and loadable via load_instruction. Set by reloadInstructions and
+	// snapshotted per turn alongside instructionDocs.
+	nestedInstructionIndex []instructions.NestedDoc
 
 	// truncator tail-caps oversized tool results and spills the full text to
 	// disk so a follow-up bash can grep it. One shared instance across every
@@ -682,6 +688,13 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 		reg.Register(NewListAgentsTool(l.catalog))
 	}
 
+	// Nested instruction docs (non-root AGENTS.md / CLAUDE.md) are discoverable
+	// via list_instructions and loadable via load_instruction, mirroring the
+	// skill/agent lazy-loading surface. Registered before GuardedSource so
+	// they run under the same guardrail chain.
+	reg.Register(NewListInstructionsTool(l.instructionNestedSnapshot))
+	reg.Register(NewLoadInstructionTool(l.ws.Root(), l.instructionNestedSnapshot))
+
 	// MCP: the connect/disconnect/list tools mutate the persistent registry
 	// (so connections survive across turns), and every tool already exposed by
 	// a connected server is merged onto this turn's registry. Registered before
@@ -718,7 +731,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 		deps.Extra = append(deps.Extra, hg)
 	}
 
-	guarded, _, err := coderunner.GuardedSource(base, deps, pipeline, ToolNameListSkills, ToolNameListAgents)
+	guarded, _, err := coderunner.GuardedSource(base, deps, pipeline, ToolNameListSkills, ToolNameListAgents, ToolNameListInstructions, ToolNameLoadInstruction)
 	if err != nil {
 		return nil, nil, fmt.Errorf("guarded tool source: %w", err)
 	}
@@ -875,8 +888,6 @@ func cloneStringMap(in map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }

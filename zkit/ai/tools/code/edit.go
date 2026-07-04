@@ -78,8 +78,8 @@ func (t *EditTool) Definition() tools.ToolSpec {
 // This legacy exact-string path remains useful for narrow consumers, but
 // the standard coding surface prefers EditFileHLTool's anchored workflow.
 func (t *EditTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args EditArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[EditArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Path == "" {
@@ -269,7 +269,7 @@ func fuzzyMatch(body, old string) (int, int, int) {
 // without burning turns on re-reads.
 func fuzzyHint(body, old string) string {
 	var probe string
-	for _, l := range strings.Split(old, "\n") {
+	for l := range strings.SplitSeq(old, "\n") {
 		l = strings.TrimSpace(strings.TrimRight(l, "\r"))
 		if l != "" {
 			probe = l

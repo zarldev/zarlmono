@@ -98,7 +98,7 @@ func TestResolve_NoOverride_UsesProfileDefaults(t *testing.T) {
 	t.Parallel()
 
 	pr := profile.NewRegistry(profile.Builtin(), &fakeOverrideStore{}, "qwen3-26b")
-	got, err := pr.Resolve(context.Background(), profile.NameResearcher)
+	got, err := pr.Resolve(t.Context(), profile.NameResearcher)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestResolve_OverrideReplacesModel(t *testing.T) {
 	}}
 
 	pr := profile.NewRegistry(profile.Builtin(), overrides, "qwen3-26b")
-	got, err := pr.Resolve(context.Background(), profile.NameResearcher)
+	got, err := pr.Resolve(t.Context(), profile.NameResearcher)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestResolve_OverrideReplacesPromptPrefix(t *testing.T) {
 	}}
 
 	pr := profile.NewRegistry(profile.Builtin(), overrides, "model")
-	got, err := pr.Resolve(context.Background(), profile.NameDefault)
+	got, err := pr.Resolve(t.Context(), profile.NameDefault)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestResolve_UnknownProfileFallsBackToDefault(t *testing.T) {
 	t.Parallel()
 
 	pr := profile.NewRegistry(profile.Builtin(), &fakeOverrideStore{}, "model")
-	got, err := pr.Resolve(context.Background(), profile.Name("missing"))
+	got, err := pr.Resolve(t.Context(), profile.Name("missing"))
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestResolve_MaxIterationsClampedToCap(t *testing.T) {
 		MaxIterations: 999,
 	}}
 	pr := profile.NewRegistry(custom, nil, "model")
-	got, err := pr.Resolve(context.Background(), "high")
+	got, err := pr.Resolve(t.Context(), "high")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

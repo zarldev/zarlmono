@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 )
 
 // modelQuickPick is a centered modal with a provider tab bar and a scrollable
@@ -27,9 +29,10 @@ type modelQuickPick struct {
 	fallback      bool
 	fallbackValue []rune
 	fallbackCur   int
+	meta          *modelInfoResolver
 }
 
-func newModelQuickPick(providers []string, models map[string][]string, activeProvider, activeModel string, onPick func(provider, model string)) *modelQuickPick {
+func newModelQuickPick(providers []string, models map[string][]string, activeProvider, activeModel string, onPick func(provider, model string), settings *engine.Settings) *modelQuickPick {
 	if models == nil {
 		models = make(map[string][]string)
 	}
@@ -39,6 +42,7 @@ func newModelQuickPick(providers []string, models map[string][]string, activePro
 		loading:   make(map[string]bool),
 		current:   activeModel,
 		onPick:    onPick,
+		meta:      newModelInfoResolver(settings),
 	}
 	for i, p := range providers {
 		if p == activeProvider {
@@ -237,11 +241,13 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 		y++
 	}
 	for i := start; i < end; i++ {
+		model := models[i]
+		meta := p.meta.summary(p.activeProvider(), model)
 		var line string
 		if i == p.cursor {
-			line = palette.Primary.On("▸ " + models[i])
+			line = rowLayout(palette.Primary.On("▸ "+model), meta, innerW)
 		} else {
-			line = "  " + palette.Subtle.On(models[i])
+			line = rowLayout("  "+palette.Subtle.On(model), meta, innerW)
 		}
 		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), line)
 		y++

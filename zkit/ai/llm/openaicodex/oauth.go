@@ -187,8 +187,8 @@ func ParseAuthorizationInput(input string) (string, string) {
 	if u, err := url.Parse(v); err == nil && u.Scheme != "" {
 		return u.Query().Get("code"), u.Query().Get("state")
 	}
-	if i := strings.IndexByte(v, '#'); i >= 0 {
-		return v[:i], v[i+1:]
+	if before, after, ok := strings.Cut(v, "#"); ok {
+		return before, after
 	}
 	if strings.Contains(v, "code=") {
 		if q, err := url.ParseQuery(v); err == nil {

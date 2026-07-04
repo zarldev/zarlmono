@@ -69,7 +69,7 @@ func looksLikeTestFile(path string) bool {
 	}
 	// Directory-based catch: any segment named "test", "tests" or
 	// "spec" along the path.
-	for _, seg := range strings.Split(filepath.ToSlash(path), "/") {
+	for seg := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		s := strings.ToLower(seg)
 		if s == "test" || s == "tests" || s == "spec" || s == "specs" || s == "__tests__" {
 			return true
@@ -106,7 +106,7 @@ func looksLikeTestPath(path string) bool {
 	if strings.HasSuffix(lower, ".golden") || strings.HasSuffix(lower, ".snap") {
 		return true
 	}
-	for _, seg := range strings.Split(filepath.ToSlash(path), "/") {
+	for seg := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		s := strings.ToLower(seg)
 		switch s {
 		case "testdata", "fixtures", "testfixtures", "test-fixtures", "test_fixtures",

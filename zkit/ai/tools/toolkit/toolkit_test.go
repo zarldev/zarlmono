@@ -59,7 +59,7 @@ func TestTool_Describe(t *testing.T) {
 func TestTool_Call_Success(t *testing.T) {
 	t.Parallel()
 	in, _ := json.Marshal(sha256Args{Text: "hello"})
-	got, err := sha256Tool().Call(context.Background(), in)
+	got, err := sha256Tool().Call(t.Context(), in)
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestTool_Call_Success(t *testing.T) {
 
 func TestTool_Call_BadJSON(t *testing.T) {
 	t.Parallel()
-	_, err := sha256Tool().Call(context.Background(), json.RawMessage(`{not json`))
+	_, err := sha256Tool().Call(t.Context(), json.RawMessage(`{not json`))
 	if err == nil {
 		t.Error("expected decode error, got nil")
 	}
@@ -83,7 +83,7 @@ func TestTool_Call_BadJSON(t *testing.T) {
 func TestTool_Call_NilFunc(t *testing.T) {
 	t.Parallel()
 	tool := toolkit.Tool[sha256Args, string]{Name: "x", Description: "y"}
-	_, err := tool.Call(context.Background(), nil)
+	_, err := tool.Call(t.Context(), nil)
 	if err == nil {
 		t.Error("expected error for nil Func")
 	}

@@ -22,6 +22,8 @@ func PlanAllows(name tools.ToolName) bool {
 		code.ToolNameGrep,
 		code.ToolNameLs,
 		code.ToolNameGlob,
+		code.ToolNameFileMap,
+		code.ToolNameRetrieveCode,
 		code.ToolNameSavePlan,
 		code.ToolNameSavePlanAppend,
 		// update_plan mutates only the structured plan store, not the workspace,

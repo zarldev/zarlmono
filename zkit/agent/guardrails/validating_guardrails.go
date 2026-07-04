@@ -3,6 +3,7 @@ package guardrails
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -48,12 +49,7 @@ func (g *NonEmptyResultGuardrail) matches(name tools.ToolName) bool {
 	if len(g.Tools) == 0 {
 		return true
 	}
-	for _, t := range g.Tools {
-		if t == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(g.Tools, name)
 }
 
 func isEmptyData(data any) bool {

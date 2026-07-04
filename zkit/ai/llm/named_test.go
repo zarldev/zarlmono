@@ -47,7 +47,7 @@ func TestNamedOverridesNameButDelegatesComplete(t *testing.T) {
 	}
 
 	type ctxKey string
-	ctx := context.WithValue(context.Background(), ctxKey("k"), "v")
+	ctx := context.WithValue(t.Context(), ctxKey("k"), "v")
 	req := llm.CompletionRequest{Temperature: 0.42, MaxTokens: 99}
 
 	gotSeq, gotErr := wrapped.Complete(ctx, req)

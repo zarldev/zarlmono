@@ -92,8 +92,8 @@ func DecodeJSON(r *http.Request, v any, maxBytes int64) error {
 	if ct := r.Header.Get("Content-Type"); ct != "" {
 		// Trim charset/boundary suffixes before the prefix check.
 		base := ct
-		if i := strings.IndexByte(ct, ';'); i >= 0 {
-			base = strings.TrimSpace(ct[:i])
+		if before, _, ok := strings.Cut(ct, ";"); ok {
+			base = strings.TrimSpace(before)
 		}
 		if !strings.EqualFold(base, "application/json") {
 			return fmt.Errorf("content-type must be application/json, got %q", ct)

@@ -1,7 +1,6 @@
 package openaicodex_test
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -222,7 +221,7 @@ func TestExchangeAuthorizationCode(t *testing.T) {
 	defer srv.Close()
 	redirectTokenURL(t, srv)
 
-	tok, err := openaicodex.ExchangeAuthorizationCode(context.Background(), "the-code", "the-verifier")
+	tok, err := openaicodex.ExchangeAuthorizationCode(t.Context(), "the-code", "the-verifier")
 	if err != nil {
 		t.Fatalf("ExchangeAuthorizationCode: %v", err)
 	}
@@ -255,7 +254,7 @@ func TestExchangeAuthorizationCode_Failure(t *testing.T) {
 	srv := httptest.NewServer(fake.handler())
 	defer srv.Close()
 	redirectTokenURL(t, srv)
-	_, err := openaicodex.ExchangeAuthorizationCode(context.Background(), "x", "y")
+	_, err := openaicodex.ExchangeAuthorizationCode(t.Context(), "x", "y")
 	if !errors.Is(err, openaicodex.ErrTokenExchange) {
 		t.Errorf("err = %v, want ErrTokenExchange", err)
 	}
@@ -285,7 +284,7 @@ func TestRefreshAccessToken(t *testing.T) {
 	defer srv.Close()
 	redirectTokenURL(t, srv)
 
-	tok, err := openaicodex.RefreshAccessToken(context.Background(), "old-refresh")
+	tok, err := openaicodex.RefreshAccessToken(t.Context(), "old-refresh")
 	if err != nil {
 		t.Fatalf("RefreshAccessToken: %v", err)
 	}
@@ -300,7 +299,7 @@ func TestRefreshAccessToken(t *testing.T) {
 func TestStaticTokenSource(t *testing.T) {
 	t.Parallel()
 	ts := openaicodex.StaticTokenSource{T: openaicodex.Token{Access: "a", Refresh: "r", AccountID: "acct"}}
-	got, err := ts.Token(context.Background())
+	got, err := ts.Token(t.Context())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
 	}

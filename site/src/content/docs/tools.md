@@ -56,28 +56,50 @@ and it's callable on the next turn.
 
 ## Typed arguments and schemas
 
-Hand-writing nested `map[string]any` schema trees gets old fast.
-Define an args struct instead and derive the schema by reflection:
+Hand-writing nested `map[string]any` schema trees gets old fast, and manual
+`call.Arguments["field"]` extraction is easy to get subtly wrong. For statically
+shaped tools, define args and result structs, derive the input schema by
+reflection, and keep the raw argument map at the dispatch boundary:
 
 ```go
 type LsArgs struct {
-	Path       string `json:"path" description:"directory to list"`
+	Path       string `json:"path" doc:"directory to list"`
 	ShowHidden bool   `json:"show_hidden"`
 }
 
-func (t *LsTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
+type LsResult struct {
+	Entries []string `json:"entries"`
+	Count   int      `json:"count"`
+}
+
+tool := tools.NewTyped(
+	tools.ToolSpec{
 		Name:        "ls",
 		Description: "List a directory.",
 		Parameters:  tools.SchemaFor[LsArgs](),
-	}
+	},
+	func(ctx context.Context, args LsArgs) (LsResult, error) {
+		return listDirectory(ctx, args)
+	},
+)
+```
+
+`tools.NewTyped` decodes model arguments with `tools.DecodeArgs[Args]`, which
+round-trips through the JSON repairer before invoking your handler. The handler
+returns a typed result that becomes `ToolResult.Data`; if it returns a
+`*tools.Error`, the adapter emits a failed tool result the model can act on.
+
+Existing hand-written tools can use the same decoder directly:
+
+```go
+args, err := tools.DecodeArgs[LsArgs](call.Arguments)
+if err != nil {
+	return tools.Failure(call.ID, err), nil
 }
 ```
 
-`tools.DecodeArgs[LsArgs]` round-trips the model's arguments into
-the struct — through the JSON repairer, so a slightly mangled
-payload still decodes.
-
+Keep `map[string]any` only for genuinely dynamic JSON payloads or schema
+transport from external systems.
 ## JSON repair
 
 Small models routinely emit tool-call JSON that strict parsers
@@ -129,6 +151,17 @@ The `diffrecorder` package reads them to build per-turn diffs for
 eval harnesses. Tools that don't produce effects declare `nil` —
 still a valid result.
 
+Typed tools can derive effects from their typed result without giving up the
+`NewTyped` adapter:
+
+```go
+tool := tools.NewTyped(spec, writeFile,
+	tools.WithTypedEffects(func(r WriteResult) []tools.Effect {
+		return []tools.Effect{&tools.FileEffect{Path: r.Path, Op: tools.EffectOpWrite}}
+	}),
+)
+```
+
 ## Output formats
 
 Tools that return structured data (`web_search`, `bash_output`,
@@ -149,13 +182,11 @@ which tools ship on a given turn:
 
 ```go
 tools.ToolPreference{
-    Enabled:  new(bool),
-    Weight:   new(float64),
-    Overrides: map[string]any{"max_results": 10},
+    Enabled:    true,
+    Weight:     0.8,
+    Parameters: tools.ToolParameters{"max_results": 10},
 }
 ```
-
-*Set `*Enabled = true` and `*Weight = 0.8` after construction, or use literal addresses if you prefer.*
 
 Stored on `ToolSpec.Preference` — the tool declares its own
 affordances; the selector consumes them.

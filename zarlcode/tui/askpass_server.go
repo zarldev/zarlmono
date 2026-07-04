@@ -109,7 +109,6 @@ func (s *askpassServer) handle(conn net.Conn) {
 	defer conn.Close()
 	var req askpass.Request
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
-		//nolint:gosec // G117: askpass.Response returns the requested credential to a local-only unix-socket client by design.
 		_ = json.NewEncoder(conn).Encode(askpass.Response{Error: "invalid askpass request"})
 		return
 	}
@@ -118,17 +117,16 @@ func (s *askpassServer) handle(conn net.Conn) {
 	send := s.send
 	s.mu.RUnlock()
 	if send == nil {
-		//nolint:gosec // G117: askpass.Response returns the requested credential to a local-only unix-socket client by design.
 		_ = json.NewEncoder(conn).Encode(askpass.Response{Error: "askpass UI is not ready"})
 		return
 	}
 	send(askpassPromptMsg{Prompt: req.Prompt, Reply: reply})
 	select {
 	case resp := <-reply:
-		//nolint:gosec // G117: askpass.Response returns the requested credential to a local-only unix-socket client by design.
+
 		_ = json.NewEncoder(conn).Encode(resp)
 	case <-s.ctx.Done():
-		//nolint:gosec // G117: askpass.Response returns the requested credential to a local-only unix-socket client by design.
+
 		_ = json.NewEncoder(conn).Encode(askpass.Response{Error: "askpass cancelled"})
 	}
 }

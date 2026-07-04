@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -260,10 +261,5 @@ func TestPolicyWithExecPath(t *testing.T) {
 }
 
 func contains(paths []string, p string) bool {
-	for _, e := range paths {
-		if e == p {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(paths, p)
 }

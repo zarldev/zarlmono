@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -150,8 +149,8 @@ func TestHeadlessRecorder_PersistsVerifierResult(t *testing.T) {
 func TestHeadlessRecorder_NilIsNoOp(t *testing.T) {
 	var rec *headlessRecorder // no store configured
 	// None of these must panic or touch a store.
-	rec.start(context.Background(), "p", "prov", "model")
-	rec.progress(context.Background(), 1, 2)
-	rec.attempt(context.Background(), pursue.AttemptReport{})
-	rec.complete(context.Background(), runner.TaskResult{Reason: runner.TerminalCompleted})
+	rec.start(t.Context(), "p", "prov", "model")
+	rec.progress(t.Context(), 1, 2)
+	rec.attempt(t.Context(), pursue.AttemptReport{})
+	rec.complete(t.Context(), runner.TaskResult{Reason: runner.TerminalCompleted})
 }

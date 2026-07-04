@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/chromedp/chromedp v0.15.1
 	github.com/joho/godotenv v1.5.1
-	github.com/zarldev/zarlmono/zkit v0.1.2
+	github.com/zarldev/zarlmono/zkit v0.2.0
 )
 
 require (

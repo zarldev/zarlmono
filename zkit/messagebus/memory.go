@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -404,10 +405,5 @@ func (s *memorySubscription[T]) Unsubscribe() error {
 func (s *memorySubscription[T]) IsValid() bool {
 	s.bus.mu.RLock()
 	defer s.bus.mu.RUnlock()
-	for _, sub := range s.bus.subscriptions[s.subject] {
-		if sub == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.bus.subscriptions[s.subject], s)
 }

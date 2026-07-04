@@ -177,18 +177,18 @@ func extractTagged(text, open, closeTag string, calls *[]llm.ToolCall) string {
 			return text
 		}
 		rest := text[start+len(open):]
-		end := strings.Index(rest, closeTag)
-		if end < 0 {
+		before, after, ok := strings.Cut(rest, closeTag)
+		if !ok {
 			return text
 		}
-		block := stripJSONFence(rest[:end])
+		block := stripJSONFence(before)
 		if blockCalls := parseNestedFunctionArray(block); len(blockCalls) > 0 {
 			*calls = append(*calls, blockCalls...)
 		} else if blockCalls := parseFlatFunctionArray(block); len(blockCalls) > 0 {
 			*calls = append(*calls, blockCalls...)
 		}
 		// Continue after the close tag to handle multiple blocks
-		text = rest[end+len(closeTag):]
+		text = after
 	}
 }
 

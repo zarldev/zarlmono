@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"regexp"
@@ -176,8 +177,8 @@ func (t *BashTool) Definition() tools.ToolSpec {
 // append the exit code; the ProcessEffect carries timeout/truncation
 // flags.
 func (t *BashTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args BashArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[BashArgs](call.Arguments)
+	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
 	}
 	if args.Command == "" {
@@ -492,8 +493,6 @@ func cloneEnvMap(in map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }

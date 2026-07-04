@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -54,6 +55,8 @@ type Launch struct {
 	Headless  bool
 	Prompt    string // pre-resolved in Main from --prompt-file/--prompt-text
 	MaxIter   int
+	PprofAddr string
+	TraceFile string
 }
 
 // Name identifies the program to the zapp harness (errors, signals).
@@ -101,6 +104,20 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		return nil, fmt.Errorf("settings: %w", err)
 	}
 	_ = app.AddCloser("settings", settings)
+	perf, err := startPerf(perfOptions{
+		pprofAddr: firstNonEmpty(strings.TrimSpace(p.PprofAddr), settings.PprofAddr(ctx)),
+		traceFile: firstNonEmpty(strings.TrimSpace(p.TraceFile), settings.TraceFile(ctx)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("perf: %w", err)
+	}
+	_ = app.AddCloser("perf", closerFunc(func() error {
+		if err := perf.stop(); err != nil {
+			slog.DebugContext(ctx, "stop perf profiling", "error", err)
+			return err
+		}
+		return nil
+	}))
 
 	// Kernel sandbox for shell commands: Landlock filesystem allow-list
 	// rooted at the workspace (zkit/agent/sandbox). One instance shared
@@ -362,6 +379,15 @@ func resolveMCPAuthToken(ctx context.Context, settings *engine.Settings, srv db.
 		fmt.Fprintf(os.Stderr, "mcp: migrate token for %q to vault: %v\n", srv.Name, err)
 	}
 	return srv.AuthToken
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // selectThemeByName resolves a theme name to a builtin theme, falling back to

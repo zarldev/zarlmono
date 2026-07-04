@@ -19,6 +19,7 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = mm.(*UI)
 
+	m.composer.insert("/")
 	out := ansi.Strip(m.View().Content)
 	title := strings.SplitN(out, "\n", 2)[0]
 	if !strings.HasPrefix(title, "┌") {
@@ -36,6 +37,11 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 			t.Errorf("timeline title should not include %q:\n%s", unwanted, title)
 		}
 	}
+	if !strings.Contains(out, "slash commands") || !strings.Contains(out, "/clear") || !strings.Contains(out, "/help") {
+		t.Fatalf("status should show slash commands while composing '/':\n%s", out)
+	}
+	m.composer.setText("")
+	out = ansi.Strip(m.View().Content)
 	for _, want := range []string{"enter submit", "shift+enter", "ctrl+c quit", "ctrl+q clear", "ctrl+g"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status missing %q:\n%s", want, out)

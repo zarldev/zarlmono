@@ -369,7 +369,7 @@ func (p *Provider) buildConfig(req llm.CompletionRequest) *genai.GenerateContent
 	// server apply the model's own default — matching openai/anthropic,
 	// which both gate on Temperature > 0.
 	if req.Temperature > 0 {
-		cfg.Temperature = genai.Ptr(req.Temperature)
+		cfg.Temperature = new(req.Temperature)
 	}
 	if req.MaxTokens > 0 {
 		if req.MaxTokens > math.MaxInt32 {

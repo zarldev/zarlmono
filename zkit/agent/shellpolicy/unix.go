@@ -177,8 +177,8 @@ func appendPart(b *strings.Builder, p syntax.WordPart) bool {
 // flag (-1, -20) to -*. This keeps the IR's CommandFlags small and
 // stable across calls that vary only in the numeric or value tail.
 func normalizeFlag(raw string) string {
-	if idx := strings.Index(raw, "="); idx != -1 {
-		return raw[:idx]
+	if before, _, ok := strings.Cut(raw, "="); ok {
+		return before
 	}
 	if isNumericFlag(raw) {
 		return "-*"

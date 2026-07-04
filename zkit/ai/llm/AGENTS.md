@@ -32,7 +32,7 @@ Every provider's `Complete` MUST:
 
 Carries `Messages`, `Temperature`, `MaxTokens`, `Stream`, `Tools`, plus four escape hatches:
 
-- **`ChatTemplateKwargs`** — wire-level extension for llama.cpp / vLLM (`chat_template_kwargs`); built from the chat template's thinking kwargs for Qwen3-style loops. Providers that don't recognize it drop it.
+- **`ChatTemplateKwargs`** — typed payload for the llama.cpp / vLLM `chat_template_kwargs` extension; built from the chat template's thinking kwargs for Qwen3-style loops and rendered to a raw map only at provider transport edges. Providers that don't recognize it drop it.
 - **`ResponseFormat`** — pins output shape via JSON Schema. On OpenAI this hits structured output; on llama.cpp it triggers GBNF-constrained sampling (the model literally cannot emit a token sequence violating the schema, including invented enum values). Anthropic and Google ignore this field.
 - **`Thinking`** — toggles extended reasoning, mapped to each provider's native mechanism (Anthropic budget, Gemini config, OpenAI/codex effort, llama.cpp kwargs). Providers that surface reasoning unconditionally ignore the toggle.
 - **`Options ModelOptions`** — a `map[string]any` escape hatch. Reach for it only when a feature isn't worth a typed field yet; typed fields graduate when a second consumer wants the same thing.

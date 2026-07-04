@@ -26,10 +26,7 @@ func iterationContext(ctx context.Context, timeout time.Duration) (context.Conte
 // a sane minimum) so the actual cancellation lands within ~25% of the
 // configured budget.
 func watchStreamIdle(iterCtx context.Context, cancel context.CancelFunc, last *atomicTime, threshold time.Duration) {
-	tick := threshold / 4
-	if tick < time.Second {
-		tick = time.Second
-	}
+	tick := max(threshold/4, time.Second)
 	t := time.NewTicker(tick)
 	defer t.Stop()
 	for {

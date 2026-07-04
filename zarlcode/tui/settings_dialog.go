@@ -182,8 +182,15 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "command to edit agents/skills (may carry flags, e.g. 'code -w'). empty falls back to $ZARLCODE_EDITOR / $VISUAL / $EDITOR, then vi."},
 				{label: "web tools", key: prefs.KeyEnableWeb, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register web_search + web_fetch. off drops both from the tool surface for a leaner local-model setup."},
+				{label: "local web_search service", kind: rowAction, def: "SearXNG",
+					desc: "install/start the optional bundled SearXNG Docker Compose service for web_search. model servers stay external.",
+					open: func(*engine.Settings) dialog { return newServiceDialog(ctx) }},
 				{label: "mcp tools", key: prefs.KeyEnableMCP, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register the mcp_connect/disconnect/list tools. off drops MCP management from the tool surface."},
+				{label: "pprof address", key: prefs.KeyPprofAddr, kind: rowText, def: "(off)",
+					desc: "optional listen address for Go pprof + runtime metrics, e.g. 127.0.0.1:6060. applies on restart; CLI -pprof overrides."},
+				{label: "trace file", key: prefs.KeyTraceFile, kind: rowText, def: "(off)",
+					desc: "optional Go execution trace output path. applies on restart; CLI -trace overrides."},
 			}},
 			{name: "mcp", mcp: true},
 			{name: "processes", rows: []settingsRow{
@@ -723,7 +730,14 @@ func (d *settingsDialog) activateModel() action {
 	}
 	items = append(items, modelCustomSentinel)
 	items = append(items, opts...)
-	return actionPush{d: newListPicker("models · "+p, items, d.curRow().value, func(choice string) {
+	meta := newModelInfoResolver(d.s)
+	right := func(item string) string {
+		if item == modelCustomSentinel || item == compactActiveSentinel {
+			return ""
+		}
+		return meta.summary(p, item)
+	}
+	return actionPush{d: newListPickerWithRight("models · "+p, items, d.curRow().value, func(choice string) {
 		switch choice {
 		case modelCustomSentinel:
 			d.startEdit()
@@ -732,7 +746,7 @@ func (d *settingsDialog) activateModel() action {
 		default:
 			d.commit(key, choice)
 		}
-	})}
+	}, right)}
 }
 
 // modelHintFor is the trailing badge on a model row: the fetch state or the

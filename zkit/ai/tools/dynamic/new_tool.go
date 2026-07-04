@@ -82,8 +82,8 @@ func (t *NewToolTool) Definition() tools.ToolSpec {
 // tools/<name>/main.go — refusing to overwrite an existing file unless
 // replace=true — then hands off to BuildTool.Execute under the same call ID.
 func (t *NewToolTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args NewToolArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
+	args, derr := tools.DecodeArgs[NewToolArgs](call.Arguments)
+	if derr != nil {
 		return failureResult(call.ID, derr.Error()), nil
 	}
 	name := strings.TrimSpace(args.Name)
@@ -158,7 +158,7 @@ func (t *NewToolTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.
 // lines so the LLM can use them for readability.
 func parseImports(raw string) []string {
 	var out []string
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		s := strings.TrimSpace(line)
 		if s == "" {
 			continue

@@ -21,6 +21,7 @@ import (
 type LsTool struct {
 	ws                    Workspace
 	allowOutsideWorkspace bool
+	tool                  tools.Tool
 }
 
 // LsArgs is the typed argument struct LsTool.Execute decodes into
@@ -38,21 +39,14 @@ func NewLsTool(ws Workspace, opts ...ReadOption) *LsTool {
 	for _, opt := range opts {
 		opt(&policy)
 	}
-	return &LsTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
+	t := &LsTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
+	t.tool = tools.NewTyped(lsSpec(), t.executeTyped)
+	return t
 }
 
 // Definition advertises ls with optional path, show_hidden, and a
 // labeled|json output enum; listing never mutates.
-func (t *LsTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
-		Name: ToolNameLs,
-		Description: "List a workspace directory (one level, non-recursive). Returns labelled plaintext " +
-			"(one entry per line, with size and type); set output=\"json\" for a [{name, type, size}] array " +
-			"instead. Dotfiles are excluded unless `show_hidden: true`. Use `glob` for recursive path " +
-			"enumeration and `read` to fetch contents.",
-		Parameters: tools.SchemaFor[LsArgs](),
-	}
-}
+func (t *LsTool) Definition() tools.ToolSpec { return lsSpec() }
 
 // Entry-type values carried in lsEntry.Type and surfaced in the JSON
 // output. Named so the classifier and the renderer agree on the spelling.
@@ -142,21 +136,32 @@ func collectLsEntries(ws Workspace, allowOutsideWorkspace bool, args LsArgs) ([]
 // reads a single level only, skips dotfiles unless show_hidden,
 // classifies entries as file/dir/symlink, and returns them sorted by
 // name in the requested output format.
-func (t *LsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	var args LsArgs
-	if derr := tools.DecodeArgs(call.Arguments, &args); derr != nil {
-		return tools.Failure(call.ID, derr), nil
+func (t *LsTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	return t.tool.Execute(ctx, call)
+}
+
+func lsSpec() tools.ToolSpec {
+	return tools.ToolSpec{
+		Name: ToolNameLs,
+		Description: "List a workspace directory (one level, non-recursive). Returns labelled plaintext " +
+			"(one entry per line, with size and type); set output=\"json\" for a [{name, type, size}] array " +
+			"instead. Dotfiles are excluded unless `show_hidden: true`. Use `glob` for recursive path " +
+			"enumeration and `read` to fetch contents.",
+		Parameters: tools.SchemaFor[LsArgs](),
 	}
+}
+
+func (t *LsTool) executeTyped(_ context.Context, args LsArgs) (LsResult, error) {
 	entries, displayPath, err := collectLsEntries(t.ws, t.allowOutsideWorkspace, args)
 	if err != nil {
-		return tools.Failure(call.ID, err), nil
+		return LsResult{}, err
 	}
-	return tools.Success(call.ID, LsResult{
+	return LsResult{
 		Entries:    entries,
 		Path:       displayPath,
 		ShowHidden: args.ShowHidden,
 		Output:     args.Output.Resolve(),
-	}), nil
+	}, nil
 }
 
 // renderLsLabeled formats entries as the canonical labelled-output shape:

@@ -95,14 +95,8 @@ func compactHunks(script []diffLine, contextLines int) []diffHunk {
 			break
 		}
 
-		start := i - contextLines
-		if start < 0 {
-			start = 0
-		}
-		end := i + contextLines + 1
-		if end > len(script) {
-			end = len(script)
-		}
+		start := max(i-contextLines, 0)
+		end := min(i+contextLines+1, len(script))
 
 		i++
 		for {
@@ -112,10 +106,7 @@ func compactHunks(script []diffLine, contextLines int) []diffHunk {
 			if i >= len(script) || i > end+contextLines {
 				break
 			}
-			end = i + contextLines + 1
-			if end > len(script) {
-				end = len(script)
-			}
+			end = min(i+contextLines+1, len(script))
 			i++
 		}
 

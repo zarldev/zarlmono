@@ -47,7 +47,7 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	}}
 	plan := true // toggled below to prove the filter reads it live
 	src := NewModeFilteredSource(inner, func() bool { return plan })
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// --- PLAN: read-only surface ---
 	names := listedNames(src)

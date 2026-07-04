@@ -346,7 +346,7 @@ func gitWriteTargets(args []*syntax.Word) []string {
 		}
 		// `--git-dir=foo` is self-contained; `--git-dir foo` / `-C foo`
 		// consume the next token; anything else is a standalone flag.
-		if eq := strings.IndexByte(w, '='); eq >= 0 {
+		if found := strings.Contains(w, "="); found {
 			i++
 			continue
 		}

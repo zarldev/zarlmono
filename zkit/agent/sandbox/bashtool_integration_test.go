@@ -3,7 +3,6 @@
 package sandbox_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,7 +82,7 @@ func TestBackgroundProcessSandboxed(t *testing.T) {
 		t.Fatal(err)
 	}
 	pm := code.NewProcessManager(ws, code.WithProcessSandbox(sb))
-	defer pm.Close(context.Background())
+	defer pm.Close(t.Context())
 
 	id, err := pm.StartProcess("touch " + filepath.Join(outside, "bg-escape") + "; touch inside-ok")
 	if err != nil {

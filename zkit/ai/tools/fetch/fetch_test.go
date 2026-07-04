@@ -1,7 +1,6 @@
 package fetch_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -44,7 +43,7 @@ func TestDefinition_Shape(t *testing.T) {
 // TestDecodeAndValidate covers arg-validation boundaries.
 func TestDecodeAndValidate(t *testing.T) {
 	tool := fetch.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tests := []struct {
 		name    string

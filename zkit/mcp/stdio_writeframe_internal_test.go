@@ -42,7 +42,7 @@ func TestStdioWriteFrameUnblocksOnCtxCancel(t *testing.T) {
 		pending: make(map[string]chan rpcResponse),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	done := make(chan error, 1)

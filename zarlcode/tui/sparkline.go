@@ -57,10 +57,7 @@ func sparkline(vals []float64, width int, normMax float64, c, markC theme.Color,
 
 	var b strings.Builder
 	for i, v := range win {
-		level := int(v / top * float64(len(sparkBlocks)-1))
-		if level < 0 {
-			level = 0
-		}
+		level := max(int(v/top*float64(len(sparkBlocks)-1)), 0)
 		if level >= len(sparkBlocks) {
 			level = len(sparkBlocks) - 1
 		}

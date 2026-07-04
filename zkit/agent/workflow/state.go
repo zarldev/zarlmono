@@ -1,5 +1,7 @@
 package workflow
 
+import "maps"
+
 // State records workflow execution data.
 type State struct {
 	Input   any
@@ -14,8 +16,6 @@ func (s State) clone() State {
 	out := s
 	out.Path = append([]string(nil), s.Path...)
 	out.Values = map[string]any{}
-	for k, v := range s.Values {
-		out.Values[k] = v
-	}
+	maps.Copy(out.Values, s.Values)
 	return out
 }
