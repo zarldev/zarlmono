@@ -86,6 +86,7 @@ jobs:
     env:
       HOMEBREW_APP_ID: ${{ secrets.HOMEBREW_APP_ID }}
       HOMEBREW_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+      HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
     steps:
       - uses: actions/checkout@v6
       - name: setup go
@@ -151,8 +152,10 @@ jobs:
           private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
           owner: zarldev
           repositories: homebrew-tap
-      - name: update homebrew tap
+      - name: update homebrew tap with app token
+        id: update-homebrew-tap-app
         if: ${{ steps.homebrew-app-token.outcome == 'success' && steps.homebrew-app-token.outputs.token != '' }}
+        continue-on-error: true
         env:
           HOMEBREW_TAP_APP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
@@ -173,3 +176,28 @@ jobs:
           git -C "$tmpdir" add Formula/zarlcode.rb
           git -C "$tmpdir" commit -m "zarlcode ${TAG#zarlcode/}"
           git -C "$tmpdir" push
+
+      - name: update homebrew tap with deploy key
+        if: ${{ steps.update-homebrew-tap-app.outcome != 'success' && env.HOMEBREW_TAP_SSH_KEY != '' }}
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          keyfile="$tmpdir/homebrew_tap_key"
+          trap 'rm -rf "$tmpdir"' EXIT
+          printf '%s\n' "$HOMEBREW_TAP_SSH_KEY" > "$keyfile"
+          chmod 600 "$keyfile"
+          export GIT_SSH_COMMAND="ssh -i $keyfile -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:zarldev/homebrew-tap.git "$tmpdir/tap"
+          mkdir -p "$tmpdir/tap/Formula"
+          cp homebrew/zarlcode.rb "$tmpdir/tap/Formula/zarlcode.rb"
+          if git -C "$tmpdir/tap" diff --quiet -- Formula/zarlcode.rb; then
+            echo "homebrew tap already up to date"
+            exit 0
+          fi
+          git -C "$tmpdir/tap" config user.name "github-actions[bot]"
+          git -C "$tmpdir/tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tmpdir/tap" add Formula/zarlcode.rb
+          git -C "$tmpdir/tap" commit -m "zarlcode ${TAG#zarlcode/}"
+          git -C "$tmpdir/tap" push
