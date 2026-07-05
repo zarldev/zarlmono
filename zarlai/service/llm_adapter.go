@@ -247,7 +247,7 @@ func finalizeStreamToolCalls(raw []llm.ToolCall, content, label string) ([]ToolC
 
 // templateKwargs renders a ChatTemplate's thinking kwargs into the
 // provider-neutral chat_template_kwargs map zkit serialises onto the wire.
-func templateKwargs(t ChatTemplate, reasoning bool) map[string]any {
+func templateKwargs(t ChatTemplate, reasoning bool) llm.ChatTemplateKwargs {
 	kw := t.ThinkingKwargs(reasoning)
-	return map[string]any{"enable_thinking": kw.EnableThinking}
+	return llm.ChatTemplateKwargs{EnableThinking: kw.EnableThinking}
 }
