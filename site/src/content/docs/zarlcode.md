@@ -15,7 +15,7 @@ work to sub-agents.
 
 ```bash
 # latest tagged release
-go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.4
+go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.6
 
 # or Homebrew
 brew install zarldev/tap/zarlcode

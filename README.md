@@ -18,7 +18,7 @@ Docs: **[zarldev.github.io/zarlmono](https://zarldev.github.io/zarlmono)**
 
 ```bash
 # install the latest tagged CLI
-go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.4
+go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.6
 
 # or via Homebrew
 brew install zarldev/tap/zarlcode
@@ -51,7 +51,7 @@ llama.cpp, Ollama, and OAuth-backed Claude Code / OpenAI Codex surfaces.
 ## Use zkit in your own Go app
 
 ```bash
-go get github.com/zarldev/zarlmono/zkit@v0.1.3
+go get github.com/zarldev/zarlmono/zkit@v0.2.1
 ```
 
 A minimal agent is an LLM provider, a tool registry, and the runner:
@@ -85,8 +85,11 @@ func (weather) Definition() tools.ToolSpec {
 }
 
 func (weather) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	city := call.Arguments.String("city", "")
-	return tools.Success(call.ID, city+": sunny, 21C"), nil
+	args, err := tools.DecodeArgs[weatherArgs](call.Arguments)
+	if err != nil {
+		return tools.Failure(call.ID, err), nil
+	}
+	return tools.Success(call.ID, args.City+": sunny, 21C"), nil
 }
 
 func main() {

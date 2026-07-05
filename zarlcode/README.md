@@ -21,7 +21,7 @@ Built on [`zkit`](../zkit/), the reusable Go agent toolkit in this repo.
 
 ```bash
 # latest tagged release
-go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.4
+go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.6
 
 # or Homebrew
 brew install zarldev/tap/zarlcode
@@ -274,6 +274,7 @@ zarlcode/
 ├── hooks/         # Workspace lifecycle hooks (OnToolResult, OnCompaction)
 ├── instructions/  # Workspace instruction loading (AGENTS.md, CLAUDE.md, etc.)
 ├── prompts/       # System prompt templates (system.md, plan.md, init.md)
+├── services/      # Optional local service lifecycle helpers (for example bundled web_search)
 ├── home/          # Materialises ~/.zarlcode/ on first run
 └── version/       # Build-time version stamp (Version, Commit, Date)
 ```
