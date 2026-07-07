@@ -73,43 +73,50 @@ func buttonNames(targets []model.TargetDescriptor) []string {
 	return out
 }
 
-type distractorEntry struct {
-	Title   string   `json:"title"`
-	Choices []string `json:"choices"`
+type generatedQuestion struct {
+	SourceTitle  string   `json:"source_title"`
+	Question     string   `json:"question"`
+	Answer       string   `json:"answer"`
+	WrongAnswers []string `json:"wrong_answers"`
 }
 
-func generateDistractors(ctx context.Context, provider llm.Provider, summaries []wikiSummary) (map[string][]string, error) {
+func generateQuizQuestions(ctx context.Context, provider llm.Provider, summaries []wikiSummary) ([]quizQuestion, error) {
 	if len(summaries) == 0 {
-		return map[string][]string{}, nil
+		return nil, nil
 	}
 	var parts []string
 	for _, s := range summaries {
-		parts = append(parts, fmt.Sprintf("Title: %s\nSummary: %s", s.Title, normalize(s.Extract)))
+		parts = append(parts, fmt.Sprintf("Source title: %s\nSummary: %s", s.Title, normalize(s.Extract)))
 	}
-	prompt := fmt.Sprintf(`For each Wikipedia article below, generate exactly 3 plausible but incorrect answer choices
-that could realistically be confused with the correct title. The distractors
-should be related topics, similar names, or common misconceptions.
+	prompt := fmt.Sprintf(`For each Wikipedia source below, generate one multiple-choice quiz question.
+The question must be answerable from general knowledge or from the source summary,
+but MUST NOT reveal the answer text in the question itself.
+
+For each source return:
+- source_title: the exact source title provided
+- question: a standalone question that does not contain the answer text
+- answer: the correct answer
+- wrong_answers: exactly 4 plausible but incorrect answers
 
 Return ONLY a JSON array with no extra text:
 [
-  {"title": "Article Title Here", "choices": ["Distractor A", "Distractor B", "Distractor C"]},
-  ...
+  {"source_title":"Exact Source Title","question":"Question text?","answer":"Correct answer","wrong_answers":["Wrong A","Wrong B","Wrong C","Wrong D"]}
 ]
 
-Articles:
+Sources:
 %s`, strings.Join(parts, "\n\n"))
 
+	slog.Debug("generating quiz questions", "articles", len(summaries))
 	seq, err := provider.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: "Output only valid JSON arrays. No markdown, no explanation."},
 			{Role: llm.RoleUser, Content: prompt},
 		},
-		MaxTokens:   2048,
+		MaxTokens:   4096,
 		Temperature: 0.7,
 	})
-	slog.Debug("generating distractors", "articles", len(summaries))
 	if err != nil {
-		return nil, fmt.Errorf("generate distractors: %w", err)
+		return nil, fmt.Errorf("generate quiz questions: %w", err)
 	}
 
 	var b strings.Builder
@@ -120,24 +127,56 @@ Articles:
 		b.WriteString(chunk.Content)
 	}
 	raw := b.String()
-	slog.Debug("distractor response", "raw", raw)
+	slog.Debug("quiz generation response", "raw", raw)
 
-	var entries []distractorEntry
+	var entries []generatedQuestion
 	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
-		return nil, fmt.Errorf("parse distractors: %w\nraw: %s", err, raw)
+		return nil, fmt.Errorf("parse quiz questions: %w\nraw: %s", err, raw)
+	}
+	if len(entries) != len(summaries) {
+		return nil, fmt.Errorf("generated %d questions, want %d", len(entries), len(summaries))
 	}
 
-	out := make(map[string][]string, len(entries))
-	for _, e := range entries {
-		if len(e.Choices) != 3 {
-			slog.Warn("distractor entry has wrong choice count", "title", e.Title, "count", len(e.Choices))
+	questions := make([]quizQuestion, 0, len(entries))
+	for i, entry := range entries {
+		question, err := entry.toQuizQuestion(i)
+		if err != nil {
+			return nil, err
 		}
-		if len(e.Choices) > 0 {
-			out[e.Title] = e.Choices
+		questions = append(questions, question)
+		slog.Debug("quiz question", "q", i+1, "source_title", entry.SourceTitle, "answer", entry.Answer, "choices", question.Choices)
+	}
+	slog.Info("generated quiz questions", "count", len(questions))
+	return questions, nil
+}
+
+func (q generatedQuestion) toQuizQuestion(index int) (quizQuestion, error) {
+	question := strings.TrimSpace(q.Question)
+	answer := strings.TrimSpace(q.Answer)
+	if question == "" || answer == "" {
+		return quizQuestion{}, fmt.Errorf("generated question %q has empty question or answer", q.SourceTitle)
+	}
+	if strings.Contains(strings.ToLower(question), strings.ToLower(answer)) {
+		return quizQuestion{}, fmt.Errorf("generated question for %q reveals answer %q", q.SourceTitle, answer)
+	}
+
+	seen := map[string]bool{strings.ToLower(answer): true}
+	choices := []string{answer}
+	for _, wrong := range q.WrongAnswers {
+		wrong = strings.TrimSpace(wrong)
+		key := strings.ToLower(wrong)
+		if wrong == "" || seen[key] {
+			continue
 		}
+		seen[key] = true
+		choices = append(choices, wrong)
 	}
-	if len(out) < len(summaries) {
-		slog.Warn("distractors missing for some articles", "expected", len(summaries), "got", len(out))
+	if len(choices) != 5 {
+		return quizQuestion{}, fmt.Errorf("generated question for %q has %d unique choices, want 5", q.SourceTitle, len(choices))
 	}
-	return out, nil
+	return quizQuestion{
+		Prompt:  question,
+		Answer:  answer,
+		Choices: rotate(choices, index%len(choices)),
+	}, nil
 }

@@ -66,20 +66,6 @@ func fetchSummaries(ctx context.Context, n int) ([]wikiSummary, error) {
 	return summaries, nil
 }
 
-func buildQuiz(summaries []wikiSummary, distractors map[string][]string) []quizQuestion {
-	slog.Info("building quiz questions", "summaries", len(summaries))
-	questions := make([]quizQuestion, 0, len(summaries))
-	for i, s := range summaries {
-		choices := append([]string{s.Title}, distractors[s.Title]...)
-		questions = append(questions, quizQuestion{
-			Prompt:  "Which Wikipedia article does this summary describe?\n\n" + normalize(s.Extract),
-			Answer:  s.Title,
-			Choices: rotate(choices, i%4),
-		})
-		slog.Debug("quiz question", "q", i+1, "title", s.Title, "choices", choices)
-	}
-	return questions
-}
 func fetchRandomSummary(ctx context.Context, client *zhttp.Client) (wikiSummary, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wikiRandomURL, nil)
 	if err != nil {

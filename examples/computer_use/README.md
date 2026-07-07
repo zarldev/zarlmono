@@ -3,14 +3,12 @@
 This example demonstrates the universal computer-use flow with a visible browser:
 
 1. Fetch random Wikipedia summaries with `zhttp`.
-2. Ask an LLM to generate plausible distractors for each summary.
-3. Serve a local multiple-choice quiz.
+2. Ask an LLM to generate standalone quiz questions, one correct answer, and four plausible wrong answers from those summaries.
+3. Serve a local multiple-choice quiz that does not show the raw Wikipedia extract.
 4. Use `computer_observe` to read the browser UI.
 5. Ask the LLM to choose one of the observed answer buttons.
 6. Use `computer_act` to click the selected answer.
-
 The example intentionally drives the typed tool registry directly instead of a full agent loop so the observe → LLM → act workflow is easy to follow.
-
 ## Requirements
 
 - Chrome or Chromium.
@@ -68,17 +66,15 @@ Set the normal zlog/log-level environment used by your shell profile if you want
 
 ```text
 fetching random wikipedia summaries
-building quiz questions
+generated quiz questions
 navigating to quiz
 question answered
 quiz complete
 ```
-
 ## Files
 
 - `main.go` — CLI flags and top-level orchestration.
 - `harness.go` — browser session, tool registration, and observe → LLM → act loop.
-- `llm.go` — LLM provider setup, answer selection, and distractor generation.
-- `wiki.go` — Wikipedia fetching and quiz construction.
-- `server.go` — local quiz web page.
+- `llm.go` — LLM provider setup, answer selection, and quiz-question generation.
+- `wiki.go` — Wikipedia fetching.- `server.go` — local quiz web page.
 - `tools.go` — typed tool-call helper.

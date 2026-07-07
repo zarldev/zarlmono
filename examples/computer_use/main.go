@@ -55,12 +55,11 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "wikipedia:", err)
 		return 1
 	}
-	distractors, err := generateDistractors(ctx, provider, summaries)
+	questions, err := generateQuizQuestions(ctx, provider, summaries)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "distractors:", err)
+		fmt.Fprintln(os.Stderr, "quiz generation:", err)
 		return 1
 	}
-	questions := buildQuiz(summaries, distractors)
 	url, shutdown, err := serveQuizPage(questions)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
