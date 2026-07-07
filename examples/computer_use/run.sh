@@ -11,4 +11,5 @@ exec go run ./examples/computer_use \
   -provider "$LLM_PROVIDER" \
   -model "$LLM_MODEL" \
   -headless=false \
-  -pause "${PAUSE:-30s}" \  "$@"
+  -pause "${PAUSE:-30s}" \
+  "$@"
