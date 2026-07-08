@@ -3,6 +3,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
 // liveTurnFinishedMsg is emitted by RunFn once a turn's conversation history is
@@ -17,8 +18,12 @@ type liveTurnFinishedMsg struct{}
 // the sink's pump. It is a package func, not a method, because RunFn must live
 // in the TUI (it returns a tea.Cmd) while LiveRunner lives in the engine.
 func RunFn(l *engine.LiveRunner, prompt string) tea.Cmd {
+	return RunFnWithAttachments(l, prompt, nil)
+}
+
+func RunFnWithAttachments(l *engine.LiveRunner, prompt string, attachments []llm.ContentPart) tea.Cmd {
 	return func() tea.Msg {
-		if err := l.RunTurn(prompt); err != nil {
+		if err := l.RunTurnWithAttachments(prompt, attachments); err != nil {
 			return turnSetupFailedMsg{Prompt: prompt, Error: err.Error()}
 		}
 		return liveTurnFinishedMsg{}

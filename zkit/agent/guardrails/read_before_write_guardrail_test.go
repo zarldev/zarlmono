@@ -1,6 +1,7 @@
 package guardrails_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
@@ -50,6 +51,32 @@ func TestReadBeforeWriteGuardrail_AllowsWriteAfterDirContext(t *testing.T) {
 	call := tools.ToolCall{ToolName: code.ToolNameWrite, Arguments: tools.ToolParameters{"path": "pkg/new.go"}}
 	if err := g.Before(ctx, call); err != nil {
 		t.Fatalf("want dir listing to unlock new-file write, got %v", err)
+	}
+}
+
+func TestReadBeforeWriteGuardrail_AllowsWriteAfterGlobContext(t *testing.T) {
+	ctx := t.Context()
+	ledger := runner.NewMemoryTaskCallLedger()
+	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameGlob, tools.ToolParameters{"pattern": "zkit/ai/llm/media*"})
+	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
+	call := tools.ToolCall{ToolName: code.ToolNameWrite, Arguments: tools.ToolParameters{"path": "zkit/ai/llm/media/image.go"}}
+	if err := g.Before(ctx, call); err != nil {
+		t.Fatalf("want glob context to unlock new-file write, got %v", err)
+	}
+}
+
+func TestReadBeforeWriteGuardrail_WriteNudgeDiscouragesShellFallback(t *testing.T) {
+	ledger := runner.NewMemoryTaskCallLedger()
+	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
+	call := tools.ToolCall{ToolName: code.ToolNameWrite, Arguments: tools.ToolParameters{"path": "pkg/new.go"}}
+	err := g.Before(t.Context(), call)
+	if err == nil {
+		t.Fatal("want nudge")
+	}
+	for _, want := range []string{"ls/glob/read", "call write", "do not fall back to bash/python"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("nudge missing %q: %v", want, err)
+		}
 	}
 }
 

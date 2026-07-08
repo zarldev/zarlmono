@@ -110,6 +110,7 @@ func FetchModels(ctx context.Context, tokens TokenSource, baseURL string) ([]llm
 				SupportsSystem:    true,
 				SupportsThinking:  true,
 				SupportsVision:    true,
+				SupportsVideo:     true,
 			},
 		})
 	}

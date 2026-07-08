@@ -449,9 +449,7 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 			continue
 
 		case llm.RoleUser:
-			if msg.Content != "" {
-				pendingUser = append(pendingUser, anthropic.NewTextBlock(msg.Content))
-			}
+			appendUserContent(&pendingUser, msg)
 
 		case llm.RoleTool:
 			// A tool result rides on a user message as a tool_result block,
@@ -490,6 +488,54 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 	flushUser()
 
 	return sdkMessages
+}
+
+func appendUserContent(blocks *[]anthropic.ContentBlockParamUnion, msg llm.Message) {
+	if msg.Content != "" {
+		*blocks = append(*blocks, anthropic.NewTextBlock(msg.Content))
+	}
+	for _, part := range msg.Parts {
+		switch part.Type {
+		case llm.ContentTypeText:
+			if part.Text != "" {
+				*blocks = append(*blocks, anthropic.NewTextBlock(part.Text))
+			}
+		case llm.ContentTypeImage:
+			block, ok := anthropicImageBlock(part.Image)
+			if ok {
+				*blocks = append(*blocks, block)
+			}
+		}
+	}
+}
+
+func anthropicImageBlock(img *llm.ImageData) (anthropic.ContentBlockParamUnion, bool) {
+	if img == nil {
+		return anthropic.ContentBlockParamUnion{}, false
+	}
+	if img.DataURI != "" {
+		mime, data, ok := splitDataURI(img.DataURI)
+		if !ok {
+			return anthropic.ContentBlockParamUnion{}, false
+		}
+		if img.MIMEType != "" {
+			mime = img.MIMEType
+		}
+		return anthropic.NewImageBlockBase64(mime, data), true
+	}
+	if img.URL != "" {
+		return anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: img.URL}), true
+	}
+	return anthropic.ContentBlockParamUnion{}, false
+}
+
+func splitDataURI(uri string) (string, string, bool) {
+	const sep = ";base64,"
+	prefix, data, ok := strings.Cut(uri, sep)
+	if !ok || !strings.HasPrefix(prefix, "data:") || data == "" {
+		return "", "", false
+	}
+	return strings.TrimPrefix(prefix, "data:"), data, true
 }
 
 // applyResponseFormat maps the provider-neutral ResponseFormat onto

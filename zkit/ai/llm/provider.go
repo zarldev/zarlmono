@@ -199,6 +199,7 @@ type ResponseFormat struct {
 }
 
 // Message represents a single message in a conversation.
+// Includes vision/audio/video-capable parts for user input.
 type Message struct {
 	Role    string `json:"role"` // Use messages.RoleSystem, messages.RoleUser, etc.
 	Content string `json:"content"`
@@ -213,8 +214,8 @@ type Message struct {
 	// contract.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
 
-	// Parts carries multimodal content (text + image + audio) for
-	// vision/audio-capable models. When non-nil, providers SHOULD send
+	// Parts carries multimodal content (text + image + audio + video) for
+	// vision/audio/video-capable models. When non-nil, providers SHOULD send
 	// Parts in preference to Content; if a provider doesn't support
 	// multimodal, it falls back to flattening the Text parts to
 	// Content. Parts is typically only set on role="user" messages —
@@ -244,10 +245,11 @@ const (
 	ContentTypeText  ContentPartType = "text"
 	ContentTypeImage ContentPartType = "image"
 	ContentTypeAudio ContentPartType = "audio"
+	ContentTypeVideo ContentPartType = "video"
 )
 
 // ContentPart is one element of a multimodal Message.Parts slice.
-// Exactly one of the typed fields (Text/Image/Audio) is meaningful per
+// Exactly one of the typed fields (Text/Image/Audio/Video) is meaningful per
 // instance; Type tells you which.
 type ContentPart struct {
 	Type ContentPartType `json:"type"`
@@ -260,6 +262,9 @@ type ContentPart struct {
 
 	// Audio is set when Type == ContentTypeAudio.
 	Audio *AudioData `json:"audio,omitempty"`
+
+	// Video is set when Type == ContentTypeVideo.
+	Video *VideoData `json:"video,omitempty"`
 }
 
 // ImageData is the image payload for an image content part. Either URL
@@ -282,6 +287,15 @@ type AudioData struct {
 	Format  string `json:"format,omitempty"`
 }
 
+// VideoData is the video payload for a video content part. Either URL
+// (remote http(s) URL) or DataURI ("data:video/...;base64,...") must be set;
+// providers prefer DataURI when both are present.
+type VideoData struct {
+	URL      string `json:"url,omitempty"`
+	DataURI  string `json:"data_uri,omitempty"`
+	MIMEType string `json:"mime_type,omitempty"`
+}
+
 // TextPart is a convenience constructor for a text ContentPart.
 func TextPart(text string) ContentPart {
 	return ContentPart{Type: ContentTypeText, Text: text}
@@ -300,6 +314,21 @@ func ImagePartFromDataURI(dataURI, mime string) ContentPart {
 // ContentPart referenced by remote URL.
 func ImagePartFromURL(url string) ContentPart {
 	return ContentPart{Type: ContentTypeImage, Image: &ImageData{URL: url}}
+}
+
+// VideoPartFromDataURI is a convenience constructor for a video
+// ContentPart backed by a base64 data URI.
+func VideoPartFromDataURI(dataURI, mime string) ContentPart {
+	return ContentPart{
+		Type:  ContentTypeVideo,
+		Video: &VideoData{DataURI: dataURI, MIMEType: mime},
+	}
+}
+
+// VideoPartFromURL is a convenience constructor for a video
+// ContentPart referenced by remote URL.
+func VideoPartFromURL(url string) ContentPart {
+	return ContentPart{Type: ContentTypeVideo, Video: &VideoData{URL: url}}
 }
 
 // Tool represents a function that the LLM can call.
@@ -399,6 +428,7 @@ type Model struct {
 type ModelCapabilities struct {
 	SupportsStreaming bool `json:"supports_streaming"`
 	SupportsVision    bool `json:"supports_vision"`   // Image input processing
+	SupportsVideo     bool `json:"supports_video"`    // Video input processing
 	SupportsTools     bool `json:"supports_tools"`    // Function/tool calling
 	SupportsSystem    bool `json:"supports_system"`   // System messages
 	SupportsThinking  bool `json:"supports_thinking"` // DeepSeek R1 style reasoning

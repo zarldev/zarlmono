@@ -32,6 +32,119 @@ func TestReadFileHLTool_RendersBase64SHA256Anchors(t *testing.T) {
 	}
 }
 
+func TestEditFileHLTool_BatchEditsApplyAtomically(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "batch.txt")
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\nfour\nfive\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "batch.txt",
+		Edits: []code.HashlineEdit{
+			{
+				StartLine: 2,
+				StartHash: testHashlineHash("two", 4),
+				EndLine:   3,
+				EndHash:   testHashlineHash("three", 4),
+				NewString: "TWO-THREE\n",
+			},
+			{
+				StartLine: 4,
+				StartHash: testHashlineHash("four", 4),
+				Mode:      "insert_after",
+				NewString: "after four\n",
+			},
+			{
+				StartLine: 5,
+				StartHash: testHashlineHash("five", 4),
+				Mode:      "delete",
+			},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("batch edit failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "one\nTWO-THREE\nfour\nafter four\n" {
+		t.Fatalf("content = %q", got)
+	}
+}
+
+func TestEditFileHLTool_BatchRejectsStaleWithoutWriting(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "batch-stale.txt")
+	original := "one\ntwo\nthree\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "batch-stale.txt",
+		Edits: []code.HashlineEdit{
+			{
+				StartLine: 1,
+				StartHash: testHashlineHash("one", 4),
+				NewString: "ONE\n",
+			},
+			{
+				StartLine: 3,
+				StartHash: testHashlineHash("missing", 4),
+				NewString: "THREE\n",
+			},
+		},
+	})
+	if res.Success {
+		t.Fatal("expected stale batch failure")
+	}
+	if res.Err == nil || res.Err.Kind != tools.Kinds.STALE {
+		t.Fatalf("expected STALE kind, got %v (%s)", res.Err, res.Error)
+	}
+	if got := readFile(t, path); got != original {
+		t.Fatalf("file changed on failed batch edit: %q", got)
+	}
+}
+
+func TestEditFileHLTool_BatchRejectsOverlappingRanges(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "batch-overlap.txt")
+	original := "one\ntwo\nthree\nfour\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "batch-overlap.txt",
+		Edits: []code.HashlineEdit{
+			{
+				StartLine: 1,
+				StartHash: testHashlineHash("one", 4),
+				EndLine:   3,
+				EndHash:   testHashlineHash("three", 4),
+				NewString: "A\n",
+			},
+			{
+				StartLine: 2,
+				StartHash: testHashlineHash("two", 4),
+				EndLine:   4,
+				EndHash:   testHashlineHash("four", 4),
+				NewString: "B\n",
+			},
+		},
+	})
+	if res.Success {
+		t.Fatal("expected overlapping batch failure")
+	}
+	if !strings.Contains(res.Error, "overlap") {
+		t.Fatalf("unexpected error: %s", res.Error)
+	}
+	if got := readFile(t, path); got != original {
+		t.Fatalf("file changed on failed batch edit: %q", got)
+	}
+}
+
 func TestReadFileHLTool_AllowsThreeCharacterHashes(t *testing.T) {
 	t.Parallel()
 	ws, root := mustWS(t)

@@ -146,6 +146,7 @@ func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model 
 				SupportsTools:    e.SupportsTools,
 				SupportsThinking: e.SupportsThinking,
 				SupportsVision:   e.SupportsVision,
+				SupportsVideo:    e.SupportsVideo,
 				// models.dev doesn't track streaming/system support —
 				// those are near-universal for hosted providers.
 				SupportsStreaming: true,

@@ -41,12 +41,10 @@ import (
 
 // RegisterStandardTools registers the standard workspace code-tool set onto
 // reg: the file tools (write, edit), the read/search tools (read, grep, ls,
-// glob), and the bash + process-management tools. The set is kept lean — one
-// tool per job, no competing variants. Deliberately NOT registered:
-// write_append (write + edit cover authoring; >256KB single files are rare),
-// and save_plan / save_plan_append (update_plan is the single planning
-// surface — the markdown archive was a second, competing plan system).
-// Re-add at the call site if a consumer genuinely needs them.
+// glob), bash + process-management tools, and the path-locked plan archive
+// tools (save_plan / save_plan_append). The set is kept lean — one tool per
+// job, no competing variants. Deliberately NOT registered: write_append (write
+// + edit cover authoring; >256KB single files are rare).
 //
 // The labelled variants are the default, matching the TUI; JSON siblings (the
 // format-switch) and the interactive-only tools (update_plan with its UI hook,
@@ -96,6 +94,8 @@ func RegisterStandardTools(reg *tools.Registry, ws code.Workspace, pm *code.Proc
 	reg.Register(code.NewGlobTool(ws, readOpts...))
 	reg.Register(code.NewFileMapTool(ws, readOpts...))
 	reg.Register(code.NewRetrieveCodeTool(ws, readOpts...))
+	reg.Register(code.NewSavePlanTool(ws))
+	reg.Register(code.NewSavePlanAppendTool(ws))
 }
 
 // toolsConfig collects RegisterStandardTools options.

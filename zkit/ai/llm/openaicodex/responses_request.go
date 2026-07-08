@@ -76,6 +76,7 @@ type contentPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
+	VideoURL string `json:"video_url,omitempty"`
 	Detail   string `json:"detail,omitempty"`
 }
 
@@ -318,6 +319,18 @@ func userContentParts(m llm.Message) []contentPart {
 		case llm.ContentTypeAudio:
 			// Codex doesn't currently accept audio on /responses;
 			// skip silently so we don't break the request body.
+		case llm.ContentTypeVideo:
+			if p.Video == nil {
+				continue
+			}
+			u := p.Video.DataURI
+			if u == "" {
+				u = p.Video.URL
+			}
+			if u == "" {
+				continue
+			}
+			parts = append(parts, contentPart{Type: "input_video", VideoURL: u})
 		}
 	}
 	return parts

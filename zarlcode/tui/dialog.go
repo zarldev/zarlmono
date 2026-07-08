@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -60,6 +61,11 @@ func (actionFetchModels) isAction() {}
 type actionEditFile struct{ path string }
 
 func (actionEditFile) isAction() {}
+
+// actionAttachImage attaches an image path to the next submitted prompt.
+type actionAttachImage struct{ path string }
+
+func (actionAttachImage) isAction() {}
 
 // actionRollback restores files from a recorded checkpoint after a confirmation
 // dialog. Empty path means rollback the whole turn.
@@ -168,6 +174,13 @@ func (m *UI) handleAction(a action) tea.Cmd {
 		return m.fetchModelsCmd(a.provider)
 	case actionEditFile:
 		return m.editFileCmd(a.path)
+	case actionAttachImage:
+		if err := m.attachImagePath(a.path); err != nil {
+			m.session.SetErrorToast(err.Error())
+		} else {
+			m.session.SetSuccessToast("attached " + filepath.Base(a.path) + " to next prompt")
+		}
+		return m.toastExpiryCmd()
 	case actionRollback:
 		return m.rollback(a.turnID, a.path)
 	case serviceAction:

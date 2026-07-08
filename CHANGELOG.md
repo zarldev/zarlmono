@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.3.0] — 2026-07-08
+
+`zkit/v0.3.0`
+
+### Added
+
+- Computer-use agent primitives, browser-backed observation/action flows, and computer action/observation tools for agent tool registries.
+- Multimodal image media helpers and provider conversion support for image-capable model requests.
+- Atomic batch support for anchored hashline edits so related same-file changes can be applied in one verified write.
+
+### Changed
+
+- Model metadata and capability plumbing now carries multimodal and computer-use hints through provider integrations.
+- Read-before-write guardrails account for prior successful writes/edits when validating follow-up file edits.
+- `golangci-lint` is pinned as a Go tool for reproducible lint checks.
+
+### Fixed
+
+- Browser computer backend cleanup and lint fixes across computer-use tooling.
+
+## [zarlcode/v0.2.0] — 2026-07-08
+
+`zarlcode/v0.2.0`
+
+### Added
+
+- Image attachment support in the TUI composer, transcript flow, and file viewer.
+- Browser computer backend wiring for live agent runs.
+- Multimodal prompt/context support for providers that accept images.
+
+### Changed
+
+- Editing guidance now prefers cohesive range or batch edits over many tiny adjacent edits.
+
+### Fixed
+
+- TUI layout and live-run plumbing fixes for multimodal/computer-use flows.
+
+## [examples/v0.2.0] — 2026-07-08
+
+`examples/v0.2.0`
+
+### Added
+
+- Computer-use Wikipedia quiz example with browser automation and LLM-generated questions.
+
+### Changed
+
+- Example lint/build flow now uses the repo-pinned lint tool.
+
 ## [v0.2.1] — 2026-06-29
 
 `zkit/v0.2.1`

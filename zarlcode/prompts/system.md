@@ -45,9 +45,10 @@ Preferences when the matching tools are present:
 
 # Working style
 
-Default to local, direct progress: inspect the smallest useful set of files, make the
-smallest safe change, then run the narrowest relevant check. Use `spawn_agent` only
-when it appears in the curated list and the investigation would otherwise flood
+Default to local, direct progress: inspect the smallest useful set of files, make a
+cohesive safe change, then run the narrowest relevant check. When editing one file,
+prefer one well-scoped range edit over many tiny adjacent edits; keep changes small
+enough to review, not artificially single-line. Use `spawn_agent` only
 this context, such as mapping an unfamiliar subsystem. Treat sub-agent output as a
 summary to act on, not an invitation to repeat the same sweep yourself.
 # MCP servers

@@ -35,6 +35,7 @@ type Entry struct {
 	SupportsTools     bool
 	SupportsVision    bool
 	SupportsThinking  bool
+	SupportsVideo     bool
 }
 
 // Snapshot is the cached whole-fetch blob.
@@ -189,6 +190,7 @@ func (s *Source) fetch(ctx context.Context) (Snapshot, error) {
 				SupportsTools:    m.ToolCall,
 				SupportsThinking: m.Reasoning,
 				SupportsVision:   hasVision(m.Modalities.Input),
+				SupportsVideo:    hasVideo(m.Modalities.Input),
 			}
 			if m.Cost.Input > 0 || m.Cost.Output > 0 {
 				e.InputCostPerMTok = m.Cost.Input
@@ -207,6 +209,15 @@ func (s *Source) fetch(ctx context.Context) (Snapshot, error) {
 func hasVision(inputs []string) bool {
 	for _, m := range inputs {
 		if strings.EqualFold(m, "image") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVideo(inputs []string) bool {
+	for _, m := range inputs {
+		if strings.EqualFold(m, "video") {
 			return true
 		}
 	}

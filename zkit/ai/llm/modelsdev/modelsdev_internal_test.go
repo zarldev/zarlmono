@@ -114,9 +114,9 @@ func TestSource_Lookup(t *testing.T) {
 	if e.MaxOutputTokens != 16384 {
 		t.Errorf("max_output = %d, want 16384", e.MaxOutputTokens)
 	}
-	if !e.SupportsTools || !e.SupportsVision || e.SupportsThinking {
-		t.Errorf("capabilities: tools=%v vision=%v thinking=%v, want true/true/false",
-			e.SupportsTools, e.SupportsVision, e.SupportsThinking)
+	if !e.SupportsTools || !e.SupportsVision || e.SupportsVideo || e.SupportsThinking {
+		t.Errorf("capabilities: tools=%v vision=%v video=%v thinking=%v, want true/true/false/false",
+			e.SupportsTools, e.SupportsVision, e.SupportsVideo, e.SupportsThinking)
 	}
 
 	// OpenAI — o3: reasoning model
@@ -154,14 +154,17 @@ func TestSource_Lookup(t *testing.T) {
 	if !e.SupportsVision {
 		t.Error("gemini-2.5-pro should support vision")
 	}
+	if !e.SupportsVideo {
+		t.Error("gemini-2.5-pro should support video")
+	}
 
 	// Google via alias "google-vertex"
 	e, ok = src.Lookup(t.Context(), "google-vertex", "gemini-2.5-flash")
 	if !ok {
 		t.Fatal("gemini-2.5-flash not found via 'google-vertex' alias")
 	}
-	if e.SupportsVision || e.SupportsThinking {
-		t.Error("gemini-2.5-flash should not have vision or thinking")
+	if e.SupportsVision || e.SupportsVideo || e.SupportsThinking {
+		t.Error("gemini-2.5-flash should not have vision, video, or thinking")
 	}
 
 	// DeepSeek
@@ -174,6 +177,9 @@ func TestSource_Lookup(t *testing.T) {
 	}
 	if e.SupportsVision {
 		t.Error("deepseek-reasoner should not support vision")
+	}
+	if e.SupportsVideo {
+		t.Error("deepseek-reasoner should not support video")
 	}
 
 	// Unknown model

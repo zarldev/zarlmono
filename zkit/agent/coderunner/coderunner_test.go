@@ -33,6 +33,7 @@ func TestRegisterStandardToolsRegistersTheToolSet(t *testing.T) {
 		code.ToolNameBash,
 		code.ToolNameRead, code.ToolNameWrite, code.ToolNameEdit,
 		code.ToolNameGrep, code.ToolNameLs, code.ToolNameGlob,
+		code.ToolNameSavePlan, code.ToolNameSavePlanAppend,
 	}
 	for _, name := range want {
 		if !got[name] {
