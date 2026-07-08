@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/chromedp/chromedp v0.15.1
 	github.com/joho/godotenv v1.5.1
-	github.com/zarldev/zarlmono/zkit v0.2.1
+	github.com/zarldev/zarlmono/zkit v0.3.0
 )
 
 require (
@@ -35,6 +35,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
+	github.com/lmittmann/tint v1.1.3 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
