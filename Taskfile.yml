@@ -61,7 +61,7 @@ tasks:
       - |
         for m in examples zkit zarlcode swebench-eval; do
           echo "==> golangci-lint ($m)"
-          (cd "$m" && golangci-lint run)
+          go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "./$m/..."
         done
 
   race:

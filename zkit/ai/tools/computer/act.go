@@ -134,7 +134,7 @@ func (a ActArgs) toModel() (model.ActionRequest, error) {
 
 func (t *Trigger) toModel() (*model.Trigger, error) {
 	if t == nil {
-		return nil, nil
+		return nil, tools.Validation("computer_act", "trigger is nil")
 	}
 	kind, err := model.ParseTriggerKind(t.Kind)
 	if err != nil {

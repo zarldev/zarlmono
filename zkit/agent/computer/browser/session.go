@@ -22,6 +22,11 @@ const (
 	defaultSettleWait    = 500 * time.Millisecond
 	defaultWidth         = 1280
 	defaultHeight        = 1024
+
+	chromeBinGoogleChrome    = "google-chrome"
+	chromeBinChromium        = "chromium"
+	chromeBinChromiumBrowser = "chromium-browser"
+	chromeBinChrome          = "chrome"
 )
 
 // Option configures a Session.
@@ -101,7 +106,7 @@ func New(ctx context.Context, opts ...Option) (*Session, error) {
 	s.cancel = browserCancel
 
 	if err := chromedp.Run(browserCtx); err != nil {
-		s.Close()
+		_ = s.Close()
 		return nil, fmt.Errorf("start chrome at %q: %w%s", resolvedChrome, err, s.chromeFailureSuffix())
 	}
 
@@ -258,27 +263,27 @@ func chromeCandidates() []string {
 		return []string{
 			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 			"/Applications/Chromium.app/Contents/MacOS/Chromium",
-			"google-chrome",
-			"chromium",
-			"chromium-browser",
-			"chrome",
+			chromeBinGoogleChrome,
+			chromeBinChromium,
+			chromeBinChromiumBrowser,
+			chromeBinChrome,
 		}
 	case "windows":
-		return []string{"chrome", "chrome.exe", "chromium", "chromium-browser", "google-chrome"}
+		return []string{chromeBinChrome, "chrome.exe", chromeBinChromium, chromeBinChromiumBrowser, chromeBinGoogleChrome}
 	default:
 		return []string{
 			"headless_shell",
 			"headless-shell",
-			"chromium",
-			"chromium-browser",
-			"google-chrome",
+			chromeBinChromium,
+			chromeBinChromiumBrowser,
+			chromeBinGoogleChrome,
 			"google-chrome-stable",
 			"google-chrome-beta",
 			"google-chrome-unstable",
 			"/usr/bin/google-chrome",
 			"/usr/local/bin/chrome",
 			"/snap/bin/chromium",
-			"chrome",
+			chromeBinChrome,
 		}
 	}
 }

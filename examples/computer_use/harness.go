@@ -68,7 +68,7 @@ func (h *quizHarness) click(ctx context.Context, answer string, untilText string
 	})
 }
 func (h *quizHarness) run(ctx context.Context, questions []quizQuestion, url string) (model.Observation, error) {
-	slog.Info("navigating to quiz", "url", url)
+	slog.InfoContext(ctx, "navigating to quiz", "url", url)
 	if _, err := h.navigate(ctx, url); err != nil {
 		return model.Observation{}, fmt.Errorf("navigate: %w", err)
 	}
@@ -86,7 +86,7 @@ func (h *quizHarness) run(ctx context.Context, questions []quizQuestion, url str
 		if err != nil {
 			return model.Observation{}, fmt.Errorf("llm answer: %w\nvisible text:\n%s", err, obs.VisibleText)
 		}
-		slog.Info("question answered", "question", i, "answer", answer)
+		slog.InfoContext(ctx, "question answered", "question", i, "answer", answer)
 
 		untilText := fmt.Sprintf("Question %d of %d", i+1, len(questions))
 		if i == len(questions) {
@@ -107,7 +107,7 @@ func pauseBeforeExit(ctx context.Context, pause time.Duration, headless bool) {
 	if pause <= 0 {
 		return
 	}
-	slog.Info("keeping browser open", "duration", pause)
+	slog.InfoContext(ctx, "keeping browser open", "duration", pause)
 	select {
 	case <-ctx.Done():
 	case <-time.After(pause):

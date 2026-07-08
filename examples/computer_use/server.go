@@ -23,11 +23,11 @@ func serveQuizPage(questions []quizQuestion) (string, func(), error) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, page)
 	})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err
 	}
-	server := &http.Server{Handler: mux}
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
 	go func() { _ = server.Serve(listener) }()
 	shutdown := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

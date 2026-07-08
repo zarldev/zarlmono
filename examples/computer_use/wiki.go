@@ -35,7 +35,7 @@ const wikiRandomURL = "https://en.wikipedia.org/api/rest_v1/page/random/summary"
 
 func fetchSummaries(ctx context.Context, n int) ([]wikiSummary, error) {
 	client := zhttp.NewClient(zhttp.WithUserAgent(wikiUserAgent))
-	slog.Info("fetching random wikipedia summaries", "count", n)
+	slog.InfoContext(ctx, "fetching random wikipedia summaries", "count", n)
 
 	summaries := make([]wikiSummary, 0, n)
 	seen := map[string]bool{}
@@ -50,14 +50,13 @@ func fetchSummaries(ctx context.Context, n int) ([]wikiSummary, error) {
 
 		summary, err := fetchRandomSummary(ctx, client)
 		if err != nil {
-			slog.Warn("wikipedia fetch failed, retrying", "attempt", attempts, "err", err)
+			slog.WarnContext(ctx, "wikipedia fetch failed, retrying", "attempt", attempts, "err", err)
 			continue
 		}
 		if summary.Title == "" || len(summary.Extract) < 80 || seen[summary.Title] {
 			continue
 		}
-		seen[summary.Title] = true
-		slog.Debug("fetched summary", "title", summary.Title)
+		slog.DebugContext(ctx, "fetched summary", "title", summary.Title)
 		summaries = append(summaries, summary)
 	}
 	if len(summaries) < n {
@@ -84,7 +83,7 @@ func fetchRandomSummary(ctx context.Context, client *zhttp.Client) (wikiSummary,
 }
 func rotate(values []string, n int) []string {
 	out := append([]string(nil), values...)
-	for i := 0; i < n; i++ {
+	for range n {
 		out = append(out[1:], out[0])
 	}
 	return out

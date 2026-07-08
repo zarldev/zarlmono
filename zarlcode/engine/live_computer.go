@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -54,7 +55,7 @@ func (c *liveComputer) Close() error {
 
 func (c *liveComputer) sessionFor(ctx context.Context) (computerSession, error) {
 	if c == nil || c.owner == nil {
-		return nil, fmt.Errorf("computer browser backend is not configured")
+		return nil, errors.New("computer browser backend is not configured")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

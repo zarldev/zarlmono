@@ -2,7 +2,6 @@ package computer_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	model "github.com/zarldev/zarlmono/zkit/agent/computer"
@@ -83,5 +82,3 @@ func (f fakeActor) Act(context.Context, model.ActionRequest) (model.Observation,
 	}
 	return model.Observation{Surface: model.SurfaceInfo{Kind: model.SurfaceKinds.BROWSER}}, nil
 }
-
-var errBoom = errors.New("boom")

@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/chromedp/chromedp"
@@ -38,7 +39,7 @@ func (s *Session) act(ctx context.Context, action computer.Action) error {
 	switch action.Kind {
 	case computer.ActionKinds.NAVIGATE:
 		if action.URL == "" {
-			return fmt.Errorf("navigate action requires url")
+			return errors.New("navigate action requires url")
 		}
 		if err := s.run(ctx,
 			chromedp.Navigate(action.URL),
@@ -64,7 +65,7 @@ func (s *Session) act(ctx context.Context, action computer.Action) error {
 			}
 		}
 		if action.Key == "" {
-			return fmt.Errorf("press action requires key")
+			return errors.New("press action requires key")
 		}
 		if err := s.run(ctx, chromedp.KeyEvent(action.Key)); err != nil {
 			return fmt.Errorf("press key %q: %w", action.Key, err)

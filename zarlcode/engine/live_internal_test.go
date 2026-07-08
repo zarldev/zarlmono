@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"iter"
 	"testing"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
-	"iter"
 )
 
 type blockingProvider struct {

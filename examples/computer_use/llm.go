@@ -36,7 +36,7 @@ Reply with only the exact answer choice text.`, visibleText, strings.Join(choice
 		MaxTokens:   64,
 		Temperature: 0,
 	})
-	slog.Debug("asking llm", "choices", choices)
+	slog.DebugContext(ctx, "asking llm", "choices", choices)
 	if err != nil {
 		return "", err
 	}
@@ -49,7 +49,7 @@ Reply with only the exact answer choice text.`, visibleText, strings.Join(choice
 		b.WriteString(chunk.Content)
 	}
 	raw := b.String()
-	slog.Debug("llm response", "raw", raw, "choices", choices)
+	slog.DebugContext(ctx, "llm response", "raw", raw, "choices", choices)
 	return matchChoice(raw, choices)
 }
 
@@ -106,7 +106,7 @@ Return ONLY a JSON array with no extra text:
 Sources:
 %s`, strings.Join(parts, "\n\n"))
 
-	slog.Debug("generating quiz questions", "articles", len(summaries))
+	slog.DebugContext(ctx, "generating quiz questions", "articles", len(summaries))
 	seq, err := provider.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: "Output only valid JSON arrays. No markdown, no explanation."},
@@ -127,7 +127,7 @@ Sources:
 		b.WriteString(chunk.Content)
 	}
 	raw := b.String()
-	slog.Debug("quiz generation response", "raw", raw)
+	slog.DebugContext(ctx, "quiz generation response", "raw", raw)
 
 	var entries []generatedQuestion
 	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
@@ -144,9 +144,9 @@ Sources:
 			return nil, err
 		}
 		questions = append(questions, question)
-		slog.Debug("quiz question", "q", i+1, "source_title", entry.SourceTitle, "answer", entry.Answer, "choices", question.Choices)
+		slog.DebugContext(ctx, "quiz question", "q", i+1, "source_title", entry.SourceTitle, "answer", entry.Answer, "choices", question.Choices)
 	}
-	slog.Info("generated quiz questions", "count", len(questions))
+	slog.InfoContext(ctx, "generated quiz questions", "count", len(questions))
 	return questions, nil
 }
 
