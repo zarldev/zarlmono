@@ -100,10 +100,6 @@ jobs:
             exit 1
           fi
 
-          if ! grep -q "\[$VERSION\]" CHANGELOG.md; then
-            echo "CHANGELOG.md does not contain an entry for $VERSION" >&2
-            exit 1
-          fi
 
           resolve_modules() {
             case "$SCOPE" in
@@ -161,6 +157,13 @@ jobs:
               exit 1
             fi
             tags+=("$tag")
+          done
+
+          for module in "${modules[@]}"; do
+            if ! grep -Eq "\\[($VERSION|$module/$VERSION)\\]" CHANGELOG.md; then
+              echo "CHANGELOG.md does not contain an entry for $VERSION or $module/$VERSION" >&2
+              exit 1
+            fi
           done
 
           if printf '%s\n' "${modules[@]}" | grep -qx 'zarlcode'; then
