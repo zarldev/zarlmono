@@ -35,6 +35,7 @@ func Capabilities(model string) llm.ModelCapabilities {
 		SupportsTools:     true,
 		SupportsSystem:    true,
 		SupportsVision:    true,
+		SupportsVideo:     true,
 		SupportsThinking:  strings.Contains(m, "2.5") || strings.Contains(m, "thinking"),
 	}
 }

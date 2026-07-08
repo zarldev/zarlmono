@@ -42,14 +42,16 @@ type conversation struct {
 // Session.applyConversationEnded). So there is nothing to return here — we
 // keep only the partial history.
 func (c *conversation) run(prompt string, exec func(runner.TaskSpec) runner.TaskResult) {
+	c.runSpec(runner.TaskSpec{Prompt: prompt}, exec)
+}
+
+func (c *conversation) runSpec(spec runner.TaskSpec, exec func(runner.TaskSpec) runner.TaskResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	res := exec(runner.TaskSpec{
-		ID:      taskscope.ID(uuid.NewString()),
-		Prompt:  prompt,
-		Context: c.history,
-	})
+	spec.ID = taskscope.ID(uuid.NewString())
+	spec.Context = c.history
+	res := exec(spec)
 	if len(res.Messages) > 0 {
 		c.history = res.Messages
 	}

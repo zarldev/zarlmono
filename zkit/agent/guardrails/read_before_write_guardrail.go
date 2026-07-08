@@ -64,6 +64,9 @@ func (g *ReadBeforeWriteGuardrail) Before(ctx context.Context, call tools.ToolCa
 		return nil
 	}
 	calls := g.ledger.Calls(ctx)
+	if call.ToolName == code.ToolNameWrite && hasCreationEvidence(path, calls) {
+		return nil
+	}
 	if hasSufficientContext(call.ToolName, path, calls) {
 		return nil
 	}
@@ -81,6 +84,44 @@ func hasSufficientContext(tool tools.ToolName, path string, calls []runner.Obser
 		}
 	}
 	return hasReadInDir(dir, calls) && hasSearchEvidence(calls)
+}
+
+func hasCreationEvidence(path string, calls []runner.ObservedCall) bool {
+	dir := filepath.Dir(path)
+	if hasDirListing(dir, calls) || hasReadInDir(dir, calls) {
+		return true
+	}
+	for _, call := range calls {
+		if call.ToolName != code.ToolNameGlob {
+			continue
+		}
+		pattern := normalizeEvidencePath(call.Arguments.String("pattern", ""))
+		if pattern == "" {
+			continue
+		}
+		if globCouldCoverPath(pattern, path) || filepath.Dir(pattern) == dir {
+			return true
+		}
+	}
+	return false
+}
+
+func globCouldCoverPath(pattern, path string) bool {
+	if pattern == path {
+		return true
+	}
+	if strings.HasPrefix(pattern, "**/") {
+		if ok, _ := filepath.Match(strings.TrimPrefix(pattern, "**/"), filepath.Base(path)); ok {
+			return true
+		}
+	}
+	if strings.HasSuffix(pattern, "*") && strings.HasPrefix(path, strings.TrimSuffix(pattern, "*")) {
+		return true
+	}
+	if ok, _ := filepath.Match(pattern, path); ok {
+		return true
+	}
+	return false
 }
 
 func hasReadPath(path string, calls []runner.ObservedCall) bool {
@@ -194,7 +235,9 @@ func readBeforeWriteReason(tool tools.ToolName, path string, mode ReadBeforeWrit
 		prefix = "advisory: "
 	}
 	return fmt.Sprintf(
-		"%syou are about to %s %q without first reading that file or establishing enough nearby context in this task. Read the target file (and, if useful, its immediate tests/shared utilities) before continuing.",
-		prefix, verb, path,
+		"%syou are about to %s %q without first reading that file or establishing enough nearby context in this task. "+
+			"For an existing file, call read(path=%q, ...) and use edit with the returned anchors. "+
+			"For a new file, first establish nearby context with ls/glob/read in the parent directory, then call write — do not fall back to bash/python just to create files.",
+		prefix, verb, path, path,
 	)
 }

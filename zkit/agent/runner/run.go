@@ -589,8 +589,16 @@ func (r *Runner) initialMessages(ctx context.Context, spec TaskSpec) ([]llm.Mess
 
 	msgs = append(msgs, spec.Context...)
 
-	if spec.Prompt != "" {
-		msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: spec.Prompt})
+	if spec.Prompt != "" || len(spec.Attachments) > 0 {
+		msg := llm.Message{Role: llm.RoleUser, Content: spec.Prompt}
+		if len(spec.Attachments) > 0 {
+			msg.Parts = make([]llm.ContentPart, 0, 1+len(spec.Attachments))
+			if spec.Prompt != "" {
+				msg.Parts = append(msg.Parts, llm.TextPart(spec.Prompt))
+			}
+			msg.Parts = append(msg.Parts, spec.Attachments...)
+		}
+		msgs = append(msgs, msg)
 	}
 	return msgs, nil
 }

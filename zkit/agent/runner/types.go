@@ -23,6 +23,12 @@ type TaskSpec struct {
 	// Empty is fine.
 	Context []llm.Message
 
+	// Attachments carries multimodal content for the initial user turn, such as
+	// image parts attached by a UI. Prompt remains the readable text; when
+	// Attachments is non-empty the runner sends Prompt as a TextPart followed by
+	// these parts.
+	Attachments []llm.ContentPart
+
 	// MaxIterations caps the loop. Zero means "use the runner's
 	// configured default" (set via WithMaxIterations). Negative is
 	// invalid (Run errors).

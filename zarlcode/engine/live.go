@@ -19,6 +19,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/fetch"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
@@ -140,6 +141,10 @@ type LiveRunner struct {
 	// mcp holds live MCP server connections, bound to mcpHost. Persistent so a
 	// server connected in one turn stays connected; its discovered tools are
 	// merged into each turn's registry. nil disables mcp_connect/disconnect/list.
+	// computer owns the lazy browser session backing computer_observe and
+	// computer_act. The session is process-local and closed with the LiveRunner.
+	computer *liveComputer
+
 	mcp     *dynamic.MCPRegistry
 	mcpHost *tools.Registry
 }
@@ -204,8 +209,8 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, sink LiveSink, model st
 		catalog:   newRuntimeCatalog(ws.Root()),
 		truncator: &runner.SpillingTruncator{Prefix: "zarlcode-"},
 	}
-	// Only populate the sink seams when a real sink was supplied; callers
-	// disable events by passing a nil LiveSink.
+	l.computer = &liveComputer{owner: l}
+	// Only populate the sink seams when a real sink was supplied; callers	// disable events by passing a nil LiveSink.
 	if sink != nil {
 		l.sink = sink
 		l.planStore.sink = sink
@@ -247,18 +252,21 @@ func (l *LiveRunner) Close(ctx context.Context) error {
 		return nil
 	}
 	// Once the in-flight turn has drained: remove this session's tool-result
-	// spill dir and tear down any live MCP connections (stdio servers would
-	// otherwise leave orphaned child processes). Both best-effort — a non-nil
-	// return is informational.
+	// spill dir and tear down any live MCP/browser connections. Both are
+	// best-effort — a non-nil return is informational.
 	defer func() {
 		if l.truncator != nil {
 			_ = l.truncator.Cleanup()
 		}
 		l.mu.Lock()
 		mcp := l.mcp
+		computer := l.computer
 		l.mu.Unlock()
 		if mcp != nil {
 			_ = mcp.CloseAll()
+		}
+		if computer != nil {
+			_ = computer.Close()
 		}
 	}()
 	if ctx == nil {
@@ -666,6 +674,10 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 		reg.Register(search.New(searxngURL))
 	}
 
+	if l.computer != nil {
+		computertools.Register(reg, l.computer, l.computer)
+	}
+
 	// web_fetch — HTTP GET fast path, chromedp fallback for JS-heavy pages.
 	// Gated with web_search under the enable_web cluster toggle.
 	if enableWeb {
@@ -841,6 +853,10 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 // outside the TUI can use it directly. It returns a non-nil error only when
 // turn setup fails — a completed or cancelled run returns nil.
 func (l *LiveRunner) RunTurn(prompt string) error {
+	return l.RunTurnWithAttachments(prompt, nil)
+}
+
+func (l *LiveRunner) RunTurnWithAttachments(prompt string, attachments []llm.ContentPart) error {
 	r, err := l.buildTurn()
 	if err != nil {
 		return err
@@ -860,7 +876,7 @@ func (l *LiveRunner) RunTurn(prompt string) error {
 		}
 		l.mu.Unlock()
 	}()
-	l.conv.run(prompt, func(spec runner.TaskSpec) runner.TaskResult {
+	l.conv.runSpec(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func(spec runner.TaskSpec) runner.TaskResult {
 		spec.Thinking = l.thinkingEnabled()
 		return r.Run(ctx, spec)
 	})

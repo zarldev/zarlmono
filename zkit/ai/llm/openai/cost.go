@@ -45,6 +45,7 @@ func Capabilities(model string) llm.ModelCapabilities {
 		SupportsSystem:    true,
 		SupportsVision: reasoning || strings.Contains(m, "gpt-4o") ||
 			strings.Contains(m, "gpt-4.1"),
+		SupportsVideo:    reasoning || strings.Contains(m, "gpt-4o"),
 		SupportsThinking: reasoning,
 	}
 }

@@ -142,6 +142,18 @@ func convertPart(p llm.ContentPart) *genai.Part {
 		return &genai.Part{
 			InlineData: &genai.Blob{Data: data, MIMEType: mime},
 		}
+	case llm.ContentTypeVideo:
+		if p.Video == nil {
+			return nil
+		}
+		mime := p.Video.MIMEType
+		data := dataURIBytes(p.Video.DataURI)
+		if data == nil {
+			return nil
+		}
+		return &genai.Part{
+			InlineData: &genai.Blob{Data: data, MIMEType: mime},
+		}
 	}
 	return nil
 }

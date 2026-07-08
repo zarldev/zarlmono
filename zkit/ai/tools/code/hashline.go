@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -22,6 +23,8 @@ const (
 	hashlineModeDelete       = "delete"
 	hashlineModeInsertBefore = "insert_before"
 	hashlineModeInsertAfter  = "insert_after"
+
+	hashlineMaxBatchEdits = 64
 )
 
 // ReadFileHLTool reads a file with line-number + hash anchors for the edit
@@ -114,12 +117,26 @@ type EditFileHLTool struct{ ws Workspace }
 
 // EditFileHLArgs is the typed argument struct EditFileHLTool.Execute decodes.
 type EditFileHLArgs struct {
-	Path      string `json:"path" doc:"Path inside the workspace."`
+	Path string `json:"path" doc:"Path inside the workspace."`
+
+	// Single-edit fields. Kept for compatibility; prefer Edits for several changes in one file.
+	StartLine int    `json:"start_line,omitempty" doc:"1-based line anchor from the read output."`
+	StartHash string `json:"start_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for start_line from the read output."`
+	EndLine   int    `json:"end_line,omitempty" doc:"Inclusive 1-based end line for replace/delete. Omit for a single-line edit."`
+	EndHash   string `json:"end_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for end_line from the read output."`
+	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; use a single cohesive range edit when changing adjacent lines."`
+	Mode      string `json:"mode,omitempty" enum:"replace,delete,insert_before,insert_after" doc:"Edit mode: replace (default), delete, insert_before, or insert_after."`
+
+	Edits []HashlineEdit `json:"edits,omitempty" doc:"Multiple edits to apply atomically to this file. Prefer this for several related edits in one file; all anchors are verified before writing."`
+}
+
+// HashlineEdit describes one edit inside EditFileHLArgs.Edits.
+type HashlineEdit struct {
 	StartLine int    `json:"start_line" doc:"1-based line anchor from the read output."`
 	StartHash string `json:"start_hash" doc:"3- or 4-character base64 SHA-256 hash for start_line from the read output."`
 	EndLine   int    `json:"end_line,omitempty" doc:"Inclusive 1-based end line for replace/delete. Omit for a single-line edit."`
 	EndHash   string `json:"end_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for end_line from the read output."`
-	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired."`
+	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; use a single cohesive range edit when changing adjacent lines."`
 	Mode      string `json:"mode,omitempty" enum:"replace,delete,insert_before,insert_after" doc:"Edit mode: replace (default), delete, insert_before, or insert_after."`
 }
 
@@ -131,8 +148,10 @@ func (t *EditFileHLTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameEdit,
 		Description: "Edit a workspace file using line/hash anchors from the read output. " +
-			"Replaces or deletes an anchored line range, or inserts before/after an anchored line. " +
-			"The hash identifies the line by content, so anchors survive line-number shifts from earlier edits — you can apply several edits from one read. " +
+			"For several changes in one file, use edits to apply them atomically in one call. " +
+			"Prefer one well-scoped range edit for a cohesive change instead of many tiny adjacent edits. " +
+			"Replaces or deletes anchored line ranges, or inserts before/after anchored lines. " +
+			"The hash identifies the line by content, so anchors survive line-number shifts from earlier edits. " +
 			"A stale error means the content changed; re-read that file and retry with fresh anchors.",
 		Parameters: tools.SchemaFor[EditFileHLArgs](),
 		Mutates:    true,
@@ -151,16 +170,8 @@ func (t *EditFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 	if args.Path == "" {
 		return tools.Failure(call.ID, tools.Validation("edit", "path required")), nil
 	}
-	if maxEditArgBytes > 0 && len(args.NewString) > maxEditArgBytes {
-		return tools.Failure(call.ID, tools.Validation("edit", fmt.Sprintf(
-			"%q: new_string too large (%d bytes; cap %d). Split into smaller edits.",
-			args.Path, len(args.NewString), maxEditArgBytes))), nil
-	}
-	mode := args.Mode
-	if mode == "" {
-		mode = hashlineModeReplace
-	}
-	if err := validateHashlineEditArgs(args, mode); err != nil {
+	edits, err := normalizeHashlineEdits(args)
+	if err != nil {
 		return tools.Failure(call.ID, tools.Validation("edit", err.Error())), nil
 	}
 
@@ -178,61 +189,257 @@ func (t *EditFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 	body := string(data)
 	lines := hashlineLines(body)
 
-	start, err := verifyHashlineAnchor(args.Path, "start", lines, args.StartLine, args.StartHash)
-	if err != nil {
-		return tools.Failure(call.ID, err), nil
-	}
-
-	spliceStart := start.Start
-	spliceEnd := start.End
-	replacement := args.NewString
-	summary := fmt.Sprintf("%s line %d", mode, args.StartLine)
-
-	switch mode {
-	case hashlineModeReplace, hashlineModeDelete:
-		endLine := args.EndLine
-		endHash := args.EndHash
-		if endLine == 0 && endHash == "" {
-			endLine = args.StartLine
-			endHash = args.StartHash
-		}
-		end, err := verifyHashlineAnchor(args.Path, "end", lines, endLine, endHash)
+	resolved := make([]resolvedHashlineEdit, 0, len(edits))
+	for i, edit := range edits {
+		item, err := resolveHashlineEdit(args.Path, lines, i, edit)
 		if err != nil {
 			return tools.Failure(call.ID, err), nil
 		}
-		if endLine < args.StartLine {
-			return tools.Failure(call.ID, tools.Validation(
-				"edit",
-				fmt.Sprintf("%q: end_line %d is before start_line %d", args.Path, endLine, args.StartLine),
-			)), nil
-		}
-		spliceEnd = end.End
-		if spliceEnd < spliceStart {
-			return tools.Failure(call.ID, tools.Stale(
-				"edit",
-				fmt.Sprintf("%q: resolved end anchor precedes start anchor after the file shifted; re-run read on this file and retry with fresh anchors", args.Path),
-			)), nil
-		}
-		if mode == hashlineModeDelete {
-			replacement = ""
-		}
-		if endLine != args.StartLine {
-			summary = fmt.Sprintf("%s lines %d-%d", mode, args.StartLine, endLine)
-		}
-	case hashlineModeInsertBefore:
-		spliceEnd = spliceStart
-	case hashlineModeInsertAfter:
-		spliceStart = start.End
-		spliceEnd = start.End
+		resolved = append(resolved, item)
+	}
+	if err := validateResolvedHashlineEdits(args.Path, resolved); err != nil {
+		return tools.Failure(call.ID, tools.Validation("edit", err.Error())), nil
 	}
 
-	updated := body[:spliceStart] + replacement + body[spliceEnd:]
+	updated := applyResolvedHashlineEdits(body, resolved)
 	if err := t.ws.WriteFileInRoot(abs, []byte(updated), filesystem.ModePublicFile); err != nil {
 		return tools.Failure(call.ID, tools.Fatal("edit", fmt.Errorf("write %q: %w", args.Path, err))), nil
 	}
 	effect := tools.NewFileEffect(tools.FileModify, args.Path)
 	effect.File.BytesAfter = int64(len(updated))
-	return tools.Success(call.ID, fmt.Sprintf("edited %s (%s, hashline anchors verified)", args.Path, summary), effect), nil
+	return tools.Success(call.ID, fmt.Sprintf("edited %s (%s, hashline anchors verified)", args.Path, hashlineEditSummary(resolved)), effect), nil
+}
+
+type resolvedHashlineEdit struct {
+	Index       int
+	Mode        string
+	StartLine   int
+	EndLine     int
+	SpliceStart int
+	SpliceEnd   int
+	Replacement string
+	Summary     string
+}
+
+func normalizeHashlineEdits(args EditFileHLArgs) ([]HashlineEdit, error) {
+	if len(args.Edits) > 0 {
+		if hasSingleHashlineEditFields(args) {
+			return nil, fmt.Errorf("%q: use either edits or top-level edit fields, not both", args.Path)
+		}
+		if len(args.Edits) > hashlineMaxBatchEdits {
+			return nil, fmt.Errorf("%q: edits has %d items; max %d", args.Path, len(args.Edits), hashlineMaxBatchEdits)
+		}
+		if err := validateHashlineEditList(args.Path, args.Edits); err != nil {
+			return nil, err
+		}
+		return args.Edits, nil
+	}
+
+	edit := HashlineEdit{
+		StartLine: args.StartLine,
+		StartHash: args.StartHash,
+		EndLine:   args.EndLine,
+		EndHash:   args.EndHash,
+		NewString: args.NewString,
+		Mode:      args.Mode,
+	}
+	if err := validateHashlineEditList(args.Path, []HashlineEdit{edit}); err != nil {
+		return nil, err
+	}
+	return []HashlineEdit{edit}, nil
+}
+
+func hasSingleHashlineEditFields(args EditFileHLArgs) bool {
+	return args.StartLine != 0 || args.StartHash != "" || args.EndLine != 0 || args.EndHash != "" || args.NewString != "" || args.Mode != ""
+}
+
+func validateHashlineEditList(path string, edits []HashlineEdit) error {
+	if len(edits) == 0 {
+		return fmt.Errorf("%q: at least one edit is required", path)
+	}
+	totalNewBytes := 0
+	for i, edit := range edits {
+		mode := hashlineEditMode(edit)
+		if err := validateHashlineEdit(path, i, edit, mode); err != nil {
+			return err
+		}
+		totalNewBytes += len(edit.NewString)
+	}
+	if maxEditArgBytes > 0 && totalNewBytes > maxEditArgBytes {
+		return fmt.Errorf("%q: total new_string too large (%d bytes; cap %d)", path, totalNewBytes, maxEditArgBytes)
+	}
+	return nil
+}
+
+func validateHashlineEdit(path string, index int, edit HashlineEdit, mode string) error {
+	prefix := hashlineEditErrorPrefix(path, index)
+	if edit.StartLine <= 0 {
+		return fmt.Errorf("%s: start_line must be positive", prefix)
+	}
+	if err := validateHashlineToken(edit.StartHash, "start_hash"); err != nil {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	if maxEditArgBytes > 0 && len(edit.NewString) > maxEditArgBytes {
+		return fmt.Errorf("%s: new_string too large (%d bytes; cap %d)", prefix, len(edit.NewString), maxEditArgBytes)
+	}
+	switch mode {
+	case hashlineModeReplace:
+		return validateHashlineEditRange(prefix, edit)
+	case hashlineModeDelete:
+		if edit.NewString != "" {
+			return fmt.Errorf("%s: delete mode requires empty new_string", prefix)
+		}
+		return validateHashlineEditRange(prefix, edit)
+	case hashlineModeInsertBefore, hashlineModeInsertAfter:
+		if edit.NewString == "" {
+			return fmt.Errorf("%s: %s mode requires non-empty new_string", prefix, mode)
+		}
+		if edit.EndLine != 0 || edit.EndHash != "" {
+			return fmt.Errorf("%s: end_line/end_hash are only valid for replace or delete", prefix)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s: mode must be one of replace, delete, insert_before, insert_after", prefix)
+	}
+}
+
+func validateHashlineEditRange(prefix string, edit HashlineEdit) error {
+	if edit.EndLine == 0 && edit.EndHash == "" {
+		return nil
+	}
+	if edit.EndLine <= 0 {
+		return fmt.Errorf("%s: end_line must be positive when end_hash is set", prefix)
+	}
+	if edit.EndHash == "" {
+		return fmt.Errorf("%s: end_hash required when end_line is set", prefix)
+	}
+	if err := validateHashlineToken(edit.EndHash, "end_hash"); err != nil {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	return nil
+}
+
+func resolveHashlineEdit(path string, lines []hashlineLine, index int, edit HashlineEdit) (resolvedHashlineEdit, error) {
+	mode := hashlineEditMode(edit)
+	start, err := verifyHashlineAnchor(path, "start", lines, edit.StartLine, edit.StartHash)
+	if err != nil {
+		return resolvedHashlineEdit{}, err
+	}
+
+	resolved := resolvedHashlineEdit{
+		Index:       index,
+		Mode:        mode,
+		StartLine:   edit.StartLine,
+		EndLine:     edit.StartLine,
+		SpliceStart: start.Start,
+		SpliceEnd:   start.End,
+		Replacement: edit.NewString,
+		Summary:     fmt.Sprintf("%s line %d", mode, edit.StartLine),
+	}
+
+	switch mode {
+	case hashlineModeReplace, hashlineModeDelete:
+		endLine := edit.EndLine
+		endHash := edit.EndHash
+		if endLine == 0 && endHash == "" {
+			endLine = edit.StartLine
+			endHash = edit.StartHash
+		}
+		end, err := verifyHashlineAnchor(path, "end", lines, endLine, endHash)
+		if err != nil {
+			return resolvedHashlineEdit{}, err
+		}
+		if endLine < edit.StartLine {
+			return resolvedHashlineEdit{}, tools.Validation(
+				"edit",
+				fmt.Sprintf("%s: end_line %d is before start_line %d", hashlineEditErrorPrefix(path, index), endLine, edit.StartLine),
+			)
+		}
+		resolved.EndLine = endLine
+		resolved.SpliceEnd = end.End
+		if resolved.SpliceEnd < resolved.SpliceStart {
+			return resolvedHashlineEdit{}, tools.Stale(
+				"edit",
+				fmt.Sprintf("%q: resolved end anchor precedes start anchor after the file shifted; re-run read on this file and retry with fresh anchors", path),
+			)
+		}
+		if mode == hashlineModeDelete {
+			resolved.Replacement = ""
+		}
+		if endLine != edit.StartLine {
+			resolved.Summary = fmt.Sprintf("%s lines %d-%d", mode, edit.StartLine, endLine)
+		}
+	case hashlineModeInsertBefore:
+		resolved.SpliceEnd = resolved.SpliceStart
+	case hashlineModeInsertAfter:
+		resolved.SpliceStart = start.End
+		resolved.SpliceEnd = start.End
+	}
+	return resolved, nil
+}
+
+func validateResolvedHashlineEdits(path string, edits []resolvedHashlineEdit) error {
+	sorted := slices.Clone(edits)
+	slices.SortFunc(sorted, func(a, b resolvedHashlineEdit) int {
+		if a.SpliceStart != b.SpliceStart {
+			return a.SpliceStart - b.SpliceStart
+		}
+		if a.SpliceEnd != b.SpliceEnd {
+			return a.SpliceEnd - b.SpliceEnd
+		}
+		return a.Index - b.Index
+	})
+	for i := 1; i < len(sorted); i++ {
+		prev := sorted[i-1]
+		cur := sorted[i]
+		if prev.SpliceStart == prev.SpliceEnd && cur.SpliceStart == cur.SpliceEnd && prev.SpliceStart == cur.SpliceStart {
+			continue
+		}
+		if cur.SpliceStart < prev.SpliceEnd {
+			return fmt.Errorf("%q: edits %d and %d overlap", path, prev.Index+1, cur.Index+1)
+		}
+	}
+	return nil
+}
+
+func applyResolvedHashlineEdits(body string, edits []resolvedHashlineEdit) string {
+	sorted := slices.Clone(edits)
+	slices.SortFunc(sorted, func(a, b resolvedHashlineEdit) int {
+		if a.SpliceStart != b.SpliceStart {
+			return b.SpliceStart - a.SpliceStart
+		}
+		return b.Index - a.Index
+	})
+	updated := body
+	for _, edit := range sorted {
+		updated = updated[:edit.SpliceStart] + edit.Replacement + updated[edit.SpliceEnd:]
+	}
+	return updated
+}
+
+func hashlineEditMode(edit HashlineEdit) string {
+	if edit.Mode == "" {
+		return hashlineModeReplace
+	}
+	return edit.Mode
+}
+
+func hashlineEditSummary(edits []resolvedHashlineEdit) string {
+	if len(edits) == 1 {
+		return edits[0].Summary
+	}
+	parts := make([]string, len(edits))
+	for i, edit := range edits {
+		parts[i] = edit.Summary
+	}
+	return fmt.Sprintf("%d edits: %s", len(edits), strings.Join(parts, "; "))
+}
+
+func hashlineEditErrorPrefix(path string, index int) string {
+	if index < 0 {
+		return fmt.Sprintf("%q", path)
+	}
+	return fmt.Sprintf("%q edit %d", path, index+1)
 }
 
 type hashlineLine struct {
@@ -308,47 +515,6 @@ func hashlineHashLen(length int) (int, error) {
 		return length, nil
 	}
 	return 0, fmt.Errorf("hash_len must be 3 or 4, got %d", length)
-}
-
-func validateHashlineEditArgs(args EditFileHLArgs, mode string) error {
-	if args.StartLine <= 0 {
-		return fmt.Errorf("%q: start_line must be positive", args.Path)
-	}
-	if err := validateHashlineToken(args.StartHash, "start_hash"); err != nil {
-		return err
-	}
-	switch mode {
-	case hashlineModeReplace:
-		return validateHashlineRange(args)
-	case hashlineModeDelete:
-		if args.NewString != "" {
-			return fmt.Errorf("%q: delete mode requires empty new_string", args.Path)
-		}
-		return validateHashlineRange(args)
-	case hashlineModeInsertBefore, hashlineModeInsertAfter:
-		if args.NewString == "" {
-			return fmt.Errorf("%q: %s mode requires non-empty new_string", args.Path, mode)
-		}
-		if args.EndLine != 0 || args.EndHash != "" {
-			return fmt.Errorf("%q: end_line/end_hash are only valid for replace or delete", args.Path)
-		}
-		return nil
-	default:
-		return fmt.Errorf("%q: mode must be one of replace, delete, insert_before, insert_after", args.Path)
-	}
-}
-
-func validateHashlineRange(args EditFileHLArgs) error {
-	if args.EndLine == 0 && args.EndHash == "" {
-		return nil
-	}
-	if args.EndLine <= 0 {
-		return fmt.Errorf("%q: end_line must be positive when end_hash is set", args.Path)
-	}
-	if args.EndHash == "" {
-		return fmt.Errorf("%q: end_hash required when end_line is set", args.Path)
-	}
-	return validateHashlineToken(args.EndHash, "end_hash")
 }
 
 func validateHashlineToken(hash, field string) error {

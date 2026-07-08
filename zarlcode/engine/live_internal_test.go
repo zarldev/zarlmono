@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"iter"
 	"testing"
 	"time"
 
@@ -10,6 +9,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
+	"iter"
 )
 
 type blockingProvider struct {
@@ -89,6 +90,25 @@ func TestLiveRunner_WebSearchRegistration(t *testing.T) {
 	}
 	if !hasTool(srcOn, tools.ToolNameWebSearch) {
 		t.Error("web_search should be registered when a SearXNG URL is set")
+	}
+}
+
+func TestLiveRunner_ComputerToolsRegistered(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	l := NewLiveRunner(nil, ws, nil, "local")
+
+	src, _, err := l.source("")
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+	if !hasTool(src, computertools.ToolNameComputerObserve) {
+		t.Error("computer_observe should be registered")
+	}
+	if !hasTool(src, computertools.ToolNameComputerAct) {
+		t.Error("computer_act should be registered")
 	}
 }
 

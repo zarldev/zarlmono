@@ -12,6 +12,7 @@ func Capabilities(string) llm.ModelCapabilities {
 		SupportsTools:     true,
 		SupportsSystem:    true,
 		SupportsVision:    true,
+		SupportsVideo:     true,
 		SupportsThinking:  true,
 	}
 }

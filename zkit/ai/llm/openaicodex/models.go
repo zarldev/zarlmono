@@ -227,6 +227,7 @@ func ListPresetModels() []llm.Model {
 				SupportsSystem:    true,
 				SupportsThinking:  true,
 				SupportsVision:    true,
+				SupportsVideo:     true,
 			},
 		})
 	}

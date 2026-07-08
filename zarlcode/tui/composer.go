@@ -452,9 +452,18 @@ func (m *UI) submit(text string) tea.Cmd {
 		return m.handleSlashSubmit(text)
 	}
 	if m.session.Run.Running && m.live != nil {
+		if len(m.pendingAttachments) > 0 {
+			m.session.SetErrorToast("image attachments can only be sent with a new turn")
+			return m.toastExpiryCmd()
+		}
 		m.live.QueueInput(text)
 		m.timeline.addQueuedUser(text)
 		return nil
+	}
+	if m.live != nil {
+		attachments := m.attachmentParts()
+		m.pendingAttachments = nil
+		return RunFnWithAttachments(m.live, text, attachments)
 	}
 	if m.runFn != nil {
 		return m.runFn(text)

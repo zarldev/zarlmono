@@ -224,10 +224,9 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 					result := toolparse.ParseArtifact(choice.Delta.Content)
 					if result.HighConfidence {
 						if !yield(llm.CompletionChunk{
-							Content:      result.RemainingContent,
-							FinishReason: choice.FinishReason,
-							Done:         true,
-							ToolCalls:    result.Calls,
+							Content:   result.RemainingContent,
+							Done:      true,
+							ToolCalls: result.Calls,
 						}, nil) {
 							return
 						}
@@ -240,9 +239,6 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 				}
 			}
 
-			// Forward every tool-call delta unchanged except for ID
-			// stabilisation by Index. The runner accumulates Name and
-			// Arguments across chunks.
 			if len(choice.Delta.ToolCalls) > 0 {
 				toolCalls := make([]llm.ToolCall, 0, len(choice.Delta.ToolCalls))
 				for _, tc := range choice.Delta.ToolCalls {
@@ -748,6 +744,10 @@ func userMessageWithParts(msg llm.Message) openai.ChatCompletionMessageParamUnio
 					Format: p.Audio.Format,
 				}),
 			)
+		case llm.ContentTypeVideo:
+			// Chat Completions has no stable video content part yet. Providers
+			// that support video should use a Responses/Gemini-style transport.
+			continue
 		}
 	}
 	return openai.UserMessage(parts)

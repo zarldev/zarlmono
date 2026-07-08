@@ -51,7 +51,8 @@ type UI struct {
 	ticking bool
 	// runFn launches a live run for a submitted prompt; nil means the
 	// composer just echoes prompts locally (no runner wired).
-	runFn func(prompt string) tea.Cmd
+	runFn              func(prompt string) tea.Cmd
+	pendingAttachments []pendingAttachment
 
 	// settings is the persistence handle (prefs + provider registry) the
 	// settings overlay reads and writes. nil disables the overlay.

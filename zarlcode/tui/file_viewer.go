@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/media"
 )
 
 // fileViewer is a full-screen read-only browser with four tabs: Files,
@@ -168,6 +169,13 @@ func (v *fileViewer) handleKey(msg tea.KeyPressMsg) action {
 		case fileViewerHooks:
 			if h, ok := v.selectedHook(); ok {
 				return actionEditFile{path: h.Source}
+			}
+		}
+
+	case "a":
+		if v.mode == fileViewerFiles {
+			if path, ok := v.selectedFilePath(); ok && media.IsImagePath(path) {
+				return actionAttachImage{path: path}
 			}
 		}
 
@@ -1109,7 +1117,7 @@ func (v *fileViewer) drawCatalogPreview(scr uv.Screen, x, y, w, bodyH int) {
 func (v *fileViewer) drawPlaceholder(scr uv.Screen, x, y, w int, _ int) {
 	title := "file preview"
 	msg := " choose a file to preview"
-	action := " navigate the list and press enter to open folders or e to edit files"
+	action := " navigate the list and press enter to open folders, a to attach images, or e to edit files"
 	if v.mode != fileViewerFiles {
 		title = "catalog preview"
 		msg = " choose an item to inspect"
@@ -1215,7 +1223,7 @@ func (v *fileViewer) drawFooter(scr uv.Screen, footer uv.Rectangle) {
 		hints := []keyHint{{"↑↓/jk", "navigate"}, {"enter/e", "open source"}, {"tab", "switch view"}, {"pgup/pgdn", "scroll"}, {"esc", "close"}}
 		drawPaneRow(scr, footer, palette.Subtle.On(" "+compactFooterHints(hints...)), "")
 	default:
-		hints := []keyHint{{"↑↓/jk", "navigate"}, {"enter", "open folder"}, {"e", "edit file"}, {"tab", "switch view"}, {"backspace", "up"}, {"pgup/pgdn", "scroll"}, {"esc", "close"}}
+		hints := []keyHint{{"↑↓/jk", "navigate"}, {"enter", "open folder"}, {"a", "attach image"}, {"e", "edit file"}, {"tab", "switch view"}, {"backspace", "up"}, {"pgup/pgdn", "scroll"}, {"esc", "close"}}
 		drawPaneRow(scr, footer, palette.Subtle.On(" "+compactFooterHints(hints...)), "")
 	}
 }
