@@ -9,20 +9,20 @@ type Started struct {
 
 // NodeStarted fires immediately before a node runs.
 type NodeStarted struct {
-	Node  string
+	Node  NodeID
 	Input any
 }
 
 // NodeCompleted fires after a node returns successfully.
 type NodeCompleted struct {
-	Node     string
+	Node     NodeID
 	Output   any
 	Duration time.Duration
 }
 
 // NodeFailed fires after a node returns an error.
 type NodeFailed struct {
-	Node     string
+	Node     NodeID
 	Error    error
 	Duration time.Duration
 }

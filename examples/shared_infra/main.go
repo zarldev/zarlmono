@@ -91,10 +91,10 @@ func run(ctx context.Context, stdout io.Writer) error {
 		return err
 	}
 
-	_ = graph.AddEdge(workflow.Start, "retrieve")
+	_ = graph.AddEdge(workflow.Start.String(), "retrieve")
 	_ = graph.AddEdge("retrieve", "checkpoint")
 	_ = graph.AddEdge("checkpoint", "review")
-	_ = graph.AddEdge("review", workflow.End)
+	_ = graph.AddEdge("review", workflow.End.String())
 
 	runnable, err := graph.Compile()
 	if err != nil {

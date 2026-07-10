@@ -9,7 +9,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
-// recordingStore is a PlanStore that captures every SetPlan call.
 // Lets tests assert both the final state and the call sequence
 // (multiple update_plan invocations across plan/build mode flows).
 type recordingStore struct {
@@ -34,9 +33,9 @@ func TestUpdatePlan_SeedsPendingList(t *testing.T) {
 	store := &recordingStore{}
 	res := runUpdatePlan(t, store, code.UpdatePlanArgs{
 		Plan: []code.UpdatePlanStepArg{
-			{Step: "Add Foo field", Status: "pending"},
-			{Step: "Update Marshal", Status: "pending"},
-			{Step: "Add test", Status: "pending"},
+			{Step: "Add Foo field", Status: code.StepStatuses.PENDING},
+			{Step: "Update Marshal", Status: code.StepStatuses.PENDING},
+			{Step: "Add test", Status: code.StepStatuses.PENDING},
 		},
 		Explanation: "seeded from plan-mode output",
 	})
@@ -61,8 +60,8 @@ func TestUpdatePlan_AcceptsStatusTransitions(t *testing.T) {
 
 	// Seed
 	res := runUpdatePlan(t, store, code.UpdatePlanArgs{Plan: []code.UpdatePlanStepArg{
-		{Step: "A", Status: "pending"},
-		{Step: "B", Status: "pending"},
+		{Step: "A", Status: code.StepStatuses.PENDING},
+		{Step: "B", Status: code.StepStatuses.PENDING},
 	}})
 	if !res.Success {
 		t.Fatalf("seed: %s", res.Error)
@@ -70,8 +69,8 @@ func TestUpdatePlan_AcceptsStatusTransitions(t *testing.T) {
 
 	// Start A
 	res = runUpdatePlan(t, store, code.UpdatePlanArgs{Plan: []code.UpdatePlanStepArg{
-		{Step: "A", Status: "in_progress"},
-		{Step: "B", Status: "pending"},
+		{Step: "A", Status: code.StepStatuses.INPROGRESS},
+		{Step: "B", Status: code.StepStatuses.PENDING},
 	}})
 	if !res.Success {
 		t.Fatalf("start A: %s", res.Error)
@@ -79,8 +78,8 @@ func TestUpdatePlan_AcceptsStatusTransitions(t *testing.T) {
 
 	// Finish A, start B
 	res = runUpdatePlan(t, store, code.UpdatePlanArgs{Plan: []code.UpdatePlanStepArg{
-		{Step: "A", Status: "completed"},
-		{Step: "B", Status: "in_progress"},
+		{Step: "A", Status: code.StepStatuses.COMPLETED},
+		{Step: "B", Status: code.StepStatuses.INPROGRESS},
 	}})
 	if !res.Success {
 		t.Fatalf("transition: %s", res.Error)
@@ -105,11 +104,9 @@ func TestUpdatePlan_AcceptsStatusTransitions(t *testing.T) {
 func TestUpdatePlan_RejectsInvalidShape(t *testing.T) {
 	t.Parallel()
 	// Shape errors that REMAIN in Execute after the typed-args
-	// migration: missing/empty plan, empty step text, unknown status.
-	// The previous map-based cases ("plan not array", "step not object")
-	// are no longer reachable — they fail at the tools.DecodeArgs
-	// JSON-roundtrip boundary before the rest of Execute runs. That
-	// path is covered in pkg/ai/tools/typed_test.go.
+	// migration: missing/empty plan and empty step text. Invalid
+	// statuses fail at the JSON DecodeArgs boundary now that Status is
+	// a StepStatus instead of string.
 	tests := []struct {
 		name string
 		args code.UpdatePlanArgs
@@ -128,16 +125,9 @@ func TestUpdatePlan_RejectsInvalidShape(t *testing.T) {
 		{
 			name: "step missing text",
 			args: code.UpdatePlanArgs{Plan: []code.UpdatePlanStepArg{
-				{Step: "", Status: "pending"},
+				{Step: "", Status: code.StepStatuses.PENDING},
 			}},
 			want: "empty `step`",
-		},
-		{
-			name: "bad status",
-			args: code.UpdatePlanArgs{Plan: []code.UpdatePlanStepArg{
-				{Step: "do thing", Status: "nope"},
-			}},
-			want: "unknown step status",
 		},
 	}
 	for _, tt := range tests {
@@ -151,6 +141,23 @@ func TestUpdatePlan_RejectsInvalidShape(t *testing.T) {
 				t.Errorf("err = %q, want substring %q", res.Error, tt.want)
 			}
 		})
+	}
+}
+
+func TestUpdatePlan_RejectsInvalidStatusAtDecode(t *testing.T) {
+	t.Parallel()
+	call := tools.ToolCall{ID: "1", ToolName: code.ToolNameUpdatePlan, Arguments: tools.ToolParameters{
+		"plan": []any{map[string]any{"step": "do thing", "status": "nope"}},
+	}}
+	res, err := code.NewUpdatePlanTool(&recordingStore{}).Execute(t.Context(), call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success {
+		t.Fatal("expected invalid status to fail")
+	}
+	if !strings.Contains(res.Error, "invalid") {
+		t.Fatalf("error = %q, want invalid status details", res.Error)
 	}
 }
 
@@ -185,10 +192,6 @@ func TestStepStatus_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-// TestParseStepStatus_Aliases covers the wire form plus the aliases baked
-// into the goenums source comment. Case folding, whitespace trimming, and
-// empty -> pending are the caller's responsibility (see
-// TestUpdatePlan_NormalizesStatus), not the generated parser's.
 func TestParseStepStatus_Aliases(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -215,31 +218,6 @@ func TestParseStepStatus_Aliases(t *testing.T) {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-// TestUpdatePlan_NormalizesStatus asserts the tool tolerates raw model
-// output — surrounding whitespace, mixed case, and an omitted status
-// (treated as pending) — by normalising before parsing.
-func TestUpdatePlan_NormalizesStatus(t *testing.T) {
-	t.Parallel()
-	store := &recordingStore{}
-	res := runUpdatePlan(t, store, code.UpdatePlanArgs{
-		Plan: []code.UpdatePlanStepArg{
-			{Step: "a", Status: "  In_Progress "},
-			{Step: "b", Status: "DONE"},
-			{Step: "c", Status: ""},
-		},
-	})
-	if !res.Success {
-		t.Fatalf("expected success: %s", res.Error)
-	}
-	p := store.GetPlan()
-	want := []code.StepStatus{code.StepStatuses.INPROGRESS, code.StepStatuses.COMPLETED, code.StepStatuses.PENDING}
-	for i, w := range want {
-		if p.Steps[i].Status != w {
-			t.Errorf("step %d status = %v, want %v", i, p.Steps[i].Status, w)
-		}
 	}
 }
 

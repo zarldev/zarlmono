@@ -19,7 +19,7 @@ func ExampleNewGuardedSource() {
 	)
 
 	for i := 1; i <= 2; i++ {
-		call := tools.ToolCall{ID: fmt.Sprintf("c%d", i), ToolName: "read", Arguments: tools.ToolParameters{}}
+		call := tools.ToolCall{ID: tools.ToolCallID(fmt.Sprintf("c%d", i)), ToolName: "read", Arguments: tools.ToolParameters{}}
 		res, err := guarded.Execute(context.Background(), call)
 		fmt.Printf("call %d: err=%v success=%v\n", i, err, res.Success)
 	}

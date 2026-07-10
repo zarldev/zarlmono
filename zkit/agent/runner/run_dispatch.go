@@ -94,14 +94,14 @@ func (r *Runner) dispatch(
 	// (errors.AsType extracts it) — same pattern as code.failure and
 	// failedFromGuard, with no duplication of the projection logic.
 	if err := repair.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		return tools.Failure(tc.ID, tools.Validation(string(name), fmt.Sprintf(
+		return tools.Failure(tools.ToolCallID(tc.ID), tools.Validation(string(name), fmt.Sprintf(
 			"tool arguments did not parse as JSON (after repair attempts): %v. "+
 				"Re-emit the call with valid JSON. Common fixes: escape literal newlines "+
 				"as \\n inside string values, remove trailing commas, double-quote keys.",
 			err))), nil
 	}
 	call := tools.ToolCall{
-		ID:        tc.ID,
+		ID:        tools.ToolCallID(tc.ID),
 		ToolName:  name,
 		Arguments: args,
 		Status:    tools.ToolCallStatusExecuting,

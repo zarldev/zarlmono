@@ -53,18 +53,18 @@ func (h *quizHarness) observe(ctx context.Context) (model.Observation, error) {
 
 func (h *quizHarness) navigate(ctx context.Context, url string) (model.Observation, error) {
 	return execute[model.Observation](ctx, h.registry, toolcomputer.ToolNameComputerAct, toolcomputer.ActArgs{
-		Action: toolcomputer.Action{Kind: "navigate", URL: url},
-		Until:  &toolcomputer.Trigger{Kind: "navigation_complete"},
+		Action: toolcomputer.Action{Kind: model.ActionKinds.NAVIGATE, URL: url},
+		Until:  &toolcomputer.Trigger{Kind: model.TriggerKinds.NAVIGATIONCOMPLETE},
 	})
 }
 
 func (h *quizHarness) click(ctx context.Context, answer string, untilText string) (model.Observation, error) {
 	return execute[model.Observation](ctx, h.registry, toolcomputer.ToolNameComputerAct, toolcomputer.ActArgs{
 		Action: toolcomputer.Action{
-			Kind:   "click",
+			Kind:   model.ActionKinds.CLICK,
 			Target: &toolcomputer.TargetRef{Role: "button", Name: answer},
 		},
-		Until: &toolcomputer.Trigger{Kind: "text_present", Text: untilText},
+		Until: &toolcomputer.Trigger{Kind: model.TriggerKinds.TEXTPRESENT, Text: untilText},
 	})
 }
 func (h *quizHarness) run(ctx context.Context, questions []quizQuestion, url string) (model.Observation, error) {

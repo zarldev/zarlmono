@@ -154,7 +154,7 @@ func TestProcessManager_MaxAliveCap(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	m := NewProcessManager(fakeProcessWorkspace{root: dir}, WithMaxAliveProcesses(2))
-	var ids []string
+	var ids []ProcessID
 	for i := range 2 {
 		id, err := m.StartProcess(`sleep 5`)
 		if err != nil {
@@ -217,20 +217,20 @@ func TestProcessManager_OutputDroppedCounter(t *testing.T) {
 func TestProcessManager_NotFound(t *testing.T) {
 	t.Parallel()
 	m := newTestProcessManager(t)
-	if _, err := m.Output("bash-deadbeef", 0, 0, 0); err == nil {
+	if _, err := m.Output(ProcessID("bash-deadbeef"), 0, 0, 0); err == nil {
 		t.Error("expected error for unknown id")
 	}
-	if _, err := m.Kill("bash-deadbeef", syscall.SIGTERM); err == nil {
+	if _, err := m.Kill(ProcessID("bash-deadbeef"), syscall.SIGTERM); err == nil {
 		t.Error("expected error for unknown id")
 	}
-	if _, err := m.Info("bash-deadbeef"); err == nil {
+	if _, err := m.Info(ProcessID("bash-deadbeef")); err == nil {
 		t.Error("expected error for unknown id")
 	}
 }
 
 // waitForExit polls Info until the process exits or the deadline
 // fires. Test helper — fails the test on timeout.
-func waitForExit(t *testing.T, m *ProcessManager, id string) {
+func waitForExit(t *testing.T, m *ProcessManager, id ProcessID) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

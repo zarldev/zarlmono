@@ -32,7 +32,7 @@ type BashOutputTool struct{ mgr *ProcessManager }
 // integers, not uint64, because JSON numbers + the runner's
 // parameter normalisation prefer int.
 type BashOutputArgs struct {
-	ProcessID    string             `json:"process_id" doc:"Process id returned by bash(background=true)."`
+	ProcessID    ProcessID          `json:"process_id" doc:"Process id returned by bash(background=true)."`
 	StdoutCursor int                `json:"stdout_cursor,omitempty" doc:"Last-seen stdout cursor; omit on first call to read from start."`
 	StderrCursor int                `json:"stderr_cursor,omitempty" doc:"Last-seen stderr cursor; omit on first call to read from start."`
 	MaxLines     int                `json:"max_lines,omitempty" doc:"Cap returned lines per stream (default 1000, 0 = no cap)."`
@@ -148,8 +148,8 @@ type StopProcessTool struct{ mgr *ProcessManager }
 // declares the enum; the SchemaGuardrail validates membership
 // before dispatch).
 type StopProcessArgs struct {
-	ProcessID string `json:"process_id" doc:"Process id returned by bash(background=true)."`
-	Signal    string `json:"signal,omitempty" enum:"TERM,KILL,INT" doc:"Optional signal. Default TERM. Use KILL for immediate termination, INT to send Ctrl+C semantics first."`
+	ProcessID ProcessID `json:"process_id" doc:"Process id returned by bash(background=true)."`
+	Signal    string    `json:"signal,omitempty" enum:"TERM,KILL,INT" doc:"Optional signal. Default TERM. Use KILL for immediate termination, INT to send Ctrl+C semantics first."`
 }
 
 // NewStopProcessTool returns the tool that terminates a background

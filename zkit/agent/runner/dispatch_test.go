@@ -87,7 +87,7 @@ func (t *concurrencyTrackingTool) Execute(_ context.Context, call tools.ToolCall
 	}
 	time.Sleep(t.delay)
 	t.mu.Lock()
-	t.results[call.ID] = struct{}{}
+	t.results[call.ID.String()] = struct{}{}
 	t.mu.Unlock()
 	return &tools.ToolResult{Success: true, Data: call.ID}, nil
 }

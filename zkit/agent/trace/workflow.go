@@ -41,17 +41,17 @@ func (s *WorkflowSink) OnWorkflowStarted(e workflow.Started) { s.emit(KindWorkfl
 
 // OnWorkflowNodeStarted exports a workflow-node-started event.
 func (s *WorkflowSink) OnWorkflowNodeStarted(e workflow.NodeStarted) {
-	s.emit(KindWorkflowNodeStarted, e.Node, e)
+	s.emit(KindWorkflowNodeStarted, e.Node.String(), e)
 }
 
 // OnWorkflowNodeCompleted exports a workflow-node-completed event.
 func (s *WorkflowSink) OnWorkflowNodeCompleted(e workflow.NodeCompleted) {
-	s.emit(KindWorkflowNodeDone, e.Node, e)
+	s.emit(KindWorkflowNodeDone, e.Node.String(), e)
 }
 
 // OnWorkflowNodeFailed exports a workflow-node-failed event.
 func (s *WorkflowSink) OnWorkflowNodeFailed(e workflow.NodeFailed) {
-	s.emit(KindWorkflowNodeFailed, e.Node, e)
+	s.emit(KindWorkflowNodeFailed, e.Node.String(), e)
 }
 
 // OnWorkflowCompleted exports a workflow-completed event.

@@ -9,9 +9,9 @@ import (
 
 // Runnable is a compiled workflow graph.
 type Runnable struct {
-	nodes    map[string]anyNode
-	edges    map[string]string
-	routes   map[string]Route
+	nodes    map[NodeID]anyNode
+	edges    map[NodeID]NodeID
+	routes   map[NodeID]Route
 	MaxSteps int
 	Sink     EventSink
 }

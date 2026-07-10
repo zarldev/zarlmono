@@ -81,7 +81,7 @@ func (f *fakeSource) Execute(_ context.Context, call tools.ToolCall) (*tools.Too
 
 func makeCall(name, id string) tools.ToolCall {
 	return tools.ToolCall{
-		ID:        id,
+		ID:        tools.ToolCallID(id),
 		ToolName:  tools.ToolName(name),
 		Arguments: tools.ToolParameters{},
 		CreatedAt: time.Now(),

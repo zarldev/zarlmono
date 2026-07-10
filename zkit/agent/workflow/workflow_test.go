@@ -16,13 +16,13 @@ func TestWorkflowInvoke(t *testing.T) {
 	if err := workflow.AddNode(g, "label", workflow.NodeFunc[int, string](func(_ context.Context, n int) (string, error) { return "value", nil })); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddEdge(workflow.Start, "double"); err != nil {
+	if err := g.AddEdge(workflow.Start.String(), "double"); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.AddEdge("double", "label"); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddEdge("label", workflow.End); err != nil {
+	if err := g.AddEdge("label", workflow.End.String()); err != nil {
 		t.Fatal(err)
 	}
 	r, err := g.Compile()
@@ -36,7 +36,7 @@ func TestWorkflowInvoke(t *testing.T) {
 	if out != "value" {
 		t.Fatalf("out = %#v", out)
 	}
-	if len(state.Path) != 2 || state.Path[0] != "double" || state.Values["double"] != 42 {
+	if len(state.Path) != 2 || state.Path[0] != workflow.NodeID("double") || state.Values[workflow.NodeID("double")] != 42 {
 		t.Fatalf("state = %#v", state)
 	}
 }
@@ -44,12 +44,12 @@ func TestWorkflowInvoke(t *testing.T) {
 func TestWorkflowConditionalEdge(t *testing.T) {
 	g := workflow.NewGraph()
 	_ = workflow.AddNode(g, "inc", workflow.NodeFunc[int, int](func(_ context.Context, n int) (int, error) { return n + 1, nil }))
-	_ = g.AddEdge(workflow.Start, "inc")
-	_ = g.AddConditionalEdge("inc", func(_ context.Context, state workflow.State) (string, error) {
-		if state.Values["inc"].(int) >= 2 {
+	_ = g.AddEdge(workflow.Start.String(), "inc")
+	_ = g.AddConditionalEdge("inc", func(_ context.Context, state workflow.State) (workflow.NodeID, error) {
+		if state.Values[workflow.NodeID("inc")].(int) >= 2 {
 			return workflow.End, nil
 		}
-		return "inc", nil
+		return workflow.NodeID("inc"), nil
 	})
 	r, err := g.Compile()
 	if err != nil {
@@ -68,13 +68,13 @@ type eventSink struct{ events []string }
 
 func (s *eventSink) OnWorkflowStarted(workflow.Started) { s.events = append(s.events, "start") }
 func (s *eventSink) OnWorkflowNodeStarted(e workflow.NodeStarted) {
-	s.events = append(s.events, "node-start:"+e.Node)
+	s.events = append(s.events, "node-start:"+e.Node.String())
 }
 func (s *eventSink) OnWorkflowNodeCompleted(e workflow.NodeCompleted) {
-	s.events = append(s.events, "node-done:"+e.Node)
+	s.events = append(s.events, "node-done:"+e.Node.String())
 }
 func (s *eventSink) OnWorkflowNodeFailed(e workflow.NodeFailed) {
-	s.events = append(s.events, "node-fail:"+e.Node)
+	s.events = append(s.events, "node-fail:"+e.Node.String())
 }
 func (s *eventSink) OnWorkflowCompleted(workflow.Completed) { s.events = append(s.events, "done") }
 func (s *eventSink) OnWorkflowFailed(workflow.Failed)       { s.events = append(s.events, "fail") }
@@ -82,8 +82,8 @@ func (s *eventSink) OnWorkflowFailed(workflow.Failed)       { s.events = append(
 func TestWorkflowSinkEvents(t *testing.T) {
 	g := workflow.NewGraph()
 	_ = workflow.AddNode(g, "id", workflow.NodeFunc[int, int](func(_ context.Context, n int) (int, error) { return n, nil }))
-	_ = g.AddEdge(workflow.Start, "id")
-	_ = g.AddEdge("id", workflow.End)
+	_ = g.AddEdge(workflow.Start.String(), "id")
+	_ = g.AddEdge("id", workflow.End.String())
 	r, err := g.Compile()
 	if err != nil {
 		t.Fatal(err)

@@ -35,7 +35,7 @@ func staleFailing() *tools.ToolResult {
 }
 
 func callWithArgs(toolName, id string, args tools.ToolParameters) tools.ToolCall {
-	return tools.ToolCall{ID: id, ToolName: tools.ToolName(toolName), Arguments: args}
+	return tools.ToolCall{ID: tools.ToolCallID(id), ToolName: tools.ToolName(toolName), Arguments: args}
 }
 
 func TestDecomposeGuardrail_FirstTwoFailuresPassThrough(t *testing.T) {

@@ -228,7 +228,7 @@ func DescribeBinary(ctx context.Context, binaryPath string, timeout time.Duratio
 	return spec, nil
 }
 
-func failureResult(callID, msg string) *tools.ToolResult {
+func failureResult(callID tools.ToolCallID, msg string) *tools.ToolResult {
 	return &tools.ToolResult{
 		ToolCallID: callID,
 		Success:    false,

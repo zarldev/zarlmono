@@ -18,7 +18,7 @@ func execute[Out any, Args any](ctx context.Context, reg *tools.Registry, name t
 	if err != nil {
 		return zero, fmt.Errorf("encode %q args: %w", name, err)
 	}
-	res, err := tool.Execute(ctx, tools.ToolCall{ID: name.String() + "-call", ToolName: name, Arguments: params})
+	res, err := tool.Execute(ctx, tools.ToolCall{ID: tools.ToolCallID(name.String() + "-call"), ToolName: name, Arguments: params})
 	if err != nil {
 		return zero, err
 	}

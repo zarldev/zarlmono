@@ -327,7 +327,7 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 		Prompt:           childPrompt(args.Prompt),
 		MaxIterations:    t.spawnMaxIterations(args.MaxIterations),
 		Depth:            depth + 1,
-		ParentToolCallID: call.ID,
+		ParentToolCallID: call.ID.String(),
 	}
 	if agentLoaded {
 		childSpec.AgentName = args.Agent

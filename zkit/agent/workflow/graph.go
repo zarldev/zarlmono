@@ -8,37 +8,44 @@ import (
 	"reflect"
 )
 
+// NodeID identifies a workflow node.
+type NodeID string
+
+// String returns the node identifier as a string.
+func (id NodeID) String() string { return string(id) }
+
 // Start and End are sentinel node names for graph boundaries.
 const (
-	Start = "__start__"
-	End   = "__end__"
+	Start NodeID = "__start__"
+	End   NodeID = "__end__"
 )
 
 // Graph is a mutable workflow builder. Compile freezes it into a Runnable.
 type Graph struct {
-	nodes  map[string]anyNode
-	edges  map[string]string
-	routes map[string]Route
+	nodes  map[NodeID]anyNode
+	edges  map[NodeID]NodeID
+	routes map[NodeID]Route
 }
 
 // NewGraph returns an empty workflow graph.
 func NewGraph() *Graph {
-	return &Graph{nodes: map[string]anyNode{}, edges: map[string]string{}, routes: map[string]Route{}}
+	return &Graph{nodes: map[NodeID]anyNode{}, edges: map[NodeID]NodeID{}, routes: map[NodeID]Route{}}
 }
 
 // AddNode registers a node by name.
 func AddNode[I, O any](g *Graph, name string, node Node[I, O]) error {
-	if name == "" || name == Start || name == End {
+	id := NodeID(name)
+	if name == "" || id == Start || id == End {
 		return fmt.Errorf("add node: invalid name %q", name)
 	}
 	if g.nodes == nil {
-		g.nodes = map[string]anyNode{}
+		g.nodes = map[NodeID]anyNode{}
 	}
-	if _, exists := g.nodes[name]; exists {
+	if _, exists := g.nodes[id]; exists {
 		return fmt.Errorf("add node %q: already exists", name)
 	}
 	wrapped := WrapNode(node)
-	g.nodes[name] = func(ctx context.Context, input any) (any, error) {
+	g.nodes[id] = func(ctx context.Context, input any) (any, error) {
 		out, err := wrapped(ctx, input)
 		if mismatch, ok := errors.AsType[TypeMismatchError](err); ok {
 			mismatch.Node = name
@@ -51,28 +58,30 @@ func AddNode[I, O any](g *Graph, name string, node Node[I, O]) error {
 
 // AddEdge adds a static edge from one node to another. from may be Start and to may be End.
 func (g *Graph) AddEdge(from, to string) error {
-	if from == "" || to == "" {
+	fromID, toID := NodeID(from), NodeID(to)
+	if fromID == "" || toID == "" {
 		return errors.New("add edge: names are required")
 	}
 	if g.edges == nil {
-		g.edges = map[string]string{}
+		g.edges = map[NodeID]NodeID{}
 	}
-	g.edges[from] = to
+	g.edges[fromID] = toID
 	return nil
 }
 
 // AddConditionalEdge adds a dynamic route after from runs.
 func (g *Graph) AddConditionalEdge(from string, route Route) error {
-	if from == "" || from == End {
+	fromID := NodeID(from)
+	if fromID == "" || fromID == End {
 		return fmt.Errorf("add conditional edge: invalid from %q", from)
 	}
 	if route == nil {
 		return fmt.Errorf("add conditional edge %q: route is nil", from)
 	}
 	if g.routes == nil {
-		g.routes = map[string]Route{}
+		g.routes = map[NodeID]Route{}
 	}
-	g.routes[from] = route
+	g.routes[fromID] = route
 	return nil
 }
 
@@ -88,11 +97,11 @@ func (g *Graph) Compile() (*Runnable, error) {
 	if _, ok := g.nodes[start]; !ok {
 		return nil, fmt.Errorf("compile workflow: start target %q is not a node", start)
 	}
-	nodes := map[string]anyNode{}
+	nodes := map[NodeID]anyNode{}
 	maps.Copy(nodes, g.nodes)
-	edges := map[string]string{}
+	edges := map[NodeID]NodeID{}
 	maps.Copy(edges, g.edges)
-	routes := map[string]Route{}
+	routes := map[NodeID]Route{}
 	maps.Copy(routes, g.routes)
 	return &Runnable{nodes: nodes, edges: edges, routes: routes}, nil
 }

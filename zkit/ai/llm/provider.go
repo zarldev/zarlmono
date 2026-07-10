@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 )
 
@@ -196,6 +197,41 @@ type ResponseFormat struct {
 	// it (grammar-constrained sampling is always strict by
 	// construction). Default false to match OpenAI's default.
 	Strict bool
+}
+
+// TextResponseFormat returns an unconstrained text response format.
+func TextResponseFormat() ResponseFormat { return ResponseFormat{Type: ResponseFormatText} }
+
+// JSONObjectResponseFormat returns provider JSON-object mode without a pinned schema.
+func JSONObjectResponseFormat() ResponseFormat { return ResponseFormat{Type: ResponseFormatJSONObject} }
+
+// JSONSchemaResponseFormat returns a schema-constrained response format.
+func JSONSchemaResponseFormat(name string, schema Schema, strict bool) ResponseFormat {
+	return ResponseFormat{Type: ResponseFormatJSONSchema, Name: name, Schema: schema, Strict: strict}
+}
+
+// Validate reports whether f has the fields required by its Type.
+func (f ResponseFormat) Validate() error {
+	switch f.Type {
+	case ResponseFormatText:
+		if f.Name != "" || !f.Schema.IsZero() || f.Strict {
+			return fmt.Errorf("response_format %q must not set name, schema, or strict", f.Type)
+		}
+	case ResponseFormatJSONObject:
+		if f.Name != "" || !f.Schema.IsZero() || f.Strict {
+			return fmt.Errorf("response_format %q must not set name, schema, or strict", f.Type)
+		}
+	case ResponseFormatJSONSchema:
+		if f.Name == "" {
+			return fmt.Errorf("response_format %q requires name", f.Type)
+		}
+		if f.Schema.IsZero() {
+			return fmt.Errorf("response_format %q requires schema", f.Type)
+		}
+	default:
+		return fmt.Errorf("response_format type %q is invalid", f.Type)
+	}
+	return nil
 }
 
 // Message represents a single message in a conversation.

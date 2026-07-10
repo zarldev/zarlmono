@@ -23,7 +23,7 @@ func TestStartProcess_CapHoldsUnderConcurrentStarts(t *testing.T) {
 
 	var (
 		mu      sync.Mutex
-		ids     []string
+		ids     []ProcessID
 		wg      sync.WaitGroup
 		started = make(chan struct{})
 	)

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding"
 	"maps"
 	"reflect"
 	"strings"
@@ -16,6 +17,8 @@ const (
 	schemaTypeObject  = "object"
 	schemaTypeString  = "string"
 )
+
+var textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
 
 // SchemaFor reflects over T and returns the tool's parameter schema as a typed
 // llm.Schema (the shape tools.ToolSpec.Parameters expects) so a tool author
@@ -49,6 +52,9 @@ func schemaFromType(t reflect.Type) llm.Schema {
 	}
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
+	}
+	if t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType) {
+		return llm.Schema{Type: schemaTypeString}
 	}
 
 	switch t.Kind() {

@@ -31,7 +31,7 @@ func newProcMgrForTest(t *testing.T) *code.ProcessManager {
 }
 
 // waitForExit polls m.Info until the process exits or the deadline fires.
-func waitForExit(t *testing.T, m *code.ProcessManager, id string, timeout time.Duration) {
+func waitForExit(t *testing.T, m *code.ProcessManager, id code.ProcessID, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -125,7 +125,7 @@ func TestBashOutput_JSONOutput(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &snap); err != nil {
 		t.Fatalf("json output should parse: %v\n%s", err, body)
 	}
-	if snap.ProcessID != id {
+	if snap.ProcessID != id.String() {
 		t.Errorf("process_id = %q, want %q", snap.ProcessID, id)
 	}
 }

@@ -97,7 +97,7 @@ func TestBackgroundProcessSandboxed(t *testing.T) {
 	}
 }
 
-func waitExit(t *testing.T, pm *code.ProcessManager, id string) {
+func waitExit(t *testing.T, pm *code.ProcessManager, id code.ProcessID) {
 	t.Helper()
 	deadline := t.Context().Done()
 	for range 200 {

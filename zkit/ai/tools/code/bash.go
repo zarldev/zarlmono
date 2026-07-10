@@ -319,7 +319,7 @@ func (t *BashTool) executeBackgroundManaged(
 	)
 	effect := tools.NewProcessEffect(cmdStr, 0)
 	effect.Process.Background = true
-	effect.Process.ProcessID = id
+	effect.Process.ProcessID = id.String()
 	effect.Process.PID = info.PID
 	effect.Process.AutoBackgrounded = autoFlipReason != ""
 	return tools.Success(call.ID, body, effect), nil

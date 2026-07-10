@@ -348,6 +348,39 @@ type MCPConnSpec struct {
 	AuthToken string            `json:"auth_token"` // http: Bearer token (optional)
 }
 
+// NewStdioMCPConn returns a stdio MCP connection spec.
+func NewStdioMCPConn(command string, args []string, env map[string]string) MCPConnSpec {
+	return MCPConnSpec{Type: Transports.TRANSPORTSTDIO, Command: command, Args: args, Env: env}
+}
+
+// NewHTTPMCPConn returns an HTTP MCP connection spec.
+func NewHTTPMCPConn(baseURL, authToken string) MCPConnSpec {
+	return MCPConnSpec{Type: Transports.TRANSPORTHTTP, BaseURL: baseURL, AuthToken: authToken}
+}
+
+// Validate reports whether s has exactly the fields required by its transport.
+func (s MCPConnSpec) Validate() error {
+	switch s.Type {
+	case Transports.TRANSPORTSTDIO:
+		if s.Command == "" {
+			return errors.New("command required for stdio transport")
+		}
+		if s.BaseURL != "" || s.AuthToken != "" {
+			return errors.New("stdio transport must not set base_url or auth_token")
+		}
+	case Transports.TRANSPORTHTTP:
+		if s.BaseURL == "" {
+			return errors.New("base_url required for http transport")
+		}
+		if s.Command != "" || len(s.Args) > 0 || len(s.Env) > 0 {
+			return errors.New("http transport must not set command, args, or env")
+		}
+	default:
+		return errors.New("transport required (use 'stdio' or 'http')")
+	}
+	return nil
+}
+
 // MCPConnect is the agent-facing tool that connects to an MCP server and
 // registers all its tools on the registry.
 type MCPConnect struct {
@@ -416,23 +449,17 @@ func (t *MCPConnect) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		if args.Command == "" {
 			return failureResult(call.ID, "mcp_connect: command required for stdio transport"), nil
 		}
-		spec = MCPConnSpec{
-			Type:    Transports.TRANSPORTSTDIO,
-			Command: args.Command,
-			Args:    args.Args,
-			Env:     args.Env,
-		}
+		spec = NewStdioMCPConn(args.Command, args.Args, args.Env)
 	case Transports.TRANSPORTHTTP:
 		if args.BaseURL == "" {
 			return failureResult(call.ID, "mcp_connect: base_url required for http transport"), nil
 		}
-		spec = MCPConnSpec{
-			Type:      Transports.TRANSPORTHTTP,
-			BaseURL:   args.BaseURL,
-			AuthToken: args.AuthToken,
-		}
+		spec = NewHTTPMCPConn(args.BaseURL, args.AuthToken)
 	default:
 		return failureResult(call.ID, fmt.Sprintf("unknown transport %s", args.Transport)), nil
+	}
+	if err := spec.Validate(); err != nil {
+		return failureResult(call.ID, "mcp_connect: "+err.Error()), nil
 	}
 	toolNames, err := t.reg.connect(ctx, args.Name, spec)
 	if err != nil {

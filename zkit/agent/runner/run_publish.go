@@ -119,7 +119,7 @@ func (r *Runner) publishToolStarted(_ context.Context, spec TaskSpec, call tools
 	r.sink.OnToolStarted(ToolStarted{
 		TaskID:     spec.ID,
 		Depth:      spec.Depth,
-		ToolID:     call.ID,
+		ToolID:     call.ID.String(),
 		ToolName:   call.ToolName.String(),
 		Parameters: call.Arguments,
 	})
@@ -172,7 +172,7 @@ func (r *Runner) publishToolFinished(
 		r.sink.OnToolFailed(ToolFailed{
 			TaskID:    spec.ID,
 			Depth:     spec.Depth,
-			ToolID:    call.ID,
+			ToolID:    call.ID.String(),
 			ToolName:  call.ToolName.String(),
 			Duration:  dur,
 			Error:     errMsg,
@@ -190,7 +190,7 @@ func (r *Runner) publishToolFinished(
 	r.sink.OnToolCompleted(ToolCompleted{
 		TaskID:          spec.ID,
 		Depth:           spec.Depth,
-		ToolID:          call.ID,
+		ToolID:          call.ID.String(),
 		ToolName:        call.ToolName.String(),
 		Result:          data,
 		FormattedResult: formatToolData(data),

@@ -78,7 +78,7 @@ func (t *ReadFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 		return tools.Failure(call.ID, tools.Validation("read", err.Error())), nil
 	}
 
-	data, fail := readHashlineFile(t.ws, args.Path, call.ID, "read", t.allowOutsideWorkspace)
+	data, fail := readHashlineFile(t.ws, args.Path, call.ID.String(), "read", t.allowOutsideWorkspace)
 	if fail != nil {
 		return fail, nil
 	}
@@ -182,7 +182,7 @@ func (t *EditFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 	unlock := t.ws.LockPath(abs)
 	defer unlock()
 
-	data, fail := readHashlineFileAt(t.ws, abs, args.Path, call.ID, "edit")
+	data, fail := readHashlineFileAt(t.ws, abs, args.Path, call.ID.String(), "edit")
 	if fail != nil {
 		return fail, nil
 	}
@@ -451,7 +451,7 @@ type hashlineLine struct {
 func readHashlineFile(ws Workspace, path, callID, op string, allowOutsideWorkspace bool) ([]byte, *tools.ToolResult) {
 	abs, err := ws.ResolveForRead(path, allowOutsideWorkspace)
 	if err != nil {
-		return nil, tools.Failure(callID, tools.Permission(op, err.Error()))
+		return nil, tools.Failure(tools.ToolCallID(callID), tools.Permission(op, err.Error()))
 	}
 	return readHashlineFileAt(ws, abs, path, callID, op)
 }
@@ -460,12 +460,12 @@ func readHashlineFileAt(ws Workspace, abs, path, callID, op string) ([]byte, *to
 	info, err := ws.StatPath(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, tools.Failure(callID, tools.NotFound(op, fmt.Sprintf("%q does not exist", path)))
+			return nil, tools.Failure(tools.ToolCallID(callID), tools.NotFound(op, fmt.Sprintf("%q does not exist", path)))
 		}
-		return nil, tools.Failure(callID, tools.Fatal(op, fmt.Errorf("stat %q: %w", path, err)))
+		return nil, tools.Failure(tools.ToolCallID(callID), tools.Fatal(op, fmt.Errorf("stat %q: %w", path, err)))
 	}
 	if info.Size() > readMaxBytes {
-		return nil, tools.Failure(callID, tools.Validation(
+		return nil, tools.Failure(tools.ToolCallID(callID), tools.Validation(
 			op,
 			fmt.Sprintf("%q: file too large (%d bytes, max %d)", path, info.Size(), readMaxBytes),
 		))
@@ -473,11 +473,11 @@ func readHashlineFileAt(ws Workspace, abs, path, callID, op string) ([]byte, *to
 
 	data, err := ws.ReadFilePath(abs)
 	if err != nil {
-		return nil, tools.Failure(callID, tools.Fatal(op, fmt.Errorf("%q: %w", path, err)))
+		return nil, tools.Failure(tools.ToolCallID(callID), tools.Fatal(op, fmt.Errorf("%q: %w", path, err)))
 	}
 	sniffEnd := min(len(data), binarySniffBytes)
 	if bytes.IndexByte(data[:sniffEnd], 0) >= 0 {
-		return nil, tools.Failure(callID, tools.Validation(op, fmt.Sprintf("%q: binary file refused", path)))
+		return nil, tools.Failure(tools.ToolCallID(callID), tools.Validation(op, fmt.Sprintf("%q: binary file refused", path)))
 	}
 	return data, nil
 }

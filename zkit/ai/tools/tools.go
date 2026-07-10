@@ -17,6 +17,12 @@ import (
 // ToolName is a typed identifier for a tool.
 type ToolName string
 
+// ToolCallID identifies one model-requested tool invocation.
+type ToolCallID string
+
+// String returns the string representation.
+func (id ToolCallID) String() string { return string(id) }
+
 // String returns the string representation.
 func (n ToolName) String() string { return string(n) }
 
@@ -257,6 +263,29 @@ func NewProcessEffect(command string, exitCode int) Effect {
 	return Effect{Kind: EffectProcess, Process: &ProcessEffect{Command: command, ExitCode: exitCode}}
 }
 
+// Validate reports whether e has exactly the payload selected by Kind.
+func (e Effect) Validate() error {
+	switch e.Kind {
+	case EffectFile:
+		if e.File == nil || e.Process != nil {
+			return fmt.Errorf("effect %q requires file payload only", e.Kind)
+		}
+	case EffectProcess:
+		if e.Process == nil || e.File != nil {
+			return fmt.Errorf("effect %q requires process payload only", e.Kind)
+		}
+	default:
+		return fmt.Errorf("effect kind %q is invalid", e.Kind)
+	}
+	return nil
+}
+
+// IsFile reports whether e is a valid file effect.
+func (e Effect) IsFile() bool { return e.Validate() == nil && e.Kind == EffectFile }
+
+// IsProcess reports whether e is a valid process effect.
+func (e Effect) IsProcess() bool { return e.Validate() == nil && e.Kind == EffectProcess }
+
 // ToolCallStatus is the lifecycle state of a tool call.
 type ToolCallStatus string
 
@@ -274,7 +303,7 @@ func (s ToolCallStatus) String() string { return string(s) }
 
 // ToolCall is a structured tool invocation.
 type ToolCall struct {
-	ID        string         `json:"id"`
+	ID        ToolCallID     `json:"id"`
 	ToolName  ToolName       `json:"tool_name"`
 	Arguments ToolParameters `json:"arguments"`
 	Status    ToolCallStatus `json:"status"`
@@ -283,10 +312,10 @@ type ToolCall struct {
 
 // ToolResult is the outcome of executing a tool.
 type ToolResult struct {
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	Success    bool   `json:"success"`
-	Data       any    `json:"data,omitempty"`
-	Error      string `json:"error,omitempty"`
+	ToolCallID ToolCallID `json:"tool_call_id,omitempty"`
+	Success    bool       `json:"success"`
+	Data       any        `json:"data,omitempty"`
+	Error      string     `json:"error,omitempty"`
 	// Err is the typed failure carrying Op / Reason / Wrapped, populated
 	// by the failure helpers (failure in zkit/ai/tools/code,
 	// failedFromError in zkit/agent/runner). Guardrails should switch on
@@ -300,6 +329,16 @@ type ToolResult struct {
 
 // AddEffect appends e to r. A nil receiver is ignored so callers can use
 // it defensively around optional tool results.
+// DataAs returns r.Data as T when it already has that dynamic type.
+func DataAs[T any](r *ToolResult) (T, bool) {
+	var zero T
+	if r == nil {
+		return zero, false
+	}
+	v, ok := r.Data.(T)
+	return v, ok
+}
+
 func (r *ToolResult) AddEffect(e Effect) {
 	if r == nil {
 		return
@@ -651,7 +690,7 @@ func (r *Registry) ToolSpecs() []ToolSpec {
 // ParseCall builds a ToolCall envelope for the named tool. The arguments are
 // not interpreted — concrete tools validate their own argument shape during
 // Execute. Returns an error if the named tool isn't registered.
-func (r *Registry) ParseCall(name ToolName, callID string, arguments map[string]any) (ToolCall, error) {
+func (r *Registry) ParseCall(name ToolName, callID ToolCallID, arguments map[string]any) (ToolCall, error) {
 	if _, ok := r.Tool(name); !ok {
 		return ToolCall{}, fmt.Errorf("tool not found: %s", name)
 	}

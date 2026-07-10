@@ -28,22 +28,22 @@ type TargetRef struct {
 
 // Action describes an operation to perform on the current computer surface.
 type Action struct {
-	Kind   string     `json:"kind" enum:"navigate,click,fill,press,scroll" doc:"Action kind. One of navigate, click, fill, press, or scroll."`
-	Target *TargetRef `json:"target,omitempty" doc:"Optional target for click, fill, press, or targeted trigger semantics."`
-	Value  string     `json:"value,omitempty" doc:"Text/value to enter for fill actions."`
-	Key    string     `json:"key,omitempty" doc:"Key to send for press actions, such as Enter, Tab, Escape, or printable text."`
-	URL    string     `json:"url,omitempty" doc:"URL to load for navigate actions."`
-	Delta  *Point     `json:"delta,omitempty" doc:"Nested point used as movement/scroll delta, for example {\"x\":0,\"y\":600}."`
+	Kind   model.ActionKind `json:"kind" enum:"navigate,click,fill,press,scroll" doc:"Action kind. One of navigate, click, fill, press, or scroll."`
+	Target *TargetRef       `json:"target,omitempty" doc:"Optional target for click, fill, press, or targeted trigger semantics."`
+	Value  string           `json:"value,omitempty" doc:"Text/value to enter for fill actions."`
+	Key    string           `json:"key,omitempty" doc:"Key to send for press actions, such as Enter, Tab, Escape, or printable text."`
+	URL    string           `json:"url,omitempty" doc:"URL to load for navigate actions."`
+	Delta  *Point           `json:"delta,omitempty" doc:"Nested point used as movement/scroll delta, for example {\"x\":0,\"y\":600}."`
 }
 
 // Trigger describes a condition used by When and Until. When is an action
 // precondition; Until is a completion/settlement condition after the action.
 type Trigger struct {
-	Kind   string     `json:"kind" enum:"visible,hidden,focused,text_present,value_equals,url_matches,navigation_complete,surface_stable" doc:"Trigger kind for When or Until semantics."`
-	Target *TargetRef `json:"target,omitempty" doc:"Optional target the trigger applies to."`
-	Text   string     `json:"text,omitempty" doc:"Expected text for text_present or fallback URL matching."`
-	Value  string     `json:"value,omitempty" doc:"Expected value for value_equals or fallback URL matching."`
-	URL    string     `json:"url,omitempty" doc:"Expected URL substring for url_matches."`
+	Kind   model.TriggerKind `json:"kind" enum:"visible,hidden,focused,text_present,value_equals,url_matches,navigation_complete,surface_stable" doc:"Trigger kind for When or Until semantics."`
+	Target *TargetRef        `json:"target,omitempty" doc:"Optional target the trigger applies to."`
+	Text   string            `json:"text,omitempty" doc:"Expected text for text_present or fallback URL matching."`
+	Value  string            `json:"value,omitempty" doc:"Expected value for value_equals or fallback URL matching."`
+	URL    string            `json:"url,omitempty" doc:"Expected URL substring for url_matches."`
 }
 
 // ActArgs describes a computer_act request. When is checked before the action;
@@ -101,13 +101,12 @@ func (t *ActTool) executeTyped(ctx context.Context, args ActArgs) (model.Observa
 }
 
 func (a ActArgs) toModel() (model.ActionRequest, error) {
-	actionKind, err := model.ParseActionKind(a.Action.Kind)
-	if err != nil {
+	if !a.Action.Kind.IsValid() {
 		return model.ActionRequest{}, tools.Validation("computer_act", "action.kind must be one of navigate, click, fill, press, scroll")
 	}
 	req := model.ActionRequest{
 		Action: model.Action{
-			Kind:   actionKind,
+			Kind:   a.Action.Kind,
 			Target: a.Action.Target.toModel(),
 			Value:  a.Action.Value,
 			Key:    a.Action.Key,
@@ -136,12 +135,11 @@ func (t *Trigger) toModel() (*model.Trigger, error) {
 	if t == nil {
 		return nil, tools.Validation("computer_act", "trigger is nil")
 	}
-	kind, err := model.ParseTriggerKind(t.Kind)
-	if err != nil {
-		return nil, tools.Validation("computer_act", "trigger.kind must be one of visible, hidden, focused, text_present, value_equals, url_matches, navigation_complete, surface_stable")
+	if !t.Kind.IsValid() {
+		return nil, tools.Validation("computer_act", "trigger.kind must be one of visible, hidden, focused, text_present, value_equals, navigation_complete, surface_stable")
 	}
 	return &model.Trigger{
-		Kind:   kind,
+		Kind:   t.Kind,
 		Target: t.Target.toModel(),
 		Text:   t.Text,
 		Value:  t.Value,

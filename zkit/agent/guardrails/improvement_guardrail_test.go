@@ -35,7 +35,7 @@ func (v *recordingVerifier) Verify(_ context.Context, _ string, paths []string) 
 
 func writeCall(id, path string) tools.ToolCall {
 	return tools.ToolCall{
-		ID:        id,
+		ID:        tools.ToolCallID(id),
 		ToolName:  "write",
 		Arguments: tools.ToolParameters{"path": path},
 	}

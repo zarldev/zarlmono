@@ -166,7 +166,7 @@ func Stale(op, reason string) *Error {
 // projection mirrors what the runner expects after dispatch, so
 // every tool returns the same shape regardless of which error type
 // the body produced.
-func Failure(callID string, err error) *ToolResult {
+func Failure(callID ToolCallID, err error) *ToolResult {
 	res := &ToolResult{
 		ToolCallID: callID,
 		Success:    false,
@@ -182,7 +182,7 @@ func Failure(callID string, err error) *ToolResult {
 // Success packages data as a successful ToolResult. It mirrors [Failure]
 // so tools construct result envelopes consistently instead of open-coding
 // timestamps and effect slices at each call site.
-func Success(callID string, data any, effects ...Effect) *ToolResult {
+func Success(callID ToolCallID, data any, effects ...Effect) *ToolResult {
 	return &ToolResult{
 		ToolCallID: callID,
 		Success:    true,

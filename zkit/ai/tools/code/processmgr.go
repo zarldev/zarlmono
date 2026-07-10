@@ -32,6 +32,12 @@ import (
 // ProcessManager.Close (a strict superset) also shuts down the
 // background reap goroutine. Shell shutdown should call Close so
 // the reaper doesn't outlive its manager.
+// ProcessID identifies a managed background process.
+type ProcessID string
+
+// String returns the process identifier as a string.
+func (id ProcessID) String() string { return string(id) }
+
 type ProcessManager struct {
 	workspace ProcessWorkspace
 	sandbox   Sandboxer
@@ -41,14 +47,14 @@ type ProcessManager struct {
 	reapAfter time.Duration
 
 	mu    sync.RWMutex
-	procs map[string]*managedProcess
+	procs map[ProcessID]*managedProcess
 	// pending counts slots reserved by an in-flight StartProcess that
 	// has passed the cap check but hasn't yet inserted its process into
 	// procs. It's added to the live count so two concurrent starts can't
 	// both squeak past maxAlive in the fork-shaped window between the
 	// check and the insert.
 	pending int
-	idGen   func() string // overridable for tests
+	idGen   func() ProcessID // overridable for tests
 
 	// closeCh signals the reapLoop goroutine to exit. closed by
 	// Close; nil for managers that haven't been Close'd (the
@@ -69,7 +75,7 @@ type ProcessWorkspace interface {
 // ProcessInfo is the public snapshot of a managed process. Returned
 // by List and embedded in tool-result payloads.
 type ProcessInfo struct {
-	ID          string    `json:"process_id"`
+	ID          ProcessID `json:"process_id"`
 	Command     string    `json:"command"`
 	PID         int       `json:"pid"`
 	CWD         string    `json:"cwd"`
@@ -87,20 +93,20 @@ type ProcessInfo struct {
 // the ring buffer between reads — the agent uses this signal to
 // decide whether to throttle output (or accept a partial view).
 type OutputSnapshot struct {
-	ID                 string   `json:"process_id"`
-	Running            bool     `json:"running"`
-	ExitCode           *int     `json:"exit_code,omitempty"`
-	Stdout             []string `json:"stdout"`
-	Stderr             []string `json:"stderr"`
-	StdoutCursor       uint64   `json:"stdout_cursor"`
-	StderrCursor       uint64   `json:"stderr_cursor"`
-	StdoutDroppedSince uint64   `json:"stdout_dropped_since,omitempty"`
-	StderrDroppedSince uint64   `json:"stderr_dropped_since,omitempty"`
+	ID                 ProcessID `json:"process_id"`
+	Running            bool      `json:"running"`
+	ExitCode           *int      `json:"exit_code,omitempty"`
+	Stdout             []string  `json:"stdout"`
+	Stderr             []string  `json:"stderr"`
+	StdoutCursor       uint64    `json:"stdout_cursor"`
+	StderrCursor       uint64    `json:"stderr_cursor"`
+	StdoutDroppedSince uint64    `json:"stdout_dropped_since,omitempty"`
+	StderrDroppedSince uint64    `json:"stderr_dropped_since,omitempty"`
 }
 
 // managedProcess holds the bookkeeping for one background process.
 type managedProcess struct {
-	id        string
+	id        ProcessID
 	cmd       *exec.Cmd
 	pid       int
 	cwd       string
@@ -143,7 +149,7 @@ func NewProcessManager(ws ProcessWorkspace, opts ...ProcessManagerOption) *Proce
 		maxAlive:  16,
 		maxBuffer: 10000,
 		reapAfter: 60 * time.Second,
-		procs:     make(map[string]*managedProcess),
+		procs:     make(map[ProcessID]*managedProcess),
 		idGen:     defaultProcessIDGen,
 		closeCh:   make(chan struct{}),
 		reapDone:  make(chan struct{}),
@@ -242,7 +248,7 @@ var ErrProcessNotFound = errors.New("processmgr: process not found")
 // command runs through /bin/bash -c (falling back to /bin/sh) to
 // match the synchronous bash tool's semantics — same env, same
 // shell, same setsid isolation.
-func (m *ProcessManager) StartProcess(command string) (string, error) {
+func (m *ProcessManager) StartProcess(command string) (ProcessID, error) {
 	if command == "" {
 		return "", errors.New("processmgr: empty command")
 	}
@@ -411,7 +417,7 @@ func (m *ProcessManager) reapLoop() {
 // stdoutCursor / stderrCursor come from a prior call's snapshot;
 // pass 0 on the first call to read from the start. maxLines caps
 // the return per stream (0 = no cap).
-func (m *ProcessManager) Output(id string, stdoutCursor, stderrCursor uint64, maxLines int) (OutputSnapshot, error) {
+func (m *ProcessManager) Output(id ProcessID, stdoutCursor, stderrCursor uint64, maxLines int) (OutputSnapshot, error) {
 	m.mu.RLock()
 	proc, ok := m.procs[id]
 	m.mu.RUnlock()
@@ -442,7 +448,7 @@ func (m *ProcessManager) Output(id string, stdoutCursor, stderrCursor uint64, ma
 // applies a similar two-stage escalation. SIGKILL is immediate.
 // Returns the eventual exit code (or -1 if the process didn't exit
 // in time).
-func (m *ProcessManager) Kill(id string, signal syscall.Signal) (int, error) {
+func (m *ProcessManager) Kill(id ProcessID, signal syscall.Signal) (int, error) {
 	m.mu.RLock()
 	proc, ok := m.procs[id]
 	m.mu.RUnlock()
@@ -588,7 +594,7 @@ func (m *ProcessManager) List() []ProcessInfo {
 
 // Info returns a single process's snapshot. Useful for /processes
 // detail views; the tool layer uses List().
-func (m *ProcessManager) Info(id string) (ProcessInfo, error) {
+func (m *ProcessManager) Info(id ProcessID) (ProcessInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.procs[id]
@@ -745,10 +751,10 @@ func waitFor(done <-chan struct{}) bool {
 // defaultProcessIDGen produces a short, type-friendly id like
 // "bash-a7c2". 8 hex chars from crypto/rand — collision-resistant
 // well past the 16-process cap.
-func defaultProcessIDGen() string {
+func defaultProcessIDGen() ProcessID {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
-	return "bash-" + hex.EncodeToString(b[:])
+	return ProcessID("bash-" + hex.EncodeToString(b[:]))
 }
 
 func bytesToStrings(lines [][]byte) []string {

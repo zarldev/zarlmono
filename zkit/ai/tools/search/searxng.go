@@ -189,7 +189,7 @@ func decodeAndValidate(baseURL string, call tools.ToolCall) (SearxngArgs, *tools
 // caller can hand it back to the runner unchanged.
 func (t *SearxngTool) fetch(
 	ctx context.Context,
-	callID, query string,
+	callID tools.ToolCallID, query string,
 	maxResults int,
 ) (rawSearxngResponse, *tools.ToolResult) {
 	u, err := buildURL(t.baseURL, query)

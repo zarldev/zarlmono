@@ -39,12 +39,10 @@ type UpdatePlanTool struct {
 }
 
 // UpdatePlanStepArg is one step in the typed update_plan payload.
-// Mirrors the JSON Schema's per-item object {step, status}. Status is
-// kept as a string here — the strongly-typed StepStatus enum lives
-// in the plan-store layer and ParseStepStatus does the conversion.
+// Mirrors the JSON Schema's per-item object {step, status}.
 type UpdatePlanStepArg struct {
-	Step   string `json:"step" doc:"The step description."`
-	Status string `json:"status" enum:"pending,in_progress,completed" doc:"One of pending, in_progress, or completed."`
+	Step   string     `json:"step" doc:"The step description."`
+	Status StepStatus `json:"status" enum:"pending,in_progress,completed" doc:"One of pending, in_progress, or completed."`
 }
 
 // UpdatePlanArgs is the typed argument struct UpdatePlanTool.Execute
@@ -77,7 +75,7 @@ func (t *UpdatePlanTool) Definition() tools.ToolSpec {
 }
 
 // Execute requires a non-empty plan array, trims each step, treats an
-// omitted status as pending, and parses statuses via ParseStepStatus —
+// omitted status as pending, and validates statuses via StepStatus.IsValid —
 // the first empty step or unknown status fails the whole call. On
 // success it replaces the stored plan wholesale and returns per-status
 // counts.
@@ -99,22 +97,11 @@ func (t *UpdatePlanTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 				tools.Validation("update_plan", fmt.Sprintf("step %d has empty `step`", i+1)),
 			), nil
 		}
-		// Normalise raw model output before parsing: trim surrounding
-		// whitespace, fold case, and treat an omitted status as pending.
-		// ParseStepStatus itself is the generated exact-match parser
-		// (with the in-progress/done aliases baked in).
-		raw := strings.ToLower(strings.TrimSpace(item.Status))
-		if raw == "" {
-			raw = "pending"
+		status := item.Status
+		if !status.IsValid() {
+			status = StepStatuses.PENDING
 		}
-		status, err := ParseStepStatus(raw)
-		if err == nil {
-			steps = append(steps, PlanStep{Text: text, Status: status})
-			continue
-		}
-		// Unknown status is surfaced as a tool-result validation failure, not a
-		// Go error — the dispatch layer feeds it back to the model.
-		return tools.Failure(call.ID, tools.Validation("update_plan", fmt.Sprintf("step %d: unknown step status %q (want pending|in_progress|completed)", i+1, item.Status))), nil
+		steps = append(steps, PlanStep{Text: text, Status: status})
 	}
 
 	plan := Plan{Steps: steps, Explanation: strings.TrimSpace(args.Explanation)}
