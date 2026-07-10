@@ -16,6 +16,12 @@ import (
 	"time"
 )
 
+// ProcessID identifies a managed background process.
+type ProcessID string
+
+// String returns the process identifier as a string.
+func (id ProcessID) String() string { return string(id) }
+
 // ProcessManager tracks the lifecycle of background shell processes
 // spawned by the bash tool. Replaces the earlier "redirect to a log
 // file, return the raw pid" approach with in-memory output capture
@@ -32,11 +38,6 @@ import (
 // ProcessManager.Close (a strict superset) also shuts down the
 // background reap goroutine. Shell shutdown should call Close so
 // the reaper doesn't outlive its manager.
-// ProcessID identifies a managed background process.
-type ProcessID string
-
-// String returns the process identifier as a string.
-func (id ProcessID) String() string { return string(id) }
 
 type ProcessManager struct {
 	workspace ProcessWorkspace

@@ -183,8 +183,8 @@ func TestFetchModelsFollowsAnthropicPagination(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Header.Get("x-api-key") != "sk-ant-test" {
-			t.Fatalf("x-api-key = %q, want sk-ant-test", r.Header.Get("x-api-key"))
+		if r.Header.Get("X-Api-Key") != "sk-ant-test" {
+			t.Fatalf("x-api-key = %q, want sk-ant-test", r.Header.Get("X-Api-Key"))
 		}
 		if r.URL.Query().Get("limit") != "1000" {
 			t.Fatalf("limit = %q, want 1000", r.URL.Query().Get("limit"))

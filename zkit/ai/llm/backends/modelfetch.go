@@ -78,7 +78,7 @@ func openaiCompatGetCursor(ctx context.Context, baseURL string, headers http.Hea
 	ids := make([]string, 0)
 	seen := make(map[string]bool)
 	cursor := ""
-	for page := 0; page < maxModelListPages; page++ {
+	for range maxModelListPages {
 		reqURL, err := modelListURL(endpoint, cursorParam, cursor, includeLimit)
 		if err != nil {
 			return nil, err
