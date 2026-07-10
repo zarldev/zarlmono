@@ -458,8 +458,8 @@ func (t *MCPConnect) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 	default:
 		return failureResult(call.ID, fmt.Sprintf("unknown transport %s", args.Transport)), nil
 	}
-	if err := spec.Validate(); err != nil {
-		return failureResult(call.ID, "mcp_connect: "+err.Error()), nil
+	if validationErr := spec.Validate(); validationErr != nil {
+		return failureResult(call.ID, "mcp_connect: "+validationErr.Error()), nil
 	}
 	toolNames, err := t.reg.connect(ctx, args.Name, spec)
 	if err != nil {

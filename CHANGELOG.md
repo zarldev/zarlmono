@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [zkit/v0.3.1] — 2026-07-10
+
+`zkit/v0.3.1`
+
+### Added
+
+- Typed workflow node IDs, tool-call IDs, and background process IDs to make shared agent/runtime boundaries harder to misuse.
+- Validation helpers and constructors for tool effects, LLM response formats, and dynamic MCP connection specs.
+- OpenAI/Codex model metadata updates, including GPT-5.6 family defaults and max reasoning effort support.
+
+### Changed
+
+- First-party tool schemas now preserve enum-backed argument types for plan and computer-use tools.
+- OpenAI-compatible and Anthropic model discovery now follows paginated provider responses.
+
+### Fixed
+
+- Downstream zarlcode, swebench-eval, and examples call sites now use the stronger zkit ID and enum types.
+
 
 ## [zkit/v0.3.0] — 2026-07-08
 

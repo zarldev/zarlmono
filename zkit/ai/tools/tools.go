@@ -327,8 +327,6 @@ type ToolResult struct {
 	ExecutedAt time.Time    `json:"executed_at"`
 }
 
-// AddEffect appends e to r. A nil receiver is ignored so callers can use
-// it defensively around optional tool results.
 // DataAs returns r.Data as T when it already has that dynamic type.
 func DataAs[T any](r *ToolResult) (T, bool) {
 	var zero T
@@ -339,6 +337,8 @@ func DataAs[T any](r *ToolResult) (T, bool) {
 	return v, ok
 }
 
+// AddEffect appends e to r. A nil receiver is ignored so callers can use
+// it defensively around optional tool results.
 func (r *ToolResult) AddEffect(e Effect) {
 	if r == nil {
 		return
