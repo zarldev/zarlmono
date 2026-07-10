@@ -327,7 +327,7 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 			continue
 		}
 		res, err := connect.Execute(ctx, tools.ToolCall{
-			ID: "startup-mcp-" + srv.Name,
+			ID: tools.ToolCallID("startup-mcp-" + srv.Name),
 			Arguments: tools.ToolParameters{
 				"name":       srv.Name,
 				"transport":  srv.Transport,

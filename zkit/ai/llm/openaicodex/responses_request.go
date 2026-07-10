@@ -7,8 +7,8 @@ import (
 )
 
 // reasoningEffort enumerates the values the Responses API accepts for
-// reasoning.effort. The plugin's "xhigh" variant is Codex-only and is
-// silently coerced to "high" by older models — sent as-is here.
+// reasoning.effort. The plugin's "xhigh" and GPT-5.6 "max" variants are
+// Codex-only for ChatGPT-authenticated runs — sent as-is here.
 type reasoningEffort string
 
 const (
@@ -17,6 +17,7 @@ const (
 	reasoningEffortMedium reasoningEffort = "medium"
 	reasoningEffortHigh   reasoningEffort = "high"
 	reasoningEffortXHigh  reasoningEffort = "xhigh"
+	reasoningEffortMax    reasoningEffort = "max"
 )
 
 // textVerbosity enumerates text.verbosity values. medium is the
@@ -355,7 +356,7 @@ func toolsToResponsesTools(tools []llm.Tool) []responsesTool {
 }
 
 // defaultReasoningEffort returns the effort the Codex backend uses
-// when one isn't specified explicitly. Pattern: -max → high,
+// when one isn't specified explicitly. Pattern: -max → max,
 // -spark → low (real-time iteration is the whole point), -mini →
 // low (fast & cheap is what you ask mini for), other codex → medium,
 // gpt-5 family (base / 5.5 / 5-pro etc) → medium so the Responses
@@ -368,7 +369,7 @@ func toolsToResponsesTools(tools []llm.Tool) []responsesTool {
 func defaultReasoningEffort(model string) reasoningEffort {
 	switch {
 	case strings.HasSuffix(model, "-max"):
-		return reasoningEffortHigh
+		return reasoningEffortMax
 	case strings.HasSuffix(model, "-spark"):
 		return reasoningEffortLow
 	case strings.HasSuffix(model, "-mini"):

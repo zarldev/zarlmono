@@ -20,7 +20,7 @@ import (
 
 const (
 	defaultBaseURL = "https://chatgpt.com/backend-api"
-	defaultModel   = "gpt-5.5"
+	defaultModel   = "gpt-5.6"
 )
 
 // Provider implements llm.Provider against OpenAI's Codex backend

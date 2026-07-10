@@ -25,6 +25,8 @@ func ContextWindowFor(model string) int {
 	}
 	switch model {
 	// --- GPT-5 family ---
+	case "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+		return 1_050_000
 	case "gpt-5.5":
 		return 1_000_000
 	case "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2":

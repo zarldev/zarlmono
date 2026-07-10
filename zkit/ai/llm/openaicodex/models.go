@@ -5,12 +5,14 @@ import (
 )
 
 const (
+	modelGPT56      = "gpt-5.6"
+	modelGPT56Sol   = "gpt-5.6-sol"
+	modelGPT56Terra = "gpt-5.6-terra"
+	modelGPT56Luna  = "gpt-5.6-luna"
 	modelGPT55      = "gpt-5.5"
 	modelGPT54      = "gpt-5.4"
 	modelGPT54Mini  = "gpt-5.4-mini"
-	modelGPT53Codex = "gpt-5.3-codex"
 	modelGPT53Spark = "gpt-5.3-codex-spark"
-	modelGPT52      = "gpt-5.2"
 )
 
 // modelPreset describes one selectable model id and the reasoning
@@ -45,31 +47,20 @@ type modelPreset struct {
 // which generates the variants on demand for resolveModel's lookup
 // table at init time.
 //
-// Legacy 5.1-codex / 5.1-codex-max / 5.1-codex-mini / 5.2-codex are
-// API-key-only on the OpenAI side; the Codex backend rejects them
-// when authed via a ChatGPT account ("model is not supported when
-// using Codex with a ChatGPT account"). zarlcode only supports
-// OAuth for the codex backend, so listing them in the picker means
-// every selection fails. They're excluded.
+// Deprecated ChatGPT-sign-in models such as gpt-5.2 and gpt-5.3-codex
+// are intentionally not listed; they may remain API-key-only, but zarlcode's
+// openai-codex backend uses ChatGPT OAuth.
 var presetModels = []modelPreset{
-	// gpt-5.5 (newest frontier — supersedes 5.4 for complex work)
-	{ID: modelGPT55, BaseModel: modelGPT55, Description: "GPT-5.5 (newest frontier)", ContextWindow: DefaultContextWindow},
-	// gpt-5.4 (flagship for professional work)
-	{ID: modelGPT54, BaseModel: modelGPT54, Description: "GPT-5.4 (flagship)", ContextWindow: DefaultContextWindow},
-	// gpt-5.4-mini (fast, efficient — sub-agent workhorse)
-	{
-		ID:            modelGPT54Mini,
-		BaseModel:     modelGPT54Mini,
-		Description:   "GPT-5.4 Mini (fast subagent)",
-		ContextWindow: DefaultContextWindow,
-	},
-	// gpt-5.3-codex (industry-leading coding)
-	{
-		ID:            modelGPT53Codex,
-		BaseModel:     modelGPT53Codex,
-		Description:   "GPT-5.3 Codex (coding flagship)",
-		ContextWindow: DefaultContextWindow,
-	},
+	// gpt-5.6 alias (OpenAI's recommended Codex CLI shorthand for Sol)
+	{ID: modelGPT56, BaseModel: modelGPT56, Description: "GPT-5.6 (recommended)", ContextWindow: DefaultContextWindow},
+	// gpt-5.6-sol (strongest coding/research/cybersecurity model)
+	{ID: modelGPT56Sol, BaseModel: modelGPT56Sol, Description: "GPT-5.6 Sol (flagship)", ContextWindow: DefaultContextWindow},
+	// gpt-5.6-terra (balanced everyday workhorse)
+	{ID: modelGPT56Terra, BaseModel: modelGPT56Terra, Description: "GPT-5.6 Terra (balanced)", ContextWindow: DefaultContextWindow},
+	// gpt-5.6-luna (fast, affordable, repeatable tasks)
+	{ID: modelGPT56Luna, BaseModel: modelGPT56Luna, Description: "GPT-5.6 Luna (fast/efficient)", ContextWindow: DefaultContextWindow},
+	// gpt-5.5 (previous-generation frontier)
+	{ID: modelGPT55, BaseModel: modelGPT55, Description: "GPT-5.5 (previous frontier)", ContextWindow: DefaultContextWindow},
 	// gpt-5.3-codex-spark (text-only, ChatGPT Pro only — real-time iteration)
 	{
 		ID:            modelGPT53Spark,
@@ -77,8 +68,15 @@ var presetModels = []modelPreset{
 		Description:   "GPT-5.3 Codex Spark (real-time, Pro only)",
 		ContextWindow: DefaultContextWindow,
 	},
-	// gpt-5.2 (previous-gen general-purpose)
-	{ID: modelGPT52, BaseModel: modelGPT52, Description: "GPT-5.2 (previous gen)", ContextWindow: DefaultContextWindow},
+	// gpt-5.4 (older professional-work model)
+	{ID: modelGPT54, BaseModel: modelGPT54, Description: "GPT-5.4 (older flagship)", ContextWindow: DefaultContextWindow},
+	// gpt-5.4-mini (fast, efficient — sub-agent workhorse)
+	{
+		ID:            modelGPT54Mini,
+		BaseModel:     modelGPT54Mini,
+		Description:   "GPT-5.4 Mini (fast subagent)",
+		ContextWindow: DefaultContextWindow,
+	},
 }
 
 // DefaultContextWindow is the conservative compaction budget for the
@@ -113,6 +111,10 @@ func ContextWindowFor(id string) int {
 // by the settings pane (later) to constrain the effort dropdown to
 // what the active model actually accepts.
 var effortVariants = map[string][]reasoningEffort{
+	modelGPT56:      gpt56Efforts(),
+	modelGPT56Sol:   gpt56Efforts(),
+	modelGPT56Terra: gpt56Efforts(),
+	modelGPT56Luna:  gpt56Efforts(),
 	modelGPT55: {
 		reasoningEffortNone,
 		reasoningEffortLow,
@@ -128,15 +130,17 @@ var effortVariants = map[string][]reasoningEffort{
 		reasoningEffortXHigh,
 	},
 	modelGPT54Mini:  {reasoningEffortLow, reasoningEffortMedium, reasoningEffortHigh},
-	modelGPT53Codex: {reasoningEffortLow, reasoningEffortMedium, reasoningEffortHigh, reasoningEffortXHigh},
 	modelGPT53Spark: {reasoningEffortLow},
-	modelGPT52: {
-		reasoningEffortNone,
+}
+
+func gpt56Efforts() []reasoningEffort {
+	return []reasoningEffort{
 		reasoningEffortLow,
 		reasoningEffortMedium,
 		reasoningEffortHigh,
 		reasoningEffortXHigh,
-	},
+		reasoningEffortMax,
+	}
 }
 
 // EffortVariants returns the supported reasoning efforts for the

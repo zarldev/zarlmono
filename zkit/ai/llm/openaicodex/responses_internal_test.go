@@ -461,11 +461,12 @@ func TestDefaultReasoningEffort_GPT5Family(t *testing.T) {
 	}{
 		{"gpt-5", reasoningEffortMedium},
 		{"gpt-5.5", reasoningEffortMedium},
+		{"gpt-5.6-sol", reasoningEffortMedium},
 		{"gpt-5-pro", reasoningEffortMedium},
 		// -mini and -max still win their respective suffix branches
 		// even within the gpt-5 family.
 		{"gpt-5-mini", reasoningEffortLow},
-		{"gpt-5-max", reasoningEffortHigh},
+		{"gpt-5-max", reasoningEffortMax},
 		// Non-gpt-5 models without an explicit suffix stay at the
 		// server default (empty).
 		{"gpt-4o", ""},

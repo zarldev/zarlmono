@@ -127,12 +127,17 @@ const defaultGeminiModel = "gemini-2.5-flash"
 func BuiltinDefinitions() []ProviderDefinition {
 	return []ProviderDefinition{
 		{
-			Name:          "openai",
-			DisplayName:   "OpenAI",
-			AdapterType:   AdapterTypes.OPENAICOMPATIBLE,
-			BaseURL:       "https://api.openai.com/v1",
-			DefaultModel:  "gpt-4o-mini",
-			SeedModels:    []string{"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o1", "o1-mini", "o3-mini"},
+			Name:         "openai",
+			DisplayName:  "OpenAI",
+			AdapterType:  AdapterTypes.OPENAICOMPATIBLE,
+			BaseURL:      "https://api.openai.com/v1",
+			DefaultModel: "gpt-4o-mini",
+			SeedModels: []string{
+				"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+				"gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
+				"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini",
+				"o1", "o1-mini", "o3-mini",
+			},
 			EnvAPIKeyVars: []string{"OPENAI_API_KEY"},
 			Builtin:       true,
 			Enabled:       true,

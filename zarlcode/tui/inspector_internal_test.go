@@ -79,7 +79,7 @@ func TestInspector_ShowsBackgroundProcesses(t *testing.T) {
 	ins := newInspector(snap)
 	ins.cursor = int(inspectorTabProcesses)
 	out := ansi.Strip(strings.Join(ins.contentLines(120), "\n"))
-	for _, want := range []string{"processes", "1 running", id, "sleep 5", "stdout=0 lines"} {
+	for _, want := range []string{"processes", "1 running", id.String(), "sleep 5", "stdout=0 lines"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("process inspector missing %q:\n%s", want, out)
 		}
@@ -108,7 +108,7 @@ func TestInspector_KillSelectedProcessAction(t *testing.T) {
 	if !ok {
 		t.Fatalf("x returned %T, want actionKillProcess", act)
 	}
-	if kill.processID != id || kill.signal != "TERM" {
+	if kill.processID != id.String() || kill.signal != "TERM" {
 		t.Fatalf("kill action = %+v, want %q TERM", kill, id)
 	}
 }
@@ -134,7 +134,7 @@ func TestUI_KillProcessFeedsAgentQueue(t *testing.T) {
 	m.session.Run.Running = true
 	m.overlay.push(newInspector(BuildInspectorSnapshot(m.session, live, nil)))
 
-	cmd := m.handleAction(actionKillProcess{processID: id, signal: "KILL"})
+	cmd := m.handleAction(actionKillProcess{processID: id.String(), signal: "KILL"})
 	if cmd == nil {
 		t.Fatal("kill action returned nil cmd")
 	}
@@ -152,7 +152,7 @@ func TestUI_KillProcessFeedsAgentQueue(t *testing.T) {
 	if len(queued) != 1 {
 		t.Fatalf("queued messages = %d, want 1", len(queued))
 	}
-	if got := queued[0].Message.Content; !strings.Contains(got, id) || !strings.Contains(got, "background process") || !strings.Contains(got, "sleep 30") {
+	if got := queued[0].Message.Content; !strings.Contains(got, id.String()) || !strings.Contains(got, "background process") || !strings.Contains(got, "sleep 30") {
 		t.Fatalf("queued message missing process kill detail: %q", got)
 	}
 	info, err := pm.Info(id)

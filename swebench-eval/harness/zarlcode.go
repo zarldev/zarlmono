@@ -78,7 +78,7 @@ type ZarlcodeDriver struct {
 	// default model.
 	Model string
 	// CodexEffort sets codex_reasoning_effort when Provider is
-	// "openai-codex" (low/medium/high/xhigh). Empty leaves the
+	// "openai-codex" (low/medium/high/xhigh/max). Empty leaves the
 	// per-model heuristic in place.
 	CodexEffort string
 	// StateDB is zarlcode's sqlite path (vault + custom-provider rows).

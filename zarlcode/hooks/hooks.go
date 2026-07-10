@@ -111,7 +111,7 @@ func (g *Guardrail) Before(ctx context.Context, call tools.ToolCall) error {
 		Event:         catalog.HookPreTool,
 		WorkspaceRoot: g.root,
 		ToolName:      string(call.ToolName),
-		ToolID:        call.ID,
+		ToolID:        call.ID.String(),
 		Arguments:     call.Arguments,
 	})
 }
@@ -125,7 +125,7 @@ func (g *Guardrail) Inspect(ctx context.Context, call tools.ToolCall, result *to
 		Event:         catalog.HookPostTool,
 		WorkspaceRoot: g.root,
 		ToolName:      string(call.ToolName),
-		ToolID:        call.ID,
+		ToolID:        call.ID.String(),
 		Arguments:     call.Arguments,
 		Success:       &success,
 	}

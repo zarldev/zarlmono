@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/zhttp"
@@ -32,6 +33,11 @@ func fetchOpenAICompatModels(ctx context.Context, baseURL, _ string) ([]string, 
 // fetchOpenAIBearerModels is fetchOpenAICompatModels with an
 // Authorization: Bearer header — the OpenAI hosted API returns 401
 // without it.
+const (
+	modelListPageLimit = "1000"
+	maxModelListPages  = 20
+)
+
 func fetchOpenAIBearerModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
 	if apiKey == "" {
 		return nil, errors.New("API key not set")
@@ -52,79 +58,128 @@ func fetchAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]string
 	if url == "" {
 		url = "https://api.anthropic.com"
 	}
-	return openaiCompatGet(ctx, strings.TrimRight(url, "/")+"/v1", http.Header{
+	return openaiCompatGetCursor(ctx, strings.TrimRight(url, "/")+"/v1", http.Header{
 		"x-api-key":         []string{apiKey},
 		"anthropic-version": []string{"2023-06-01"},
-	})
+	}, "after_id", true)
 }
 
 // openaiCompatGet is the shared transport for /v1/models style
 // endpoints. headers may be nil for no-auth servers.
 func openaiCompatGet(ctx context.Context, baseURL string, headers http.Header) ([]string, error) {
+	return openaiCompatGetCursor(ctx, baseURL, headers, "after", false)
+}
+
+func openaiCompatGetCursor(ctx context.Context, baseURL string, headers http.Header, cursorParam string, includeLimit bool) ([]string, error) {
 	if baseURL == "" {
 		return nil, errors.New("base URL not set")
 	}
-	url := strings.TrimRight(baseURL, "/") + "/models"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	for k, vs := range headers {
-		for _, v := range vs {
-			req.Header.Add(k, v)
+	endpoint := strings.TrimRight(baseURL, "/") + "/models"
+	ids := make([]string, 0)
+	seen := make(map[string]bool)
+	cursor := ""
+	for page := 0; page < maxModelListPages; page++ {
+		reqURL, err := modelListURL(endpoint, cursorParam, cursor, includeLimit)
+		if err != nil {
+			return nil, err
 		}
-	}
-	resp, err := modelsClient.Do(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	var oai struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &oai); err == nil && len(oai.Data) > 0 {
-		ids := make([]string, 0, len(oai.Data))
-		for _, m := range oai.Data {
-			if m.ID != "" {
-				ids = append(ids, m.ID)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		for k, vs := range headers {
+			for _, v := range vs {
+				req.Header.Add(k, v)
 			}
 		}
-		if len(ids) > 0 {
+		resp, err := modelsClient.Do(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("GET %s: %w", reqURL, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read body: %w", readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close body: %w", closeErr)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			preview := string(body)
+			if len(preview) > 512 {
+				preview = preview[:512]
+			}
+			return nil, fmt.Errorf("status %d: %s", resp.StatusCode, preview)
+		}
+		var oai struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			HasMore bool   `json:"has_more"`
+			LastID  string `json:"last_id"`
+		}
+		if err := json.Unmarshal(body, &oai); err == nil && len(oai.Data) > 0 {
+			last := ""
+			for _, m := range oai.Data {
+				last = m.ID
+				if m.ID != "" && !seen[m.ID] {
+					seen[m.ID] = true
+					ids = append(ids, m.ID)
+				}
+			}
+			if !oai.HasMore || cursorParam == "" {
+				return ids, nil
+			}
+			next := oai.LastID
+			if next == "" {
+				next = last
+			}
+			if next == "" || next == cursor {
+				return ids, nil
+			}
+			cursor = next
+			continue
+		}
+		var native struct {
+			Models []struct {
+				Name  string `json:"name"`
+				Model string `json:"model"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(body, &native); err == nil && len(native.Models) > 0 {
+			for _, m := range native.Models {
+				id := m.Name
+				if id == "" {
+					id = m.Model
+				}
+				if id != "" && !seen[id] {
+					seen[id] = true
+					ids = append(ids, id)
+				}
+			}
 			return ids, nil
 		}
-	}
-	var native struct {
-		Models []struct {
-			Name  string `json:"name"`
-			Model string `json:"model"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(body, &native); err == nil && len(native.Models) > 0 {
-		ids := make([]string, 0, len(native.Models))
-		for _, m := range native.Models {
-			id := m.Name
-			if id == "" {
-				id = m.Model
-			}
-			if id != "" {
-				ids = append(ids, id)
-			}
+		preview := string(body)
+		if len(preview) > 200 {
+			preview = preview[:200] + "…"
 		}
-		return ids, nil
+		return nil, fmt.Errorf("response shape not recognised (expected {data:[]} or {models:[]}); got: %s", preview)
 	}
-	preview := string(body)
-	if len(preview) > 200 {
-		preview = preview[:200] + "…"
+	return ids, nil
+}
+
+func modelListURL(endpoint, cursorParam, cursor string, includeLimit bool) (string, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse models URL: %w", err)
 	}
-	return nil, fmt.Errorf("response shape not recognised (expected {data:[]} or {models:[]}); got: %s", preview)
+	q := u.Query()
+	if includeLimit {
+		q.Set("limit", modelListPageLimit)
+	}
+	if cursorParam != "" && cursor != "" {
+		q.Set(cursorParam, cursor)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }

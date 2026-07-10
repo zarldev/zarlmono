@@ -20,8 +20,8 @@ func (l *LiveRunner) KillProcess(processID, signal string) (code.ProcessInfo, in
 	if pm == nil {
 		return code.ProcessInfo{}, 0, errors.New("process manager unavailable")
 	}
-	exitCode, err := pm.Kill(processID, signalForProcessKill(signal))
-	info, infoErr := pm.Info(processID)
+	exitCode, err := pm.Kill(code.ProcessID(processID), signalForProcessKill(signal))
+	info, infoErr := pm.Info(code.ProcessID(processID))
 	if err != nil {
 		return info, exitCode, err
 	}

@@ -574,7 +574,7 @@ func (d *settingsDialog) activateEnum(dir int) action {
 			}
 		})}
 	case prefs.KeyCodexEffort:
-		items := []string{codexEffortAuto, "low", "medium", "high", "xhigh"}
+		items := []string{codexEffortAuto, "low", "medium", "high", "xhigh", "max"}
 		sel := codexEffortAuto
 		if r.value != "" {
 			sel = r.value

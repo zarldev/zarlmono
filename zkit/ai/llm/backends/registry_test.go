@@ -142,6 +142,88 @@ func upsertCustomOAI(t *testing.T, reg *backends.ProviderRegistry, ctx context.C
 	}
 }
 
+func TestFetchModelsFollowsOpenAIPagination(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		pages = append(pages, r.URL.Query().Get("after"))
+		switch r.URL.Query().Get("after") {
+		case "":
+			io.WriteString(w, `{"data":[{"id":"alpha"}],"has_more":true,"last_id":"alpha"}`)
+		case "alpha":
+			io.WriteString(w, `{"data":[{"id":"beta"}],"has_more":false,"last_id":"beta"}`)
+		default:
+			t.Fatalf("unexpected after cursor %q", r.URL.Query().Get("after"))
+		}
+	}))
+	defer srv.Close()
+
+	reg, ctx := newTestRegistry(t, fakeKeyService{})
+	upsertCustomOAI(t, reg, ctx, "custom-oai", srv.URL, nil)
+
+	models, err := reg.FetchModels(ctx, "custom-oai")
+	if err != nil {
+		t.Fatalf("FetchModels: %v", err)
+	}
+	if want := []string{"alpha", "beta"}; !slices.Equal(models, want) {
+		t.Fatalf("FetchModels = %v, want %v", models, want)
+	}
+	if want := []string{"", "alpha"}; !slices.Equal(pages, want) {
+		t.Fatalf("page cursors = %v, want %v", pages, want)
+	}
+}
+
+func TestFetchModelsFollowsAnthropicPagination(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("x-api-key") != "sk-ant-test" {
+			t.Fatalf("x-api-key = %q, want sk-ant-test", r.Header.Get("x-api-key"))
+		}
+		if r.URL.Query().Get("limit") != "1000" {
+			t.Fatalf("limit = %q, want 1000", r.URL.Query().Get("limit"))
+		}
+		pages = append(pages, r.URL.Query().Get("after_id"))
+		switch r.URL.Query().Get("after_id") {
+		case "":
+			io.WriteString(w, `{"data":[{"id":"claude-a"}],"has_more":true,"last_id":"claude-a"}`)
+		case "claude-a":
+			io.WriteString(w, `{"data":[{"id":"claude-b"}],"has_more":false,"last_id":"claude-b"}`)
+		default:
+			t.Fatalf("unexpected after_id cursor %q", r.URL.Query().Get("after_id"))
+		}
+	}))
+	defer srv.Close()
+
+	reg, ctx := newTestRegistry(t, fakeVault{keys: map[string]string{"custom-anthropic": "sk-ant-test"}})
+	if err := reg.UpsertProvider(ctx, backends.ProviderDefinition{
+		Name:        "custom-anthropic",
+		DisplayName: "custom-anthropic",
+		AdapterType: backends.AdapterTypes.ANTHROPICCOMPATIBLE,
+		BaseURL:     srv.URL,
+		Enabled:     true,
+	}); err != nil {
+		t.Fatalf("UpsertProvider: %v", err)
+	}
+
+	models, err := reg.FetchModels(ctx, "custom-anthropic")
+	if err != nil {
+		t.Fatalf("FetchModels: %v", err)
+	}
+	if want := []string{"claude-a", "claude-b"}; !slices.Equal(models, want) {
+		t.Fatalf("FetchModels = %v, want %v", models, want)
+	}
+	if want := []string{"", "claude-a"}; !slices.Equal(pages, want) {
+		t.Fatalf("page cursors = %v, want %v", pages, want)
+	}
+}
+
 func TestFetchModelsLiveProbe(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

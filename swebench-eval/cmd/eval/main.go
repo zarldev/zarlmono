@@ -60,7 +60,7 @@ func run() error {
 	envFile := flag.String("env", "", "path to .env loaded before provider construction (carries per-backend URL/key knobs)")
 	zarlcodeProvider := flag.String("zarlcode-provider", "", "pin zarlcode's backend (registry name: llamacpp, openai-codex, gemini, claude-code, …); empty = registry default (llamacpp)")
 	zarlcodeModel := flag.String("zarlcode-model", "", "pin zarlcode's model (e.g. gpt-5.5, qwen3.6-35b-a3b-mtp); empty = provider's default model")
-	zarlcodeCodexEffort := flag.String("zarlcode-codex-effort", "", "codex_reasoning_effort when provider is openai-codex (low/medium/high/xhigh)")
+	zarlcodeCodexEffort := flag.String("zarlcode-codex-effort", "", "codex_reasoning_effort when provider is openai-codex (low/medium/high/xhigh/max)")
 	llamacppResetURL := flag.String("llamacpp-reset-url", "", "POSTed before each task to flush local llama-server's KV cache slot; e.g. http://localhost:8081/slots/0?action=erase (requires --slot-save-path on the server)")
 	allowRemoteResetURL := flag.Bool("allow-remote-reset-url", false, "permit a non-loopback --llamacpp-reset-url (default: loopback only, to avoid SSRF via a misconfigured URL)")
 	stateDB := flag.String("state-db", "", "path to zarlcode state.db — vault + custom-provider rows (empty = $HOME/.zarlcode/state.db)")

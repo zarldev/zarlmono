@@ -13,6 +13,12 @@ import (
 func CostPer1k(model string) (float64, float64, bool) {
 	m := strings.ToLower(model)
 	switch {
+	case strings.Contains(m, "gpt-5.6-sol") || m == "gpt-5.6":
+		return 0.005, 0.030, true
+	case strings.Contains(m, "gpt-5.6-terra"):
+		return 0.0025, 0.015, true
+	case strings.Contains(m, "gpt-5.6-luna"):
+		return 0.001, 0.006, true
 	case strings.Contains(m, "gpt-4o-mini"):
 		return 0.00015, 0.0006, true
 	case strings.Contains(m, "gpt-4o"):

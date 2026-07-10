@@ -152,7 +152,7 @@ func TestProvider_PresetModelMapsBaseAndEffort(t *testing.T) {
 	p, _ := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
-		openaicodex.WithModel("gpt-5.3-codex-high"),
+		openaicodex.WithModel("gpt-5.6-sol-high"),
 	)
 	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},
@@ -161,8 +161,8 @@ func TestProvider_PresetModelMapsBaseAndEffort(t *testing.T) {
 	for range seq {
 	}
 
-	if got := cb.lastBody["model"]; got != "gpt-5.3-codex" {
-		t.Errorf("wire model = %v, want gpt-5.3-codex", got)
+	if got := cb.lastBody["model"]; got != "gpt-5.6-sol" {
+		t.Errorf("wire model = %v, want gpt-5.6-sol", got)
 	}
 	reasoning, _ := cb.lastBody["reasoning"].(map[string]any)
 	if reasoning == nil {
@@ -445,16 +445,18 @@ func TestProvider_DoesNotRetryOn4xxOtherThan429(t *testing.T) {
 func TestListPresetModelsContainsExpectedIDs(t *testing.T) {
 	t.Parallel()
 	models := openaicodex.ListPresetModels()
-	if len(models) < 5 {
-		t.Errorf("expected >= 5 preset models, got %d", len(models))
+	if len(models) < 7 {
+		t.Errorf("expected >= 7 preset models, got %d", len(models))
 	}
 	wantIDs := map[string]bool{
+		"gpt-5.6":             false,
+		"gpt-5.6-sol":         false,
+		"gpt-5.6-terra":       false,
+		"gpt-5.6-luna":        false,
 		"gpt-5.5":             false,
 		"gpt-5.4":             false,
 		"gpt-5.4-mini":        false,
-		"gpt-5.3-codex":       false,
 		"gpt-5.3-codex-spark": false,
-		"gpt-5.2":             false,
 	}
 	for _, m := range models {
 		if _, ok := wantIDs[m.ID]; ok {
@@ -526,7 +528,7 @@ func TestFetchContextWindowDerivesUpstreamAutoCompactDefault(t *testing.T) {
 
 func TestPresetContextWindowIsConservativeForOAuthBackend(t *testing.T) {
 	t.Parallel()
-	for _, model := range []string{"gpt-5.5", "gpt-5.5-high", "gpt-5.4", "unknown-experimental"} {
+	for _, model := range []string{"gpt-5.6", "gpt-5.6-sol-max", "gpt-5.5", "gpt-5.5-high", "gpt-5.4", "unknown-experimental"} {
 		if got := openaicodex.ContextWindowFor(model); got != openaicodex.DefaultContextWindow {
 			t.Errorf("ContextWindowFor(%q) = %d, want %d", model, got, openaicodex.DefaultContextWindow)
 		}

@@ -111,8 +111,8 @@ func (d *inspector) handleKey(msg tea.KeyPressMsg) action {
 				d.status = "process already exited"
 				return actionNone{}
 			}
-			d.status = "killing " + p.ID + "…"
-			return actionKillProcess{processID: p.ID, signal: "TERM"}
+			d.status = "killing " + p.ID.String() + "…"
+			return actionKillProcess{processID: p.ID.String(), signal: "TERM"}
 		}
 	}
 	switch msg.String() {
@@ -458,7 +458,7 @@ func (d *inspector) processLines(width int) []string {
 		if selected {
 			marker = palette.Primary.On("▶")
 		}
-		lines = append(lines, fmt.Sprintf("%s %s  pid=%d  %s  age=%s", marker, palette.Info.On(p.ID), p.PID, state, age))
+		lines = append(lines, fmt.Sprintf("%s %s  pid=%d  %s  age=%s", marker, palette.Info.On(p.ID.String()), p.PID, state, age))
 		lines = append(lines, fmt.Sprintf("    %s", palette.Muted.On(p.Command)))
 		lines = append(lines, fmt.Sprintf("    cwd=%s · stdout=%d lines · stderr=%d lines", palette.Muted.On(p.CWD), p.StdoutLines, p.StderrLines))
 	}

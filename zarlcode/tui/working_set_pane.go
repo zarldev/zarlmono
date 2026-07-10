@@ -68,8 +68,8 @@ func (p *workingSetPane) handleKey(msg tea.KeyPressMsg) action {
 				p.status = "process already exited"
 				return actionNone{}
 			}
-			p.status = "killing " + proc.ID + "…"
-			return actionKillProcess{processID: proc.ID, signal: "TERM"}
+			p.status = "killing " + proc.ID.String() + "…"
+			return actionKillProcess{processID: proc.ID.String(), signal: "TERM"}
 		}
 	}
 	switch msg.String() {
@@ -433,7 +433,7 @@ func (p *workingSetPane) drawProcessNav(scr uv.Screen, r uv.Rectangle) {
 		if !proc.Running {
 			state = palette.Muted.On(fmt.Sprintf("exited %d", proc.ExitCode))
 		}
-		primary := fmt.Sprintf("%s  pid=%d  %s", palette.Info.On(proc.ID), proc.PID, state)
+		primary := fmt.Sprintf("%s  pid=%d  %s", palette.Info.On(proc.ID.String()), proc.PID, state)
 		secondary := palette.Subtle.On(fmt.Sprintf("    age %s · stdout %d · stderr %d", time.Since(proc.StartedAt).Round(time.Second), proc.StdoutLines, proc.StderrLines))
 		drawListRow(scr, uv.Rect(r.Min.X, screenY, r.Dx(), 1), primary, i == p.processCursor, true)
 		if screenY+1 < r.Max.Y {
@@ -573,7 +573,7 @@ func (p *workingSetPane) processDetailLines(width int) []string {
 		state = palette.Muted.On(fmt.Sprintf("exited %d", proc.ExitCode))
 	}
 	lines := []string{
-		headerLine(proc.ID, width, palette.Primary.On),
+		headerLine(proc.ID.String(), width, palette.Primary.On),
 		fmt.Sprintf(" status: %s", state),
 		fmt.Sprintf(" source: pid %d · %s", proc.PID, proc.StartedAt.Format("15:04:05")),
 		fmt.Sprintf(" path: %s", palette.Muted.On(proc.CWD)),
