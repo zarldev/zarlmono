@@ -21,6 +21,22 @@ import (
 	"github.com/zarldev/zarlmono/zkit/vectorstore/qdrant"
 )
 
+func (tm *ToolManager) registerProviderTool(tool tools.Tool, provider string) error {
+	if err := tm.registry.RegisterWithProvider(tool, provider); err != nil {
+		return fmt.Errorf("register %s for provider %s: %w", tool.Definition().Name, provider, err)
+	}
+	return nil
+}
+
+func (tm *ToolManager) registerProviderTools(provider string, toolList ...tools.Tool) error {
+	for _, tool := range toolList {
+		if err := tm.registerProviderTool(tool, provider); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ToolManager handles provider lifecycle: loading tools from DB config,
 // registering them in the Registry, and hot-reloading on config changes.
 type ToolManager struct {
@@ -185,10 +201,11 @@ func (tm *ToolManager) initHomeAssistant(p repository.ToolProvider) error {
 		return fmt.Errorf("home_assistant requires url and token config")
 	}
 	ha := homeassistant.NewClient(url, token)
-	tm.registry.RegisterWithProvider(homeassistant.NewGetStateTool(ha), p.Name)
-	tm.registry.RegisterWithProvider(homeassistant.NewCallServiceTool(ha), p.Name)
-	tm.registry.RegisterWithProvider(homeassistant.NewListEntitiesTool(ha), p.Name)
-	return nil
+	return tm.registerProviderTools(p.Name,
+		homeassistant.NewGetStateTool(ha),
+		homeassistant.NewCallServiceTool(ha),
+		homeassistant.NewListEntitiesTool(ha),
+	)
 }
 
 func (tm *ToolManager) initMemory(ctx context.Context, p repository.ToolProvider) error {
@@ -201,10 +218,11 @@ func (tm *ToolManager) initMemory(ctx context.Context, p repository.ToolProvider
 		return fmt.Errorf("ensure memory collection: %w", err)
 	}
 	tm.qdrantClient = qc
-	tm.registry.RegisterWithProvider(memory.NewRememberTool(qc, tm.embedder), p.Name)
-	tm.registry.RegisterWithProvider(memory.NewRecallTool(qc, tm.embedder), p.Name)
-	tm.registry.RegisterWithProvider(memory.NewForgetTool(qc, tm.embedder), p.Name)
-	return nil
+	return tm.registerProviderTools(p.Name,
+		memory.NewRememberTool(qc, tm.embedder),
+		memory.NewRecallTool(qc, tm.embedder),
+		memory.NewForgetTool(qc, tm.embedder),
+	)
 }
 
 func (tm *ToolManager) initSearxng(p repository.ToolProvider) error {
@@ -213,9 +231,10 @@ func (tm *ToolManager) initSearxng(p repository.ToolProvider) error {
 		return fmt.Errorf("searxng requires url config")
 	}
 	sc := searxng.NewClient(url)
-	tm.registry.RegisterWithProvider(searxng.NewSearchTool(sc), p.Name)
-	tm.registry.RegisterWithProvider(searxng.NewYouTubeSearchTool(sc, tm.notifications), p.Name)
-	return nil
+	return tm.registerProviderTools(p.Name,
+		searxng.NewSearchTool(sc),
+		searxng.NewYouTubeSearchTool(sc, tm.notifications),
+	)
 }
 
 func (tm *ToolManager) initSpotify(p repository.ToolProvider) error {
@@ -235,15 +254,16 @@ func (tm *ToolManager) initSpotify(p repository.ToolProvider) error {
 		return err
 	}
 	tm.spotifyClient = client
-	tm.registry.RegisterWithProvider(spotify.NewSearchTool(client), p.Name)
-	tm.registry.RegisterWithProvider(spotify.NewPlayTool(client), p.Name)
-	tm.registry.RegisterWithProvider(spotify.NewPauseTool(client), p.Name)
-	tm.registry.RegisterWithProvider(spotify.NewSkipTool(client), p.Name)
-	tm.registry.RegisterWithProvider(spotify.NewQueueAddTool(client), p.Name)
-	tm.registry.RegisterWithProvider(spotify.NewNowPlayingTool(client), p.Name)
-	tm.registry.RegisterWithProvider(spotify.NewListDevicesTool(client), p.Name)
-	tm.registry.RegisterWithProvider(spotify.NewSetPreferredDeviceTool(client), p.Name)
-	return nil
+	return tm.registerProviderTools(p.Name,
+		spotify.NewSearchTool(client),
+		spotify.NewPlayTool(client),
+		spotify.NewPauseTool(client),
+		spotify.NewSkipTool(client),
+		spotify.NewQueueAddTool(client),
+		spotify.NewNowPlayingTool(client),
+		spotify.NewListDevicesTool(client),
+		spotify.NewSetPreferredDeviceTool(client),
+	)
 }
 
 // spotifyPreferredDeviceKey is the settings table key for the pinned
@@ -269,9 +289,10 @@ func (tm *ToolManager) initTimer(p repository.ToolProvider) error {
 		return fmt.Errorf("timer requires notification store")
 	}
 	tt := timer.NewTimerTool(tm.notifications)
-	tm.registry.RegisterWithProvider(tt, p.Name)
-	tm.registry.RegisterWithProvider(timer.NewStatusTool(tt), p.Name)
-	return nil
+	return tm.registerProviderTools(p.Name,
+		tt,
+		timer.NewStatusTool(tt),
+	)
 }
 
 func (tm *ToolManager) initWiki(ctx context.Context, p repository.ToolProvider) error {
@@ -281,8 +302,7 @@ func (tm *ToolManager) initWiki(ctx context.Context, p repository.ToolProvider) 
 		if err := tm.qdrantClient.EnsureCollection(ctx, wiki.Collection, 768); err != nil {
 			return fmt.Errorf("ensure wiki collection: %w", err)
 		}
-		tm.registry.RegisterWithProvider(wiki.NewSearchTool(tm.qdrantClient, tm.embedder), p.Name)
-		return nil
+		return tm.registerProviderTool(wiki.NewSearchTool(tm.qdrantClient, tm.embedder), p.Name)
 	}
 	if qdrantURL == "" {
 		return fmt.Errorf("wiki requires qdrant_url config or an initialized memory provider")
@@ -291,8 +311,7 @@ func (tm *ToolManager) initWiki(ctx context.Context, p repository.ToolProvider) 
 	if err := qc.EnsureCollection(ctx, wiki.Collection, 768); err != nil {
 		return fmt.Errorf("ensure wiki collection: %w", err)
 	}
-	tm.registry.RegisterWithProvider(wiki.NewSearchTool(qc, tm.embedder), p.Name)
-	return nil
+	return tm.registerProviderTool(wiki.NewSearchTool(qc, tm.embedder), p.Name)
 }
 
 func (tm *ToolManager) initMCP(ctx context.Context, p repository.ToolProvider) error {
@@ -332,7 +351,9 @@ func (tm *ToolManager) initMCP(ctx context.Context, p repository.ToolProvider) e
 		if hint, ok := hints[def.Name]; ok {
 			def.Description = mergeToolDescription(def.Description, hint)
 		}
-		tm.registry.RegisterWithProvider(tools.NewRemoteTool(mc, def), p.Name)
+		if err := tm.registerProviderTool(tools.NewRemoteTool(mc, def), p.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }

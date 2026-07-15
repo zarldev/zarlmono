@@ -1,6 +1,8 @@
 package taskrunner
 
 import (
+	"log/slog"
+
 	tools "github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -21,13 +23,17 @@ func buildTaskSource(resolved ResolvedProfile, lifecycle []tools.Tool, exclude m
 		if exclude[t.Definition().Name.String()] {
 			continue
 		}
-		reg.Register(t)
+		if err := reg.Register(t); err != nil {
+			slog.Warn("task source: skipping profile tool with invalid spec", "name", t.Definition().Name, "error", err)
+		}
 	}
 	// Lifecycle tools register last so they always win a name clash with
 	// a profile tool — the loop-control contract must not be overridable
 	// by a same-named profile/MCP tool.
 	for _, t := range lifecycle {
-		reg.Register(t)
+		if err := reg.Register(t); err != nil {
+			slog.Warn("task source: skipping lifecycle tool with invalid spec", "name", t.Definition().Name, "error", err)
+		}
 	}
 	return reg
 }
