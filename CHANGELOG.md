@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-## [zkit/v0.4.0] — 2026-07-12
-
+## [zkit/v0.4.0] — 2026-07-15
 `zkit/v0.4.0`
 
 ### Added
@@ -26,8 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hashline parsing and rendering edge cases are covered with broader tests.
 - Dynamic MCP/computer tool registration now handles registry errors explicitly.
 
-## [zarlcode/v0.4.0] — 2026-07-12
-
+## [zarlcode/v0.4.0] — 2026-07-15
 `zarlcode/v0.4.0`
 
 ### Added
@@ -47,8 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tool rendering no longer displays the entire program script or raw `{Output, Stats}` wrapper in the conversation trail.
 - Settings, inspector, and launch flows handle updated tool/provider state more consistently.
 
-## [examples/v0.4.0] — 2026-07-12
+## [zarlai/v0.4.0] — 2026-07-15
 
+`zarlai/v0.4.0`
+
+### Fixed
+
+- Tool registration now propagates or logs zkit registry validation errors instead of ignoring them.
+- Module dependency pin updated for the matching zkit release so standalone zarlai builds use the stricter registry API.
+
+## [examples/v0.4.0] — 2026-07-15
 `examples/v0.4.0`
 
 ### Changed

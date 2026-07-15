@@ -43,6 +43,6 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
-	github.com/zarldev/zarlmono/zkit v0.1.2
+	github.com/zarldev/zarlmono/zkit v0.4.0
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
