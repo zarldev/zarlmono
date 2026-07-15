@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -9,6 +12,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
+	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // modelQuickPick is a centered modal with a provider tab bar and a scrollable
@@ -19,12 +25,13 @@ type modelQuickPick struct {
 	providers []string
 	provCur   int
 	// models caches fetched model lists per provider name.
-	models  map[string][]string
-	loading map[string]bool
-	current string // currently active model (pre-selected)
-	onPick  func(provider, model string)
-	// model list cursor (within the selected provider's model list).
-	cursor int
+	models   map[string][]string
+	loading  map[string]bool
+	current  string // currently active model (pre-selected)
+	onPick   func(provider, model string)
+	onEffort func(effort string)
+	effort   string
+	cursor   int
 	// free-text fallback.
 	fallback      bool
 	fallbackValue []rune
@@ -33,6 +40,25 @@ type modelQuickPick struct {
 }
 
 func newModelQuickPick(providers []string, models map[string][]string, activeProvider, activeModel string, onPick func(provider, model string), settings *engine.Settings) *modelQuickPick {
+	onEffort := func(effort string) {
+		if settings == nil || settings.Svc == nil {
+			return
+		}
+		ctx := context.Background()
+		if effort == "" {
+			if err := settings.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, prefs.KeyCodexEffort); err != nil {
+				slog.WarnContext(ctx, "clear reasoning effort", "err", err)
+			}
+			return
+		}
+		if err := settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyCodexEffort, effort); err != nil {
+			slog.WarnContext(ctx, "persist reasoning effort", "err", err, "effort", effort)
+		}
+	}
+	return newModelQuickPickWithEffort(providers, models, activeProvider, activeModel, currentCodexEffort(settings), onPick, onEffort, settings)
+}
+
+func newModelQuickPickWithEffort(providers []string, models map[string][]string, activeProvider, activeModel, activeEffort string, onPick func(provider, model string), onEffort func(string), settings *engine.Settings) *modelQuickPick {
 	if models == nil {
 		models = make(map[string][]string)
 	}
@@ -42,6 +68,8 @@ func newModelQuickPick(providers []string, models map[string][]string, activePro
 		loading:   make(map[string]bool),
 		current:   activeModel,
 		onPick:    onPick,
+		onEffort:  onEffort,
+		effort:    activeEffort,
 		meta:      newModelInfoResolver(settings),
 	}
 	for i, p := range providers {
@@ -71,11 +99,61 @@ func (p *modelQuickPick) setModels(provider string, models []string) {
 	p.loading[provider] = false
 }
 
+func currentCodexEffort(settings *engine.Settings) string {
+	if settings == nil {
+		return ""
+	}
+	return settings.Setting(context.Background(), prefs.KeyCodexEffort, "")
+}
+
 func (p *modelQuickPick) activeProvider() string {
 	if p.provCur < 0 || p.provCur >= len(p.providers) {
 		return ""
 	}
 	return p.providers[p.provCur]
+}
+
+func (p *modelQuickPick) activeModel() string {
+	models := p.activeModels()
+	if p.cursor >= 0 && p.cursor < len(models) {
+		return models[p.cursor]
+	}
+	return p.current
+}
+
+func (p *modelQuickPick) effortItems(model string) []string {
+	items := []string{codexEffortAuto}
+	if p.activeProvider() != backends.NameOpenAICodex.String() {
+		return items
+	}
+	if variants := openaicodex.EffortVariants(model); len(variants) > 0 {
+		return append(items, variants...)
+	}
+	return append(items, "low", "medium", "high", "xhigh", "max")
+}
+
+func (p *modelQuickPick) cycleEffort(dir int) {
+	items := p.effortItems(p.activeModel())
+	if len(items) <= 1 {
+		return
+	}
+	cur := codexEffortAuto
+	if p.effort != "" {
+		cur = p.effort
+	}
+	i := slices.Index(items, cur)
+	if i < 0 {
+		i = 0
+	}
+	i = (i + dir + len(items)) % len(items)
+	if items[i] == codexEffortAuto {
+		p.effort = ""
+	} else {
+		p.effort = items[i]
+	}
+	if p.onEffort != nil {
+		p.onEffort(p.effort)
+	}
 }
 
 func (p *modelQuickPick) activeModels() []string {
@@ -116,6 +194,12 @@ func (p *modelQuickPick) handleKey(msg tea.KeyPressMsg) action {
 				return actionFetchModels{provider: p.activeProvider()}
 			}
 		}
+		return actionNone{}
+	case "[", "shift+tab":
+		p.cycleEffort(-1)
+		return actionNone{}
+	case "]":
+		p.cycleEffort(1)
 		return actionNone{}
 	}
 	// Model list navigation.
@@ -211,7 +295,15 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 	innerW, innerX := lay.Body.Dx(), lay.Body.Min.X
 	bodyY := lay.Body.Min.Y
 
-	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), overlayTopBar("model", nil, 0, p.activeProvider(), innerW))
+	topRight := p.activeProvider()
+	if p.activeProvider() == backends.NameOpenAICodex.String() {
+		effort := codexEffortAuto
+		if p.effort != "" {
+			effort = p.effort
+		}
+		topRight += " · reasoning " + effort
+	}
+	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), overlayTopBar("model", nil, 0, topRight, innerW))
 	drawPaddedLine(scr, uv.Rect(innerX, bodyY, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
 	bodyY += 1
 
@@ -256,7 +348,12 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), palette.Muted.On("  ↓ more"))
 	}
 
-	hint := keyLegend(keyHint{"↑↓", "navigate"}, keyHint{"enter", "select"}, keyHint{"tab", "provider"}, keyHint{"esc", "close"})
+	hints := []keyHint{{"↑↓", "navigate"}, {"enter", "select"}, {"tab", "provider"}}
+	if p.activeProvider() == backends.NameOpenAICodex.String() {
+		hints = append(hints, keyHint{"[]", "reasoning"})
+	}
+	hints = append(hints, keyHint{"esc", "close"})
+	hint := keyLegend(hints...)
 	drawPaddedLine(scr, uv.Rect(innerX, lay.Footer.Min.Y, innerW, 1), hint)
 }
 

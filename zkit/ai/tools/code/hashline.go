@@ -119,15 +119,7 @@ type EditFileHLTool struct{ ws Workspace }
 type EditFileHLArgs struct {
 	Path string `json:"path" doc:"Path inside the workspace."`
 
-	// Single-edit fields. Kept for compatibility; prefer Edits for several changes in one file.
-	StartLine int    `json:"start_line,omitempty" doc:"1-based line anchor from the read output."`
-	StartHash string `json:"start_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for start_line from the read output."`
-	EndLine   int    `json:"end_line,omitempty" doc:"Inclusive 1-based end line for replace/delete. Omit for a single-line edit."`
-	EndHash   string `json:"end_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for end_line from the read output."`
-	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; use a single cohesive range edit when changing adjacent lines."`
-	Mode      string `json:"mode,omitempty" enum:"replace,delete,insert_before,insert_after" doc:"Edit mode: replace (default), delete, insert_before, or insert_after."`
-
-	Edits []HashlineEdit `json:"edits,omitempty" doc:"Multiple edits to apply atomically to this file. Prefer this for several related edits in one file; all anchors are verified before writing."`
+	Edits []HashlineEdit `json:"edits" doc:"One or more edits to apply atomically to this file. Use a one-item array for a single edit; all anchors are verified before writing."`
 }
 
 // HashlineEdit describes one edit inside EditFileHLArgs.Edits.
@@ -148,7 +140,8 @@ func (t *EditFileHLTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameEdit,
 		Description: "Edit a workspace file using line/hash anchors from the read output. " +
-			"For several changes in one file, use edits to apply them atomically in one call. " +
+			"Always pass edits as an array, even for a single edit. " +
+			"For several changes in one file, use one call so the edits apply atomically. " +
 			"Prefer one well-scoped range edit for a cohesive change instead of many tiny adjacent edits. " +
 			"Replaces or deletes anchored line ranges, or inserts before/after anchored lines. " +
 			"The hash identifies the line by content, so anchors survive line-number shifts from earlier edits. " +
@@ -222,35 +215,13 @@ type resolvedHashlineEdit struct {
 }
 
 func normalizeHashlineEdits(args EditFileHLArgs) ([]HashlineEdit, error) {
-	if len(args.Edits) > 0 {
-		if hasSingleHashlineEditFields(args) {
-			return nil, fmt.Errorf("%q: use either edits or top-level edit fields, not both", args.Path)
-		}
-		if len(args.Edits) > hashlineMaxBatchEdits {
-			return nil, fmt.Errorf("%q: edits has %d items; max %d", args.Path, len(args.Edits), hashlineMaxBatchEdits)
-		}
-		if err := validateHashlineEditList(args.Path, args.Edits); err != nil {
-			return nil, err
-		}
-		return args.Edits, nil
+	if len(args.Edits) > hashlineMaxBatchEdits {
+		return nil, fmt.Errorf("%q: edits has %d items; max %d", args.Path, len(args.Edits), hashlineMaxBatchEdits)
 	}
-
-	edit := HashlineEdit{
-		StartLine: args.StartLine,
-		StartHash: args.StartHash,
-		EndLine:   args.EndLine,
-		EndHash:   args.EndHash,
-		NewString: args.NewString,
-		Mode:      args.Mode,
-	}
-	if err := validateHashlineEditList(args.Path, []HashlineEdit{edit}); err != nil {
+	if err := validateHashlineEditList(args.Path, args.Edits); err != nil {
 		return nil, err
 	}
-	return []HashlineEdit{edit}, nil
-}
-
-func hasSingleHashlineEditFields(args EditFileHLArgs) bool {
-	return args.StartLine != 0 || args.StartHash != "" || args.EndLine != 0 || args.EndHash != "" || args.NewString != "" || args.Mode != ""
+	return args.Edits, nil
 }
 
 func validateHashlineEditList(path string, edits []HashlineEdit) error {
@@ -294,8 +265,8 @@ func validateHashlineEdit(path string, index int, edit HashlineEdit, mode string
 		if edit.NewString == "" {
 			return fmt.Errorf("%s: %s mode requires non-empty new_string", prefix, mode)
 		}
-		if edit.EndLine != 0 || edit.EndHash != "" {
-			return fmt.Errorf("%s: end_line/end_hash are only valid for replace or delete", prefix)
+		if err := validateHashlineInsertExtraRange(prefix, edit); err != nil {
+			return err
 		}
 		return nil
 	default:
@@ -317,6 +288,16 @@ func validateHashlineEditRange(prefix string, edit HashlineEdit) error {
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
 	return nil
+}
+
+func validateHashlineInsertExtraRange(prefix string, edit HashlineEdit) error {
+	if edit.EndLine == 0 && edit.EndHash == "" {
+		return nil
+	}
+	if edit.EndLine == edit.StartLine && edit.EndHash == edit.StartHash {
+		return nil
+	}
+	return fmt.Errorf("%s: end_line/end_hash are ignored for insert_before/insert_after; omit them or make them match start_line/start_hash", prefix)
 }
 
 func resolveHashlineEdit(path string, lines []hashlineLine, index int, edit HashlineEdit) (resolvedHashlineEdit, error) {

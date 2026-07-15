@@ -31,11 +31,13 @@ type Thinking struct {
 
 // ToolStarted fires when the runner dispatches a tool call.
 type ToolStarted struct {
-	TaskID     taskscope.ID
-	Depth      int
-	ToolID     string
-	ToolName   string
-	Parameters map[string]any
+	TaskID       taskscope.ID
+	Depth        int
+	ToolID       string
+	ToolName     string
+	Parameters   map[string]any
+	ParentToolID string
+	Sequence     int
 }
 
 // ToolCompleted fires when a tool call returns successfully.
@@ -48,6 +50,8 @@ type ToolCompleted struct {
 	FormattedResult string
 	Effects         []tools.Effect
 	Duration        time.Duration
+	ParentToolID    string
+	Sequence        int
 }
 
 // ToolFailed fires when a tool call errors or reports failure.
@@ -75,9 +79,11 @@ type ToolFailed struct {
 	// and "the tool timed out and stopped" from "the tool timed out and
 	// was abandoned with side effects possibly still in flight" — the one
 	// a consumer may want to surface or alert on.
-	Abandoned bool
-	Effects   []tools.Effect
-	Duration  time.Duration
+	Abandoned    bool
+	Effects      []tools.Effect
+	Duration     time.Duration
+	ParentToolID string
+	Sequence     int
 }
 
 // ConversationStarted marks the start of a Run. Prompt carries the
@@ -172,10 +178,11 @@ type ContextBreakdown struct {
 	AssistantBytes int
 	ToolBytes      int
 
-	// SkillBytes / AgentBytes are the load_skill / spawn_agent slices of
-	// ToolBytes (ToolBytes - SkillBytes - AgentBytes == "other tool" bytes).
-	SkillBytes int
-	AgentBytes int
+	// SkillBytes / AgentBytes / InstructionBytes are the load_skill /
+	// spawn_agent / load_instruction slices of ToolBytes.
+	SkillBytes       int
+	AgentBytes       int
+	InstructionBytes int
 
 	SystemMsgs    int
 	UserMsgs      int

@@ -125,6 +125,63 @@ func (r *Runner) publishToolStarted(_ context.Context, spec TaskSpec, call tools
 	})
 }
 
+type nestedToolPublisher struct {
+	r    *Runner
+	spec TaskSpec
+}
+
+func (p nestedToolPublisher) OnNestedToolStarted(ctx context.Context, e tools.NestedToolCall) {
+	p.r.publishNestedToolStarted(ctx, p.spec, e)
+}
+
+func (p nestedToolPublisher) OnNestedToolFinished(ctx context.Context, e tools.NestedToolResult) {
+	p.r.publishNestedToolFinished(ctx, p.spec, e)
+}
+
+func (r *Runner) publishNestedToolStarted(_ context.Context, spec TaskSpec, e tools.NestedToolCall) {
+	if r.sink == nil {
+		return
+	}
+	r.sink.OnToolStarted(ToolStarted{
+		TaskID:       spec.ID,
+		Depth:        spec.Depth,
+		ToolID:       e.ChildID.String(),
+		ToolName:     e.Call.ToolName.String(),
+		Parameters:   e.Call.Arguments,
+		ParentToolID: e.ParentID.String(),
+		Sequence:     e.Sequence,
+	})
+}
+
+func (r *Runner) publishNestedToolFinished(_ context.Context, spec TaskSpec, e tools.NestedToolResult) {
+	if r.sink == nil {
+		return
+	}
+	effects := resultEffects(e.Result)
+	failed := e.Err != nil || e.Result == nil || !e.Result.Success || e.Error != ""
+	if failed {
+		errMsg := e.Error
+		if errMsg == "" && e.Err != nil {
+			errMsg = e.Err.Error()
+		} else if errMsg == "" && e.Result != nil {
+			errMsg = e.Result.Error
+		}
+		kind := e.Kind
+		realErr := e.Err
+		if e.Result != nil && e.Result.Err != nil {
+			kind = e.Result.Err.Kind
+			realErr = e.Result.Err
+		}
+		r.sink.OnToolFailed(ToolFailed{TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Error: errMsg, Err: realErr, Kind: kind, Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), Sequence: e.Sequence})
+		return
+	}
+	var data any
+	if e.Result != nil {
+		data = e.Result.Data
+	}
+	r.sink.OnToolCompleted(ToolCompleted{TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Result: data, FormattedResult: formatToolData(data), Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), Sequence: e.Sequence})
+}
+
 func (r *Runner) publishToolFinished(
 	_ context.Context,
 	spec TaskSpec,

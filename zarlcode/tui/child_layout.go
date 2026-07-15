@@ -49,11 +49,7 @@ func (cb childBlock) togglerForLine(ln int, childWidth int, children []item, bum
 			if !ok {
 				return nil
 			}
-			child := tg
-			return togglerFunc(func() {
-				child.toggle()
-				bump()
-			})
+			return toggleChildAndParent(tg, bump)
 		}
 		if ln > off && ln < off+cb.sizes[k] {
 			if ht, ok := children[k].(hitToggler); ok {
@@ -62,4 +58,11 @@ func (cb childBlock) togglerForLine(ln int, childWidth int, children []item, bum
 		}
 	}
 	return nil
+}
+
+func toggleChildAndParent(child toggler, bump func()) toggler {
+	return togglerFunc(func() {
+		child.toggle()
+		bump()
+	})
 }

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -51,6 +52,9 @@ func TestRunState_UsageSnapshotRoundTrip(t *testing.T) {
 	rs.sessionInParent = 1500
 	rs.sessionOutParent = 700
 	rs.sessionCachedParent = 400
+	rs.sessionCostUSD = 1.23
+	rs.sessionCostParentUSD = 1.00
+	rs.sessionCacheSavedUSD = 0.45
 
 	snap := rs.UsageSnapshot()
 	blob, err := json.Marshal(snap)
@@ -64,7 +68,7 @@ func TestRunState_UsageSnapshotRoundTrip(t *testing.T) {
 	}
 	var fresh RunState
 	fresh.RestoreUsage(decoded)
-	if fresh.UsageSnapshot() != snap {
+	if !reflect.DeepEqual(fresh.UsageSnapshot(), snap) {
 		t.Errorf("usage round trip mismatch: %+v != %+v", fresh.UsageSnapshot(), snap)
 	}
 }
@@ -111,7 +115,7 @@ func TestDecodeSavedSession_HydratesAuxBlobs(t *testing.T) {
 	if s.Plan.Explanation != "the plan" || len(s.Plan.Steps) != 2 || s.Plan.Steps[1].Status != code.StepStatuses.INPROGRESS {
 		t.Errorf("plan not hydrated: %+v", s.Plan)
 	}
-	if s.Usage != usage {
+	if !reflect.DeepEqual(s.Usage, usage) {
 		t.Errorf("usage not hydrated: %+v", s.Usage)
 	}
 	if s.DiffBodies["foo.go"] != diff["foo.go"] {
@@ -136,5 +140,21 @@ func TestDecodeSavedSession_CorruptBlobStillLoadsHistory(t *testing.T) {
 	}
 	if len(s.Plan.Steps) != 0 {
 		t.Errorf("corrupt plan should decode to empty, got %+v", s.Plan)
+	}
+}
+
+func TestRunState_RestoreOldUsageSnapshotWithoutCostFields(t *testing.T) {
+	blob := []byte(`{"turns":3,"tool_calls":9,"in":100,"out":50,"cached":20,"in_parent":80,"out_parent":40,"cached_parent":10}`)
+	var snap SessionUsageSnapshot
+	if err := json.Unmarshal(blob, &snap); err != nil {
+		t.Fatalf("unmarshal old snapshot: %v", err)
+	}
+	var rs RunState
+	rs.RestoreUsage(snap)
+	if rs.sessionTurns != 3 || rs.sessionIn != 100 || rs.sessionOut != 50 || rs.sessionCached != 20 {
+		t.Fatalf("tokens not restored from old snapshot: %+v", rs.UsageSnapshot())
+	}
+	if rs.sessionCost() != 0 || rs.sessionCostParent() != 0 || rs.cacheSaved() != 0 {
+		t.Fatalf("old snapshot should restore zero cost fields: cost=%v parent=%v saved=%v", rs.sessionCost(), rs.sessionCostParent(), rs.cacheSaved())
 	}
 }

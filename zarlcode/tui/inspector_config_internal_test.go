@@ -17,22 +17,18 @@ func TestGuardrailSummary_ReflectsDeps(t *testing.T) {
 		Verifiers: []guardrails.Verifier{&guardrails.GoVerifier{}},
 		FanoutLimits: map[tools.ToolName]int{
 			code.ToolNameGrep: 30,
-			code.ToolNameRead: 30,
-			code.ToolNameLs:   20,
-			code.ToolNameGlob: 20,
 		},
 		TestEdit: guardrails.NewTestEditAdvisory(),
 	}
 	got := guardrailSummary(deps)
 
-	for _, want := range []string{"go_verifier", ".go", "grep≤30", "read≤30", "ls≤20", "glob≤20", "test_edit_advisory"} {
+	for _, want := range []string{"go_verifier", ".go", "grep≤30", "test_edit_advisory"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary missing %q:\n%s", want, got)
 		}
 	}
-	// Fan-out is sorted for a stable render regardless of map iteration order.
-	if g, l := strings.Index(got, "glob≤"), strings.Index(got, "read≤"); g > l {
-		t.Errorf("fan-out limits should render in sorted order:\n%s", got)
+	if strings.Contains(got, "read≤") {
+		t.Errorf("read should not have a fan-out limit in the summary:\n%s", got)
 	}
 }
 

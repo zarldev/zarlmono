@@ -217,7 +217,7 @@ func TestComposer_CtrlCUsesQuitConfirmation(t *testing.T) {
 	}
 }
 
-func TestComposer_CtrlQUsesClearConfirmation(t *testing.T) {
+func TestComposer_CtrlQUsesConversationDialog(t *testing.T) {
 	m := New()
 
 	cmd := m.handleKey(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
@@ -225,10 +225,10 @@ func TestComposer_CtrlQUsesClearConfirmation(t *testing.T) {
 		t.Fatalf("ctrl+q returned a command; want dialog")
 	}
 	if !m.overlay.active() {
-		t.Fatal("ctrl+q should open the clear confirmation dialog")
+		t.Fatal("ctrl+q should open the conversation dialog")
 	}
-	if _, ok := m.overlay.top().(*clearContextConfirmDialog); !ok {
-		t.Fatalf("ctrl+q opened %T, want *clearContextConfirmDialog", m.overlay.top())
+	if _, ok := m.overlay.top().(*conversationActionsDialog); !ok {
+		t.Fatalf("ctrl+q opened %T, want *conversationActionsDialog", m.overlay.top())
 	}
 }
 

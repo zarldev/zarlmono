@@ -78,7 +78,7 @@ type RunState struct {
 	// partitioned context graph; all zero until the first breakdown lands,
 	// where the graph falls back to the cached/fresh/free split.
 	ctxSysBytes, ctxUserBytes, ctxAsstBytes, ctxToolBytes int
-	ctxSkillBytes, ctxAgentBytes                          int
+	ctxSkillBytes, ctxAgentBytes, ctxInstructionBytes     int
 	ctxSysMsgs, ctxUserMsgs, ctxAsstMsgs, ctxToolMsgs     int
 
 	// --- identity / config (set once at wiring) ---
@@ -110,6 +110,22 @@ type RunState struct {
 	sessionOutParent    int // parent-only completion tokens
 	sessionCachedParent int
 	sessionToolCalls    int
+	nestedRunning       int
+	nestedCompleted     int
+	nestedFailed        int
+	nestedDuration      time.Duration
+	nestedTools         map[string]int
+	nestedActive        map[string]bool
+
+	// --- session cost rollup ---
+	// These USD estimates are folded at the rate active when each usage event
+	// completes. They intentionally do not reprice historical tokens when the
+	// active provider/model changes mid-session.
+	lastCostUSD          float64
+	lastCacheSavedUSD    float64
+	sessionCostUSD       float64 // all completed usage, including delegated sub-agents
+	sessionCostParentUSD float64 // top-level parent turns only
+	sessionCacheSavedUSD float64
 
 	// --- per-tool cumulative stats ---
 	toolStats map[string]toolStat
@@ -133,27 +149,41 @@ type RunState struct {
 // per-turn history ring, and pricing are not persisted — they reset or
 // re-derive on the next turn.
 type SessionUsageSnapshot struct {
-	Turns        int `json:"turns"`
-	ToolCalls    int `json:"tool_calls"`
-	In           int `json:"in"`
-	Out          int `json:"out"`
-	Cached       int `json:"cached"`
-	InParent     int `json:"in_parent"`
-	OutParent    int `json:"out_parent"`
-	CachedParent int `json:"cached_parent"`
+	Turns           int            `json:"turns"`
+	ToolCalls       int            `json:"tool_calls"`
+	In              int            `json:"in"`
+	Out             int            `json:"out"`
+	Cached          int            `json:"cached"`
+	InParent        int            `json:"in_parent"`
+	OutParent       int            `json:"out_parent"`
+	CachedParent    int            `json:"cached_parent"`
+	CostUSD         float64        `json:"cost_usd,omitempty"`
+	CostParentUSD   float64        `json:"cost_parent_usd,omitempty"`
+	CacheSavedUSD   float64        `json:"cache_saved_usd,omitempty"`
+	NestedCompleted int            `json:"nested_completed,omitempty"`
+	NestedFailed    int            `json:"nested_failed,omitempty"`
+	NestedDuration  time.Duration  `json:"nested_duration,omitempty"`
+	NestedTools     map[string]int `json:"nested_tools,omitempty"`
 }
 
 // UsageSnapshot captures the session rollup for persistence.
 func (s *RunState) UsageSnapshot() SessionUsageSnapshot {
 	return SessionUsageSnapshot{
-		Turns:        s.sessionTurns,
-		ToolCalls:    s.sessionToolCalls,
-		In:           s.sessionIn,
-		Out:          s.sessionOut,
-		Cached:       s.sessionCached,
-		InParent:     s.sessionInParent,
-		OutParent:    s.sessionOutParent,
-		CachedParent: s.sessionCachedParent,
+		Turns:           s.sessionTurns,
+		ToolCalls:       s.sessionToolCalls,
+		In:              s.sessionIn,
+		Out:             s.sessionOut,
+		Cached:          s.sessionCached,
+		InParent:        s.sessionInParent,
+		OutParent:       s.sessionOutParent,
+		CachedParent:    s.sessionCachedParent,
+		CostUSD:         s.sessionCostUSD,
+		CostParentUSD:   s.sessionCostParentUSD,
+		CacheSavedUSD:   s.sessionCacheSavedUSD,
+		NestedCompleted: s.nestedCompleted,
+		NestedFailed:    s.nestedFailed,
+		NestedDuration:  s.nestedDuration,
+		NestedTools:     cloneStringIntMap(s.nestedTools),
 	}
 }
 
@@ -169,6 +199,13 @@ func (s *RunState) RestoreUsage(snap SessionUsageSnapshot) {
 	s.sessionInParent = snap.InParent
 	s.sessionOutParent = snap.OutParent
 	s.sessionCachedParent = snap.CachedParent
+	s.sessionCostUSD = snap.CostUSD
+	s.sessionCostParentUSD = snap.CostParentUSD
+	s.sessionCacheSavedUSD = snap.CacheSavedUSD
+	s.nestedCompleted = snap.NestedCompleted
+	s.nestedFailed = snap.NestedFailed
+	s.nestedDuration = snap.NestedDuration
+	s.nestedTools = cloneStringIntMap(snap.NestedTools)
 }
 
 // reset clears the live-run counters at the start of a new top-level turn
@@ -179,6 +216,8 @@ func (s *RunState) reset() {
 	s.iterations = 0
 	s.tools = 0
 	s.toolsRunning = 0
+	s.nestedRunning = 0
+	s.nestedActive = make(map[string]bool)
 	s.maxDepth = 0
 	s.turnStartedAt = time.Now()
 	s.turnOutBytes = 0
@@ -241,6 +280,7 @@ func (s *RunState) setContextBreakdown(b *runner.ContextBreakdown) {
 	s.ctxSysBytes, s.ctxUserBytes = b.SystemBytes, b.UserBytes
 	s.ctxAsstBytes, s.ctxToolBytes = b.AssistantBytes, b.ToolBytes
 	s.ctxSkillBytes, s.ctxAgentBytes = b.SkillBytes, b.AgentBytes
+	s.ctxInstructionBytes = b.InstructionBytes
 	s.ctxSysMsgs, s.ctxUserMsgs = b.SystemMsgs, b.UserMsgs
 	s.ctxAsstMsgs, s.ctxToolMsgs = b.AssistantMsgs, b.ToolMsgs
 }
@@ -275,6 +315,56 @@ func (s *RunState) foldTool(name string, dur time.Duration, failed bool) {
 	s.toolStats[name] = st
 }
 
+func (s *RunState) startNestedTool(id string) {
+	if id == "" {
+		return
+	}
+	if s.nestedActive == nil {
+		s.nestedActive = make(map[string]bool)
+	}
+	if s.nestedActive[id] {
+		return
+	}
+	s.nestedActive[id] = true
+	s.nestedRunning++
+}
+
+func (s *RunState) finishNestedTool(id, name string, dur time.Duration, failed bool) {
+	if id != "" {
+		if !s.nestedActive[id] {
+			return
+		}
+		delete(s.nestedActive, id)
+	}
+	if s.nestedRunning > 0 {
+		s.nestedRunning--
+	}
+	if failed {
+		s.nestedFailed++
+	} else {
+		s.nestedCompleted++
+	}
+	s.nestedDuration += dur
+	if name == "" {
+		name = "tool"
+	}
+	if s.nestedTools == nil {
+		s.nestedTools = make(map[string]int)
+	}
+	s.nestedTools[name]++
+}
+
+func cloneStringIntMap(in map[string]int) map[string]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 // foldTurnComplete folds a top-level conversation-completed event: records
 // the last-turn token flow, rolls it into the session totals, finalises the
 // live context estimate, and pushes a history sample.
@@ -296,7 +386,16 @@ func (s *RunState) foldTurnComplete(u *llm.Usage, dur time.Duration, iters int) 
 	if u != nil {
 		// Session totals use the cumulative TotalUsage — added once per turn,
 		// this correctly reflects the full spend of the Run (including every
-		// iteration's tokens).
+		// iteration's tokens). Cost is folded at the turn-time rate so later
+		// model/provider changes do not reprice historical usage.
+		turnCost := s.cost(u.PromptTokens, u.CachedTokens, u.CompletionTokens)
+		turnSaved := s.cacheSavedFor(u.CachedTokens)
+		s.lastCostUSD = turnCost
+		s.lastCacheSavedUSD = turnSaved
+		s.sessionCostUSD += turnCost
+		s.sessionCostParentUSD += turnCost
+		s.sessionCacheSavedUSD += turnSaved
+
 		s.sessionIn += u.PromptTokens
 		s.sessionOut += u.CompletionTokens
 		s.sessionCached += u.CachedTokens
@@ -315,6 +414,11 @@ func (s *RunState) foldSubAgentUsage(u *llm.Usage) {
 	if u == nil {
 		return
 	}
+	// Delegated usage currently arrives without provider/model identity, so it is
+	// estimated with the active parent cost basis. Future work should carry the
+	// sub-agent provider/model through the event for exact attribution.
+	s.sessionCostUSD += s.cost(u.PromptTokens, u.CachedTokens, u.CompletionTokens)
+	s.sessionCacheSavedUSD += s.cacheSavedFor(u.CachedTokens)
 	s.sessionIn += u.PromptTokens
 	s.sessionOut += u.CompletionTokens
 	s.sessionCached += u.CachedTokens
@@ -426,8 +530,10 @@ func (s *RunState) hasPricing() bool {
 	return s.inCostPer1k > 0 || s.outCostPer1k > 0
 }
 
-// cost prices an (input, cached, output) token triple, charging cached
-// input at cacheReadRate of the normal input price.
+// cost estimates one usage event using the currently active cost basis,
+// charging cached input at cacheReadRate of the normal input price. It must not
+// be used to price cumulative historical totals because model/provider changes
+// can change the active basis mid-session.
 func (s *RunState) cost(in, cached, out int) float64 {
 	fresh := max(in-cached, 0)
 	return float64(fresh)/1000*s.inCostPer1k +
@@ -435,20 +541,31 @@ func (s *RunState) cost(in, cached, out int) float64 {
 		float64(out)/1000*s.outCostPer1k
 }
 
-// turnCost is the USD cost of the last completed turn.
-func (s *RunState) turnCost() float64 {
-	return s.cost(s.lastIn, s.lastCached, s.lastOut)
+func (s *RunState) cacheSavedFor(cached int) float64 {
+	return float64(cached) / 1000 * s.inCostPer1k * (1 - cacheReadRate)
 }
 
-// sessionCost is the cumulative USD cost this session.
+// turnCost is the USD cost of the last completed turn, folded at the rate that
+// was active when that turn completed.
+func (s *RunState) turnCost() float64 {
+	return s.lastCostUSD
+}
+
+// sessionCost is the cumulative USD cost this session, accumulated at each
+// usage event's completion-time rate.
 func (s *RunState) sessionCost() float64 {
-	return s.cost(s.sessionIn, s.sessionCached, s.sessionOut)
+	return s.sessionCostUSD
 }
 
 // sessionCostParent is the cumulative USD cost of top-level turns only
-// (excludes sub-agent delegation).
+// (excludes sub-agent delegation), accumulated at each parent turn's
+// completion-time rate.
 func (s *RunState) sessionCostParent() float64 {
-	return s.cost(s.sessionInParent, s.sessionCachedParent, s.sessionOutParent)
+	return s.sessionCostParentUSD
+}
+
+func (s *RunState) hasSessionCost() bool {
+	return s.sessionCostUSD > 0 || s.sessionCacheSavedUSD > 0
 }
 
 // hasSubAgentUsage reports whether sub-agent delegation contributed to
@@ -460,7 +577,7 @@ func (s *RunState) hasSubAgentUsage() bool {
 // cacheSaved is the USD not paid this session because input tokens were
 // served from the prompt cache (the discount on cached input).
 func (s *RunState) cacheSaved() float64 {
-	return float64(s.sessionCached) / 1000 * s.inCostPer1k * (1 - cacheReadRate)
+	return s.sessionCacheSavedUSD
 }
 
 // burnRate is the session's average spend per hour. Returns 0 until enough

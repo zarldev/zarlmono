@@ -167,6 +167,12 @@ const toolCallJSONRecoverLimit = 3
 // without spinning forever against a backend that's genuinely down.
 const emptyStreamRetryLimit = 3
 
+// rateLimitRetryLimit caps consecutive provider rate-limit retries. Rate-limit
+// bodies usually include a short "try again in N.s" hint; honoring a small
+// number keeps transient TPM collisions from killing long-running plans while
+// still surfacing persistent quota exhaustion.
+const rateLimitRetryLimit = 3
+
 // thinkingBudgetRecoverLimit caps consecutive in-task recoveries of an
 // [ErrThinkingBudget] cut (a turn that ran past the thinking-only byte
 // budget without emitting content or a tool call). Each recovery injects

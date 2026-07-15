@@ -33,8 +33,8 @@ const goalPrompt = "Refactor the authentication system from session-based to JWT
 func RunSpawnWorker(ctx context.Context, client runner.Client, fs *FileSystem, maxAttempts int) pursue.Outcome {
 	// Build the parent registry with file tools + spawn_agent
 	parentReg := tools.NewRegistry()
-	parentReg.Register(&readFileTool{fs: fs})
-	parentReg.Register(&listFilesTool{fs: fs})
+	_ = parentReg.Register(&readFileTool{fs: fs})
+	_ = parentReg.Register(&listFilesTool{fs: fs})
 
 	// Create the parent runner first (needed for spawn tool)
 	parentRunner := runner.New(client,
@@ -49,7 +49,7 @@ func RunSpawnWorker(ctx context.Context, client runner.Client, fs *FileSystem, m
 		spawn.WithAgentResolver(BuildAgentResolver(fs, client)),
 		spawn.WithModeToolPolicy(ModePolicy()),
 	)
-	parentReg.Register(spawnTool)
+	_ = parentReg.Register(spawnTool)
 
 	// Goal: the refactor is complete when we have JWT files and modified auth
 	checkpoint := fs.Checkpoint()

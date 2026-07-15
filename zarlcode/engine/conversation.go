@@ -1,11 +1,14 @@
 package engine
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 
 	"github.com/google/uuid"
 
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
@@ -41,6 +44,29 @@ type conversation struct {
 // TUI surfaces as an error toast + log + idle-clear (see
 // Session.applyConversationEnded). So there is nothing to return here — we
 // keep only the partial history.
+func (c *conversation) runSpecWithSetup(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	spec.ID = taskscope.ID(uuid.NewString())
+	repaired, changed := compact.RepairToolPairing(c.history)
+	if changed > 0 {
+		slog.Warn("turn: repaired unbalanced tool-call pairing before provider request",
+			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
+	}
+	c.history = repaired
+	spec.Context = c.history
+	exec, err := setup()
+	if err != nil {
+		return err
+	}
+	res := exec(spec)
+	if len(res.Messages) > 0 {
+		c.history = res.Messages
+	}
+	return nil
+}
+
 func (c *conversation) run(prompt string, exec func(runner.TaskSpec) runner.TaskResult) {
 	c.runSpec(runner.TaskSpec{Prompt: prompt}, exec)
 }
@@ -50,6 +76,12 @@ func (c *conversation) runSpec(spec runner.TaskSpec, exec func(runner.TaskSpec) 
 	defer c.mu.Unlock()
 
 	spec.ID = taskscope.ID(uuid.NewString())
+	repaired, changed := compact.RepairToolPairing(c.history)
+	if changed > 0 {
+		slog.Warn("turn: repaired unbalanced tool-call pairing before provider request",
+			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
+	}
+	c.history = repaired
 	spec.Context = c.history
 	res := exec(spec)
 	if len(res.Messages) > 0 {
@@ -82,4 +114,40 @@ func (c *conversation) restore(history []llm.Message) {
 	// RepairToolPairing always returns a freshly allocated slice, so it is
 	// already independent of the caller's backing array.
 	c.history = repaired
+}
+
+func (c *conversation) compactNow(ctx context.Context, compactor compact.Compactor, sink runner.EventSink) (ManualCompactionResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	before := len(c.history)
+	if before == 0 {
+		return ManualCompactionResult{MessagesBefore: 0, MessagesAfter: 0, Engine: compact.EngineTiered}, nil
+	}
+	repaired, changed := compact.RepairToolPairing(c.history)
+	if changed > 0 {
+		slog.WarnContext(ctx, "manual compact: repaired unbalanced tool-call pairing before compaction",
+			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
+	}
+	c.history = repaired
+	before = len(c.history)
+	keep := compact.AdaptiveKeepRecent(c.history, coderunner.AdaptiveKeepTargetTokens, coderunner.AdaptiveKeepMin, coderunner.AdaptiveKeepMax)
+	res, err := compactor.Compact(ctx, c.history, keep)
+	if err != nil {
+		return ManualCompactionResult{}, fmt.Errorf("compact now: %w", err)
+	}
+	if len(res.History) > 0 {
+		c.history = res.History
+	}
+	after := len(c.history)
+	out := ManualCompactionResult{MessagesBefore: before, MessagesAfter: after, BytesTrimmed: res.BytesTrimmed, Engine: res.Engine}
+	if sink != nil && (before != after || res.BytesTrimmed > 0) {
+		sink.OnCompactionApplied(runner.CompactionApplied{
+			TaskID:         "manual-compact",
+			MessagesBefore: before,
+			MessagesAfter:  after,
+			BytesTrimmed:   res.BytesTrimmed,
+			Engine:         res.Engine,
+		})
+	}
+	return out, nil
 }

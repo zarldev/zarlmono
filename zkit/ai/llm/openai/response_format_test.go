@@ -167,3 +167,53 @@ func TestRequest_ResponseFormatInjection(t *testing.T) {
 		})
 	}
 }
+
+func TestRequest_ReasoningEffortWithToolsDisabledForChatCompletions(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`data: {"id":"x","object":"chat.completion.chunk","choices":[{"delta":{"content":"ok"},"finish_reason":"stop","index":0}]}` + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL), openai.WithModel("gpt-5.6-sol"))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{{Role: "user", Content: "hi"}},
+		Stream:   true,
+		Thinking: llm.ThinkingConfig{Enabled: true},
+		Tools: []llm.Tool{{
+			Type: "function",
+			Function: llm.ToolFunction{
+				Name:        "read",
+				Description: "read a file",
+				Parameters:  llm.SchemaFromMap(map[string]any{"type": "object"}),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	for range seq {
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(captured, &body); err != nil {
+		t.Fatalf("unmarshal request body: %v\nbody: %s", err, captured)
+	}
+	if got, ok := body["reasoning_effort"]; ok {
+		t.Fatalf("reasoning_effort = %v, want omitted with tools (body: %s)", got, captured)
+	}
+	if _, ok := body["tools"]; !ok {
+		t.Fatalf("tools missing from request body: %s", captured)
+	}
+}

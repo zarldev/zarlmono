@@ -56,14 +56,14 @@ func (s *statusPane) Update(msg tea.Msg) tea.Cmd { return nil }
 // toastExpiryCmd schedules a wake-up to clear an active toast.
 
 func (s *statusPane) statusHint() string {
-	stopKey := "ctrl+c quit  ·  ctrl+q clear"
+	stopKey := "ctrl+c quit  ·  ctrl+q ctx"
 	if s.input != nil {
 		if hint := slashStatusHint(s.input()); hint != "" {
 			return hint
 		}
 	}
 	if s.session.Run.Running {
-		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q clear"
+		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q ctx"
 	}
 	if s.session.PlanMode {
 		return " enter submit  ·  shift+enter newline  ·  shift+tab build  ·  " + stopKey + "  ·  ctrl+g keys"

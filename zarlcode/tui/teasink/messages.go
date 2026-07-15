@@ -36,11 +36,13 @@ type ThinkingMsg struct {
 
 // ToolStartedMsg fires when the runner dispatches a tool call.
 type ToolStartedMsg struct {
-	TaskID     string
-	Depth      int
-	ToolID     string
-	ToolName   string
-	Parameters map[string]any
+	TaskID       string
+	Depth        int
+	ToolID       string
+	ToolName     string
+	Parameters   map[string]any
+	ParentToolID string
+	Sequence     int
 }
 
 // ToolCompletedMsg fires when a tool call returns successfully.
@@ -53,19 +55,23 @@ type ToolCompletedMsg struct {
 	FormattedResult string
 	Effects         []tools.Effect
 	Duration        time.Duration
+	ParentToolID    string
+	Sequence        int
 }
 
 // ToolFailedMsg fires when a tool call errors or reports failure.
 type ToolFailedMsg struct {
-	TaskID    string
-	Depth     int
-	ToolID    string
-	ToolName  string
-	Error     string
-	Kind      tools.Kind // typed failure classification (validation / transient / …)
-	Abandoned bool       // timed out with its goroutine possibly still in flight
-	Effects   []tools.Effect
-	Duration  time.Duration
+	TaskID       string
+	Depth        int
+	ToolID       string
+	ToolName     string
+	Error        string
+	Kind         tools.Kind // typed failure classification (validation / transient / …)
+	Abandoned    bool       // timed out with its goroutine possibly still in flight
+	Effects      []tools.Effect
+	Duration     time.Duration
+	ParentToolID string
+	Sequence     int
 }
 
 // ConversationStartedMsg marks the start of a Run. Prompt carries

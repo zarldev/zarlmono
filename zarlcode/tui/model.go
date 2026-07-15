@@ -93,6 +93,7 @@ type UI struct {
 	// invalid workspace-scoped provider config). Non-nil disables the normal
 	// cockpit and exits on enter/esc.
 	startupFailure *startupFailurePane
+	repointSeq     uint64
 }
 
 type contextViewTab int
@@ -221,24 +222,10 @@ func (m *UI) SetPricing(inPer1k, outPer1k float64) {
 	m.session.SetPricing(inPer1k, outPer1k)
 }
 
-// setModel updates the active model name for the current provider and
-// repoints the live runner so the change takes effect on the next turn.
-func (m *UI) setModel(name string) {
-	m.session.SetActiveModel(name)
-	if m.live != nil {
-		m.live.SetModel(name)
-	}
-	m.session.ApplyModelPricing(name)
-	m.session.SetSuccessToast("model → " + name)
-}
-
 // openModelQuickPick pushes the model list picker onto the overlay with a
-// provider tab bar and model list. Cached models are pre-seeded for instant
-// open. Provider switching is handled automatically: if the user selects a
-// model from a different provider, the selection is persisted to settings
-// and the close action triggers maybeRepoint to rebuild the provider.
-// Model-only changes on the active provider are applied directly via
-// setModel so the live runner picks them up immediately.
+// model from any provider, the selection is persisted to settings and
+// maybeRepoint rebuilds the provider. Providers capture their wire model at
+// construction time, so model-only changes cannot use LiveRunner.SetModel.
 func (m *UI) openModelQuickPick() tea.Cmd {
 	current := m.session.ActiveProviderSpec()
 	var provNames []string
@@ -274,20 +261,9 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 			}
 		}
 
-		if prov != active.Name {
-			// Provider changed: persist is done above. Don't update the
-			// active Session provider spec here — let maybeRepoint detect
-			// the diff and rebuild the llm.Provider from persisted settings.
-			m.session.SetToast("switching to " + prov + " / " + model + "…")
-		} else {
-			// Same provider, only model changed: apply directly via setModel
-			// so the live runner picks it up on the very next turn.
-			// setModel also updates Session.ProvSpec.Model so maybeRepoint is a no-op.
-			m.setModel(model)
-		}
+		m.session.SetToast("switching to " + prov + " / " + model + "…")
 	}, m.settings)
 	m.overlay.push(picker)
-
 	if _, ok := m.session.ModelCache[current.Name]; !ok {
 		return m.fetchModelsCmd(current.Name)
 	}
@@ -392,6 +368,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case askpassPromptMsg:
 		m.overlay.push(newAskpassDialog(msg.Prompt, msg.Reply))
 		return m, nil
+	case compactNowFinishedMsg:
+		m.applyCompactNowFinished(msg)
+		return m, tea.Batch(m.toastExpiryCmd(), m.saveSessionCmd())
+	case compactNowFailedMsg:
+		m.session.SetErrorToast("compact: " + msg.Error)
+		return m, m.toastExpiryCmd()
 	case processKillResultMsg:
 		return m, m.handleProcessKillResult(msg)
 	case sessionSaveFailedMsg:

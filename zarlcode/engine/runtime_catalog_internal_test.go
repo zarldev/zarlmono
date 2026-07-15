@@ -90,6 +90,65 @@ Run go test ./...
 	}
 }
 
+func TestCatalogListToolsRefreshAtListTime(t *testing.T) {
+	root := t.TempDir()
+	cat := newRuntimeCatalog(root)
+
+	mustWrite(t, filepath.Join(root, ".zarlcode", "agents", "fresh.md"), `---
+name: fresh
+description: newly added agent
+---
+
+Review fresh changes.
+`)
+	res, err := NewListAgentsTool(cat).Execute(t.Context(), tools.ToolCall{ID: "agents", ToolName: ToolNameListAgents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.Success || !strings.Contains(res.Data.(string), "fresh") {
+		t.Fatalf("list_agents did not refresh catalogue: %#v", res)
+	}
+
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "fresh-skill.md"), `---
+name: fresh-skill
+description: newly added skill
+---
+
+Use fresh skill.
+`)
+	res, err = NewListSkillsTool(cat).Execute(t.Context(), tools.ToolCall{ID: "skills", ToolName: ToolNameListSkills})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.Success || !strings.Contains(res.Data.(string), "fresh-skill") {
+		t.Fatalf("list_skills did not refresh catalogue: %#v", res)
+	}
+}
+
+func TestLoadSkillToolRefreshesOnceOnMiss(t *testing.T) {
+	root := t.TempDir()
+	cat := newRuntimeCatalog(root)
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "late.md"), `---
+name: late
+description: late skill
+---
+
+Loaded after refresh.
+`)
+
+	res, err := NewLoadSkillTool(cat).Execute(t.Context(), tools.ToolCall{
+		ID:        "late",
+		ToolName:  ToolNameLoadSkill,
+		Arguments: tools.ToolParameters{"name": "late"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.Success || !strings.Contains(res.Data.(string), "Loaded after refresh") {
+		t.Fatalf("load_skill did not refresh on miss: %#v", res)
+	}
+}
+
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

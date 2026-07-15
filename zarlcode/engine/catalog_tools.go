@@ -35,6 +35,12 @@ type loadSkillArgs struct {
 
 func NewLoadSkillTool(c *RuntimeCatalog) *loadSkillTool { return &loadSkillTool{catalog: c} }
 
+func (t *loadSkillTool) refresh() {
+	if t != nil && t.catalog != nil {
+		t.catalog.ReloadCurrent()
+	}
+}
+
 func (t *loadSkillTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameLoadSkill,
@@ -65,6 +71,10 @@ func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.
 	}
 	skill, ok := t.catalog.Skill(name)
 	if !ok {
+		t.refresh()
+		skill, ok = t.catalog.Skill(name)
+	}
+	if !ok {
 		return tools.Failure(call.ID, tools.NotFound("load_skill", fmt.Sprintf(
 			"no skill named %q. Available: %s", name, strings.Join(t.catalog.SkillNames(), ", ")))), nil
 	}
@@ -74,6 +84,12 @@ func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.
 type listSkillsTool struct{ catalog *RuntimeCatalog }
 
 func NewListSkillsTool(c *RuntimeCatalog) *listSkillsTool { return &listSkillsTool{catalog: c} }
+
+func (t *listSkillsTool) refresh() {
+	if t != nil && t.catalog != nil {
+		t.catalog.ReloadCurrent()
+	}
+}
 
 func (t *listSkillsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
@@ -85,6 +101,7 @@ func (t *listSkillsTool) Definition() tools.ToolSpec {
 }
 
 func (t *listSkillsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	t.refresh()
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: renderSkillsLabeled(t.catalog.Skills()), ExecutedAt: time.Now()}, nil
 }
 
@@ -113,6 +130,12 @@ type listAgentsTool struct{ catalog *RuntimeCatalog }
 
 func NewListAgentsTool(c *RuntimeCatalog) *listAgentsTool { return &listAgentsTool{catalog: c} }
 
+func (t *listAgentsTool) refresh() {
+	if t != nil && t.catalog != nil {
+		t.catalog.ReloadCurrent()
+	}
+}
+
 func (t *listAgentsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameListAgents,
@@ -123,6 +146,7 @@ func (t *listAgentsTool) Definition() tools.ToolSpec {
 }
 
 func (t *listAgentsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	t.refresh()
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: renderAgentsLabeled(t.catalog.Agents()), ExecutedAt: time.Now()}, nil
 }
 
@@ -141,17 +165,26 @@ func renderAgentsLabeled(agents []catalog.Agent) string {
 	}
 	for _, a := range agents {
 		pad := strings.Repeat(" ", nameWidth-ansi.StringWidth(a.Name))
-		runs := ""
-		switch {
-		case a.Provider != "" && a.Model != "":
-			runs = fmt.Sprintf("  (%s · %s)", a.Provider, a.Model)
-		case a.Provider != "":
-			runs = fmt.Sprintf("  (%s)", a.Provider)
-		case a.Model != "":
-			runs = fmt.Sprintf("  (%s)", a.Model)
+		attrs := agentRunAttrs(a)
+		if attrs != "" {
+			attrs = "  (" + attrs + ")"
 		}
-		fmt.Fprintf(&b, "  %s%s  — %s%s\n", a.Name, pad, a.Description, runs)
+		fmt.Fprintf(&b, "  %s%s  — %s%s\n", a.Name, pad, a.Description, attrs)
 		fmt.Fprintf(&b, "    path: %s\n", a.Source)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func agentRunAttrs(a catalog.Agent) string {
+	var attrs []string
+	if a.Provider != "" {
+		attrs = append(attrs, a.Provider)
+	}
+	if a.Model != "" {
+		attrs = append(attrs, a.Model)
+	}
+	if a.Mode != "" {
+		attrs = append(attrs, "mode="+a.Mode)
+	}
+	return strings.Join(attrs, " · ")
 }

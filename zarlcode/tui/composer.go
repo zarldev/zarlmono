@@ -145,7 +145,7 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+c":
 		return m.handleQuit()
 	case "ctrl+q":
-		m.overlay.push(newClearContextConfirmDialog())
+		m.overlay.push(newConversationActionsDialog())
 		return nil
 	}
 	if cmd, ok := m.handleGlobalShortcut(msg); ok {

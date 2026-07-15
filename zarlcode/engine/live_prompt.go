@@ -84,11 +84,12 @@ func systemPromptBody() string {
 // the update_plan contract only appear when the matching tools are registered.
 func RenderLivePrompt(name, body, wsRoot string, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document, toolInfo []promptTool) (string, error) {
 	data := prompts.Data{
-		WorkspaceRoot:   wsRoot,
-		Tools:           toolInfo,
-		InstructionDocs: promptInstructionDocs(instructionDocs),
-		SelfMod:         prompts.HasTool(toolInfo, "new_tool") || prompts.HasTool(toolInfo, "register_tool"),
-		Planning:        prompts.HasTool(toolInfo, "update_plan"),
+		WorkspaceRoot:     wsRoot,
+		Tools:             toolInfo,
+		InstructionDocs:   promptInstructionDocs(instructionDocs),
+		SelfMod:           prompts.HasTool(toolInfo, "new_tool") || prompts.HasTool(toolInfo, "register_tool"),
+		Planning:          prompts.HasTool(toolInfo, "update_plan"),
+		ProgrammaticTools: prompts.HasTool(toolInfo, "program"),
 	}
 	return prompts.Render(name, body, data)
 }

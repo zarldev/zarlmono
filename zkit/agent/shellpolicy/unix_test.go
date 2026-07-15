@@ -97,6 +97,10 @@ func TestUnixParser_RisksTriggeredCorrectly(t *testing.T) {
 		{"pipe raises ReasonOperator", "ls | wc -l", shellpolicy.ReasonOperator},
 		{"&& raises ReasonOperator", "ls && pwd", shellpolicy.ReasonOperator},
 		{"semicolon between stmts raises ReasonOperator", "ls; pwd", shellpolicy.ReasonOperator},
+		{"grep raises ReasonShellReadTool", "grep -r foo .", shellpolicy.ReasonShellReadTool},
+		{"sed raises ReasonShellReadTool", "sed -n '1,20p' main.go", shellpolicy.ReasonShellReadTool},
+		{"read-helper pipe raises ReasonShellReadTool", "ls | grep foo", shellpolicy.ReasonShellReadTool},
+		{"opaque interpreter pipe raises ReasonOpaqueInterpreter", "echo 'print(1)' | python3", shellpolicy.ReasonOpaqueInterpreter},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

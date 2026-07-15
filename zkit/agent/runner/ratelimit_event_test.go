@@ -89,3 +89,42 @@ func TestRun_NonRateLimitErrorLeavesRateLimitNil(t *testing.T) {
 		}
 	}
 }
+
+func TestRun_RateLimitRetryBudgetResetsAfterSuccess(t *testing.T) {
+	t.Parallel()
+
+	rateLimited := func() llm.CompletionChunk {
+		return chunkErr(&llm.RateLimitError{
+			Message:    "slow down",
+			RetryAfter: time.Nanosecond,
+			Retryable:  true,
+		})
+	}
+	provider := &fakeProvider{turns: [][]llm.CompletionChunk{
+		{rateLimited()},
+		{chunkToolCall("call-1", "echo", `{}`), chunkDone()},
+		{rateLimited()},
+		{rateLimited()},
+		{rateLimited()},
+		{chunkText("finished"), chunkDone()},
+	}}
+	r := runner.New(
+		runner.ClientFromProvider(provider),
+		runner.WithTools(newRegistry(stubTool{name: "echo", result: "ok"})),
+		runner.WithMaxIterations(8),
+	)
+
+	res := r.Run(t.Context(), runner.TaskSpec{
+		ID:     taskscope.ID(uuid.NewString()),
+		Prompt: "use echo, then finish",
+	})
+	if res.Err != nil {
+		t.Fatalf("Run returned error: %v", res.Err)
+	}
+	if res.FinalContent != "finished" {
+		t.Fatalf("FinalContent = %q, want %q", res.FinalContent, "finished")
+	}
+	if got := provider.callCount(); got != 6 {
+		t.Fatalf("provider calls = %d, want 6", got)
+	}
+}

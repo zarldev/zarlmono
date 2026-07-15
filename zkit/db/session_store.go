@@ -26,6 +26,8 @@ type SessionRecord struct {
 	LastUsageJSON  []byte
 	DiffBodiesJSON []byte
 	PlanJSON       []byte
+	MessageCount   int
+	ToolTraceJSON  []byte
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -42,6 +44,20 @@ func (s *Store) GetSession(ctx context.Context, id string) (SessionRecord, error
 		return SessionRecord{}, fmt.Errorf("get session %q: %w", id, err)
 	}
 	return toSessionRecord(row), nil
+}
+
+// ListSessionSummaries returns resumable-session metadata without loading
+// large history/diff/plan JSON blobs.
+func (s *Store) ListSessionSummaries(ctx context.Context, workspace string) ([]SessionRecord, error) {
+	rows, err := s.q.ListSessionSummariesByWorkspace(ctx, workspace)
+	if err != nil {
+		return nil, fmt.Errorf("list session summaries: %w", err)
+	}
+	out := make([]SessionRecord, len(rows))
+	for i, r := range rows {
+		out[i] = sessionSummaryRowToRecord(r)
+	}
+	return out, nil
 }
 
 // ListSessions returns every session for the workspace, most recent
@@ -77,7 +93,9 @@ func (s *Store) SaveSession(ctx context.Context, r SessionRecord) error {
 		PendingJson:    string(orEmpty(r.PendingJSON, "[]")),
 		LastUsageJson:  string(orEmpty(r.LastUsageJSON, "null")),
 		DiffBodiesJson: string(orEmpty(r.DiffBodiesJSON, "{}")),
+		ToolTraceJson:  string(orEmpty(r.ToolTraceJSON, "null")),
 		PlanJson:       string(orEmpty(r.PlanJSON, "null")),
+		MessageCount:   int64(r.MessageCount),
 		CreatedAt:      r.CreatedAt.Unix(),
 		UpdatedAt:      r.UpdatedAt.Unix(),
 	})

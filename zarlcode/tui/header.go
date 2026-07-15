@@ -27,9 +27,9 @@ func (m *UI) headerModeBadge() string {
 }
 
 func (m *UI) statusHint() string {
-	stopKey := "ctrl+c quit  ·  ctrl+q clear"
+	stopKey := "ctrl+c quit  ·  ctrl+q ctx"
 	if m.session.Run.Running {
-		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q clear"
+		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q ctx"
 	}
 	if m.session.CockpitExpanded {
 		return " tab/←→ switch  ·  ↑↓/jk scroll  ·  pgup/pgdn page  ·  home/end jump  ·  ctrl+l / esc / q close  ·  " + stopKey + "  ·  ctrl+g keys"

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -22,6 +23,7 @@ type providerRepointedMsg struct {
 	window    int                  // resolved window applied to the session/compactor
 	reasoning llm.ReasoningHistory // applied reasoning policy
 	defWindow int                  // the def's declared window (change-detection baseline)
+	seq       uint64
 	err       error
 }
 
@@ -56,6 +58,7 @@ func (m *UI) maybeRepoint() tea.Cmd {
 	// Cost basis is cheap to recompute (reads the registry), so a custom-
 	// provider price edit takes effect on close without a provider rebuild.
 	m.session.ApplyProviderCostBasis(m.session.ActiveProviderSpec())
+	seq := atomic.AddUint64(&m.repointSeq, 1)
 	fb, prev := m.session.ProviderContext()
 	settings := m.settings
 	parent := m.live.ParentContext()
@@ -75,10 +78,10 @@ func (m *UI) maybeRepoint() tea.Cmd {
 		}
 		prov, err := engine.BuildProvider(ctx, settings.Registry, settings.Svc, spec)
 		if err != nil {
-			return providerRepointedMsg{spec: spec, err: err}
+			return providerRepointedMsg{seq: seq, spec: spec, err: err}
 		}
 		window := settings.ContextWindow(ctx, spec)
-		return providerRepointedMsg{prov: prov, spec: spec, window: window, reasoning: reasoning, defWindow: defWindow}
+		return providerRepointedMsg{seq: seq, prov: prov, spec: spec, window: window, reasoning: reasoning, defWindow: defWindow}
 	}
 }
 
@@ -102,6 +105,9 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 	rp, ok := msg.(providerRepointedMsg)
 	if !ok {
 		return false
+	}
+	if rp.seq != 0 && rp.seq != atomic.LoadUint64(&m.repointSeq) {
+		return true
 	}
 	if rp.err != nil {
 		m.session.SetErrorToast("provider switch failed: " + rp.err.Error())

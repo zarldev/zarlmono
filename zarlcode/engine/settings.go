@@ -288,6 +288,16 @@ func (s *Settings) EnableBackground(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyEnableBackground, "on") == "on"
 }
 
+func (s *Settings) ProgrammaticTools(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyProgrammaticTools, "off") == "on"
+}
+
+// ProgrammaticParallelCalls resolves the maximum number of nested program tool
+// calls that call_many may run concurrently. 0 keeps the program package default.
+func (s *Settings) ProgrammaticParallelCalls(ctx context.Context) int {
+	return s.intSetting(ctx, prefs.KeyProgramParallel, 0)
+}
+
 // setting reads an effective-scope setting, returning def when unset or on
 // error (config reads must never block startup).
 func (s *Settings) setting(ctx context.Context, key, def string) string {

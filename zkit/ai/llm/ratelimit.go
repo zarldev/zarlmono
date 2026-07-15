@@ -15,6 +15,12 @@ type RateLimitError struct {
 	RetryAfter time.Duration
 	ResetAt    time.Time
 	Permanent  bool
+	// Retryable indicates the runner may retry the request if its retry
+	// budget permits. Permanent == true takes precedence (never retry).
+	// When both Permanent and Retryable are false the error is treated
+	// as terminal for backward compatibility with providers that have
+	// not yet been updated.
+	Retryable bool
 }
 
 func (e *RateLimitError) Error() string {

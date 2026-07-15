@@ -27,9 +27,9 @@ func RunLongConversation(ctx context.Context, client runner.Client, fs *FileSyst
 	// Build tools
 	reg := tools.NewRegistry()
 	var docsWritten []string
-	reg.Register(&readFileTool{fs: fs, rc: rc})
-	reg.Register(&listFilesTool{fs: fs, rc: rc})
-	reg.Register(&pushDocsTool{rc: rc, docsWritten: &docsWritten})
+	_ = reg.Register(&readFileTool{fs: fs, rc: rc})
+	_ = reg.Register(&listFilesTool{fs: fs, rc: rc})
+	_ = reg.Register(&pushDocsTool{rc: rc, docsWritten: &docsWritten})
 
 	// Use the structural compactor - trims verbose content without model calls
 	compactor := compact.NewStructural()

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -321,30 +322,57 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 		fmt.Fprintln(os.Stderr, "mcp: list servers:", err)
 		return
 	}
-	connect := dynamic.NewMCPConnect(mcpReg)
+	type startupMCPServer struct {
+		row       db.MCPServerRow
+		authToken string
+	}
+	startupServers := make([]startupMCPServer, 0, len(servers))
 	for _, srv := range servers {
 		if !srv.Enabled {
 			continue
 		}
-		res, err := connect.Execute(ctx, tools.ToolCall{
-			ID: tools.ToolCallID("startup-mcp-" + srv.Name),
-			Arguments: tools.ToolParameters{
-				"name":       srv.Name,
-				"transport":  srv.Transport,
-				"command":    srv.Command,
-				"args":       srv.Args,
-				"env":        srv.Env,
-				"base_url":   srv.BaseURL,
-				"auth_token": resolveMCPAuthToken(ctx, settings, srv),
-			},
+		// Resolve/migrate credentials before dialing concurrently. The dial path is
+		// I/O-bound and safe to fan out; keeping credential-store writes serial avoids
+		// turning startup into a burst of SQLite/vault mutations.
+		startupServers = append(startupServers, startupMCPServer{
+			row:       srv,
+			authToken: resolveMCPAuthToken(ctx, settings, srv),
 		})
-		switch {
-		case err != nil:
-			fmt.Fprintf(os.Stderr, "mcp: connect %q: %v\n", srv.Name, err)
-		case res != nil && !res.Success:
-			fmt.Fprintf(os.Stderr, "mcp: connect %q: %s\n", srv.Name, res.Error)
-		}
 	}
+	if len(startupServers) == 0 {
+		return
+	}
+
+	connect := dynamic.NewMCPConnect(mcpReg)
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	for _, srv := range startupServers {
+		wg.Add(1)
+		go func(srv startupMCPServer) {
+			defer wg.Done()
+			res, err := connect.Execute(ctx, tools.ToolCall{
+				ID: tools.ToolCallID("startup-mcp-" + srv.row.Name),
+				Arguments: tools.ToolParameters{
+					"name":       srv.row.Name,
+					"transport":  srv.row.Transport,
+					"command":    srv.row.Command,
+					"args":       srv.row.Args,
+					"env":        srv.row.Env,
+					"base_url":   srv.row.BaseURL,
+					"auth_token": srv.authToken,
+				},
+			})
+			errMu.Lock()
+			defer errMu.Unlock()
+			switch {
+			case err != nil:
+				fmt.Fprintf(os.Stderr, "mcp: connect %q: %v\n", srv.row.Name, err)
+			case res != nil && !res.Success:
+				fmt.Fprintf(os.Stderr, "mcp: connect %q: %s\n", srv.row.Name, res.Error)
+			}
+		}(srv)
+	}
+	wg.Wait()
 }
 
 // resolveMCPAuthToken returns the bearer token for an MCP server, preferring

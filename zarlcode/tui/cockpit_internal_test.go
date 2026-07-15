@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
@@ -78,9 +79,8 @@ func TestCostMath(t *testing.T) {
 	if got := s.cost(600, 200, 100); !approx(got, 0.0072) {
 		t.Errorf("cost = %v, want 0.0072", got)
 	}
-	// cacheSaved: 200 cached @0.01/1k * (1-0.10) = 0.0018.
-	s.sessionCached = 200
-	if got := s.cacheSaved(); !approx(got, 0.0018) {
+	// cacheSavedFor: 200 cached @0.01/1k * (1-0.10) = 0.0018.
+	if got := s.cacheSavedFor(200); !approx(got, 0.0018) {
 		t.Errorf("cacheSaved = %v, want 0.0018", got)
 	}
 }
@@ -188,10 +188,10 @@ func TestCockpitLinesLLMStateOverview(t *testing.T) {
 	m.session.Model = "gpt-4o-mini"
 	m.session.Workspace = "~/src/project"
 	m.session.Branch = "main"
-
+	m.session.SetActiveProviderSpec(engine.ProviderSpec{Name: "openai-codex", Model: "gpt-5.6", CodexEffort: "high"})
 	got := strings.Join(m.cockpitLines(46), "\n")
 	// Session state is a real overview, not the old abbreviated pvd/mdl/ws rows.
-	for _, want := range []string{"provider", "model", "window", "billing", "workspace", "openai", "gpt-4o-mini", "~/src/project", "main"} {
+	for _, want := range []string{"provider", "model", "window", "reasoning", "billing", "workspace", "openai-codex", "gpt-5.6", "high", "~/src/project", "main"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("cockpit missing LLM state %q:\n%s", want, got)
 		}
@@ -317,5 +317,60 @@ func TestDashboardScrollClampsToContent(t *testing.T) {
 	m.clampDashboardScroll()
 	if m.contextView.activeScroll() != 0 {
 		t.Fatalf("context view scroll = %d, want clamped zero", m.contextView.activeScroll())
+	}
+}
+
+func TestSessionCostDoesNotRepriceAfterModelRateChange(t *testing.T) {
+	s := RunState{inCostPer1k: 1, outCostPer1k: 2}
+	s.foldTurnComplete(&llm.Usage{PromptTokens: 1000, CompletionTokens: 1000}, time.Second, 1)
+	if got := s.sessionCost(); !approx(got, 3) {
+		t.Fatalf("first sessionCost = %v, want 3", got)
+	}
+
+	s.inCostPer1k = 10
+	s.outCostPer1k = 20
+	if got := s.sessionCost(); !approx(got, 3) {
+		t.Fatalf("repriced sessionCost = %v, want still 3", got)
+	}
+
+	s.foldTurnComplete(&llm.Usage{PromptTokens: 1000, CompletionTokens: 1000}, time.Second, 1)
+	if got := s.sessionCost(); !approx(got, 33) {
+		t.Fatalf("second sessionCost = %v, want 33", got)
+	}
+}
+
+func TestSessionCostParentAndSubAgentSeparate(t *testing.T) {
+	s := RunState{inCostPer1k: 1, outCostPer1k: 2}
+	s.foldTurnComplete(&llm.Usage{PromptTokens: 1000, CompletionTokens: 1000}, time.Second, 1)
+	s.inCostPer1k = 3
+	s.outCostPer1k = 4
+	s.foldSubAgentUsage(&llm.Usage{PromptTokens: 1000, CompletionTokens: 1000})
+
+	if got := s.sessionCostParent(); !approx(got, 3) {
+		t.Fatalf("parent cost = %v, want 3", got)
+	}
+	if got := s.sessionCost(); !approx(got, 10) {
+		t.Fatalf("session cost = %v, want 10", got)
+	}
+	if s.sessionInParent != 1000 || s.sessionIn != 2000 {
+		t.Fatalf("token totals parent/session = %d/%d, want 1000/2000", s.sessionInParent, s.sessionIn)
+	}
+}
+
+func TestCacheSavedAccumulatedAtTurnRate(t *testing.T) {
+	s := RunState{inCostPer1k: 1}
+	s.foldTurnComplete(&llm.Usage{PromptTokens: 1000, CachedTokens: 1000}, time.Second, 1)
+	first := 0.9
+	if got := s.cacheSaved(); !approx(got, first) {
+		t.Fatalf("first cacheSaved = %v, want %v", got, first)
+	}
+
+	s.inCostPer1k = 10
+	if got := s.cacheSaved(); !approx(got, first) {
+		t.Fatalf("repriced cacheSaved = %v, want still %v", got, first)
+	}
+	s.foldTurnComplete(&llm.Usage{PromptTokens: 1000, CachedTokens: 1000}, time.Second, 1)
+	if got := s.cacheSaved(); !approx(got, 9.9) {
+		t.Fatalf("second cacheSaved = %v, want 9.9", got)
 	}
 }

@@ -240,7 +240,7 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 	r.clients[name] = mc
 
 	for _, t := range mcpTools {
-		r.reg.RegisterWithProvider(t, provider)
+		_ = r.reg.RegisterWithProvider(t, provider)
 	}
 
 	return toolNames, nil

@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pressly/goose/v3"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
@@ -31,6 +33,62 @@ func TestStore_OpenRunsMigrations(t *testing.T) {
 	// If migrations did not run, the next call would error.
 	if _, err := s.ListSessions(t.Context(), "ws"); err != nil {
 		t.Fatalf("ListSessions on fresh db: %v", err)
+	}
+}
+
+func TestSessionMigrationsBackfillAndRollback(t *testing.T) {
+	t.Parallel()
+
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "migrations.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d, os.DirFS("migrations"))
+	if err != nil {
+		t.Fatalf("new migration provider: %v", err)
+	}
+	ctx := t.Context()
+	if _, err := provider.UpTo(ctx, 16); err != nil {
+		t.Fatalf("migrate to 16: %v", err)
+	}
+	if _, err := d.ExecContext(ctx, `
+		INSERT INTO sessions (id, workspace, history_json, created_at, updated_at)
+		VALUES ('session-1', '/workspace', '[{"role":"user"},{"role":"assistant"}]', 1, 1)`); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if _, err := provider.UpByOne(ctx); err != nil {
+		t.Fatalf("apply message-count migration: %v", err)
+	}
+
+	var messageCount int
+	if err := d.QueryRowContext(ctx, "SELECT message_count FROM sessions WHERE id = 'session-1'").Scan(&messageCount); err != nil {
+		t.Fatalf("read backfilled message count: %v", err)
+	}
+	if messageCount != 2 {
+		t.Fatalf("message_count = %d, want 2", messageCount)
+	}
+
+	if _, err := provider.UpByOne(ctx); err != nil {
+		t.Fatalf("apply tool-trace migration: %v", err)
+	}
+	if _, err := d.ExecContext(ctx, `UPDATE sessions SET tool_trace_json = '[{"id":"tool-1"}]' WHERE id = 'session-1'`); err != nil {
+		t.Fatalf("write tool trace: %v", err)
+	}
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("roll back tool-trace migration: %v", err)
+	}
+
+	var history string
+	if err := d.QueryRowContext(ctx, "SELECT history_json, message_count FROM sessions WHERE id = 'session-1'").Scan(&history, &messageCount); err != nil {
+		t.Fatalf("read session after rollback: %v", err)
+	}
+	if history == "" || messageCount != 2 {
+		t.Fatalf("session data after rollback: history=%q message_count=%d", history, messageCount)
+	}
+	if _, err := d.ExecContext(ctx, "SELECT tool_trace_json FROM sessions"); err == nil {
+		t.Fatal("tool_trace_json still exists after rollback")
 	}
 }
 
@@ -73,7 +131,8 @@ func TestStore_SessionRoundtrip(t *testing.T) {
 		LastUsageJSON:  []byte(`{"input":10,"output":5}`),
 		DiffBodiesJSON: []byte(`{"foo.go":"--- a\n+++ b\n"}`),
 		PlanJSON:       []byte(`{"title":"do the thing","steps":[{"text":"step one","status":"done"}]}`),
-	}
+		MessageCount:   1,
+		ToolTraceJSON:  []byte(`[{"id":"tool-1","name":"read","success":true}]`)}
 	if err := s.SaveSession(ctx, in); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -90,6 +149,13 @@ func TestStore_SessionRoundtrip(t *testing.T) {
 	}
 	if string(out.PlanJSON) != string(in.PlanJSON) {
 		t.Errorf("plan dropped: %q", out.PlanJSON)
+
+		if out.MessageCount != in.MessageCount {
+			t.Errorf("message count = %d, want %d", out.MessageCount, in.MessageCount)
+		}
+		if string(out.ToolTraceJSON) != string(in.ToolTraceJSON) {
+			t.Errorf("tool trace dropped: %q", out.ToolTraceJSON)
+		}
 	}
 	if out.CreatedAt.IsZero() || out.UpdatedAt.IsZero() {
 		t.Errorf("timestamps not populated: created=%v updated=%v", out.CreatedAt, out.UpdatedAt)
@@ -126,6 +192,37 @@ func TestStore_ListSessionsByWorkspace(t *testing.T) {
 	ids := map[string]bool{got[0].ID: true, got[1].ID: true}
 	if !ids["a"] || !ids["c"] {
 		t.Errorf("missing ws1 sessions, got %+v", got)
+	}
+}
+
+func TestStore_ListSessionSummariesOmitsLargeBlobs(t *testing.T) {
+	t.Parallel()
+	s := openTempStore(t)
+	ctx := t.Context()
+	mustSave(t, s, db.SessionRecord{
+		ID:             "large",
+		Workspace:      "ws",
+		Label:          "big history",
+		HistoryJSON:    []byte(`[{"role":"user","content":"one"},{"role":"assistant","content":"two"}]`),
+		PendingJSON:    []byte(`[{"large":"pending"}]`),
+		LastUsageJSON:  []byte(`{"turns": 2}`),
+		DiffBodiesJSON: []byte(`{"foo.go":"diff"}`),
+		PlanJSON:       []byte(`{"steps":[{"text":"x"}]}`),
+		MessageCount:   2,
+	})
+
+	got, err := s.ListSessionSummaries(ctx, "ws")
+	if err != nil {
+		t.Fatalf("list summaries: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].ID != "large" || got[0].MessageCount != 2 {
+		t.Fatalf("summary metadata = %+v", got[0])
+	}
+	if len(got[0].HistoryJSON) != 0 || len(got[0].DiffBodiesJSON) != 0 || len(got[0].PlanJSON) != 0 {
+		t.Fatalf("summary loaded blobs: history=%d diff=%d plan=%d", len(got[0].HistoryJSON), len(got[0].DiffBodiesJSON), len(got[0].PlanJSON))
 	}
 }
 

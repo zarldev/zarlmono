@@ -22,6 +22,6 @@ func Register(reg *tools.Registry, observer model.Observer, actor model.Actor) {
 		return
 	}
 	for _, tool := range NewTools(observer, actor) {
-		reg.Register(tool)
+		_ = reg.Register(tool)
 	}
 }

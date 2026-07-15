@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
@@ -112,5 +114,29 @@ func TestSettingsDialog_ModelPickerCustomEntry(t *testing.T) {
 	lp.handleKey(skey(tea.KeyEnter))
 	if !d.editing {
 		t.Error("picking the custom sentinel should open the text editor")
+	}
+}
+
+func TestSettingsDialog_CodexEffortOptionsFollowModel(t *testing.T) {
+	s := newTestSettings(t)
+	d := newSettingsDialog(s)
+	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider, backends.NameOpenAICodex.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel, "gpt-5.3-codex-spark"); err != nil {
+		t.Fatal(err)
+	}
+	d.refresh(t.Context())
+	if !gotoRow(d, prefs.KeyCodexEffort) {
+		t.Fatal("reasoning effort row missing")
+	}
+	push, ok := d.handleKey(skey(tea.KeyEnter)).(actionPush)
+	if !ok {
+		t.Fatalf("enter on reasoning effort should open a picker")
+	}
+	lp := push.d.(*listPicker)
+	want := []string{codexEffortAuto, "low"}
+	if strings.Join(lp.items, ",") != strings.Join(want, ",") {
+		t.Fatalf("items = %v, want %v", lp.items, want)
 	}
 }

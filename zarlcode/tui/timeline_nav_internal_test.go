@@ -65,9 +65,9 @@ func TestBrowse_SelectsEveryItem(t *testing.T) {
 func TestBrowse_SelectsExpandedGroupChildren(t *testing.T) {
 	tl := newTimeline()
 	tl.startTurn("t", 0)
-	tl.startTool("t", 0, "c1", "read", "a.go")
+	tl.startToolWithParent("t", 0, "c1", "read", "a.go", "", 0)
 	tl.finishTool("c1", "AAA", nil, 0, false, tools.Kinds.UNKNOWN)
-	tl.startTool("t", 0, "c2", "grep", "needle")
+	tl.startToolWithParent("t", 0, "c2", "grep", "needle", "", 0)
 	tl.finishTool("c2", "BBB", nil, 0, false, tools.Kinds.UNKNOWN)
 
 	groupIdx := len(tl.items) - 1

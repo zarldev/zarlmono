@@ -121,6 +121,8 @@ type Session struct {
 	CreatedAt      int64
 	UpdatedAt      int64
 	PlanJson       string
+	MessageCount   int64
+	ToolTraceJson  string
 }
 
 type Setting struct {

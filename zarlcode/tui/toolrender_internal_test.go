@@ -17,6 +17,12 @@ func TestToolArgHint(t *testing.T) {
 		{"load_skill", map[string]any{"name": "go-testing"}, "go-testing"},
 		{"spawn_agent", map[string]any{"prompt": "fix the bug\nmore detail"}, "fix the bug"},
 		{"spawn_agent", map[string]any{"agent": "reviewer", "prompt": "review the patch"}, "reviewer: review the patch"},
+		{"program", map[string]any{"script": `emit(call("read", {"path": "main.go"}))`}, "read  main.go"},
+		{"program", map[string]any{"script": `results = call_many([
+  {"name": "grep", "args": {"pattern": "TODO"}},
+  {"name": "glob", "args": {"pattern": "*.go"}},
+])
+emit(results)`}, "grep, glob"},
 		{"unknown_tool", map[string]any{"x": "y"}, ""},
 	}
 	for _, c := range cases {
@@ -25,6 +31,26 @@ func TestToolArgHint(t *testing.T) {
 				t.Errorf("toolArgHint(%q) = %q, want %q", c.name, got, c.want)
 			}
 		})
+	}
+}
+
+func TestToolArgHint_ProgramMultilineAndSingleQuotedInspect(t *testing.T) {
+	script := `results = call_many([
+  {
+    'name': 'grep',
+    'args': {
+      'pattern': 'TODO',
+      'path': 'zkit',
+    },
+  },
+  {
+    "name": "glob",
+    "args": {"pattern": "*.go"},
+  },
+])
+emit(results)`
+	if got, want := toolArgHint("program", map[string]any{"script": script}), "grep, glob"; got != want {
+		t.Fatalf("toolArgHint(program multiline) = %q, want %q", got, want)
 	}
 }
 

@@ -74,6 +74,21 @@ func TestPlanGuardrail_BlocksChangesBeforePlan(t *testing.T) {
 	}
 }
 
+// Spawned sub-agent tasks are exempt from plan-first. The parent already made
+// an explicit delegation decision, and the child may have a narrow budget where
+// spending the first iteration on update_plan would block useful work.
+func TestPlanGuardrail_AllowsSubagentChangesWithoutPlan(t *testing.T) {
+	t.Parallel()
+	g := guardrails.NewPlanGuardrail(planIter(), planToolName)
+	ctx := taskscope.WithDepth(taskscope.WithID(t.Context(), "task-1"), 1)
+	if err := g.Before(ctx, planCall("edit")); err != nil {
+		t.Fatalf("sub-agent edit before plan: got %v, want nil", err)
+	}
+	if err := g.Before(ctx, planCall("bash")); err != nil {
+		t.Fatalf("sub-agent bash before plan: got %v, want nil", err)
+	}
+}
+
 // After a successful plan-tool call, changing tools are admitted.
 func TestPlanGuardrail_AllowsChangesAfterPlan(t *testing.T) {
 	t.Parallel()

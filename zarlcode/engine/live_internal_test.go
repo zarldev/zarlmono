@@ -3,14 +3,18 @@ package engine
 import (
 	"context"
 	"iter"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
+	"github.com/zarldev/zarlmono/zkit/db"
+	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 type blockingProvider struct {
@@ -65,6 +69,50 @@ func TestLiveRunner_EarlyStopWatcher(t *testing.T) {
 	l.SetEarlyStopCommand(nil)
 	if w := l.earlyStopWatcher(); w != nil {
 		t.Fatal("cleared command → watcher must be nil again")
+	}
+}
+
+func TestLiveRunner_ProgrammaticToolsSetting(t *testing.T) {
+	ctx := t.Context()
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	settings := NewSettings(ctx, store, nil, t.TempDir())
+	l := NewLiveRunner(nil, ws, nil, "local")
+	l.SetSettingsHandle(settings)
+
+	src, _, err := l.source("")
+	if err != nil {
+		t.Fatalf("source default: %v", err)
+	}
+	if hasTool(src, programtools.ToolName) {
+		t.Fatal("program tool should default off")
+	}
+	if err := settings.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyProgrammaticTools, "on"); err != nil {
+		t.Fatalf("set programmatic tools: %v", err)
+	}
+	src, _, err = l.source("")
+	if err != nil {
+		t.Fatalf("source enabled: %v", err)
+	}
+	if !hasTool(src, programtools.ToolName) {
+		t.Fatal("program tool should be present when enabled")
+		for _, name := range []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash} {
+			if !hasTool(src, name) {
+				t.Fatalf("programmatic tools must not hide mutating/shell tool %q", name)
+			}
+		}
+		for _, name := range []tools.ToolName{code.ToolNameRead, code.ToolNameGrep, code.ToolNameGlob, code.ToolNameLs, code.ToolNameFileMap, code.ToolNameRetrieveCode} {
+			if hasTool(src, name) {
+				t.Fatalf("programmatic tools should hide direct read/search tool %q", name)
+			}
+		}
 	}
 }
 

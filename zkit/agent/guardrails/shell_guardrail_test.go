@@ -21,8 +21,24 @@ func bashCall(cmd string) tools.ToolCall {
 func TestShellGuardrail_SafeCommandPasses(t *testing.T) {
 	t.Parallel()
 	g := guardrails.NewShellGuardrail("bash")
-	if err := g.Before(t.Context(), bashCall("ls -la")); err != nil {
+	if err := g.Before(t.Context(), bashCall("go test ./...")); err != nil {
 		t.Errorf("safe command: want pass, got %v", err)
+	}
+}
+
+func TestShellGuardrail_ShellReadToolRejectsWithGuidance(t *testing.T) {
+	t.Parallel()
+	g := guardrails.NewShellGuardrail("bash")
+	err := g.Before(t.Context(), bashCall("grep -r TODO . | head -20"))
+	if err == nil {
+		t.Fatal("shell read tool: want Validation rejection")
+	}
+	e, _ := errors.AsType[*tools.Error](err)
+	if e == nil || e.Kind != tools.Kinds.VALIDATION {
+		t.Fatalf("err = %v, want Validation", err)
+	}
+	if !strings.Contains(e.Reason, "registered workspace tools") {
+		t.Errorf("Reason should suggest workspace tools: %q", e.Reason)
 	}
 }
 

@@ -23,12 +23,14 @@ type (
 	actionClose        struct{} // pop the topmost dialog
 	actionQuit         struct{} // quit the program
 	actionClearContext struct{} // clear conversation context and transcript
+	actionCompactNow   struct{} // compact conversation context now
 )
 
 func (actionNone) isAction()         {}
 func (actionClose) isAction()        {}
 func (actionQuit) isAction()         {}
 func (actionClearContext) isAction() {}
+func (actionCompactNow) isAction()   {}
 
 // actionSetTheme switches the active colour theme by name.
 type actionSetTheme struct{ name string }
@@ -159,6 +161,9 @@ func (m *UI) handleAction(a action) tea.Cmd {
 	case actionClearContext:
 		m.overlay.pop()
 		return m.clearContextAndTimeline()
+	case actionCompactNow:
+		m.overlay.pop()
+		return m.compactNowCmd()
 	case actionSetTheme:
 		if t, ok := theme.ByName(a.name); ok {
 			UseTheme(t)
@@ -183,6 +188,9 @@ func (m *UI) handleAction(a action) tea.Cmd {
 		return m.toastExpiryCmd()
 	case actionRollback:
 		return m.rollback(a.turnID, a.path)
+	case actionResumeSession:
+		m.overlay.pop()
+		return m.completeResumeSession(a.session, a.useSaved)
 	case serviceAction:
 		return m.handleServiceAction(a)
 	case actionKillProcess:
@@ -263,7 +271,7 @@ func composeHelpSections() []helpSection {
 				slashCommandHints(),
 			},
 		},
-		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+q", "clear context"}, {"ctrl+c", "quit"}}}}}
+		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+q", "conversation"}, {"ctrl+c", "quit"}}}}}
 }
 
 func startupHelpSections() []helpSection {
@@ -422,7 +430,36 @@ func (quitConfirmDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	drawDialogBox(scr, area, "quit", lines)
 }
 
-// --- clear context confirmation dialog ---
+// --- conversation actions dialog ---
+
+type conversationActionsDialog struct{}
+
+func newConversationActionsDialog() *conversationActionsDialog { return &conversationActionsDialog{} }
+
+func (conversationActionsDialog) handleKey(msg tea.KeyPressMsg) action {
+	switch msg.String() {
+	case "c", "C", "enter":
+		return actionCompactNow{}
+	case "x", "X", "delete", "backspace":
+		return actionPush{d: newClearContextConfirmDialog()}
+	}
+	return actionClose{}
+}
+
+func (conversationActionsDialog) draw(scr uv.Screen, area uv.Rectangle) {
+	lines := []string{
+		overlayTopBar("conversation", nil, 0, "context", 76),
+		palette.Subtle.On(strings.Repeat("─", 76)),
+		palette.Primary.On("conversation context"),
+		palette.Muted.On("Compact keeps the transcript visible but shrinks what the next turn remembers."),
+		palette.Muted.On("Clear drops the transcript and live conversation context."),
+		"",
+		palette.Subtle.On("c / enter") + palette.Muted.On("  compact now"),
+		palette.Subtle.On("x") + palette.Muted.On("          clear conversation…"),
+		palette.Subtle.On("any other") + palette.Muted.On("  cancel"),
+	}
+	drawDialogBox(scr, area, "conversation", lines)
+}
 
 // clearContextConfirmDialog asks before dropping the live conversation context
 // and visible transcript. y/enter confirms; anything else dismisses.

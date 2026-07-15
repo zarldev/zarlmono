@@ -14,7 +14,10 @@ import (
 // reports ChangesWorkspace) is refused until the model has successfully
 // called the planning tool at least once. Read / search / explore tools and
 // the planning tool itself are always allowed, so the model can investigate
-// freely and produce a plan; only durable changes are gated.
+// freely and produce a plan; only durable changes are gated. Spawned
+// sub-agents (task depth > 0) are exempt: the parent already chose delegation,
+// and the child may be running under a narrow iteration budget where a separate
+// plan-first loop is counterproductive.
 //
 // Motivation: weak / local models skip planning and dive straight into edits,
 // then thrash. An advisory "please plan first" in the system prompt is easy
@@ -54,10 +57,14 @@ func NewPlanGuardrail(iter tools.Iterable, planTool tools.ToolName) *PlanGuardra
 func (g *PlanGuardrail) Name() string { return "plan_first" }
 
 // Before refuses a workspace-changing call until this task has a plan. The
-// planning tool and every non-changing tool pass through unconditionally, so
-// the model can read, search, and plan without obstruction.
+// planning tool, spawned sub-agent tasks, and every non-changing tool pass
+// through unconditionally, so the model can read, search, and plan without
+// obstruction.
 func (g *PlanGuardrail) Before(ctx context.Context, call tools.ToolCall) error {
 	if call.ToolName == g.planTool {
+		return nil
+	}
+	if taskscope.DepthFrom(ctx) > 0 {
 		return nil
 	}
 	if !g.changesWorkspace(ctx, call.ToolName) {

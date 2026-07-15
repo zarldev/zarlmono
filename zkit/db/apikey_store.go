@@ -177,6 +177,18 @@ func (s *Store) ListAPIKeyProviders(ctx context.Context, workspace string) ([]st
 	return out, nil
 }
 
+func sessionSummaryRowToRecord(r gen.ListSessionSummariesByWorkspaceRow) SessionRecord {
+	return SessionRecord{
+		ID:           r.ID,
+		Label:        r.Label,
+		Provider:     r.Provider,
+		Model:        r.Model,
+		MessageCount: int(r.MessageCount),
+		CreatedAt:    time.Unix(r.CreatedAt, 0),
+		UpdatedAt:    time.Unix(r.UpdatedAt, 0),
+	}
+}
+
 // toSessionRecord maps a generated row to the domain transport type.
 func toSessionRecord(r gen.Session) SessionRecord {
 	return SessionRecord{
@@ -191,6 +203,8 @@ func toSessionRecord(r gen.Session) SessionRecord {
 		LastUsageJSON:  []byte(r.LastUsageJson),
 		DiffBodiesJSON: []byte(r.DiffBodiesJson),
 		PlanJSON:       []byte(r.PlanJson),
+		ToolTraceJSON:  []byte(r.ToolTraceJson),
+		MessageCount:   int(r.MessageCount),
 		CreatedAt:      time.Unix(r.CreatedAt, 0),
 		UpdatedAt:      time.Unix(r.UpdatedAt, 0),
 	}

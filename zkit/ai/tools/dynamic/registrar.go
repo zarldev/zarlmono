@@ -102,7 +102,10 @@ func (r *Registrar) Sync() ([]string, error) {
 			continue
 		}
 		tool := NewBinaryTool(entry.Spec, entry.BinaryPath)
-		r.registry.RegisterWithProvider(tool, ProviderName)
+		if err := r.registry.RegisterWithProvider(tool, ProviderName); err != nil {
+			slog.Warn("dynamic: skipping tool with invalid spec", "error", err)
+			continue
+		}
 	}
 	return shadowed, nil
 }
@@ -143,7 +146,9 @@ func (r *Registrar) RegisterContext(ctx context.Context, spec tools.ToolSpec, bi
 	}
 	// Replace any prior dynamic registration of this name in-place.
 	r.registry.Unregister(spec.Name)
-	r.registry.RegisterWithProvider(NewBinaryTool(spec, binaryPath), ProviderName)
+	if err := r.registry.RegisterWithProvider(NewBinaryTool(spec, binaryPath), ProviderName); err != nil {
+		return fmt.Errorf("dynamic register %q: %w", spec.Name, err)
+	}
 	return nil
 }
 

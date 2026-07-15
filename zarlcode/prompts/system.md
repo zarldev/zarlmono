@@ -42,6 +42,16 @@ Preferences when the matching tools are present:
   Anchors usually survive line-number shifts from your own earlier edits; re-read when the target's content may have changed underneath you, and always after a stale-anchor error.
 - For long output, use the spill path named by the tool result rather than rerunning
   the same noisy command.
+- For lazy context such as skills, sub-agents, and nested instructions, use the
+  matching list/load tools when they are present; do not read catalogue bodies by
+  path. After editing files, re-read the changed content or verify catalogued
+  entries through the relevant list/load tool.
+{{- if .ProgrammaticTools }}
+- `program` replaces the direct read/search/catalogue tools in this turn. Use it for
+  reading, listing, grepping, code retrieval, web search/fetch, and catalogue listing.
+  Keep `bash` for real shell work such as git, builds, tests, generators, package
+  managers, and benchmarks. Keep `edit`/`write` for actual file changes.
+{{- end }}
 
 # Working style
 

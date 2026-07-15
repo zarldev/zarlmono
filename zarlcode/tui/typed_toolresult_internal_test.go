@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	program "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -59,5 +60,69 @@ func TestRenderTypedToolResult_NilFallsBack(t *testing.T) {
 	b := contentBlock{kind: contentToolResult, toolName: "bash", text: "$ ls\nfile.go"}
 	if got := renderTypedToolResult(80, b); got != nil {
 		t.Errorf("unstructured result should return nil for fallback, got %v", got)
+	}
+}
+
+func TestRenderTypedToolResult_ProgramResultShowsOutputAndStats(t *testing.T) {
+	b := contentBlock{
+		kind:     contentToolResult,
+		toolName: "program",
+		text:     `{"Output":{"answer":"yes"},"Stats":{"ToolCalls":2}}`,
+		data: program.Result{
+			Output: map[string]any{"answer": "yes"},
+			Stats:  program.Stats{ToolCalls: 2, ParallelBatches: 1},
+		},
+	}
+	out := ansi.Strip(strings.Join(renderTypedToolResult(80, b), "\n"))
+	for _, want := range []string{"\"answer\": \"yes\"", "program: 2 calls, 1 parallel"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Output") || strings.Contains(out, "Stats") || strings.Contains(out, "ToolCalls") {
+		t.Errorf("program wrapper leaked into TUI output:\n%s", out)
+	}
+}
+
+func TestRenderTypedToolResult_ProgramCallResultsAreCompact(t *testing.T) {
+	b := contentBlock{
+		kind:     contentToolResult,
+		toolName: "program",
+		data: program.Result{
+			Output: []any{
+				map[string]any{"ok": true, "data": map[string]any{"path": "a.go", "matches": []any{"one", "two"}, "verbose": strings.Repeat("x", 200)}, "error": ""},
+				map[string]any{"ok": false, "data": nil, "error": "bad thing happened\nwith details"},
+			},
+			Stats: program.Stats{ToolCalls: 2},
+		},
+	}
+	out := ansi.Strip(strings.Join(renderTypedToolResult(70, b), "\n"))
+	for _, want := range []string{"✓ result 1", "✗ result 2: bad thing happened", "program: 2 calls"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "\n  {\n") || strings.Count(out, "verbose") > 1 {
+		t.Errorf("program result rendered as expanded JSON dump:\n%s", out)
+	}
+}
+
+func TestRenderTypedToolResult_ProgramSummarizesKnownPayloads(t *testing.T) {
+	b := contentBlock{
+		kind:     contentToolResult,
+		toolName: "program",
+		data: program.Result{Output: []any{
+			map[string]any{"ok": true, "data": map[string]any{"Payload": map[string]any{"files": []any{"a", "b"}}, "Output": "labeled"}},
+			map[string]any{"ok": true, "data": map[string]any{"Hits": []any{"h1", "h2", "h3"}}},
+		}},
+	}
+	out := ansi.Strip(strings.Join(renderTypedToolResult(80, b), "\n"))
+	for _, want := range []string{"file_map: 2 files", "grep: 3 hits"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing summary %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Payload") || strings.Contains(out, "Hits") {
+		t.Errorf("known program payload rendered as raw JSON:\n%s", out)
 	}
 }

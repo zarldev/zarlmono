@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -165,7 +166,8 @@ func (r *Runner) dispatch(
 					name, rec)))}
 			}
 		}()
-		result, err := r.tools.Execute(execCtx, call)
+		nestedCtx := tools.ContextWithNestedToolObserver(execCtx, nestedToolPublisher{r: r, spec: spec})
+		result, err := r.tools.Execute(nestedCtx, call)
 		done <- toolExecResult{result: result, err: err}
 	}()
 
@@ -240,6 +242,10 @@ func (r *Runner) buildLLMTools(ctx context.Context) []llm.Tool {
 		s := t.Definition()
 		if gate != nil && !gate(s) {
 			continue // hidden from this (gated) Run's tool surface
+		}
+		if strings.TrimSpace(s.Name.String()) == "" {
+			slog.WarnContext(ctx, "runner: skipping tool with empty name")
+			continue
 		}
 		out = append(out, llm.Tool{
 			Type: "function",

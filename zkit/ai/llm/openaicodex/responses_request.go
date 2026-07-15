@@ -12,7 +12,6 @@ import (
 type reasoningEffort string
 
 const (
-	reasoningEffortNone   reasoningEffort = "none"
 	reasoningEffortLow    reasoningEffort = "low"
 	reasoningEffortMedium reasoningEffort = "medium"
 	reasoningEffortHigh   reasoningEffort = "high"

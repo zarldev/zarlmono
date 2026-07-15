@@ -89,8 +89,8 @@ func WithModel(model string) options.Option[Provider] {
 // WithDefaultReasoningEffort pins a default effort applied when the
 // resolved model carries none and the request doesn't override.
 // Empty string is a no-op (falls back to the model-name heuristic
-// in defaultReasoningEffort). Valid values: "none", "low", "medium",
-// "high", "xhigh" — case-sensitive to match the wire format.
+// in defaultReasoningEffort). Valid values: "low", "medium",
+// "high", "xhigh", "max" — case-sensitive to match the wire format.
 func WithDefaultReasoningEffort(effort string) options.Option[Provider] {
 	return func(p *Provider) {
 		if effort != "" {

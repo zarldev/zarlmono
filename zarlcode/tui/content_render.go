@@ -11,8 +11,11 @@ import (
 	"strings"
 	"sync"
 
+	"time"
+
 	"github.com/charmbracelet/x/ansi"
 
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -513,6 +516,8 @@ func renderTypedToolResult(width int, b contentBlock) []string {
 		return renderLsResultLines(cw, r)
 	case code.GlobResult:
 		return renderGlobResultLines(cw, r)
+	case programtools.Result:
+		return renderProgramResultLines(cw, r)
 	default:
 		return nil
 	}
@@ -583,6 +588,169 @@ func renderGlobResultLines(width int, r code.GlobResult) []string {
 		out = append(out, ansi.Truncate(style(e.Path)+suffix, width, "…"))
 	}
 	return out
+}
+
+func renderProgramResultLines(width int, r programtools.Result) []string {
+	body, ok := programOutputText(r.Output)
+	if !ok {
+		return []string{palette.Muted.On("(empty program output)")}
+	}
+	if lines, ok := renderProgramCallResults(r.Output); ok {
+		return appendProgramStats(lines, r.Stats)
+	}
+	lines := renderProgramOutputLines(width, body)
+	return appendProgramStats(lines, r.Stats)
+}
+func appendProgramStats(lines []string, stats programtools.Stats) []string {
+	summary := fmt.Sprintf("%d calls", stats.ToolCalls)
+	if stats.ParallelBatches > 0 {
+		summary += fmt.Sprintf(", %d parallel", stats.ParallelBatches)
+	}
+	if stats.Duration > 0 {
+		summary += ", " + stats.Duration.Round(time.Millisecond).String()
+	}
+	return append(lines, palette.Muted.On("program: "+summary))
+}
+
+func renderProgramCallResults(output any) ([]string, bool) {
+	items, ok := output.([]any)
+	if !ok || len(items) == 0 {
+		return nil, false
+	}
+	out := make([]string, 0, len(items)*2)
+	for i, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		okValue, hasOK := m["ok"].(bool)
+		if !hasOK {
+			return nil, false
+		}
+		prefix := palette.Success.On("✓")
+		if !okValue {
+			prefix = palette.Error.On("✗")
+		}
+		label := programCallLabel(i, stringValue(m["name"]), mapValue(m["args"]))
+		if !okValue {
+			if msg, _ := m["error"].(string); strings.TrimSpace(msg) != "" {
+				out = append(out, prefix+" "+palette.Warning.On(label)+": "+palette.Muted.On(firstLine(msg)))
+				continue
+			}
+		}
+		out = append(out, prefix+" "+palette.Secondary.On(label))
+		if line := renderProgramDataSummary(m["data"]); line != "" {
+			out = append(out, "  "+palette.Muted.On(line))
+		}
+	}
+	return out, true
+}
+
+func stringValue(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func mapValue(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+func programCallLabel(i int, name string, args map[string]any) string {
+	if name == "" {
+		return fmt.Sprintf("result %d", i+1)
+	}
+	if hint := toolArgHint(name, args); hint != "" {
+		return name + "  " + hint
+	}
+	return name
+}
+
+func renderProgramDataSummary(data any) string {
+	if data == nil {
+		return ""
+	}
+	switch v := data.(type) {
+	case string:
+		return ansi.Truncate(firstLine(v), 96, "…")
+	case map[string]any:
+		return summarizeProgramMap(v)
+	case []any:
+		return fmt.Sprintf("%d items", len(v))
+	default:
+		text, ok := programOutputText(v)
+		if !ok {
+			return ""
+		}
+		return compactJSONPreview(text, 96)
+	}
+}
+
+func summarizeProgramMap(m map[string]any) string {
+	if payload, ok := m["Payload"].(map[string]any); ok {
+		if files, ok := payload["files"].([]any); ok {
+			return fmt.Sprintf("file_map: %d files", len(files))
+		}
+	}
+	if hits, ok := m["Hits"].([]any); ok {
+		return fmt.Sprintf("grep: %d hits", len(hits))
+	}
+	if entries, ok := m["Entries"].([]any); ok {
+		return fmt.Sprintf("%d entries", len(entries))
+	}
+	if matches, ok := m["Matches"].([]any); ok {
+		return fmt.Sprintf("%d matches", len(matches))
+	}
+	if files, ok := m["files"].([]any); ok {
+		return fmt.Sprintf("%d files", len(files))
+	}
+	return compactJSONPreview(mustJSON(m), 96)
+}
+
+func mustJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
+}
+
+func compactJSONPreview(text string, width int) string {
+	var v any
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		return ansi.Truncate(text, width, "…")
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ansi.Truncate(text, width, "…")
+	}
+	return ansi.Truncate(string(b), width, "…")
+}
+
+func programOutputText(output any) (string, bool) {
+	switch v := output.(type) {
+	case nil:
+		return "", false
+	case string:
+		return v, strings.TrimSpace(v) != ""
+	default:
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return fmt.Sprint(v), true
+		}
+		return string(b), true
+	}
+}
+
+func renderProgramOutputLines(width int, text string) []string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return []string{palette.Muted.On("(empty program output)")}
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return renderCodeContent(width, contentBlock{kind: contentCode, text: trimmed, syntax: "json"})
+	}
+	return wrapText(trimmed, width)
 }
 
 func prettyJSON(text string) (string, bool) {
