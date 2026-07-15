@@ -42,7 +42,7 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 	}
 	m.composer.setText("")
 	out = ansi.Strip(m.View().Content)
-	for _, want := range []string{"enter submit", "shift+enter", "ctrl+c quit", "ctrl+q clear", "ctrl+g"} {
+	for _, want := range []string{"enter submit", "shift+enter", "ctrl+c quit", "ctrl+q ctx", "ctrl+g"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status missing %q:\n%s", want, out)
 		}
@@ -56,12 +56,12 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 
 func TestStatusHintShowsStopWhileRunning(t *testing.T) {
 	m := New()
-	if got := m.statusHint(); !strings.Contains(got, "ctrl+c quit") || !strings.Contains(got, "ctrl+q clear") || strings.Contains(got, "esc stop") || strings.Contains(got, "esc quit") {
-		t.Fatalf("idle status hint should show ctrl+c quit and ctrl+q clear, not esc quit/stop:\n%s", got)
+	if got := m.statusHint(); !strings.Contains(got, "ctrl+c quit") || !strings.Contains(got, "ctrl+q ctx") || strings.Contains(got, "esc stop") || strings.Contains(got, "esc quit") {
+		t.Fatalf("idle status hint should show ctrl+c quit and ctrl+q ctx, not esc quit/stop:\n%s", got)
 	}
 	m.session.Run.Running = true
-	if got := m.statusHint(); !strings.Contains(got, "esc stop") || !strings.Contains(got, "ctrl+c quit") || !strings.Contains(got, "ctrl+q clear") || strings.Contains(got, "esc quit") {
-		t.Fatalf("running status hint should show esc stop plus ctrl+c quit and ctrl+q clear:\n%s", got)
+	if got := m.statusHint(); !strings.Contains(got, "esc stop") || !strings.Contains(got, "ctrl+c quit") || !strings.Contains(got, "ctrl+q ctx") || strings.Contains(got, "esc quit") {
+		t.Fatalf("running status hint should show esc stop plus ctrl+c quit and ctrl+q ctx:\n%s", got)
 	}
 }
 
@@ -111,7 +111,7 @@ func TestStatusHintListsCurrentShortcuts(t *testing.T) {
 	m := New()
 	// Compose footer: only the essentials, ctrl+g as gateway.
 	got := m.statusHint()
-	for _, want := range []string{"enter submit", "shift+enter newline", "tab browse", "shift+tab plan mode", "ctrl+c quit", "ctrl+q clear", "ctrl+g"} {
+	for _, want := range []string{"enter submit", "shift+enter newline", "tab browse", "shift+tab plan mode", "ctrl+c quit", "ctrl+q ctx", "ctrl+g"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("compose status hint missing %q:\n%s", want, got)
 		}
@@ -124,7 +124,7 @@ func TestStatusHintListsCurrentShortcuts(t *testing.T) {
 
 	m.session.PlanMode = true
 	got = m.statusHint()
-	for _, want := range []string{"enter submit", "shift+tab build", "ctrl+c quit", "ctrl+q clear", "ctrl+g"} {
+	for _, want := range []string{"enter submit", "shift+tab build", "ctrl+c quit", "ctrl+q ctx", "ctrl+g"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("plan status hint missing %q:\n%s", want, got)
 		}

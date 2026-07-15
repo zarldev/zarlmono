@@ -71,6 +71,45 @@ func TestEditFileHLTool_BatchEditsApplyAtomically(t *testing.T) {
 	}
 }
 
+func TestEditFileHLTool_BatchIgnoresEmptyTopLevelFields(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "batch-empty-top-level.txt")
+	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res, err := code.NewEditFileHLTool(ws).Execute(t.Context(), tools.ToolCall{
+		ID:       "test-call",
+		ToolName: code.ToolNameEdit,
+		Arguments: tools.ToolParameters{
+			"path":       "batch-empty-top-level.txt",
+			"start_line": 0,
+			"start_hash": "",
+			"end_line":   0,
+			"end_hash":   "",
+			"new_string": "",
+			"mode":       "replace",
+			"edits": []any{
+				map[string]any{
+					"start_line": 1,
+					"start_hash": testHashlineHash("one", 4),
+					"new_string": "ONE\n",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("batch edit failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "ONE\ntwo\n" {
+		t.Fatalf("content = %q", got)
+	}
+}
+
 func TestEditFileHLTool_BatchRejectsStaleWithoutWriting(t *testing.T) {
 	t.Parallel()
 	ws, root := mustWS(t)
@@ -187,10 +226,12 @@ func TestEditFileHLTool_ReplacesAmbiguousContentByAnchor(t *testing.T) {
 	}
 
 	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
-		Path:      "dupes.txt",
-		StartLine: 2,
-		StartHash: testHashlineHash("same", 4),
-		NewString: "middle\n",
+		Path: "dupes.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 2,
+			StartHash: testHashlineHash("same", 4),
+			NewString: "middle\n",
+		}},
 	})
 	if !res.Success {
 		t.Fatalf("edit failed: %s", res.Error)
@@ -211,12 +252,14 @@ func TestEditFileHLTool_ReplacesRangeWithThreeCharacterHashes(t *testing.T) {
 	}
 
 	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
-		Path:      "range.txt",
-		StartLine: 2,
-		StartHash: testHashlineHash("two", 3),
-		EndLine:   3,
-		EndHash:   testHashlineHash("three", 3),
-		NewString: "TWO-THREE\n",
+		Path: "range.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 2,
+			StartHash: testHashlineHash("two", 3),
+			EndLine:   3,
+			EndHash:   testHashlineHash("three", 3),
+			NewString: "TWO-THREE\n",
+		}},
 	})
 	if !res.Success {
 		t.Fatalf("edit failed: %s", res.Error)
@@ -236,10 +279,12 @@ func TestEditFileHLTool_RejectsStaleHashWithoutWriting(t *testing.T) {
 	}
 
 	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
-		Path:      "stale.txt",
-		StartLine: 2,
-		StartHash: testHashlineHash("old beta", 4),
-		NewString: "BETA\n",
+		Path: "stale.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 2,
+			StartHash: testHashlineHash("old beta", 4),
+			NewString: "BETA\n",
+		}},
 	})
 	if res.Success {
 		t.Fatal("expected stale hash rejection")
@@ -267,10 +312,12 @@ func TestEditFileHLTool_RecoversShiftedAnchorByHash(t *testing.T) {
 	}
 
 	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
-		Path:      "shift.txt",
-		StartLine: 3,
-		StartHash: testHashlineHash("target", 4),
-		NewString: "TARGET\n",
+		Path: "shift.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 3,
+			StartHash: testHashlineHash("target", 4),
+			NewString: "TARGET\n",
+		}},
 	})
 	if !res.Success {
 		t.Fatalf("edit failed: %s", res.Error)
@@ -292,10 +339,12 @@ func TestEditFileHLTool_AmbiguousDriftedDuplicateNeedsReread(t *testing.T) {
 	}
 
 	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
-		Path:      "ambig.txt",
-		StartLine: 2,
-		StartHash: testHashlineHash("same", 4),
-		NewString: "X\n",
+		Path: "ambig.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 2,
+			StartHash: testHashlineHash("same", 4),
+			NewString: "X\n",
+		}},
 	})
 	if res.Success {
 		t.Fatalf("expected ambiguous-anchor refusal, file now: %q", readFile(t, path))
@@ -315,38 +364,71 @@ func TestEditFileHLTool_InsertAndDelete(t *testing.T) {
 	tool := code.NewEditFileHLTool(ws)
 
 	res := execTyped(t, tool, code.EditFileHLArgs{
-		Path:      "ops.txt",
-		StartLine: 2,
-		StartHash: testHashlineHash("two", 4),
-		Mode:      "insert_before",
-		NewString: "before two\n",
+		Path: "ops.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 2,
+			StartHash: testHashlineHash("two", 4),
+			Mode:      "insert_before",
+			NewString: "before two\n",
+		}},
 	})
 	if !res.Success {
 		t.Fatalf("insert_before failed: %s", res.Error)
 	}
 
 	res = execTyped(t, tool, code.EditFileHLArgs{
-		Path:      "ops.txt",
-		StartLine: 1,
-		StartHash: testHashlineHash("one", 4),
-		Mode:      "insert_after",
-		NewString: "after one\n",
+		Path: "ops.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 1,
+			StartHash: testHashlineHash("one", 4),
+			Mode:      "insert_after",
+			NewString: "after one\n",
+		}},
 	})
 	if !res.Success {
 		t.Fatalf("insert_after failed: %s", res.Error)
 	}
 
 	res = execTyped(t, tool, code.EditFileHLArgs{
-		Path:      "ops.txt",
-		StartLine: 5,
-		StartHash: testHashlineHash("three", 4),
-		Mode:      "delete",
+		Path: "ops.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 5,
+			StartHash: testHashlineHash("three", 4),
+			Mode:      "delete",
+		}},
 	})
 	if !res.Success {
 		t.Fatalf("delete failed: %s", res.Error)
 	}
 
 	if got := readFile(t, path); got != "one\nafter one\nbefore two\ntwo\n" {
+		t.Fatalf("content = %q", got)
+	}
+}
+
+func TestEditFileHLTool_InsertAllowsRedundantEndAnchor(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "insert-redundant-end.txt")
+	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "insert-redundant-end.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 2,
+			StartHash: testHashlineHash("two", 4),
+			EndLine:   2,
+			EndHash:   testHashlineHash("two", 4),
+			Mode:      "insert_before",
+			NewString: "before two\n",
+		}},
+	})
+	if !res.Success {
+		t.Fatalf("insert_before failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "one\nbefore two\ntwo\n" {
 		t.Fatalf("content = %q", got)
 	}
 }
@@ -359,10 +441,12 @@ func TestEditFileHLTool_RejectsInvalidAnchorShape(t *testing.T) {
 	}
 
 	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
-		Path:      "shape.txt",
-		StartLine: 1,
-		StartHash: "aa",
-		NewString: "beta\n",
+		Path: "shape.txt",
+		Edits: []code.HashlineEdit{{
+			StartLine: 1,
+			StartHash: "aa",
+			NewString: "beta\n",
+		}},
 	})
 	if res.Success {
 		t.Fatal("expected invalid hash failure")

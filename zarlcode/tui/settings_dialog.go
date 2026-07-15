@@ -11,6 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
@@ -70,6 +72,8 @@ const modelCustomSentinel = "✎ custom model…"
 // meaning "reuse the active provider/model" — committing it clears the
 // override.
 const compactActiveSentinel = "(active)"
+
+const codexEffortAuto = "(auto)"
 
 type settingsRowKind int
 
@@ -144,8 +148,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "model id for the active provider. enter to pick from the fetched list."},
 				{label: "agent", key: prefs.KeyAgent, kind: rowText, def: "default",
 					desc: "named agent preset; 'default' is the built-in coding agent."},
-				{label: "codex effort", key: prefs.KeyCodexEffort, kind: rowEnum, def: "(auto)",
-					desc: "reasoning effort for openai codex models. (auto) lets the model decide."},
+				{label: "reasoning effort", key: prefs.KeyCodexEffort, kind: rowEnum, def: codexEffortAuto,
+					desc: "reasoning effort for OpenAI Codex models. (auto) uses the model/default heuristic; options narrow to the selected model when known."},
 				{label: "temperature", key: prefs.KeyTemperature, kind: rowEnum, def: "(default)", opts: []string{"(default)", "0", "0.2", "0.5", "0.7", "1.0"},
 					desc: "sampling temperature. (default) leaves it to the server; a low value (0–0.2) makes local models more deterministic and improves tool-call reliability."},
 			}},
@@ -171,7 +175,7 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 				{label: "tool result max lines", key: prefs.KeyToolResultMaxLines, kind: rowText, numeric: true, def: "2000",
 					desc: "line cap on a tool result before tail-truncation + spill to disk."},
 				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, def: "0",
-					desc: "max calls per exploration tool (read/ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly."},
+					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly."},
 			}},
 			{name: "integrations", rows: []settingsRow{
 				{label: "web search", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,
@@ -182,6 +186,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "command to edit agents/skills (may carry flags, e.g. 'code -w'). empty falls back to $ZARLCODE_EDITOR / $VISUAL / $EDITOR, then vi."},
 				{label: "web tools", key: prefs.KeyEnableWeb, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register web_search + web_fetch. off drops both from the tool surface for a leaner local-model setup."},
+				{label: "programmatic tools", key: prefs.KeyProgrammaticTools, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+					desc: "replace direct read/search/catalogue tools with one program tool for bounded Starlark fan-out and aggregation."},
 				{label: "local web_search service", kind: rowAction, def: "SearXNG",
 					desc: "install/start the optional bundled SearXNG Docker Compose service for web_search. model servers stay external.",
 					open: func(*engine.Settings) dialog { return newServiceDialog(ctx) }},
@@ -501,10 +507,6 @@ func (d *settingsDialog) activate(dir int) action {
 	return actionNone{}
 }
 
-// codexEffortAuto is the picker label for "unset" — i.e. let the backend pick
-// the reasoning effort. Committing it clears the setting.
-const codexEffortAuto = "(auto)"
-
 // activateEnum handles enter/←/→ on an enum row. Theme and codex-effort open a
 // visible picker (so you choose from the full list with live preview instead
 // of cycling blind); the rest cycle in place. dir is the cycle direction for
@@ -574,12 +576,12 @@ func (d *settingsDialog) activateEnum(dir int) action {
 			}
 		})}
 	case prefs.KeyCodexEffort:
-		items := []string{codexEffortAuto, "low", "medium", "high", "xhigh", "max"}
+		items := d.codexEffortItems()
 		sel := codexEffortAuto
 		if r.value != "" {
 			sel = r.value
 		}
-		return actionPush{d: newListPicker("codex effort", items, sel, func(choice string) {
+		return actionPush{d: newListPicker("reasoning effort", items, sel, func(choice string) {
 			val := choice
 			if choice == codexEffortAuto {
 				val = ""
@@ -672,6 +674,31 @@ func (d *settingsDialog) providerForRow(key string) string {
 		return d.judgeProvider()
 	}
 	return d.currentProvider()
+}
+
+func (d *settingsDialog) activeModel() string {
+	for _, c := range d.cats {
+		for _, r := range c.rows {
+			if r.key == prefs.KeyModel {
+				if r.isSet && r.value != "" {
+					return r.value
+				}
+				return r.def
+			}
+		}
+	}
+	return ""
+}
+
+func (d *settingsDialog) codexEffortItems() []string {
+	items := []string{codexEffortAuto}
+	if d.currentProvider() != backends.NameOpenAICodex.String() {
+		return append(items, "low", "medium", "high", "xhigh", "max")
+	}
+	if variants := openaicodex.EffortVariants(d.activeModel()); len(variants) > 0 {
+		return append(items, variants...)
+	}
+	return append(items, "low", "medium", "high", "xhigh", "max")
 }
 
 // takePendingFetch returns and clears any queued model-fetch provider.

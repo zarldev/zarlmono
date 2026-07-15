@@ -50,11 +50,17 @@ func (p *UnixParser) Parse(command string) (ParsedIR, error) {
 		switch n := node.(type) {
 		case *syntax.CallExpr:
 			recordCall(&ir, seenCmd, seenFlag, seenRisk, n)
+			if callUsesShellReadTool(n) {
+				addRisk(&ir, seenRisk, ReasonShellReadTool)
+			}
 		case *syntax.BinaryCmd:
 			addOperator(&ir, seenOp, n.Op.String())
 			addRisk(&ir, seenRisk, ReasonOperator)
 			if isPipe(n.Op) && stmtFeedsStdinInterpreter(n.Y) {
 				addRisk(&ir, seenRisk, ReasonOpaqueInterpreter)
+			}
+			if isPipe(n.Op) && (stmtUsesShellReadTool(n.X) || stmtUsesShellReadTool(n.Y)) {
+				addRisk(&ir, seenRisk, ReasonShellReadTool)
 			}
 		case *syntax.Stmt:
 			if stmtHasHeredoc(n) && stmtIsStdinInterpreter(n) {
@@ -308,6 +314,48 @@ func interpreterReadsStdin(args []*syntax.Word, depth int) bool {
 		}
 	}
 	return true
+}
+
+// shellReadTools are common shell-side file reading, listing, and filtering
+// helpers that duplicate registered workspace tools. They are safe as shell
+// commands, but using them for repository discovery burns context and loses the
+// bounded, structured results the tools provide.
+var shellReadTools = map[string]bool{
+	"ag":      true,
+	"awk":     true,
+	"cat":     true,
+	"egrep":   true,
+	"fd":      true,
+	"fgrep":   true,
+	"find":    true,
+	"grep":    true,
+	"head":    true,
+	"less":    true,
+	"ls":      true,
+	"more":    true,
+	"rg":      true,
+	"ripgrep": true,
+	"sed":     true,
+	"tail":    true,
+}
+
+func callUsesShellReadTool(call *syntax.CallExpr) bool {
+	if call == nil || len(call.Args) == 0 {
+		return false
+	}
+	name, ok := resolveWord(call.Args[0])
+	if !ok || name == "" {
+		return false
+	}
+	return shellReadTools[commandBase(name)]
+}
+
+func stmtUsesShellReadTool(stmt *syntax.Stmt) bool {
+	if stmt == nil {
+		return false
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	return ok && callUsesShellReadTool(call)
 }
 
 func addRisk(ir *ParsedIR, seen map[ReasonCode]bool, code ReasonCode) {

@@ -616,9 +616,9 @@ func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *
 	// rendered runner prompt.
 	reg := tools.NewRegistry()
 	if catalog != nil {
-		reg.Register(engine.NewListSkillsTool(catalog))
-		reg.Register(engine.NewLoadSkillTool(catalog))
-		reg.Register(engine.NewListAgentsTool(catalog))
+		_ = reg.Register(engine.NewListSkillsTool(catalog))
+		_ = reg.Register(engine.NewLoadSkillTool(catalog))
+		_ = reg.Register(engine.NewListAgentsTool(catalog))
 	}
 	for t := range reg.Tools(ctx) {
 		s.Tools = append(s.Tools, t.Definition())

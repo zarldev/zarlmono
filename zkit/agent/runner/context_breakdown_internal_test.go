@@ -14,15 +14,17 @@ func TestComputeContextBreakdown(t *testing.T) {
 			{ID: "c1", Function: llm.ToolCallFunction{Name: "load_skill"}},
 			{ID: "c2", Function: llm.ToolCallFunction{Name: "spawn_agent"}},
 			{ID: "c3", Function: llm.ToolCallFunction{Name: "bash"}},
+			{ID: "c4", Function: llm.ToolCallFunction{Name: "load_instruction"}},
 		}},
 		{Role: "tool", ToolCallID: "c1", Content: "skill body content"}, // skill
 		{Role: "tool", ToolCallID: "c2", Content: "agent summary"},      // agent
 		{Role: "tool", ToolCallID: "c3", Content: "$ ls"},               // other
+		{Role: "tool", ToolCallID: "c4", Content: "nested guidance"},    // instruction
 	}
 
 	b := computeContextBreakdown(msgs)
 
-	if b.SystemMsgs != 1 || b.UserMsgs != 1 || b.AssistantMsgs != 1 || b.ToolMsgs != 3 {
+	if b.SystemMsgs != 1 || b.UserMsgs != 1 || b.AssistantMsgs != 1 || b.ToolMsgs != 4 {
 		t.Errorf("msg counts = sys%d usr%d asst%d tool%d", b.SystemMsgs, b.UserMsgs, b.AssistantMsgs, b.ToolMsgs)
 	}
 	if b.SystemBytes != len("sys-prompt") || b.UserBytes != len("do the thing please") {
@@ -36,14 +38,17 @@ func TestComputeContextBreakdown(t *testing.T) {
 	if want := len("agent summary") + len("c2"); b.AgentBytes != want {
 		t.Errorf("agent bytes = %d, want %d", b.AgentBytes, want)
 	}
-	// ToolBytes is the sum of all three tool results; skill+agent are a
+	if want := len("nested guidance") + len("c4"); b.InstructionBytes != want {
+		t.Errorf("instruction bytes = %d, want %d", b.InstructionBytes, want)
+	}
+	// ToolBytes is the sum of all four tool results; skill+agent+instruction are a
 	// subset, so "other" (bash) is the remainder.
-	other := b.ToolBytes - b.SkillBytes - b.AgentBytes
+	other := b.ToolBytes - b.SkillBytes - b.AgentBytes - b.InstructionBytes
 	if want := len("$ ls") + len("c3"); other != want {
 		t.Errorf("other tool bytes = %d, want %d", other, want)
 	}
 	// Assistant bytes include the tool-call function names + the content.
-	wantAsst := len("ok") + len("load_skill") + len("spawn_agent") + len("bash")
+	wantAsst := len("ok") + len("load_skill") + len("spawn_agent") + len("bash") + len("load_instruction")
 	if b.AssistantBytes != wantAsst {
 		t.Errorf("assistant bytes = %d, want %d", b.AssistantBytes, wantAsst)
 	}
@@ -60,7 +65,7 @@ func TestComputeContextBreakdownOrphanTool(t *testing.T) {
 	// still counts toward ToolBytes, just not skill/agent.
 	msgs := []llm.Message{{Role: "tool", ToolCallID: "gone", Content: "orphaned"}}
 	b := computeContextBreakdown(msgs)
-	if want := len("orphaned") + len("gone"); b.ToolBytes != want || b.SkillBytes != 0 || b.AgentBytes != 0 {
-		t.Errorf("orphan tool = tool%d skill%d agent%d (want tool%d)", b.ToolBytes, b.SkillBytes, b.AgentBytes, want)
+	if want := len("orphaned") + len("gone"); b.ToolBytes != want || b.SkillBytes != 0 || b.AgentBytes != 0 || b.InstructionBytes != 0 {
+		t.Errorf("orphan tool = tool%d skill%d agent%d instruction%d (want tool%d)", b.ToolBytes, b.SkillBytes, b.AgentBytes, b.InstructionBytes, want)
 	}
 }

@@ -14,7 +14,6 @@ func TestPolicy_RelaxedAllowsCdAndRedirect(t *testing.T) {
 	cases := []string{
 		"cd /tmp",
 		"echo hi > /tmp/x",
-		"cat in.go > out.go",
 		"cd src && echo hi > x.go",
 	}
 	engine := shellpolicy.NewPolicyEngine(shellpolicy.WithRelaxed(true))

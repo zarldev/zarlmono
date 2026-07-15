@@ -65,7 +65,7 @@ func (e PolicyEngine) DecideVerify(ir ParsedIR, writeTargets []string) Decision 
 	// Verify is always strict: a verify sub-agent must not mutate the
 	// workspace whether or not a kernel sandbox confines it, so the
 	// ergonomic cd/redirect blocks apply even on a relaxed engine.
-	d := e.decide(ir, false)
+	d := e.decide(ir, false, false)
 	if d.IsBlocked {
 		return d
 	}

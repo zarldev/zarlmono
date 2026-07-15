@@ -61,7 +61,7 @@ func TestApplyPlanner_AgentInRegisteredSet_SkipsPlanner(t *testing.T) {
 	// parallel spawn_agent calls per turn, and one llm round-trip per
 	// call adds up fast if we don't gate.
 	plan := &fakeSpawnPlanner{}
-	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
+	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}, {Name: "coder"}}}
 	args := Args{Prompt: "investigate", Agent: "researcher"}
 
 	note := tool.applyPlanner(t.Context(), &args)
@@ -82,7 +82,7 @@ func TestApplyPlanner_EmptyAgent_PlannerReroutes(t *testing.T) {
 		Mode:      SpawnModeExplore,
 		Rationale: "investigation task, read-only",
 	}}
-	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
+	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}, {Name: "coder"}}}
 	args := Args{Prompt: "find references to Foo", Agent: ""}
 
 	note := tool.applyPlanner(t.Context(), &args)
@@ -91,9 +91,6 @@ func TestApplyPlanner_EmptyAgent_PlannerReroutes(t *testing.T) {
 	}
 	if args.Agent != "researcher" {
 		t.Errorf("args.Agent = %q, want researcher (planner's pick)", args.Agent)
-	}
-	if !strings.HasPrefix(args.Prompt, "[mode: explore]") {
-		t.Errorf("args.Prompt = %q, want it to start with mode prefix", args.Prompt)
 	}
 	if !strings.Contains(note, "researcher") {
 		t.Errorf("note = %q, want it to mention the chosen agent", note)
@@ -111,7 +108,7 @@ func TestApplyPlanner_UnknownAgent_PlannerReroutes(t *testing.T) {
 		Mode:      SpawnModeImplement,
 		Rationale: "code change",
 	}}
-	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
+	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}, {Name: "coder"}}}
 	args := Args{Prompt: "add a method", Agent: "best-coder-ever"}
 
 	note := tool.applyPlanner(t.Context(), &args)
@@ -121,9 +118,6 @@ func TestApplyPlanner_UnknownAgent_PlannerReroutes(t *testing.T) {
 	if args.Agent != "coder" {
 		t.Errorf("args.Agent = %q, want coder (planner's correction)", args.Agent)
 	}
-	if !strings.HasPrefix(args.Prompt, "[mode: implement]") {
-		t.Errorf("args.Prompt = %q, want it to start with [mode: implement]", args.Prompt)
-	}
 	if !strings.Contains(note, "best-coder-ever") && !strings.Contains(note, "coder") {
 		t.Errorf("note = %q, want it to mention the chosen agent", note)
 	}
@@ -131,7 +125,7 @@ func TestApplyPlanner_UnknownAgent_PlannerReroutes(t *testing.T) {
 
 func TestApplyPlanner_PlannerErrorFallsThrough(t *testing.T) {
 	plan := &fakeSpawnPlanner{err: errors.New("provider down")}
-	tool := &Tool{planner: plan, plannerAgents: []string{"researcher"}}
+	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}}}
 	args := Args{Prompt: "task", Agent: ""}
 
 	note := tool.applyPlanner(t.Context(), &args)
@@ -151,7 +145,7 @@ func TestApplyPlanner_InvalidPlanAgentFallsThrough(t *testing.T) {
 		Agent: "wat",
 		Mode:  SpawnModeExplore,
 	}}
-	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
+	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}, {Name: "coder"}}}
 	args := Args{Prompt: "task", Agent: ""}
 
 	note := tool.applyPlanner(t.Context(), &args)
@@ -165,7 +159,7 @@ func TestApplyPlanner_InvalidModeFallsThrough(t *testing.T) {
 		Agent: "researcher",
 		Mode:  SpawnMode("nope"),
 	}}
-	tool := &Tool{planner: plan, plannerAgents: []string{"researcher"}}
+	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}}}
 	args := Args{Prompt: "task", Agent: ""}
 
 	note := tool.applyPlanner(t.Context(), &args)
@@ -183,15 +177,12 @@ func TestApplyPlanner_EmptyAgentInPlan_IsValid(t *testing.T) {
 		Mode:      SpawnModeVerify,
 		Rationale: "no specialist fits; parent runner handles verify",
 	}}
-	tool := &Tool{planner: plan, plannerAgents: []string{"researcher", "coder"}}
+	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}, {Name: "coder"}}}
 	args := Args{Prompt: "double-check this works", Agent: ""}
 
 	note := tool.applyPlanner(t.Context(), &args)
 	if note == "" {
 		t.Error("note empty; planner should narrate the parent-routing choice")
-	}
-	if !strings.HasPrefix(args.Prompt, "[mode: verify]") {
-		t.Errorf("args.Prompt = %q, want [mode: verify] prefix", args.Prompt)
 	}
 	if !strings.Contains(note, "parent") {
 		t.Errorf("note = %q, want it to mention parent routing", note)

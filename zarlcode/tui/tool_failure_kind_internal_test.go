@@ -14,7 +14,7 @@ func finishedTool(t *testing.T, kind tools.Kind) *toolItem {
 	t.Helper()
 	tl := newTimeline()
 	tl.startTurn("t1", 0)
-	tl.startTool("t1", 0, "call1", "read", "missing.go")
+	tl.startToolWithParent("t1", 0, "call1", "read", "missing.go", "", 0)
 	tl.finishTool("call1", "no such file", nil, time.Millisecond, true, kind)
 	ref, ok := tl.toolIdx["call1"]
 	if !ok || ref.tool == nil {

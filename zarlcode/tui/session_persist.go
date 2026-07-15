@@ -35,29 +35,44 @@ type sessionSummary struct {
 
 type savedSession struct {
 	sessionSummary
-	Plan       code.Plan
-	DiffBodies map[string]string
-	Usage      SessionUsageSnapshot
-	History    []llm.Message
+	Plan         code.Plan
+	DiffBodies   map[string]string
+	Usage        SessionUsageSnapshot
+	ToolTrace    savedToolTrace
+	ToolTraceRaw []byte
+	History      []llm.Message
 }
 
 func listSavedSessions(ctx context.Context, store *db.Store, wsRoot string) ([]sessionSummary, error) {
 	if store == nil {
 		return nil, nil
 	}
-	rows, err := store.ListSessions(ctx, wsRoot)
+	rows, err := store.ListSessionSummaries(ctx, wsRoot)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]sessionSummary, 0, len(rows))
 	for _, r := range rows {
-		s, err := decodeSavedSession(r)
-		if err != nil {
-			continue // one corrupt row should not hide the picker
-		}
-		out = append(out, s.sessionSummary)
+		s := savedSessionSummary(r)
+		out = append(out, s)
 	}
 	return out, nil
+}
+
+func savedSessionSummary(rec db.SessionRecord) sessionSummary {
+	label := rec.Label
+	if label == "" {
+		label = rec.CreatedAt.Format("2006-01-02 15:04")
+	}
+	return sessionSummary{
+		ID:        rec.ID,
+		Label:     label,
+		Provider:  rec.Provider,
+		Model:     rec.Model,
+		CreatedAt: rec.CreatedAt,
+		SavedAt:   rec.UpdatedAt,
+		Messages:  sessionMessageCount(rec, 0),
+	}
 }
 
 func loadSavedSession(ctx context.Context, store *db.Store, id string) (*savedSession, error) {
@@ -78,29 +93,27 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 			return nil, err
 		}
 	}
-	label := rec.Label
-	if label == "" {
-		label = rec.CreatedAt.Format("2006-01-02 15:04")
-	}
+	summary := savedSessionSummary(rec)
+	summary.Messages = sessionMessageCount(rec, len(history))
 	// The auxiliary blobs are best-effort: a corrupt plan/diff/usage
 	// field must not block resuming the conversation itself, which lives
 	// in HistoryJSON. Decode failures leave the zero value and are logged.
 	s := &savedSession{
-		sessionSummary: sessionSummary{
-			ID:        rec.ID,
-			Label:     label,
-			Provider:  rec.Provider,
-			Model:     rec.Model,
-			CreatedAt: rec.CreatedAt,
-			SavedAt:   rec.UpdatedAt,
-			Messages:  len(history),
-		},
-		History: history,
+		sessionSummary: summary,
+		History:        history,
+		ToolTraceRaw:   rec.ToolTraceJSON,
 	}
 	decodeSessionBlob(rec.PlanJSON, &s.Plan, rec.ID, "plan")
 	decodeSessionBlob(rec.DiffBodiesJSON, &s.DiffBodies, rec.ID, "diff bodies")
 	decodeSessionBlob(rec.LastUsageJSON, &s.Usage, rec.ID, "usage")
 	return s, nil
+}
+
+func sessionMessageCount(rec db.SessionRecord, fallback int) int {
+	if rec.MessageCount > 0 || len(rec.HistoryJSON) == 0 {
+		return rec.MessageCount
+	}
+	return fallback
 }
 
 // decodeSessionBlob unmarshals an optional session blob into dst,
@@ -173,12 +186,32 @@ func (m *UI) resumeIntroSession(id string) tea.Cmd {
 		}
 		return nil
 	}
+	if m.resumeTargetDiffers(s) {
+		m.overlay.push(newResumeTargetDialog(s, m.session.Provider, m.session.Model))
+		return nil
+	}
+	return m.completeResumeSession(s, false)
+}
+
+func (m *UI) resumeTargetDiffers(s *savedSession) bool {
+	if s == nil || s.Provider == "" || s.Model == "" {
+		return false
+	}
+	active := m.session.ActiveProviderSpec()
+	return s.Provider != active.Name || s.Model != active.Model
+}
+
+func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd {
+	if s == nil {
+		return nil
+	}
 	m.intro = nil
 	m.session.SetIdentity(s.ID, s.Label, s.CreatedAt)
 	if m.live != nil {
 		m.live.RestoreHistory(s.History)
 	}
 	m.timeline.restoreMessages(s.History)
+	restoreToolTrace(m.timeline, s.ToolTraceRaw)
 	// Rehydrate the per-session working state so the plan overlay, Files
 	// dock + diff viewer, and cockpit totals reflect the resumed session.
 	m.session.Plan = s.Plan
@@ -188,13 +221,34 @@ func (m *UI) resumeIntroSession(id string) tea.Cmd {
 	if !s.SavedAt.IsZero() {
 		notice += ", saved " + formatAgo(time.Since(s.SavedAt))
 	}
+	if useSavedTarget && s.Provider != "" && s.Model != "" {
+		notice += "; switching to saved target " + providerModelLabel(s.Provider, s.Model)
+		m.persistResumeTarget(s.Provider, s.Model)
+	}
 	m.session.SetSuccessToast(notice)
 	if m.settings.Svc != nil {
 		if err := m.settings.Svc.SetSetting(m.appContext(), prefs.ScopeWorkspace, activeSessionKey, s.ID); err != nil {
 			slog.WarnContext(m.appContext(), "persist active session", "err", err, "session", s.ID)
 		}
 	}
-	return m.toastExpiryCmd()
+	cmd := m.toastExpiryCmd()
+	if useSavedTarget {
+		cmd = tea.Batch(cmd, m.maybeRepoint())
+	}
+	return cmd
+}
+
+func (m *UI) persistResumeTarget(provider, model string) {
+	if m.settings == nil || m.settings.Svc == nil {
+		return
+	}
+	ctx := m.appContext()
+	if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider, provider); err != nil {
+		slog.WarnContext(ctx, "persist resumed session provider", "err", err, "provider", provider)
+	}
+	if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, model); err != nil {
+		slog.WarnContext(ctx, "persist resumed session model", "err", err, "model", model)
+	}
 }
 
 func (m *UI) SaveSession(ctx context.Context) error {
@@ -221,6 +275,8 @@ func (m *UI) SaveSession(ctx context.Context) error {
 		LastUsageJSON:  encodeSessionJSON(m.session.Run.UsageSnapshot(), "null"),
 		DiffBodiesJSON: encodeSessionJSON(m.session.WorkingSet.DiffBodies(), "{}"),
 		PlanJSON:       encodePlanJSON(m.session.Plan),
+		ToolTraceJSON:  encodeToolTraceJSON(m.timeline),
+		MessageCount:   len(history),
 		CreatedAt:      m.session.CreatedAt,
 	}
 	if err := m.settings.Store.SaveSession(ctx, rec); err != nil {

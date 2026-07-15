@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -31,6 +32,15 @@ import (
 	"github.com/zarldev/zarlmono/zarlai/transport/grpc/gen/zarl/v1/zarlv1connect"
 	"github.com/zarldev/zarlmono/zkit/mcp"
 )
+
+func registerTools(registry *ztools.Registry, toolList ...ztools.Tool) error {
+	for _, tool := range toolList {
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("register %s: %w", tool.Definition().Name, err)
+		}
+	}
+	return nil
+}
 
 func main() {
 	ctx := context.Background()
@@ -84,11 +94,15 @@ func main() {
 		slog.WarnContext(ctx, "init tool providers", "err", err)
 	}
 
-	// --- Always-on tools (no provider config) ---
-	registry.Register(tools.NewTimeTool())
-	registry.Register(tools.NewRenderChartTool(notifications))
-	registry.Register(tools.NewGestureTool(notifications))
-	registry.Register(taskrunner.NewPresentFindingsTool(notifications))
+	if err := registerTools(registry,
+		tools.NewTimeTool(),
+		tools.NewRenderChartTool(notifications),
+		tools.NewGestureTool(notifications),
+		taskrunner.NewPresentFindingsTool(notifications),
+	); err != nil {
+		slog.Error("register always-on tools", "err", err)
+		os.Exit(1)
+	}
 
 	// --- Event bus + session-end subscribers ---
 	bus := events.New(64)
@@ -212,15 +226,19 @@ func main() {
 	sensors.Start(ctx)
 	defer sensors.Stop()
 
-	// --- Tools that depend on the runner / scheduler being live ---
-	registry.Register(tools.NewStartTaskTool(repos.Task, taskRunner, repos.Workspaces))
-	registry.Register(tools.NewTaskStatusTool(repos.Task))
-	registry.Register(tools.NewScheduleTaskTool(repos.Task, scheduler))
-	registry.Register(proposeTool)
-	registry.Register(requestPromptTool)
-	registry.Register(readPromptTool)
-	registry.Register(proposeSensorTool)
-	registry.Register(proposeSkillTool)
+	if err := registerTools(registry,
+		tools.NewStartTaskTool(repos.Task, taskRunner, repos.Workspaces),
+		tools.NewTaskStatusTool(repos.Task),
+		tools.NewScheduleTaskTool(repos.Task, scheduler),
+		proposeTool,
+		requestPromptTool,
+		readPromptTool,
+		proposeSensorTool,
+		proposeSkillTool,
+	); err != nil {
+		slog.Error("register runner tools", "err", err)
+		os.Exit(1)
+	}
 
 	// --- Tool selector (registry now fully populated) ---
 	// topN deliberately high — full catalog ships every turn. The

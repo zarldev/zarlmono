@@ -71,6 +71,7 @@ func agentTemplate(name string) string {
 		"# max_iterations: 30\n" +
 		"# thinking: true\n" +
 		"# tool_output_format: labeled\n" +
+		"# mode: implement # explore, verify, or implement; delete to inherit caller/default\n" +
 		"---\n\n" +
 		"You are " + name + ".\n\n" +
 		"TODO write the system prompt: the agent's role, how it should work, and\nwhat a good final answer looks like.\n"

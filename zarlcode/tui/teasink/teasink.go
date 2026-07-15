@@ -374,11 +374,13 @@ func (s *Sink) flush() {
 func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 	s.flush()
 	s.dispatch(ToolStartedMsg{
-		TaskID:     string(e.TaskID),
-		Depth:      e.Depth,
-		ToolID:     e.ToolID,
-		ToolName:   e.ToolName,
-		Parameters: e.Parameters,
+		TaskID:       string(e.TaskID),
+		Depth:        e.Depth,
+		ToolID:       e.ToolID,
+		ToolName:     e.ToolName,
+		Parameters:   e.Parameters,
+		ParentToolID: e.ParentToolID,
+		Sequence:     e.Sequence,
 	})
 }
 
@@ -394,6 +396,8 @@ func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 		FormattedResult: e.FormattedResult,
 		Effects:         e.Effects,
 		Duration:        e.Duration,
+		ParentToolID:    e.ParentToolID,
+		Sequence:        e.Sequence,
 	})
 }
 
@@ -401,15 +405,17 @@ func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 func (s *Sink) OnToolFailed(e runner.ToolFailed) {
 	s.flush()
 	s.dispatch(ToolFailedMsg{
-		TaskID:    string(e.TaskID),
-		Depth:     e.Depth,
-		ToolID:    e.ToolID,
-		ToolName:  e.ToolName,
-		Error:     e.Error,
-		Kind:      e.Kind, // flat classification only; e.Err is not forwarded to the UI
-		Abandoned: e.Abandoned,
-		Effects:   e.Effects,
-		Duration:  e.Duration,
+		TaskID:       string(e.TaskID),
+		Depth:        e.Depth,
+		ToolID:       e.ToolID,
+		ToolName:     e.ToolName,
+		Error:        e.Error,
+		Kind:         e.Kind, // flat classification only; e.Err is not forwarded to the UI
+		Abandoned:    e.Abandoned,
+		ParentToolID: e.ParentToolID,
+		Sequence:     e.Sequence,
+		Effects:      e.Effects,
+		Duration:     e.Duration,
 	})
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
+	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -18,7 +19,7 @@ func (l *LiveRunner) registerSpawnTool(reg *tools.Registry, parent *runner.Runne
 		return
 	}
 	var planner spawn.SpawnPlanner
-	var names []string
+	var candidates []spawn.AgentCandidate
 	var plannerProv llm.Provider
 	if l != nil {
 		l.mu.Lock()
@@ -26,15 +27,21 @@ func (l *LiveRunner) registerSpawnTool(reg *tools.Registry, parent *runner.Runne
 		l.mu.Unlock()
 	}
 	if l != nil && plannerProv != nil && l.catalog != nil {
-		names = l.catalog.AgentNames()
-		if len(names) > 0 {
+		for _, agent := range l.catalog.Agents() {
+			candidates = append(candidates, spawn.AgentCandidate{
+				Name:        agent.Name,
+				Description: agent.Description,
+				Mode:        spawn.SpawnMode(agent.Mode),
+			})
+		}
+		if len(candidates) > 0 {
 			planner = spawn.NewLLMSpawnPlanner(plannerProv)
 		}
 	}
-	reg.Register(spawn.New(parent,
+	_ = reg.Register(spawn.New(parent,
 		spawn.WithMaxDepth(maxDepth),
 		spawn.WithAgentResolver(l.resolveAgentRunner),
-		spawn.WithSpawnPlanner(planner, names),
+		spawn.WithSpawnPlannerCandidates(planner, candidates),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
 		// Arm the same explore/verify tool gating coderunner.RegisterSpawnTool
 		// uses — without it the mode arg is advisory prompt text only.
@@ -101,7 +108,7 @@ func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, erro
 		reserve = liveReserveTokens
 	}
 
-	engine, compactProv, compactModel := "tiered", parentProv, parentModel
+	engine, compactProv, compactModel := compact.EngineTiered, parentProv, parentModel
 	if settings != nil {
 		ctx := l.parentContext()
 		engine = settings.CompactEngine(ctx)

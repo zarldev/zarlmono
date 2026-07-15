@@ -105,6 +105,59 @@ func TestRender_WorkspaceInstructionsTail(t *testing.T) {
 	}
 }
 
+func TestRender_LazyContextGuidance(t *testing.T) {
+	d := prompts.Data{WorkspaceRoot: "/repo"}
+	out, err := prompts.Render("system", prompts.System, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"lazy context", "list/load tools", "do not read catalogue bodies", "re-read the changed content"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("system prompt missing lazy-context guidance %q", want)
+		}
+	}
+
+	out, err = prompts.Render("plan", prompts.Plan, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"lazy context", "list/load tools", "do not read catalogue bodies", "verification"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan prompt missing lazy-context guidance %q", want)
+		}
+	}
+}
+
+func TestRender_ProgrammaticToolsGuidance(t *testing.T) {
+	base := prompts.Data{WorkspaceRoot: "/repo"}
+	without, err := prompts.Render("system", prompts.System, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(without, "program` replaces") {
+		t.Fatal("programmatic guidance rendered without ProgrammaticTools")
+	}
+	base.ProgrammaticTools = true
+	with, err := prompts.Render("system", prompts.System, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"program` replaces", "Keep `bash` for real shell work", "Keep `edit`/`write`"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("system prompt missing programmatic guidance %q", want)
+		}
+	}
+	plan, err := prompts.Render("plan", prompts.Plan, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"program` replaces", "read-only investigation fan-out", "build/test/git"} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("plan prompt missing programmatic guidance %q", want)
+		}
+	}
+}
+
 func TestHasTool(t *testing.T) {
 	tools := []prompts.ToolInfo{{Name: "read"}, {Name: "update_plan"}}
 	if !prompts.HasTool(tools, "update_plan") {

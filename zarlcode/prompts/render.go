@@ -36,6 +36,11 @@ type Data struct {
 	// whether the update_plan tool is registered (the interactive TUI wires
 	// it; the eval harness does not).
 	Planning bool
+
+	// ProgrammaticTools is true when the portable program tool is present. In
+	// that roster, read/search/catalogue tools are intentionally hidden behind
+	// program while mutating and shell tools remain direct.
+	ProgrammaticTools bool
 }
 
 // ToolInfo is the name + description of a registered tool or skill as the
@@ -54,6 +59,7 @@ type AgentInfo struct {
 	Provider    string
 	Model       string
 	Workspace   string
+	Mode        string
 }
 
 // InstructionDoc is one repository/workspace guidance file appended to the

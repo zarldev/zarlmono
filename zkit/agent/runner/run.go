@@ -43,6 +43,9 @@ type loopState struct {
 	// turnQualityCorrections counts empty-turn corrections injected by the
 	// TurnQuality hook, bounded by the decision's MaxCorrections.
 	turnQualityCorrections int
+	// rateLimitRetries counts consecutive provider rate-limit recoveries.
+	// Resets on any successful iteration; capped at rateLimitRetryLimit.
+	rateLimitRetries int
 	// finalizeWarned latches the cap-warning nudge to exactly once per Run.
 	// The nudge rides a single request at shape time — NEVER appended to
 	// canonical history, so the synthetic "wrap up" message isn't
@@ -274,7 +277,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		t.st.toolCallJSONRecovers = 0
 		t.st.emptyStreamRetries = 0
 		t.st.thinkingBudgetCuts = 0
-
+		t.st.rateLimitRetries = 0
 		// Rewrite each tool call's arguments to canonical JSON before they
 		// land in history — see canonicalizeToolArgs.
 		canonicalizeToolArgs(toolCalls)

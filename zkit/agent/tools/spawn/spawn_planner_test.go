@@ -37,7 +37,7 @@ func TestLLMSpawnPlanner_ParsesPlan(t *testing.T) {
 			planner := newTestPlanner(t, srv.URL)
 			out, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 				Prompt:          "do the thing",
-				AvailableAgents: []string{"researcher", "coder", "reviewer"},
+				AvailableAgents: []spawn.AgentCandidate{{Name: "researcher"}, {Name: "coder"}, {Name: "reviewer"}},
 			})
 			if err != nil {
 				t.Fatalf("Plan: %v", err)
@@ -68,9 +68,16 @@ func TestLLMSpawnPlanner_RequestCarriesDynamicEnum(t *testing.T) {
 
 	planner := newTestPlanner(t, srv.URL)
 	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
-		Prompt:          "trace request flow",
-		AvailableAgents: []string{"researcher", "coder", "reviewer"},
+		Prompt: "trace request flow",
+		AvailableAgents: []spawn.AgentCandidate{
+			{Name: "researcher", Description: "map unfamiliar code", Mode: spawn.SpawnModeExplore},
+			{Name: "coder", Description: "make code changes", Mode: spawn.SpawnModeImplement},
+			{Name: "reviewer", Description: "review changed code", Mode: spawn.SpawnModeVerify},
+		},
 	})
+	if !strings.Contains(string(captured), "map unfamiliar code") || !strings.Contains(string(captured), "mode=explore") {
+		t.Fatalf("planner request did not include agent descriptions and modes: %s", captured)
+	}
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -133,7 +140,7 @@ func TestLLMSpawnPlanner_RejectsUnknownAgent(t *testing.T) {
 	planner := newTestPlanner(t, srv.URL)
 	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "x",
-		AvailableAgents: []string{"researcher", "coder"},
+		AvailableAgents: []spawn.AgentCandidate{{Name: "researcher"}, {Name: "coder"}},
 	})
 	if err == nil {
 		t.Fatal("Plan: want error for unknown agent, got nil")
@@ -153,7 +160,7 @@ func TestLLMSpawnPlanner_RejectsInvalidMode(t *testing.T) {
 	planner := newTestPlanner(t, srv.URL)
 	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "x",
-		AvailableAgents: []string{"researcher"},
+		AvailableAgents: []spawn.AgentCandidate{{Name: "researcher"}},
 	})
 	if err == nil {
 		t.Fatal("Plan: want error for invalid mode, got nil")
@@ -173,7 +180,7 @@ func TestLLMSpawnPlanner_StripsThinking(t *testing.T) {
 	planner := newTestPlanner(t, srv.URL)
 	out, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
 		Prompt:          "x",
-		AvailableAgents: []string{"researcher"},
+		AvailableAgents: []spawn.AgentCandidate{{Name: "researcher"}},
 	})
 	if err != nil {
 		t.Fatalf("Plan: %v (thinking should be stripped)", err)

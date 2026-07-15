@@ -64,6 +64,17 @@ func (c *RuntimeCatalog) Reload(wsRoot string) []error {
 	return errs
 }
 
+// ReloadCurrent re-reads the catalogue from its last configured workspace root.
+func (c *RuntimeCatalog) ReloadCurrent() []error {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	wsRoot := c.wsRoot
+	c.mu.RUnlock()
+	return c.Reload(wsRoot)
+}
+
 func (c *RuntimeCatalog) Errors() []error {
 	if c == nil {
 		return nil

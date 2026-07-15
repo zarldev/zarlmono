@@ -4,6 +4,58 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [zkit/v0.4.0] — 2026-07-12
+
+`zkit/v0.4.0`
+
+### Added
+
+- Provider-neutral `program` tool support for bounded, read-only Starlark fan-out over existing guarded tool sources.
+- Programmatic read policy wiring for coderunner, including explicit allowlists for read/search/catalogue tools and bounded `call`, `call_many`, and `emit` execution.
+- OpenAI Responses API request/stream handling, model plan metadata, endpoint kind, reasoning effort, and token-limit support.
+- Session message-count storage migration and query plumbing.
+
+### Changed
+
+- Runner and guardrail event/context accounting now carries richer task/tool metadata for fan-out and context-breakdown reporting.
+- Structured tool results normalize cleanly through programmatic execution while preserving typed result rendering for callers.
+- OpenAI and Codex model metadata and request construction were refreshed for current endpoint capabilities.
+
+### Fixed
+
+- Hashline parsing and rendering edge cases are covered with broader tests.
+- Dynamic MCP/computer tool registration now handles registry errors explicitly.
+
+## [zarlcode/v0.4.0] — 2026-07-12
+
+`zarlcode/v0.4.0`
+
+### Added
+
+- Opt-in `programmatic_tools` setting that exposes a portable `program` tool for read/search/catalogue fan-out while keeping edit/write/bash actions direct.
+- Prompt guidance and tool-roster filtering for programmatic read/search workflows.
+- Compact TUI rendering for program results, including call summaries and known structured-result summaries instead of raw wrapper JSON.
+- Resume/session restoration UI and persistence improvements for continuing prior work.
+
+### Changed
+
+- Cockpit, model switching, runtime catalog, and session restore flows were tightened around live provider/model state.
+- Conversation persistence now records additional session metadata for restore/resume views.
+
+### Fixed
+
+- Tool rendering no longer displays the entire program script or raw `{Output, Stats}` wrapper in the conversation trail.
+- Settings, inspector, and launch flows handle updated tool/provider state more consistently.
+
+## [examples/v0.4.0] — 2026-07-12
+
+`examples/v0.4.0`
+
+### Changed
+
+- Example harnesses now handle tool-registration errors explicitly for the stricter lint configuration.
+- Example module dependency pin updated for the matching zkit release.
+
 ## [zkit/v0.3.1] — 2026-07-10
 
 `zkit/v0.3.1`

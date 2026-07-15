@@ -74,6 +74,11 @@ func (s *Session) applyThinking(e teasink.ThinkingMsg) {
 }
 
 func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
+	if e.ParentToolID != "" {
+		s.Run.startNestedTool(e.ToolID)
+		s.logEvent("nested tool started", e.ToolName)
+		return
+	}
 	s.logEvent("tool started", e.ToolName)
 	s.Run.toolsRunning++
 	if e.Depth > s.Run.maxDepth {
@@ -90,6 +95,11 @@ func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
 }
 
 func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEffect {
+	if e.ParentToolID != "" {
+		s.Run.finishNestedTool(e.ToolID, e.ToolName, e.Duration, false)
+		s.logEvent("nested tool completed", e.ToolName)
+		return toolCompletedEffect{}
+	}
 	s.LastToolResult = e.Result
 	s.LastToolEffects = e.Effects
 	s.logEvent("tool completed", e.ToolName)
@@ -106,6 +116,11 @@ func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEf
 }
 
 func (s *Session) applyToolFailed(e teasink.ToolFailedMsg) {
+	if e.ParentToolID != "" {
+		s.Run.finishNestedTool(e.ToolID, e.ToolName, e.Duration, true)
+		s.logEvent("nested tool failed", e.ToolName+" ✗")
+		return
+	}
 	s.LastToolEffects = e.Effects
 	s.logEvent("tool failed", e.ToolName+" ✗")
 	s.Run.foldTool(e.ToolName, e.Duration, true)

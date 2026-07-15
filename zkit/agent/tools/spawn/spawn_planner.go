@@ -81,6 +81,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 		return SpawnPlan{}, errors.New("planner: no available agents to choose from")
 	}
 
+	agentNames := agentCandidateNames(in.AvailableAgents)
 	req := llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: plannerSystemPrompt},
@@ -89,7 +90,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 		Stream:         true,
 		MaxTokens:      p.maxTokens,
 		Temperature:    0,
-		ResponseFormat: plannerResponseFormat(in.AvailableAgents),
+		ResponseFormat: plannerResponseFormat(agentNames),
 		// Thinking off, same reasoning as LLMVerdictJudge: the schema's
 		// rationale field is the reasoning slot, and a thinking-default
 		// model otherwise burns MaxTokens inside <think> and returns an
@@ -137,7 +138,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 	// non-empty value must be in the supplied set. The grammar
 	// constrains this end-to-end, but defensive-validate for
 	// providers without grammar support.
-	if payload.Agent != "" && !slices.Contains(in.AvailableAgents, payload.Agent) {
+	if payload.Agent != "" && !slices.Contains(agentNames, payload.Agent) {
 		return SpawnPlan{}, fmt.Errorf("planner invalid agent: %q", payload.Agent)
 	}
 
@@ -157,8 +158,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 // serialize alphabetically (see zkit/agent/guardrails/decompose_judge.go
 // for the same pattern).
 //
-// The agent enum is built from the input's AvailableAgents slice
-// PLUS the empty string (meaning "use the parent runner") so the
+// The agent enum is built from the supplied agent names PLUS the empty string
 // planner can decide that none of the registered agents fit and
 // fall back cleanly.
 func plannerResponseFormat(agents []string) llm.ResponseFormat {
@@ -215,8 +215,15 @@ func renderPlannerUserMessage(in SpawnPlanInput) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Task: %s\n", in.Prompt)
 	b.WriteString("Available agents:\n")
-	for _, name := range in.AvailableAgents {
-		fmt.Fprintf(&b, "  - %s\n", name)
+	for _, agent := range in.AvailableAgents {
+		parts := []string{agent.Name}
+		if agent.Mode.Valid() {
+			parts = append(parts, "mode="+string(agent.Mode))
+		}
+		if agent.Description != "" {
+			parts = append(parts, "description="+agent.Description)
+		}
+		fmt.Fprintf(&b, "  - %s\n", strings.Join(parts, " — "))
 	}
 	return b.String()
 }

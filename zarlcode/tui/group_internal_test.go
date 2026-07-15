@@ -10,8 +10,8 @@ import (
 
 func TestGroup_ToolsGroupedPerIteration(t *testing.T) {
 	tl := newTimeline()
-	tl.startTool("t", 0, "c1", "read", "a.go")
-	tl.startTool("t", 0, "c2", "grep", "foo")
+	tl.startToolWithParent("t", 0, "c1", "read", "a.go", "", 0)
+	tl.startToolWithParent("t", 0, "c2", "grep", "foo", "", 0)
 	tl.finishTool("c1", "ok", nil, time.Millisecond, false, tools.Kinds.UNKNOWN)
 	tl.finishTool("c2", "ok", nil, time.Millisecond, false, tools.Kinds.UNKNOWN)
 
@@ -27,7 +27,7 @@ func TestGroup_ToolsGroupedPerIteration(t *testing.T) {
 	if !g.closed || tl.curTools != nil {
 		t.Error("closeGroups should freeze and clear the current group")
 	}
-	tl.startTool("t", 0, "c3", "bash", "x")
+	tl.startToolWithParent("t", 0, "c3", "bash", "x", "", 0)
 	if tl.curTools == g {
 		t.Error("a new iteration should open a fresh group")
 	}
@@ -55,7 +55,7 @@ func TestGroup_CollapsedSummaryVsExpanded(t *testing.T) {
 
 func TestTool_KeepsFullMultiLineResult(t *testing.T) {
 	tl := newTimeline()
-	tl.startTool("t", 0, "c1", "bash", "echo")
+	tl.startToolWithParent("t", 0, "c1", "bash", "echo", "", 0)
 	tl.finishTool("c1", "line one\nline two\nline three", nil, time.Millisecond, false, tools.Kinds.UNKNOWN)
 
 	g := tl.curTools
@@ -71,7 +71,7 @@ func TestTool_KeepsFullMultiLineResult(t *testing.T) {
 
 func TestTool_RendersEffectSummary(t *testing.T) {
 	tl := newTimeline()
-	tl.startTool("t", 0, "c1", "edit", "pkg/foo.go")
+	tl.startToolWithParent("t", 0, "c1", "edit", "pkg/foo.go", "", 0)
 	tl.finishTool("c1", "edited", nil, time.Millisecond, false, tools.Kinds.UNKNOWN, "modified pkg/foo.go")
 
 	g := tl.curTools
@@ -88,7 +88,7 @@ func TestThinking_SingleBlockPerTurn(t *testing.T) {
 	tl := newTimeline()
 	tl.startTurn("t", 0)
 	tl.appendThinking("t", 0, "before the tool")
-	tl.startTool("t", 0, "c1", "read", "a.go")
+	tl.startToolWithParent("t", 0, "c1", "read", "a.go", "", 0)
 	tl.finishTool("c1", "ok", nil, time.Millisecond, false, tools.Kinds.UNKNOWN)
 	tl.closeGroups() // iteration boundary
 	tl.appendThinking("t", 0, "after the tool")

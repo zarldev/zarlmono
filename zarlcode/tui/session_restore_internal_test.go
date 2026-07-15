@@ -3,8 +3,11 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/db"
 )
 
 func TestTimelineRestoreMessagesConnectsToolCallsToAssistant(t *testing.T) {
@@ -53,5 +56,58 @@ func TestTimelineRestoreMessagesConnectsToolCallsToAssistant(t *testing.T) {
 	}
 	if _, ok := tl.toolIdx["call_1"]; !ok {
 		t.Error("restored tool index missing call_1")
+	}
+}
+
+func TestResumeIntroSession_TargetMismatchPrompts(t *testing.T) {
+	m := New()
+	m.settings = newTestSettings(t)
+	m.SetProviderContext(engine.ProviderSpec{Name: "openai", Model: "gpt-4o-mini"}, engine.ProviderSpec{Name: "openai", Model: "gpt-4o-mini"})
+	m.SetProvider("openai")
+	m.SetWorkspace("/tmp/ws", "gpt-4o-mini")
+	m.intro = newIntroPane("/tmp/ws", nil, "openai", "gpt-4o-mini")
+
+	rec := db.SessionRecord{
+		ID:          "s1",
+		Workspace:   m.settings.WorkspaceRoot(),
+		Provider:    "anthropic",
+		Model:       "claude-sonnet-4-5",
+		HistoryJSON: []byte(`[{"role":"user","content":"hi"}]`),
+		CreatedAt:   time.Now(),
+	}
+	if err := m.settings.Store.SaveSession(t.Context(), rec); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	if cmd := m.resumeIntroSession("s1"); cmd != nil {
+		t.Fatalf("resume returned cmd before target decision")
+	}
+	if m.intro == nil {
+		t.Fatal("intro dismissed before target decision")
+	}
+	if _, ok := m.overlay.top().(*resumeTargetDialog); !ok {
+		t.Fatalf("overlay = %T, want *resumeTargetDialog", m.overlay.top())
+	}
+}
+
+func TestResumeTargetDialog_CurrentTargetKeepsCurrentProvider(t *testing.T) {
+	m := New()
+	m.settings = newTestSettings(t)
+	m.SetProviderContext(engine.ProviderSpec{Name: "openai", Model: "gpt-4o-mini"}, engine.ProviderSpec{Name: "openai", Model: "gpt-4o-mini"})
+	m.SetProvider("openai")
+	m.SetWorkspace("/tmp/ws", "gpt-4o-mini")
+	m.intro = newIntroPane("/tmp/ws", nil, "openai", "gpt-4o-mini")
+	saved := &savedSession{sessionSummary: sessionSummary{ID: "s1", Label: "saved", Provider: "anthropic", Model: "claude-sonnet-4-5", CreatedAt: time.Now()}, History: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}}
+	m.overlay.push(newResumeTargetDialog(saved, "openai", "gpt-4o-mini"))
+
+	cmd := m.handleAction(actionResumeSession{session: saved, useSaved: false})
+	if cmd == nil {
+		t.Fatal("resume should return toast command")
+	}
+	if m.intro != nil {
+		t.Fatal("intro not dismissed")
+	}
+	if got := m.session.ActiveProviderSpec(); got.Name != "openai" || got.Model != "gpt-4o-mini" {
+		t.Fatalf("active provider changed: %+v", got)
 	}
 }

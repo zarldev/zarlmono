@@ -134,26 +134,72 @@ func (r *ProviderRegistry) ResolveCost(ctx context.Context, name, model string) 
 // value. Unlike ResolveCost, local providers are not short-circuited:
 // they still have capabilities (vision, thinking) — only cost is zero
 // for unmetered providers.
+//
+// Merge semantics: static table capabilities are the authoritative base.
+// Models.dev non-zero fields overlay on top — zero/absent models.dev
+// fields are never interpreted as an explicit "unsupported" claim, because
+// the snapshot can be stale or incomplete.
 func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model string) llm.ModelCapabilities {
 	def, err := r.Parse(name)
 	if err != nil {
 		return llm.ModelCapabilities{}
 	}
-	// 1. Live models.dev lookup.
+	// 1. Start with static capabilities as the authoritative base.
+	caps := capabilitiesForAdapter(def.AdapterType, model)
+	// 2. Overlay models.dev non-zero fields on top of the static base.
 	if r.modelsDevSource != nil {
 		if e, ok := r.modelsDevSource.Lookup(ctx, name, model); ok {
-			return llm.ModelCapabilities{
-				SupportsTools:    e.SupportsTools,
-				SupportsThinking: e.SupportsThinking,
-				SupportsVision:   e.SupportsVision,
-				SupportsVideo:    e.SupportsVideo,
-				// models.dev doesn't track streaming/system support —
-				// those are near-universal for hosted providers.
-				SupportsStreaming: true,
-				SupportsSystem:    true,
+			if e.SupportsTools {
+				caps.SupportsTools = true
+			}
+			if e.SupportsThinking {
+				caps.SupportsThinking = true
+			}
+			if e.SupportsVision {
+				caps.SupportsVision = true
+			}
+			if e.SupportsVideo {
+				caps.SupportsVideo = true
 			}
 		}
 	}
-	// 2. Static per-package table.
-	return capabilitiesForAdapter(def.AdapterType, model)
+	// Streaming and system support are near-universal for hosted providers
+	// and not tracked by models.dev.
+	caps.SupportsStreaming = true
+	caps.SupportsSystem = true
+	return caps
+}
+
+// CostEstimate is an estimated token cost at listed provider/model rates. It is
+// not an invoice amount: provider-specific cached-token discounts, multimodal
+// charges, tool charges, taxes, and contract pricing are not represented by the
+// rate metadata this package resolves.
+type CostEstimate struct {
+	InputUSD   float64
+	OutputUSD  float64
+	TotalUSD   float64
+	Incomplete bool
+	Reason     string
+}
+
+// EstimateCost estimates the cost for usage using ResolveCost's provider/model
+// rate resolution. ok=false means the provider/model has no metered token rate
+// known to the registry (local, subscription, unknown, or unavailable).
+func (r *ProviderRegistry) EstimateCost(ctx context.Context, provider, model string, usage llm.Usage) (CostEstimate, bool) {
+	inPer1K, outPer1K, ok := r.ResolveCost(ctx, provider, model)
+	if !ok {
+		return CostEstimate{Incomplete: true, Reason: "unknown_or_unmetered"}, false
+	}
+	inputUSD := float64(usage.PromptTokens) / 1000 * inPer1K
+	outputUSD := float64(usage.CompletionTokens) / 1000 * outPer1K
+	est := CostEstimate{
+		InputUSD:   inputUSD,
+		OutputUSD:  outputUSD,
+		TotalUSD:   inputUSD + outputUSD,
+		Incomplete: usage.CachedTokens > 0,
+	}
+	if est.Incomplete {
+		est.Reason = "cached_token_discount_unknown"
+	}
+	return est, true
 }

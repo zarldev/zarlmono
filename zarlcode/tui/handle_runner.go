@@ -79,7 +79,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 
 	case teasink.ToolStartedMsg:
 		m.session.applyToolStarted(e)
-		m.timeline.startTool(e.TaskID, e.Depth, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters))
+		m.timeline.startToolWithParent(e.TaskID, e.Depth, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters), e.ParentToolID, e.Sequence)
 		m.notePRRelevantTool(e.ToolName, e.Parameters)
 
 	case teasink.ToolCompletedMsg:

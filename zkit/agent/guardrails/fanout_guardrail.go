@@ -14,15 +14,16 @@ import (
 // make to a given tool. It addresses a different failure mode than
 // [DecomposeGuardrail] (same-signature repeats) or [MemoSource]'s
 // loop break (cache hits): the FAN OUT pattern where a model issues
-// many different-argument calls to the same exploration tool —
-// `read pkg/a.go`, `read pkg/b.go`, `read pkg/c.go`, … — instead of
+// many different-argument calls to the same discovery tool —
+// `grep foo pkg/a`, `grep foo pkg/b`, `grep foo pkg/c`, … — instead of
 // delegating to `spawn_agent`.
 //
-// The classic trigger is "read the pkg dir" against a workspace
-// with 200 files. The model dutifully calls `read` once per file,
-// consuming the context window with raw source the agent doesn't
-// need to plan. spawn_agent's job is exactly this; the guardrail
-// nudges the model back toward it.
+// The classic trigger is "scan a large tree" against a workspace with 200
+// entries. The model dutifully calls `ls`, `grep`, or `glob` over and over,
+// consuming the context window with raw discovery output the agent doesn't need
+// to plan. spawn_agent's job is exactly this; the guardrail nudges the model
+// back toward it. Read is usually the evidence-gathering step after discovery
+// narrows the target set, so the standard zarlcode wiring leaves it uncapped.
 //
 // Per-tool budget (configured via WithLimit / NewFanoutGuardrail):
 //
@@ -50,8 +51,9 @@ type FanoutGuardrail struct {
 
 // NewFanoutGuardrail builds a guardrail with the given per-tool
 // budgets. Tools not listed in limits are unbounded. The typical
-// zarlcode wiring caps exploration tools (read, ls, grep) at a
-// generous-but-finite count.
+// zarlcode wiring caps discovery tools (ls, grep, glob) at a
+// generous-but-finite count. Read is left uncapped so implementation work can
+// gather precise evidence after discovery narrows the target set.
 func NewFanoutGuardrail(limits map[tools.ToolName]int) *FanoutGuardrail {
 	clone := make(map[tools.ToolName]int, len(limits))
 	for k, v := range limits {
@@ -88,7 +90,7 @@ func (g *FanoutGuardrail) Inspect(
 	}
 	return tools.Validation("fanout", fmt.Sprintf(
 		"%q has now been invoked %d times this task (cap %d). The fan-out pattern — "+
-			"many small reads / lists driven directly from the orchestrator — burns context "+
+			"many small discovery calls driven directly from the orchestrator — burns context "+
 			"the agent doesn't need for planning. Delegate further exploration to "+
 			"`spawn_agent` with a specific question (e.g. \"map the public API of pkg/foo — "+
 			"list each type and its purpose\") and act on the digest, not the raw bodies.",

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -571,7 +573,6 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 	if l.settings != nil {
 		if fanoutCap := l.settings.FanoutCap(l.parentContext()); fanoutCap > 0 {
 			deps.FanoutLimits = map[tools.ToolName]int{
-				code.ToolNameRead: fanoutCap,
 				code.ToolNameLs:   fanoutCap,
 				code.ToolNameGrep: fanoutCap,
 				code.ToolNameGlob: fanoutCap,
@@ -642,12 +643,15 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// shrink the surface. Resolved per turn (toggling re-shapes the next turn's
 	// roster). Background off → bash registers foreground-only and the
 	// bash_output/stop_process/list_processes trio is omitted (pm = nil).
-	enableWeb, enableMCP, enableBackground := true, true, true
+	enableWeb, enableMCP, enableBackground, enableProgrammatic := true, true, true, false
+	programParallel := 0
 	if l.settings != nil {
 		sctx := l.parentContext()
 		enableWeb = l.settings.EnableWeb(sctx)
 		enableMCP = l.settings.EnableMCP(sctx)
 		enableBackground = l.settings.EnableBackground(sctx)
+		enableProgrammatic = l.settings.ProgrammaticTools(sctx)
+		programParallel = l.settings.ProgrammaticParallelCalls(sctx)
 	}
 	pmArg := l.pm
 	if !enableBackground {
@@ -663,7 +667,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// flows to the plan overlay. Registered before GuardedSource so it runs
 	// under the same guardrail chain as every other tool.
 	if l.planStore != nil {
-		reg.Register(code.NewUpdatePlanTool(l.planStore))
+		_ = reg.Register(code.NewUpdatePlanTool(l.planStore))
 	}
 
 	// web_search isn't part of the standard code tool set (it needs an
@@ -671,7 +675,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// Registered before GuardedSource so it runs under the same guardrail
 	// chain as every other tool.
 	if enableWeb && searxngURL != "" {
-		reg.Register(search.New(searxngURL))
+		_ = reg.Register(search.New(searxngURL))
 	}
 
 	if l.computer != nil {
@@ -687,7 +691,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 				ft.WithChromeBinPath(cp)
 			}
 		}
-		reg.Register(ft)
+		_ = reg.Register(ft)
 	}
 
 	if l.catalog != nil {
@@ -695,17 +699,17 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 		// intentionally NOT inlined into prompts; local models should not pay that
 		// token cost unless the user asks for a skill/sub-agent or the task clearly
 		// needs one.
-		reg.Register(NewListSkillsTool(l.catalog))
-		reg.Register(NewLoadSkillTool(l.catalog))
-		reg.Register(NewListAgentsTool(l.catalog))
+		_ = reg.Register(NewListSkillsTool(l.catalog))
+		_ = reg.Register(NewLoadSkillTool(l.catalog))
+		_ = reg.Register(NewListAgentsTool(l.catalog))
 	}
 
 	// Nested instruction docs (non-root AGENTS.md / CLAUDE.md) are discoverable
 	// via list_instructions and loadable via load_instruction, mirroring the
 	// skill/agent lazy-loading surface. Registered before GuardedSource so
 	// they run under the same guardrail chain.
-	reg.Register(NewListInstructionsTool(l.instructionNestedSnapshot))
-	reg.Register(NewLoadInstructionTool(l.ws.Root(), l.instructionNestedSnapshot))
+	_ = reg.Register(NewListInstructionsTool(l.instructionNestedSnapshot))
+	_ = reg.Register(NewLoadInstructionTool(l.ws.Root(), l.instructionNestedSnapshot))
 
 	// MCP: the connect/disconnect/list tools mutate the persistent registry
 	// (so connections survive across turns), and every tool already exposed by
@@ -713,9 +717,9 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// GuardedSource so MCP tool calls run under the same guardrail chain. Gated
 	// by the enable_mcp cluster toggle.
 	if l.mcp != nil && enableMCP {
-		reg.Register(dynamic.NewMCPConnect(l.mcp))
-		reg.Register(dynamic.NewMCPDisconnect(l.mcp))
-		reg.Register(dynamic.NewMCPList(l.mcp))
+		_ = reg.Register(dynamic.NewMCPConnect(l.mcp))
+		_ = reg.Register(dynamic.NewMCPDisconnect(l.mcp))
+		_ = reg.Register(dynamic.NewMCPList(l.mcp))
 	}
 
 	// Diff recorder: capture write/edit mutations and stream
@@ -747,6 +751,23 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	if err != nil {
 		return nil, nil, fmt.Errorf("guarded tool source: %w", err)
 	}
+	if enableProgrammatic {
+		programLimits := programtools.Limits{}
+		if programParallel > 0 {
+			programLimits.MaxParallelCalls = programParallel
+			if programParallel > 20 {
+				programLimits.MaxToolCalls = programParallel
+			}
+		}
+		programSource, err := programtools.NewSource(guarded,
+			programtools.WithPolicy(coderunner.ProgrammaticReadPolicy()),
+			programtools.WithLimits(programLimits),
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("program tool source: %w", err)
+		}
+		guarded = programSource
+	}
 	return guarded, reg, nil
 }
 
@@ -760,20 +781,21 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 func (l *LiveRunner) buildTurn() (*runner.Runner, error) {
 	// Interactive only: the cockpit's context-window graph consumes the
 	// per-iteration breakdown. Headless/eval (buildHeadlessTurn) leave it off.
-	return l.buildTurnWithSource(l.source, runner.WithContextBreakdown())
+	r, _, err := l.buildTurnWithSource(l.source, runner.WithContextBreakdown())
+	return r, err
 }
-
 func (l *LiveRunner) buildHeadlessTurn(extraOpts ...options.Option[runner.Runner]) (*runner.Runner, error) {
-	return l.buildTurnWithSource(l.headlessSource, extraOpts...)
+	r, _, err := l.buildTurnWithSource(l.headlessSource, extraOpts...)
+	return r, err
 }
-
-func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, error) {
+func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, error) {
 	// Snapshot the (re-pointable) run target for this turn. The PLAN flag
 	// is still read live by prompt/source closures so a mid-turn toggle
 	// gates the next dispatch.
 	l.mu.Lock()
 	tgt := l.target
 	settings := l.settings
+	thinking := l.thinkingEnabledForLocked(tgt)
 	l.mu.Unlock()
 	prov, model, window, searxngURL := tgt.Provider, tgt.Model, tgt.Window, tgt.SearxngURL
 	reserve, maxIter, spawnMaxIter, spawnDepth := tgt.Reserve, tgt.MaxIter, tgt.SpawnMaxIter, tgt.SpawnDepth
@@ -784,7 +806,7 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 
 	// Resolve the compaction engine (and its optional LLM target) live, so
 	// a settings change takes effect on the next turn without a restart.
-	engine, compactProv, compactModel := "tiered", prov, model
+	engine, compactProv, compactModel := compact.EngineTiered, prov, model
 	if settings != nil {
 		ctx := l.parentContext()
 		engine = settings.CompactEngine(ctx)
@@ -832,7 +854,7 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	// live so toggling mid-run gates the next dispatch.
 	src, reg, err := sourceFn(searxngURL)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	visible = NewModeFilteredSource(src, l.isPlan)
 	opts = append(opts, extraOpts...)
@@ -843,62 +865,79 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	// runner exists (the registry enumerates lazily, so it's visible to
 	// this turn). spawnDepth 0 leaves spawning disabled.
 	l.registerSpawnTool(reg, r, spawnDepth, spawnMaxIter)
-	return r, nil
+	return r, thinking, nil
 }
 
-// RunTurn executes one interactive turn to completion: it builds the turn's
-// runner, registers cancellation so CancelTurn/Close can interrupt it, and
-// threads the result through the conversation so the next turn sees prior
-// history. It is the charm-free core that RunFn adapts into a tea.Cmd; callers
-// outside the TUI can use it directly. It returns a non-nil error only when
-// turn setup fails — a completed or cancelled run returns nil.
+// ManualCompactionResult reports the effect of a user-triggered conversation
+// compaction.
+type ManualCompactionResult struct {
+	MessagesBefore int
+	MessagesAfter  int
+	BytesTrimmed   int
+	Engine         string
+}
+
+// CompactNow immediately applies the configured compaction engine to the live
+func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, error) {
+	if l == nil {
+		return ManualCompactionResult{}, errors.New("compact now: live runner is nil")
+	}
+	l.mu.Lock()
+	tgt := l.target
+	settings := l.settings
+	l.mu.Unlock()
+
+	prov, model, window := tgt.Provider, tgt.Model, tgt.Window
+	if window <= 0 {
+		window = LiveContextWindow
+	}
+	engineName, compactProv, compactModel := compact.EngineTiered, prov, model
+	if settings != nil {
+		engineName = settings.CompactEngine(ctx)
+		compactProv, compactModel = settings.CompactorProvider(ctx, prov, model)
+	}
+	return l.conv.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l), l.sink)
+}
+
 func (l *LiveRunner) RunTurn(prompt string) error {
 	return l.RunTurnWithAttachments(prompt, nil)
 }
 
 func (l *LiveRunner) RunTurnWithAttachments(prompt string, attachments []llm.ContentPart) error {
-	r, err := l.buildTurn()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithCancel(l.parentContext())
-	done := make(chan struct{})
-	l.mu.Lock()
-	l.turnCancel = cancel
-	l.turnDone = done
-	l.mu.Unlock()
-	defer func() {
-		close(done)
-		l.mu.Lock()
-		if l.turnDone == done {
-			l.turnCancel = nil
-			l.turnDone = nil
+	return l.conv.runSpecWithSetup(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
+		r, thinking, err := l.buildTurnWithSource(l.source, runner.WithContextBreakdown())
+		if err != nil {
+			return nil, err
 		}
+		ctx, cancel := context.WithCancel(l.parentContext())
+		done := make(chan struct{})
+		l.mu.Lock()
+		l.turnCancel = cancel
+		l.turnDone = done
 		l.mu.Unlock()
-	}()
-	l.conv.runSpec(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func(spec runner.TaskSpec) runner.TaskResult {
-		spec.Thinking = l.thinkingEnabled()
-		return r.Run(ctx, spec)
+		return func(spec runner.TaskSpec) runner.TaskResult {
+			defer func() {
+				cancel()
+				close(done)
+				l.mu.Lock()
+				if l.turnDone == done {
+					l.turnCancel = nil
+					l.turnDone = nil
+				}
+				l.mu.Unlock()
+			}()
+			spec.Thinking = thinking
+			return r.Run(ctx, spec)
+		}, nil
 	})
-	return nil
 }
 
-// thinkingEnabled reports whether the active model supports extended
-// thinking, gating the per-run TaskSpec.Thinking toggle on capability so
-// reasoning is requested only where the provider can honour it (Anthropic
-// extended thinking, Gemini, the OpenAI reasoning line). Capability is
-// resolved from the registry — the same provider-side source the cockpit's
-// cost basis reads.
-func (l *LiveRunner) thinkingEnabled() bool {
-	l.mu.Lock()
-	provider, model, settings := l.target.Spec.Name, l.target.Model, l.settings
-	l.mu.Unlock()
-	if settings == nil || settings.Registry == nil {
+func (l *LiveRunner) thinkingEnabledForLocked(tgt RunTarget) bool {
+	if l.settings == nil || l.settings.Registry == nil {
 		return false
 	}
-	return settings.Registry.Capabilities(provider, model).SupportsThinking
+	return l.settings.Registry.Capabilities(tgt.Spec.Name, tgt.Model).SupportsThinking
 }
-
 func cloneStringMap(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil

@@ -7,14 +7,15 @@ import "github.com/zarldev/zarlmono/zkit/ai/llm"
 // to avoid an import cycle (spawn imports the runner). They are the names
 // the model sees, so they're stable wire contract, not internal detail.
 const (
-	toolNameLoadSkill  = "load_skill"
-	toolNameSpawnAgent = "spawn_agent"
+	toolNameLoadSkill       = "load_skill"
+	toolNameSpawnAgent      = "spawn_agent"
+	toolNameLoadInstruction = "load_instruction"
 )
 
 // computeContextBreakdown walks a Run's working history once and tallies
 // per-role bytes + message counts, attributing each tool-result message to
 // the tool that produced it (by matching ToolCallID against the assistant
-// ToolCalls that requested it) so load_skill / spawn_agent content can be
+// ToolCalls that requested it) so load_skill / spawn_agent / load_instruction content can be
 // split out. It's O(n) over the slice — the same order the iteration loop
 // already pays — and allocates one small id→name map.
 func computeContextBreakdown(msgs []llm.Message) ContextBreakdown {
@@ -54,6 +55,8 @@ func computeContextBreakdown(msgs []llm.Message) ContextBreakdown {
 				b.SkillBytes += n
 			case toolNameSpawnAgent:
 				b.AgentBytes += n
+			case toolNameLoadInstruction:
+				b.InstructionBytes += n
 			}
 		}
 	}

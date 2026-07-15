@@ -69,7 +69,7 @@ func TestIntroCtrlCUsesQuitConfirmation(t *testing.T) {
 	}
 }
 
-func TestIntroCtrlQUsesClearConfirmation(t *testing.T) {
+func TestIntroCtrlQUsesConversationDialog(t *testing.T) {
 	m := New()
 	m.intro = newIntroPane("/tmp/ws", nil, "", "")
 
@@ -78,10 +78,10 @@ func TestIntroCtrlQUsesClearConfirmation(t *testing.T) {
 		t.Fatalf("intro ctrl+q returned a command; want dialog")
 	}
 	if !m.overlay.active() {
-		t.Fatal("intro ctrl+q should open the clear confirmation dialog")
+		t.Fatal("intro ctrl+q should open the conversation dialog")
 	}
-	if _, ok := m.overlay.top().(*clearContextConfirmDialog); !ok {
-		t.Fatalf("intro ctrl+q opened %T, want *clearContextConfirmDialog", m.overlay.top())
+	if _, ok := m.overlay.top().(*conversationActionsDialog); !ok {
+		t.Fatalf("intro ctrl+q opened %T, want *conversationActionsDialog", m.overlay.top())
 	}
 }
 

@@ -36,7 +36,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 func TestApplyPlanner_ProbeWarnsOnFailure(t *testing.T) {
 	buf := captureLogs(t)
 	p := &probingPlanner{probeErr: errors.New("provider unreachable")}
-	tool := &Tool{planner: p, plannerAgents: []string{"researcher"}}
+	tool := &Tool{planner: p, plannerAgents: []AgentCandidate{{Name: "researcher"}}}
 
 	// Model omitted the agent — the planner's Plan path also runs, but
 	// the probe is what we're asserting on here.
@@ -56,7 +56,7 @@ func TestApplyPlanner_ProbeFiresEvenWhenModelPicksValidName(t *testing.T) {
 	// every time and never reach the planner's Plan path. The probe must
 	// still fire on the first applyPlanner, before that early return.
 	p := &probingPlanner{}
-	tool := &Tool{planner: p, plannerAgents: []string{"researcher", "coder"}}
+	tool := &Tool{planner: p, plannerAgents: []AgentCandidate{{Name: "researcher"}, {Name: "coder"}}}
 	args := Args{Prompt: "investigate", Agent: "researcher"} // valid → Plan skipped
 
 	note := tool.applyPlanner(t.Context(), &args)
@@ -73,7 +73,7 @@ func TestApplyPlanner_ProbeFiresEvenWhenModelPicksValidName(t *testing.T) {
 
 func TestApplyPlanner_ProbeRunsOnce(t *testing.T) {
 	p := &probingPlanner{}
-	tool := &Tool{planner: p, plannerAgents: []string{"researcher"}}
+	tool := &Tool{planner: p, plannerAgents: []AgentCandidate{{Name: "researcher"}}}
 	for range 3 {
 		args := Args{Prompt: "task", Agent: "researcher"}
 		tool.applyPlanner(t.Context(), &args)
@@ -87,7 +87,7 @@ func TestApplyPlanner_NonProbingPlanner_NoPanic(t *testing.T) {
 	// A planner that doesn't implement ProbingPlanner: the probe type
 	// assertion fails, no probe runs, nothing panics.
 	p := &fakeSpawnPlanner{plan: SpawnPlan{Agent: "researcher", Mode: SpawnModeExplore}}
-	tool := &Tool{planner: p, plannerAgents: []string{"researcher"}}
+	tool := &Tool{planner: p, plannerAgents: []AgentCandidate{{Name: "researcher"}}}
 	args := Args{Prompt: "task"}
 	tool.applyPlanner(t.Context(), &args) // must not panic
 }

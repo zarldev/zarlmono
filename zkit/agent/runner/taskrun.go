@@ -180,6 +180,28 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 		tr := t.cancelled(ctx, streamErr)
 		return &tr
 	}
+	var rle *llm.RateLimitError
+	if errors.As(streamErr, &rle) && rle.Retryable && !rle.Permanent && t.st.rateLimitRetries < rateLimitRetryLimit {
+		t.st.rateLimitRetries++
+		backoff := rle.RetryAfter
+		if backoff <= 0 {
+			backoff = 5 * time.Second
+		}
+		slog.WarnContext(ctx, "runner: provider rate limited, retrying",
+			"task", string(t.spec.ID), "iter", t.iter,
+			"retry_attempt", t.st.rateLimitRetries,
+			"limit", rateLimitRetryLimit,
+			"backoff_ms", backoff.Milliseconds(),
+			"err", streamErr,
+		)
+		select {
+		case <-ctx.Done():
+			tr := t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, ctx.Err()))
+			return &tr
+		case <-time.After(backoff):
+		}
+		return nil
+	}
 
 	if errors.Is(streamErr, ErrEmptyStream) && t.st.emptyStreamRetries < emptyStreamRetryLimit {
 		t.st.emptyStreamRetries++

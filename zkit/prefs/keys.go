@@ -40,8 +40,8 @@ const (
 	// runner (50 KB / 2000 lines); lower them for small-context local models.
 	KeyToolResultMaxKB    = "tool_result_max_kb"
 	KeyToolResultMaxLines = "tool_result_max_lines"
-	// KeyFanoutCap overrides the per-tool exploration fan-out cap (read/ls/grep/
-	// glob). 0 keeps the built-in per-tool defaults; a positive value caps every
+	// KeyFanoutCap overrides the per-tool exploration fan-out cap (ls/grep/glob).
+	// 0 keeps the built-in per-tool defaults; a positive value caps every capped
 	// exploration tool at that count to bound context growth.
 	KeyFanoutCap = "fanout_cap"
 	// KeyEnableMCP / KeyEnableWeb / KeyEnableBackground gate optional tool
@@ -51,6 +51,8 @@ const (
 	KeyEnableMCP           = "enable_mcp"
 	KeyEnableWeb           = "enable_web"
 	KeyEnableBackground    = "enable_background"
+	KeyProgrammaticTools   = "programmatic_tools"
+	KeyProgramParallel     = "program_parallel_calls"
 	KeyPprofAddr           = "pprof_addr"
 	KeyTraceFile           = "trace_file"
 	KeySearxngURL          = "search_searxng_url"

@@ -31,7 +31,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json FROM sessions WHERE id = ?
+SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
@@ -51,12 +51,62 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PlanJson,
+		&i.MessageCount,
+		&i.ToolTraceJson,
 	)
 	return i, err
 }
 
+const listSessionSummariesByWorkspace = `-- name: ListSessionSummariesByWorkspace :many
+SELECT id, label, provider, model, created_at, updated_at, message_count
+FROM sessions
+WHERE workspace = ?
+ORDER BY updated_at DESC
+`
+
+type ListSessionSummariesByWorkspaceRow struct {
+	ID           string
+	Label        string
+	Provider     string
+	Model        string
+	CreatedAt    int64
+	UpdatedAt    int64
+	MessageCount int64
+}
+
+func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace string) ([]ListSessionSummariesByWorkspaceRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionSummariesByWorkspace, workspace)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionSummariesByWorkspaceRow{}
+	for rows.Next() {
+		var i ListSessionSummariesByWorkspaceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Label,
+			&i.Provider,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.MessageCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionsByWorkspace = `-- name: ListSessionsByWorkspace :many
-SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json FROM sessions
+SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json FROM sessions
 WHERE workspace = ?
 ORDER BY updated_at DESC
 `
@@ -84,6 +134,8 @@ func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PlanJson,
+			&i.MessageCount,
+			&i.ToolTraceJson,
 		); err != nil {
 			return nil, err
 		}
@@ -101,11 +153,11 @@ func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string)
 const upsertSession = `-- name: UpsertSession :exec
 INSERT INTO sessions (
     id, workspace, label, agent_name, provider, model,
-    history_json, pending_json, last_usage_json, diff_bodies_json, plan_json,
+    history_json, pending_json, last_usage_json, diff_bodies_json, plan_json, message_count, tool_trace_json,
     created_at, updated_at
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?,
     ?, ?
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -118,6 +170,8 @@ ON CONFLICT (id) DO UPDATE SET
     last_usage_json  = excluded.last_usage_json,
     diff_bodies_json = excluded.diff_bodies_json,
     plan_json        = excluded.plan_json,
+    tool_trace_json  = excluded.tool_trace_json,
+    message_count    = excluded.message_count,
     updated_at       = excluded.updated_at
 `
 
@@ -133,6 +187,8 @@ type UpsertSessionParams struct {
 	LastUsageJson  string
 	DiffBodiesJson string
 	PlanJson       string
+	MessageCount   int64
+	ToolTraceJson  string
 	CreatedAt      int64
 	UpdatedAt      int64
 }
@@ -150,6 +206,8 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) er
 		arg.LastUsageJson,
 		arg.DiffBodiesJson,
 		arg.PlanJson,
+		arg.MessageCount,
+		arg.ToolTraceJson,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

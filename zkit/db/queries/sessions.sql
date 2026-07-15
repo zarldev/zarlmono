@@ -6,14 +6,20 @@ SELECT * FROM sessions
 WHERE workspace = ?
 ORDER BY updated_at DESC;
 
+-- name: ListSessionSummariesByWorkspace :many
+SELECT id, label, provider, model, created_at, updated_at, message_count
+FROM sessions
+WHERE workspace = ?
+ORDER BY updated_at DESC;
+
 -- name: UpsertSession :exec
 INSERT INTO sessions (
     id, workspace, label, agent_name, provider, model,
-    history_json, pending_json, last_usage_json, diff_bodies_json, plan_json,
+    history_json, pending_json, last_usage_json, diff_bodies_json, plan_json, message_count, tool_trace_json,
     created_at, updated_at
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?,
     ?, ?
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -26,6 +32,8 @@ ON CONFLICT (id) DO UPDATE SET
     last_usage_json  = excluded.last_usage_json,
     diff_bodies_json = excluded.diff_bodies_json,
     plan_json        = excluded.plan_json,
+    tool_trace_json  = excluded.tool_trace_json,
+    message_count    = excluded.message_count,
     updated_at       = excluded.updated_at;
 
 -- name: DeleteSession :exec

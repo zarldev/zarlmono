@@ -29,7 +29,7 @@ func (m *modeProbeTool) Execute(ctx context.Context, call tools.ToolCall) (*tool
 // The spawn tool plants the child's work mode on the child Run's ctx (via
 // taskscope), independent of whether a tool-gate policy is wired — that's
 // what lets the shell guardrail's verify profile fire for verify-mode
-// sub-agents. A spawn without a mode plants nothing.
+// sub-agents. A spawn without a mode uses the default implement mode.
 func TestExecute_PlantsWorkModeOnChildCtx(t *testing.T) {
 	run := func(mode string) taskscope.WorkMode {
 		provider := &scriptedProvider{turns: [][]llm.CompletionChunk{
@@ -61,7 +61,7 @@ func TestExecute_PlantsWorkModeOnChildCtx(t *testing.T) {
 	if got := run("explore"); got != taskscope.WorkModes.EXPLORE {
 		t.Errorf("explore child saw mode %v, want EXPLORE", got)
 	}
-	if got := run(""); got.IsValid() {
-		t.Errorf("modeless child saw mode %v, want the zero NONE", got)
+	if got := run(""); got != taskscope.WorkModes.IMPLEMENT {
+		t.Errorf("modeless child saw mode %v, want IMPLEMENT", got)
 	}
 }

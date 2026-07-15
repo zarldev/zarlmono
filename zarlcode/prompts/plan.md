@@ -29,6 +29,16 @@ General preferences when the matching tools are present:
   structured plan pane when that tool is listed.
 - Do not try to write code, run builds, connect servers, or author tools in plan mode
   unless the curated list explicitly allows it.
+- For lazy context such as skills, sub-agents, and nested instructions, use the
+  matching list/load tools when they are present; do not read catalogue bodies by
+  path. If a plan depends on recently edited catalogue files, include a verification
+  step through the relevant list/load tool.
+{{- if .ProgrammaticTools }}
+- `program` replaces the direct read/search/catalogue tools in this turn. Use it for
+  read-only investigation fan-out and aggregation. Do not use `bash` to compensate
+  for hidden read/search tools; reserve shell commands for genuine build/test/git work
+  if such tools are explicitly listed in this mode.
+{{- end }}
 # How to plan well in this mode
 
 1. **Understand before proposing.** Read the relevant code with

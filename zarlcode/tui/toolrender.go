@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 )
 
 // toolArgHint renders a compact, tool-specific argument summary for the
@@ -15,9 +18,11 @@ func toolArgHint(name string, params map[string]any) string {
 	if utf8.RuneCountInString(hint) > maxHint {
 		hint = string([]rune(hint)[:maxHint-1]) + "…"
 	}
+	if strings.EqualFold(name, "program") {
+		return programArgHint(params)
+	}
 	return hint
 }
-
 func rawToolArg(name string, params map[string]any) string {
 	get := func(keys ...string) string {
 		for _, k := range keys {
@@ -54,6 +59,51 @@ func rawToolArg(name string, params map[string]any) string {
 	default:
 		return ""
 	}
+}
+
+func programArgHint(params map[string]any) string {
+	script, ok := params["script"].(string)
+	if !ok || strings.TrimSpace(script) == "" {
+		return ""
+	}
+	inspect, err := programtools.Inspect(script)
+	if err == nil && len(inspect.Calls) > 0 {
+		return programInspectionHint(inspect)
+	}
+	if inspect.Dynamic {
+		return "dynamic script"
+	}
+	calls := strings.Count(script, "call(") + strings.Count(script, "call_many(")
+	if calls == 0 {
+		return "script"
+	}
+	return fmt.Sprintf("%d call(s)", calls)
+}
+
+func programInspectionHint(inspect programtools.Inspection) string {
+	parts := make([]string, 0, min(len(inspect.Calls), 3))
+	for i, call := range inspect.Calls {
+		if i >= 3 {
+			parts = append(parts, fmt.Sprintf("+%d", len(inspect.Calls)-i))
+			break
+		}
+		tool := call.Name.String()
+		if tool == "" {
+			tool = "dynamic"
+		}
+		if hint := rawToolArg(tool, map[string]any(call.Args)); hint != "" && len(inspect.Calls) == 1 && !call.Dynamic {
+			parts = append(parts, tool+"  "+firstLine(hint))
+			continue
+		}
+		if call.Dynamic {
+			tool += "?"
+		}
+		parts = append(parts, tool)
+	}
+	if inspect.Dynamic {
+		parts = append(parts, "dynamic")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // firstLine returns the first non-empty line of s, trimmed.

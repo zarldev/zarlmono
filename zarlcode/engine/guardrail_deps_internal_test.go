@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -36,5 +37,23 @@ func TestZarlcodeGuardrailDepsDoNotDefaultLoadGoVerifier(t *testing.T) {
 	}
 	if got := live.headlessGuardrailDeps().Verifiers; len(got) != 0 {
 		t.Fatalf("headless verifiers = %d, want none by default", len(got))
+	}
+}
+
+func TestStandardFanoutDepsLeaveReadUncapped(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	live := NewLiveRunner(nil, ws, nil, "local")
+
+	limits := live.guardrailDeps().FanoutLimits
+	if _, ok := limits[code.ToolNameRead]; ok {
+		t.Fatalf("read fanout cap = %d, want uncapped", limits[code.ToolNameRead])
+	}
+	for _, name := range []tools.ToolName{code.ToolNameLs, code.ToolNameGrep, code.ToolNameGlob} {
+		if limits[name] <= 0 {
+			t.Fatalf("%s fanout cap = %d, want positive", name, limits[name])
+		}
 	}
 }

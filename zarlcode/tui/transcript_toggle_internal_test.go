@@ -108,7 +108,7 @@ func TestSubAgentItem_TogglerAtDelegatesToNestedTool(t *testing.T) {
 func TestToggleAtViewportLine_TogglesGroupHeader(t *testing.T) {
 	tl := newTimeline()
 	tl.startTurn("t", 0)
-	tl.startTool("t", 0, "c1", "read", "a.go")
+	tl.startToolWithParent("t", 0, "c1", "read", "a.go", "", 0)
 	tl.finishTool("c1", "line one\nline two", nil, time.Millisecond, false, tools.Kinds.UNKNOWN)
 
 	g := tl.items[len(tl.items)-1].(*groupItem)

@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -87,7 +86,7 @@ type Tool struct {
 	spawnMaxIter  int
 	resolveAgent  AgentResolver
 	planner       SpawnPlanner
-	plannerAgents []string
+	plannerAgents []AgentCandidate
 	probeOnce     sync.Once
 	modePolicy    func(SpawnMode, tools.ToolSpec) bool
 }
@@ -98,6 +97,27 @@ type Tool struct {
 // is propagated to the model as a tool-result failure (e.g. agent
 // not found, provider construction failed).
 type AgentResolver func(name string) (*runner.Runner, error)
+
+// AgentCandidate is one named sub-agent the spawn planner may choose.
+// Description and Mode are optional hints used only for routing; Name is the
+// closed-set value returned in SpawnPlan.Agent.
+type AgentCandidate struct {
+	Name        string
+	Description string
+	Mode        SpawnMode
+}
+
+func (c AgentCandidate) normalized() AgentCandidate {
+	c.Name = strings.TrimSpace(c.Name)
+	c.Description = strings.TrimSpace(c.Description)
+	mode := SpawnMode(strings.ToLower(strings.TrimSpace(string(c.Mode))))
+	if mode.Valid() {
+		c.Mode = mode
+	} else {
+		c.Mode = ""
+	}
+	return c
+}
 
 // New returns a spawn-agent tool wired to parent. Apply WithMaxDepth
 // to set the recursion ceiling (default 1 — see [defaultMaxDepth]
@@ -213,7 +233,7 @@ type SpawnPlan struct {
 // names the planner must choose from (or leave empty for parent).
 type SpawnPlanInput struct {
 	Prompt          string
-	AvailableAgents []string
+	AvailableAgents []AgentCandidate
 }
 
 // SpawnPlanner is the optional hook the spawn tool consults when the
@@ -249,11 +269,11 @@ type ProbingPlanner interface {
 }
 
 // WithSpawnPlanner wires a planner the tool consults when the model
-// omits the `agent` arg or supplies a name that's not in agents. The
-// names slice is the closed enum the planner is constrained to —
-// must match the set the wired AgentResolver recognises (the planner
-// has no way to validate names against the resolver, so this is the
-// caller's contract).
+// omits the `agent` arg or supplies a name that's not in agents. The names
+// slice is the closed enum the planner is constrained to and must match the
+// set the wired AgentResolver recognises. Use WithSpawnPlannerCandidates when
+// descriptions or profile default modes are available; this compatibility
+// helper keeps older name-only callers working.
 //
 // A nil planner or empty names slice is a no-op: the tool preserves
 // today's soft-fallback-to-parent behavior. Both must be supplied
@@ -261,8 +281,56 @@ type ProbingPlanner interface {
 func WithSpawnPlanner(planner SpawnPlanner, agents []string) options.Option[Tool] {
 	return func(t *Tool) {
 		t.planner = planner
-		t.plannerAgents = agents
+		candidates := make([]AgentCandidate, 0, len(agents))
+		for _, name := range agents {
+			candidates = append(candidates, AgentCandidate{Name: name})
+		}
+		t.plannerAgents = normalizeAgentCandidates(candidates)
 	}
+}
+
+// WithSpawnPlannerCandidates wires a planner with the full agent catalogue the
+// router should consider. Empty names are ignored. Invalid or empty modes mean
+// the candidate has no profile-mode default.
+func WithSpawnPlannerCandidates(planner SpawnPlanner, agents []AgentCandidate) options.Option[Tool] {
+	return func(t *Tool) {
+		t.planner = planner
+		t.plannerAgents = normalizeAgentCandidates(agents)
+	}
+}
+
+func normalizeAgentCandidates(agents []AgentCandidate) []AgentCandidate {
+	out := make([]AgentCandidate, 0, len(agents))
+	seen := map[string]bool{}
+	for _, agent := range agents {
+		agent = agent.normalized()
+		if agent.Name == "" || seen[agent.Name] {
+			continue
+		}
+		seen[agent.Name] = true
+		out = append(out, agent)
+	}
+	return out
+}
+
+func agentCandidateNames(agents []AgentCandidate) []string {
+	names := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		if agent.Name != "" {
+			names = append(names, agent.Name)
+		}
+	}
+	return names
+}
+
+func findAgentCandidate(agents []AgentCandidate, name string) (AgentCandidate, bool) {
+	name = strings.TrimSpace(name)
+	for _, agent := range agents {
+		if agent.Name == name {
+			return agent, true
+		}
+	}
+	return AgentCandidate{}, false
 }
 
 // Args is the typed argument struct Tool.Execute decodes into via
@@ -281,7 +349,7 @@ type Args struct {
 func (*Tool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolNameSpawnAgent,
-		Description: "Run a focused sub-task in a fresh agent. The sub-agent has the same tools but no memory of your conversation — describe the task fully. Returns its final summary plus iteration count and termination reason. Use to keep your context clean during multi-step detours (research, refactors, builds). **Emit multiple spawn_agent calls in the same response to run sub-tasks in parallel** — the runner dispatches them concurrently. A small handful (researcher + reviewer + coder shape) is the intended use; if the host enforces a per-task fan-out cap you'll see a clear guardrail error before further calls run. Sub-agents cannot themselves spawn further sub-agents under the default recursion cap — flatten deeper work into your own iteration loop. Pass an `agent` name to delegate to a sub-agent backed by a different provider/model/prompt; available names are listed in your system prompt under 'Sub-agents available to you'. Omit the arg to run on the parent's provider+model.",
+		Description: "Run a focused sub-task in a fresh agent. The sub-agent has the same tools but no memory of your conversation — describe the task fully. Returns its final summary plus iteration count and termination reason. Use to keep your context clean during multi-step detours (research, refactors, builds). **Emit multiple spawn_agent calls in the same response to run sub-tasks in parallel** — the runner dispatches them concurrently. A small handful (researcher + reviewer + coder shape) is the intended use; if the host enforces a per-task fan-out cap you'll see a clear guardrail error before further calls run. Sub-agents cannot themselves spawn further sub-agents under the default recursion cap — flatten deeper work into your own iteration loop. Pass an `agent` name to delegate to a sub-agent backed by a different provider/model/prompt; call list_agents to discover available names. Omit the arg to run on the parent's provider/model.",
 		Parameters:  tools.SchemaFor[Args](),
 	}
 }
@@ -313,18 +381,24 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	// planner errored, returned invalid output) the original args
 	// flow through unchanged — today's soft-fallback path catches it
 	// later.
+	explicitMode := argsModeExplicit(call.Arguments)
 	plannerNote := t.applyPlanner(ctx, &args)
 
 	// Pick the runner the child should execute on (parent, or a named
 	// agent via the resolver — see resolveTarget for the soft-fallback).
+	profileMode := SpawnMode("")
+	if candidate, ok := findAgentCandidate(t.plannerAgents, args.Agent); ok {
+		profileMode = candidate.Mode
+	}
 	target, agentLoaded, fallbackNotice := t.resolveTarget(args)
 	if target == nil {
 		return tools.Failure(call.ID, tools.Fatal("spawn_agent", errors.New("parent runner is nil"))), nil
 	}
 
+	mode := t.effectiveMode(args, profileMode, explicitMode)
 	childSpec := runner.TaskSpec{
 		ID:               taskscope.ID(uuid.NewString()),
-		Prompt:           childPrompt(args.Prompt),
+		Prompt:           childPromptWithMode(args.Prompt, mode),
 		MaxIterations:    t.spawnMaxIterations(args.MaxIterations),
 		Depth:            depth + 1,
 		ParentToolCallID: call.ID.String(),
@@ -340,7 +414,7 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	// is wired, a tool gate hides and refuses the tools the mode
 	// disallows. With no valid mode the child keeps the full surface.
 	runCtx := ctx
-	if mode := t.effectiveMode(args); mode != "" {
+	if mode != "" {
 		if wm, err := taskscope.ParseWorkMode(string(mode)); err == nil {
 			runCtx = taskscope.WithWorkMode(runCtx, wm)
 		}
@@ -369,15 +443,14 @@ func (t *Tool) resolveTarget(args Args) (*runner.Runner, bool, string) {
 	if t.resolveAgent == nil {
 		return t.parent, false, fmt.Sprintf(
 			"note: no named agents are configured in this workspace, so the request for agent=%q "+
-				"ran on the default runner. Drop the `agent` arg on future calls; same effect.",
+				"ran on the default runner. Call list_agents to see available profiles, then pick one of those or omit the `agent` arg.",
 			args.Agent)
 	}
 	r, err := t.resolveAgent(args.Agent)
 	if err != nil || r == nil {
 		return t.parent, false, fmt.Sprintf(
 			"note: agent=%q is not registered (%v), so the request ran on the default runner. "+
-				"The available agent names are inlined in your system prompt under "+
-				"'Sub-agents available to you' — pick one of those, or omit the `agent` arg "+
+				"Call list_agents to see available profiles, then pick one of those, or omit the `agent` arg "+
 				"to suppress this notice.",
 			args.Agent, err)
 	}
@@ -436,6 +509,13 @@ Sub-agent completion contract:
 
 func childPrompt(prompt string) string {
 	return strings.TrimSpace(prompt) + childSummaryContract
+}
+
+func childPromptWithMode(prompt string, mode SpawnMode) string {
+	if mode.Valid() {
+		prompt = fmt.Sprintf("[mode: %s] %s", mode, prompt)
+	}
+	return childPrompt(prompt)
 }
 
 func pluralS(n int) string {
@@ -498,7 +578,7 @@ func (t *Tool) applyPlanner(ctx context.Context, args *Args) string {
 	// Only fire when the agent's pick wouldn't resolve cleanly today.
 	// A correctly-spelled, registered name short-circuits — the
 	// model already made a good call and the planner adds nothing.
-	if args.Agent != "" && slices.Contains(t.plannerAgents, args.Agent) {
+	if args.Agent != "" && findAgentCandidateName(t.plannerAgents, args.Agent) {
 		return ""
 	}
 
@@ -518,7 +598,7 @@ func (t *Tool) applyPlanner(ctx context.Context, args *Args) string {
 	// in case the planner's provider doesn't honour the grammar.
 	// Either issue means we silently fall back rather than emit a
 	// half-baked plan into the child's prompt.
-	if plan.Agent != "" && !slices.Contains(t.plannerAgents, plan.Agent) {
+	if plan.Agent != "" && !findAgentCandidateName(t.plannerAgents, plan.Agent) {
 		slog.WarnContext(ctx, "spawn: planner returned an unregistered agent, falling back to parent", "agent", plan.Agent)
 		return ""
 	}
@@ -529,7 +609,6 @@ func (t *Tool) applyPlanner(ctx context.Context, args *Args) string {
 
 	args.Agent = plan.Agent
 	args.Mode = string(plan.Mode)
-	args.Prompt = fmt.Sprintf("[mode: %s] %s", plan.Mode, args.Prompt)
 
 	target := plan.Agent
 	if target == "" {
@@ -540,13 +619,58 @@ func (t *Tool) applyPlanner(ctx context.Context, args *Args) string {
 		target, plan.Mode, plan.Rationale)
 }
 
-// effectiveMode resolves the child's work mode from args — set directly
-// by the model via the `mode` arg, or by the planner. An invalid or empty
-// value yields "" (no gating, full tool surface).
-func (t *Tool) effectiveMode(args Args) SpawnMode {
-	m := SpawnMode(strings.ToLower(strings.TrimSpace(args.Mode)))
-	if m.Valid() {
-		return m
+func (t *Tool) effectiveMode(args Args, profileMode SpawnMode, explicit bool) SpawnMode {
+	argMode := normalizeMode(args.Mode)
+	profileMode = normalizeMode(string(profileMode))
+	if explicit && argMode.Valid() {
+		return argMode
+	}
+	if profileMode.Valid() && argMode.Valid() {
+		return stricterMode(profileMode, argMode)
+	}
+	if profileMode.Valid() {
+		return profileMode
+	}
+	if argMode.Valid() {
+		return argMode
+	}
+	return SpawnModeImplement
+}
+
+func normalizeMode(raw string) SpawnMode {
+	mode := SpawnMode(strings.ToLower(strings.TrimSpace(raw)))
+	if mode.Valid() {
+		return mode
 	}
 	return ""
+}
+
+func stricterMode(a, b SpawnMode) SpawnMode {
+	if modeRank(a) <= modeRank(b) {
+		return a
+	}
+	return b
+}
+
+func modeRank(mode SpawnMode) int {
+	switch mode {
+	case SpawnModeExplore:
+		return 0
+	case SpawnModeVerify:
+		return 1
+	case SpawnModeImplement:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func argsModeExplicit(params tools.ToolParameters) bool {
+	_, ok := params["mode"]
+	return ok
+}
+
+func findAgentCandidateName(agents []AgentCandidate, name string) bool {
+	_, ok := findAgentCandidate(agents, name)
+	return ok
 }

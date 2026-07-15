@@ -3,11 +3,14 @@ package tools
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -416,6 +419,22 @@ func (s ToolSpec) ChangesWorkspace() bool {
 	return s.Mutates || s.AffectsWorkspace
 }
 
+// ErrInvalidToolName is returned by ValidateToolSpec and registry registration
+// when a ToolSpec has an empty or whitespace-only Name.
+var ErrInvalidToolName = errors.New("tools: invalid tool name")
+
+// ValidateToolSpec checks that a ToolSpec meets basic invariants:
+//   - Name is non-empty after trimming whitespace
+//
+// Additional provider-specific constraints (name length, character set) should
+// be enforced at the provider conversion boundary, not here.
+func ValidateToolSpec(spec ToolSpec) error {
+	if strings.TrimSpace(string(spec.Name)) == "" {
+		return fmt.Errorf("%w: name is empty or whitespace-only", ErrInvalidToolName)
+	}
+	return nil
+}
+
 // ToolPreference captures hints about a tool — enabled, weight for selection,
 // optional parameter overrides — used by upstream selectors.
 type ToolPreference struct {
@@ -471,7 +490,10 @@ func NewRegistry(tools ...Tool) *Registry {
 		providers: make(map[ToolName]string),
 	}
 	for _, t := range tools {
-		r.Register(t)
+		if err := r.register(t, ""); err != nil {
+			slog.Warn("registry: skipping tool with invalid spec", "name", t.Definition().Name, "error", err)
+			continue
+		}
 	}
 	return r
 }
@@ -479,19 +501,22 @@ func NewRegistry(tools ...Tool) *Registry {
 // Register adds a tool to the registry. Tools are addressed by their
 // Definition().Name; subsequent registrations under the same name
 // replace. The tool has no provider tag.
-func (r *Registry) Register(tool Tool) {
-	r.register(tool, "")
+func (r *Registry) Register(tool Tool) error {
+	return r.register(tool, "")
 }
 
 // RegisterWithProvider adds a tool tagged with a provider name. Useful
 // for tools discovered from a third-party source (MCP server, HA
 // entity sync, etc.) so profiles can whitelist by provider rather than
 // enumerating individual tool names.
-func (r *Registry) RegisterWithProvider(tool Tool, provider string) {
-	r.register(tool, provider)
+func (r *Registry) RegisterWithProvider(tool Tool, provider string) error {
+	return r.register(tool, provider)
 }
 
-func (r *Registry) register(tool Tool, provider string) {
+func (r *Registry) register(tool Tool, provider string) error {
+	if err := ValidateToolSpec(tool.Definition()); err != nil {
+		return err
+	}
 	name := tool.Definition().Name
 	r.mu.Lock()
 	r.tools[name] = tool
@@ -503,6 +528,7 @@ func (r *Registry) register(tool Tool, provider string) {
 	r.version++
 	r.invalidateSpecsLocked()
 	r.mu.Unlock()
+	return nil
 }
 
 // Unregister removes a tool by name.

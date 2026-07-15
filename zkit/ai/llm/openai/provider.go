@@ -62,9 +62,12 @@ type Provider struct {
 }
 
 const (
-	roleUser      = "user"
-	roleAssistant = "assistant"
-	roleTool      = "tool"
+	roleUser       = "user"
+	roleAssistant  = "assistant"
+	roleTool       = "tool"
+	modelGPT4oMini = "gpt-4o-mini"
+	typeFunction   = "function"
+	jsonKeyType    = "type"
 )
 
 // NewProvider creates a new OpenAI provider with variadic options.
@@ -83,7 +86,7 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) (*Provider, er
 
 	provider := &Provider{
 		client:  client,
-		model:   "gpt-4o-mini", // Default model
+		model:   modelGPT4oMini, // Default model
 		apiKey:  apiKey,
 		baseURL: "https://api.openai.com/v1", // Default base URL
 	}
@@ -106,10 +109,22 @@ func (p *Provider) Name() string {
 // channel.
 func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		if req.Stream {
-			p.streamCompletion(ctx, req, yield)
-		} else {
-			p.nonStreamCompletion(ctx, req, yield)
+		plan, err := planRequest(p.model, req)
+		if err != nil {
+			yield(llm.CompletionChunk{Done: true}, err)
+			return
+		}
+		switch plan := plan.(type) {
+		case chatCompletionPlan:
+			if req.Stream {
+				p.streamCompletion(ctx, req, plan, yield)
+			} else {
+				p.nonStreamCompletion(ctx, req, plan, yield)
+			}
+		case responsesPlan:
+			p.responsesCompletion(ctx, req, plan, yield)
+		default:
+			yield(llm.CompletionChunk{Done: true}, fmt.Errorf("openai: unhandled request plan %T", plan))
 		}
 	}, nil
 }
@@ -117,7 +132,7 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (ite
 // streamCompletion handles streaming responses using the official OpenAI SDK,
 // yielding each chunk (errors as the second value). It stops early if yield
 // returns false (the consumer broke / the attempt was cancelled).
-func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
+func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, plan chatCompletionPlan, yield func(llm.CompletionChunk, error) bool) {
 	// Convert our LLM messages to OpenAI messages
 	messages := p.convertMessagesToOpenAI(req.Messages)
 
@@ -143,9 +158,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	if req.Temperature > 0 {
 		params.Temperature = openai.Float(float64(req.Temperature))
 	}
-	if req.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(req.MaxTokens))
-	}
+	applyChatTokenLimit(&params, plan.tokenLimit, req.MaxTokens)
 
 	// Convert tools if present. Always send tool_choice: "auto"
 	// explicitly when tools are in play — hosted OpenAI's default IS
@@ -257,7 +270,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 					}
 					toolCalls = append(toolCalls, llm.ToolCall{
 						ID:   id,
-						Type: "function",
+						Type: typeFunction,
 						Function: llm.ToolCallFunction{
 							Name:      tc.Function.Name,
 							Arguments: tc.Function.Arguments,
@@ -468,6 +481,7 @@ func userFacingAPIError(err error) error {
 		rle := &llm.RateLimitError{
 			Message:   msg,
 			Permanent: isPermanentQuotaError(apiErr),
+			Retryable: !isPermanentQuotaError(apiErr),
 		}
 		if resp := apiErr.Response; resp != nil {
 			rle.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
@@ -531,6 +545,7 @@ func parseRateLimitReset(v string) time.Time {
 func (p *Provider) nonStreamCompletion(
 	ctx context.Context,
 	req llm.CompletionRequest,
+	plan chatCompletionPlan,
 	yield func(llm.CompletionChunk, error) bool,
 ) {
 	// Convert our LLM messages to OpenAI messages
@@ -546,9 +561,7 @@ func (p *Provider) nonStreamCompletion(
 	if req.Temperature > 0 {
 		params.Temperature = openai.Float(float64(req.Temperature))
 	}
-	if req.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(req.MaxTokens))
-	}
+	applyChatTokenLimit(&params, plan.tokenLimit, req.MaxTokens)
 
 	// Convert tools if present. See streaming path for tool_choice
 	// rationale — same explicit "auto" applies here.
@@ -576,7 +589,7 @@ func (p *Provider) nonStreamCompletion(
 		for _, tc := range choice.Message.ToolCalls {
 			toolCalls = append(toolCalls, llm.ToolCall{
 				ID:   tc.ID,
-				Type: "function",
+				Type: typeFunction,
 				Function: llm.ToolCallFunction{
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
@@ -641,6 +654,22 @@ func (p *Provider) nonStreamCompletion(
 //
 // HTTP 400.
 //
+// applyChatTokenLimit maps the provider-neutral completion cap onto the
+// Chat Completions parameter selected by the typed request plan.
+func applyChatTokenLimit(params *openai.ChatCompletionNewParams, field TokenLimitField, maxTokens int) {
+	if maxTokens <= 0 {
+		return
+	}
+	switch field {
+	case TokenLimitFields.TOKENLIMITMAXCOMPLETIONTOKENS:
+		params.MaxCompletionTokens = openai.Int(int64(maxTokens))
+	case TokenLimitFields.TOKENLIMITMAXTOKENS:
+		params.MaxTokens = openai.Int(int64(maxTokens))
+	default:
+		params.MaxTokens = openai.Int(int64(maxTokens))
+	}
+}
+
 // Returns the option slice the callers spread into their
 // NewStreaming/New variadics.
 func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestOption {
@@ -673,7 +702,7 @@ func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestO
 func buildResponseFormat(rf llm.ResponseFormat) (map[string]any, bool) {
 	switch rf.Type {
 	case llm.ResponseFormatJSONObject:
-		return map[string]any{"type": "json_object"}, true
+		return map[string]any{jsonKeyType: "json_object"}, true
 	case llm.ResponseFormatJSONSchema:
 		if rf.Schema.IsZero() {
 			return nil, false

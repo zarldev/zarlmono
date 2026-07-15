@@ -65,16 +65,11 @@ func TestPolicy_UnsafeRedirectBlocks(t *testing.T) {
 func TestPolicy_SafeCommandPasses(t *testing.T) {
 	t.Parallel()
 	cases := []string{
-		"ls -la",
 		"git log --oneline",
 		"go test ./pkg/foo",
 		"echo hi > /dev/null",
-		"grep -r foo .",
-		// Informational risks (expansion, subshell, operator) don't block.
 		"echo $HOME",
 		"echo $(date)",
-		"ls | wc -l",
-		"ls && pwd",
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
@@ -92,11 +87,43 @@ func TestPolicy_DecisionEchoesReasonCodes(t *testing.T) {
 	t.Parallel()
 	ir, _ := shellpolicy.NewUnixParser().Parse("ls | grep foo")
 	d := shellpolicy.NewPolicyEngine().Decide(ir)
-	if d.IsBlocked {
-		t.Fatalf("Decide(pipe): want pass, got Block(%q)", d.BlockReason)
+	if !d.IsBlocked {
+		t.Fatalf("Decide(shell read pipeline): want block")
+	}
+	if !strings.Contains(d.BlockReason, "workspace tools") {
+		t.Errorf("BlockReason = %q, want workspace-tool guidance", d.BlockReason)
 	}
 	if len(d.ReasonCodes) == 0 {
 		t.Error("ReasonCodes = empty, want the operator flag echoed")
+	}
+}
+
+func TestPolicy_ShellReadToolsBlockWithGuidance(t *testing.T) {
+	t.Parallel()
+	for _, cmd := range []string{"grep -r foo .", "sed -n '1,20p' main.go", "find . -name '*.go'", "head -20 README.md"} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			ir, _ := shellpolicy.NewUnixParser().Parse(cmd)
+			d := shellpolicy.NewPolicyEngine().Decide(ir)
+			if !d.IsBlocked {
+				t.Fatalf("Decide(%q): want shell read-tool block", cmd)
+			}
+			if !strings.Contains(d.BlockReason, "registered workspace tools") {
+				t.Errorf("BlockReason = %q, want registered-tool guidance", d.BlockReason)
+			}
+		})
+	}
+}
+
+func TestPolicy_OpaqueInterpreterBlocks(t *testing.T) {
+	t.Parallel()
+	ir, _ := shellpolicy.NewUnixParser().Parse("echo 'print(1)' | python3")
+	d := shellpolicy.NewPolicyEngine().Decide(ir)
+	if !d.IsBlocked {
+		t.Fatal("opaque interpreter: want block")
+	}
+	if !strings.Contains(d.BlockReason, "static analysis cannot inspect") {
+		t.Errorf("BlockReason = %q, want opaque-payload guidance", d.BlockReason)
 	}
 }
 

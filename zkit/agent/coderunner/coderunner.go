@@ -31,6 +31,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
@@ -38,6 +39,32 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/options"
 )
+
+// ProgrammaticReadPolicy returns the conservative v1 allowlist for nested
+// program tool calls. It intentionally combines exact names with the current
+// spec capability flags so dynamic or reclassified tools fail closed.
+func ProgrammaticReadPolicy() program.Policy {
+	allowed := map[tools.ToolName]struct{}{
+		code.ToolNameRead:         {},
+		code.ToolNameGrep:         {},
+		code.ToolNameGlob:         {},
+		code.ToolNameLs:           {},
+		code.ToolNameFileMap:      {},
+		code.ToolNameRetrieveCode: {},
+		tools.ToolNameWebSearch:   {},
+		tools.ToolNameWebFetch:    {},
+		"list_skills":             {},
+		"list_agents":             {},
+		"list_instructions":       {},
+	}
+	return func(spec tools.ToolSpec) bool {
+		if spec.Name == program.ToolName || spec.ChangesWorkspace() {
+			return false
+		}
+		_, ok := allowed[spec.Name]
+		return ok
+	}
+}
 
 // RegisterStandardTools registers the standard workspace code-tool set onto
 // reg: the file tools (write, edit), the read/search tools (read, grep, ls,
@@ -79,23 +106,23 @@ func RegisterStandardTools(reg *tools.Registry, ws code.Workspace, pm *code.Proc
 		readOpts = append(readOpts, code.WithUnrestrictedReads())
 	}
 	if pm != nil {
-		reg.Register(code.NewBashTool(ws, append(bashOpts, code.WithProcessManager(pm))...))
-		reg.Register(code.NewBashOutputTool(pm))
-		reg.Register(code.NewStopProcessTool(pm))
-		reg.Register(code.NewListProcessesTool(pm))
+		_ = reg.Register(code.NewBashTool(ws, append(bashOpts, code.WithProcessManager(pm))...))
+		_ = reg.Register(code.NewBashOutputTool(pm))
+		_ = reg.Register(code.NewStopProcessTool(pm))
+		_ = reg.Register(code.NewListProcessesTool(pm))
 	} else {
-		reg.Register(code.NewBashTool(ws, bashOpts...))
+		_ = reg.Register(code.NewBashTool(ws, bashOpts...))
 	}
-	reg.Register(code.NewReadFileHLTool(ws, readOpts...))
-	reg.Register(code.NewWriteTool(ws))
-	reg.Register(code.NewEditFileHLTool(ws))
-	reg.Register(code.NewGrepTool(ws, readOpts...))
-	reg.Register(code.NewLsTool(ws, readOpts...))
-	reg.Register(code.NewGlobTool(ws, readOpts...))
-	reg.Register(code.NewFileMapTool(ws, readOpts...))
-	reg.Register(code.NewRetrieveCodeTool(ws, readOpts...))
-	reg.Register(code.NewSavePlanTool(ws))
-	reg.Register(code.NewSavePlanAppendTool(ws))
+	_ = reg.Register(code.NewReadFileHLTool(ws, readOpts...))
+	_ = reg.Register(code.NewWriteTool(ws))
+	_ = reg.Register(code.NewEditFileHLTool(ws))
+	_ = reg.Register(code.NewGrepTool(ws, readOpts...))
+	_ = reg.Register(code.NewLsTool(ws, readOpts...))
+	_ = reg.Register(code.NewGlobTool(ws, readOpts...))
+	_ = reg.Register(code.NewFileMapTool(ws, readOpts...))
+	_ = reg.Register(code.NewRetrieveCodeTool(ws, readOpts...))
+	_ = reg.Register(code.NewSavePlanTool(ws))
+	_ = reg.Register(code.NewSavePlanAppendTool(ws))
 }
 
 // toolsConfig collects RegisterStandardTools options.
@@ -154,7 +181,7 @@ func RegisterSpawnTool(reg *tools.Registry, parent *runner.Runner, maxDepth, spa
 	if maxDepth == 0 {
 		return // spawning explicitly disabled — don't surface the tool
 	}
-	reg.Register(spawn.New(parent,
+	_ = reg.Register(spawn.New(parent,
 		spawn.WithMaxDepth(maxDepth),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
 		spawn.WithModeToolPolicy(SpawnModePolicy()),
@@ -431,11 +458,12 @@ func StandardCompactor(inner compact.Compactor, window, reserve int) *compact.Pr
 
 // StandardFanoutLimits are the per-tool repeat-call caps the guardrail
 // chain enforces — the shared invariant both consumers run with. Returned
-// fresh (the map is mutable) so a caller can tune one entry without
-// mutating the canonical set.
+// fresh (the map is mutable) so a caller can tune one entry without mutating
+// the canonical set. Read is intentionally not capped here: it is the
+// primary way an agent gets precise evidence into its own context, and repeated
+// identical reads are already memoized per task.
 func StandardFanoutLimits() map[tools.ToolName]int {
 	return map[tools.ToolName]int{
-		code.ToolNameRead: 30,
 		code.ToolNameLs:   20,
 		code.ToolNameGrep: 30,
 		code.ToolNameGlob: 20,

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -22,11 +23,12 @@ import (
 // renders enough items from the bottom to fill the viewport, so cost is
 // O(viewport) regardless of history length.
 type timeline struct {
-	items   []item
-	toolIdx map[string]toolRef   // ToolID -> its row + the group it lives in
-	turns   map[string]*openTurn // TaskID -> in-progress turn (split think/answer)
-	cache   map[item]cacheEntry  // per-item render cache, keyed (width, version)
-	queued  []*queuedUserItem    // FIFO user inputs waiting for SteerInjected
+	items           []item
+	toolIdx         map[string]toolRef            // ToolID -> its row + the group it lives in
+	turns           map[string]*openTurn          // TaskID -> in-progress turn (split think/answer)
+	cache           map[item]cacheEntry           // per-item render cache, keyed (width, version)
+	pendingChildren map[string][]pendingToolChild // Parent ToolID -> children that arrived first
+	queued          []*queuedUserItem             // FIFO user inputs waiting for SteerInjected
 
 	// subAgents tracks in-progress sub-agent runs by TaskID. Depth>0
 	// events route into the matching subAgentItem instead of the flat
@@ -62,11 +64,18 @@ type timeline struct {
 	visLocal []int
 }
 
+type pendingToolChild struct {
+	toolID   string
+	sequence int
+	tool     *toolItem
+}
+
 // Clear resets the timeline to empty, discarding all items, turns, caches,
 // and queued inputs. Does not affect the current run — only the transcript.
 func (tl *timeline) Clear() {
 	tl.items = nil
 	tl.toolIdx = make(map[string]toolRef)
+	tl.pendingChildren = make(map[string][]pendingToolChild)
 	tl.turns = make(map[string]*openTurn)
 	tl.cache = make(map[item]cacheEntry)
 	tl.queued = nil
@@ -83,10 +92,11 @@ func (tl *timeline) Clear() {
 
 func newTimeline() *timeline {
 	return &timeline{
-		toolIdx:   make(map[string]toolRef),
-		turns:     make(map[string]*openTurn),
-		cache:     make(map[item]cacheEntry),
-		subAgents: make(map[string]*subAgentItem),
+		toolIdx:         make(map[string]toolRef),
+		pendingChildren: make(map[string][]pendingToolChild),
+		turns:           make(map[string]*openTurn),
+		cache:           make(map[item]cacheEntry),
+		subAgents:       make(map[string]*subAgentItem),
 	}
 }
 
@@ -202,7 +212,29 @@ type toolItem struct {
 	result   string     // full formatted output (or error); shown when expanded
 	data     any        // typed structured result (code.GrepResult, …); nil = render from result string
 	dur      time.Duration
+	sequence int
 	expanded bool // result shown ([-]) vs hidden ([+]); only meaningful once result != ""
+	children []*toolItem
+}
+
+func (t *toolItem) childSummary() string {
+	if len(t.children) == 0 {
+		return ""
+	}
+	done, failed := 0, 0
+	for _, child := range t.children {
+		if child.state != toolRunning {
+			done++
+		}
+		if child.state == toolFailed {
+			failed++
+		}
+	}
+	summary := fmt.Sprintf("%d/%d calls", done, len(t.children))
+	if failed > 0 {
+		summary += fmt.Sprintf(", %d failed", failed)
+	}
+	return summary
 }
 
 func (t *toolItem) render(width int) []string {
@@ -220,15 +252,20 @@ func (t *toolItem) render(width int) []string {
 	if t.arg != "" {
 		head += "  " + t.arg
 	}
+	if summary := t.childSummary(); summary != "" {
+		head += "  " + palette.Muted.On("· "+summary)
+	}
 	if t.effect != "" {
 		head += "  " + palette.Muted.On("· "+t.effect)
 	}
 	if t.dur > 0 {
 		head += "  (" + t.dur.Round(time.Millisecond).String() + ")"
 	}
-	// Once there's output, prefix a clickable toggle so each tool row can hide
-	// or show its result independently of its siblings.
-	if t.result != "" {
+	// Prefix a clickable disclosure when the tool has output or nested calls. For
+	// program, the disclosure hides/shows the nested call list; each child row can
+	// then open its own result independently.
+	hasDisclosure := t.result != "" || len(t.children) > 0
+	if hasDisclosure {
 		glyph := palette.Subtle.On("[") + palette.Primary.On("-") + palette.Subtle.On("] ")
 		if !t.expanded {
 			glyph = palette.Subtle.On("[") + palette.Primary.On("+") + palette.Subtle.On("] ")
@@ -237,13 +274,40 @@ func (t *toolItem) render(width int) []string {
 	}
 	lines := []string{head}
 	if t.result != "" && t.expanded {
-		lines = append(lines, renderToolResult(width-t.depth*2, t.name, t.arg, t.result,
-			withBodyPrefix("    "),
-			withMaxLines(toolResultMaxLines),
-			withData(t.data),
-		)...)
+		if t.suppressesResultBody() {
+			lines = append(lines, palette.Muted.On("    "+t.childSummary()))
+		} else {
+			lines = append(lines, renderToolResult(width-t.depth*2, t.name, t.arg, t.result,
+				withBodyPrefix("    "),
+				withMaxLines(toolResultMaxLines),
+				withData(t.data),
+			)...)
+		}
+	}
+	if t.expanded {
+		for _, child := range t.children {
+			lines = append(lines, child.render(width)...)
+		}
 	}
 	return indentLines(lines, t.depth)
+}
+
+func (t *toolItem) suppressesResultBody() bool {
+	return t.name == "program" && len(t.children) > 0 && t.childSummary() != ""
+}
+
+func (t *toolItem) togglerAt(width, ln int) toggler {
+	if ln == 0 {
+		return t
+	}
+	if !t.expanded || len(t.children) == 0 {
+		return nil
+	}
+	children := make([]item, 0, len(t.children))
+	for _, child := range t.children {
+		children = append(children, child)
+	}
+	return renderChildBlock(children, width).togglerForLine(ln, width, children, t.bump)
 }
 func (t *toolItem) finished() bool { return t.state != toolRunning }
 
@@ -340,8 +404,13 @@ func (tl *timeline) addNotice(text string) {
 }
 
 func (tl *timeline) attachCompaction(taskID, text string) {
-	if turn := tl.ensureTurn(taskID, 0); turn != nil && turn.resp != nil {
+	if taskID == "manual-compact" {
+		tl.pushItem(newCompactionItem(text))
+		return
+	}
+	if turn := tl.turns[taskID]; turn != nil && turn.resp != nil {
 		turn.resp.compactionNotice = text
+		turn.resp.bump()
 	}
 }
 
@@ -466,7 +535,20 @@ func (tl *timeline) endTurn(taskID string) {
 	delete(tl.turns, taskID)
 }
 
-func (tl *timeline) startTool(taskID string, depth int, toolID, name, arg string) {
+func (tl *timeline) startToolWithParent(taskID string, depth int, toolID, name, arg, parentToolID string, sequence int) {
+	if parentToolID != "" {
+		child := &toolItem{depth: depth + 1, name: name, arg: arg, state: toolRunning, sequence: sequence}
+		if ref, ok := tl.toolIdx[parentToolID]; ok && ref.tool != nil {
+			tl.attachChildTool(ref, toolID, child, sequence)
+			return
+		}
+		if tl.pendingChildren == nil {
+			tl.pendingChildren = make(map[string][]pendingToolChild)
+		}
+		tl.pendingChildren[parentToolID] = append(tl.pendingChildren[parentToolID], pendingToolChild{toolID: toolID, sequence: sequence, tool: child})
+		tl.toolIdx[toolID] = toolRef{tool: child}
+		return
+	}
 	if sa := tl.subAgents[taskID]; sa != nil {
 		sa.startTool(toolID, name, arg)
 		return
@@ -481,6 +563,51 @@ func (tl *timeline) startTool(taskID string, depth int, toolID, name, arg string
 	t := &toolItem{name: name, arg: arg, state: toolRunning}
 	g.add(t)
 	tl.toolIdx[toolID] = toolRef{group: g, tool: t}
+	tl.attachPendingChildren(toolID, toolRef{group: g, tool: t})
+}
+
+func (tl *timeline) attachChildTool(parentRef toolRef, toolID string, child *toolItem, sequence int) {
+	insertChildBySequence(parentRef.tool, child, sequence)
+	tl.toolIdx[toolID] = toolRef{group: parentRef.group, tool: child}
+	tl.bumpToolOwner(parentRef)
+}
+
+func (tl *timeline) attachPendingChildren(parentToolID string, parentRef toolRef) {
+	pending := tl.pendingChildren[parentToolID]
+	if len(pending) == 0 || parentRef.tool == nil {
+		return
+	}
+	delete(tl.pendingChildren, parentToolID)
+	for _, p := range pending {
+		tl.attachChildTool(parentRef, p.toolID, p.tool, p.sequence)
+	}
+}
+
+func (tl *timeline) bumpToolOwner(ref toolRef) {
+	if ref.group != nil {
+		ref.group.bump()
+		return
+	}
+	if ref.tool != nil {
+		ref.tool.bump()
+	}
+}
+
+func insertChildBySequence(parent, child *toolItem, sequence int) {
+	if parent == nil {
+		return
+	}
+	child.sequence = sequence
+	idx := len(parent.children)
+	for i, existing := range parent.children {
+		if existing != nil && existing.sequence > sequence {
+			idx = i
+			break
+		}
+	}
+	parent.children = append(parent.children, nil)
+	copy(parent.children[idx+1:], parent.children[idx:])
+	parent.children[idx] = child
 }
 
 func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duration, failed bool, failKind tools.Kind, effects ...string) {
@@ -495,7 +622,7 @@ func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duratio
 		ref.tool.data = data
 		ref.tool.effect = firstEffectSummary(effects)
 		ref.tool.dur = dur
-		ref.group.bump()
+		tl.bumpToolOwner(ref)
 		return
 	}
 	// Check sub-agent tool indices — tools spawned by sub-agents are

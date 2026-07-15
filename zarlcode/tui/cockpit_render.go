@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
@@ -72,7 +74,7 @@ func (m *UI) cockpitLines(width int) []string {
 	// --- COST ----------------------------------------------------------
 	add(sectionHead("cost", width))
 	switch {
-	case s.hasPricing():
+	case s.hasPricing() || s.hasSessionCost():
 		add(s.costSummary())
 		if s.sessionCached > 0 {
 			add(s.cacheSavedLine())
@@ -125,7 +127,7 @@ func (m *UI) stateSidebarContent(width, height int) []string {
 	add("")
 	add(sectionHead("cost", width))
 	switch {
-	case s.hasPricing():
+	case s.hasPricing() || s.hasSessionCost():
 		add(s.costSummary())
 		if s.sessionCached > 0 {
 			add(s.cacheSavedLine())
@@ -365,8 +367,10 @@ func (m *UI) llmStateLines() []string {
 		add("window", palette.Muted.On("unknown"))
 	}
 
+	if effort := m.reasoningEffortLine(); effort != "" {
+		add("reasoning", effort)
+	}
 	add("billing", s.billingLine())
-
 	if m.session.Workspace != "" {
 		add("workspace", palette.Fg.On(m.session.Workspace))
 	}
@@ -389,6 +393,20 @@ func (m *UI) llmStateLines() []string {
 	}
 
 	return out
+}
+
+func (m *UI) reasoningEffortLine() string {
+	if m.session.Provider != backends.NameOpenAICodex.String() {
+		return ""
+	}
+	effort := strings.TrimSpace(m.session.ProvSpec.CodexEffort)
+	if effort != "" {
+		return palette.Fg.On(effort)
+	}
+	for _, effort := range openaicodex.EffortVariants(m.session.Model) {
+		return palette.Fg.On("auto") + palette.Muted.On(" · ") + palette.Subtle.On(effort)
+	}
+	return palette.Fg.On("auto") + palette.Muted.On(" · model default")
 }
 
 func (m *UI) workspaceChangesLine() string {
@@ -477,7 +495,8 @@ func (s *RunState) compactionPressureLine() string {
 
 // contextRoleBar paints the v1-style composition graph: the context window
 // partitioned by role (system / user / assistant) with tool content further
-// split into load_skill (skills) / spawn_agent (agents) / other tool output,
+// split into load_skill (skills) / spawn_agent (agents) / load_instruction
+// (instructions) / other tool output,
 // then free headroom. Per-role token estimates (bytes/4) are scaled to sum
 // to the provider-authoritative used count so the bar's free share matches
 // the gauge above it; rounding drift lands in the free segment.
@@ -488,7 +507,8 @@ func contextRoleBar(s *RunState, width int) string {
 	tool := float64(s.ctxToolBytes) / 4
 	skill := float64(s.ctxSkillBytes) / 4
 	agent := float64(s.ctxAgentBytes) / 4
-	other := tool - skill - agent
+	instruction := float64(s.ctxInstructionBytes) / 4
+	other := tool - skill - agent - instruction
 	if other < 0 {
 		other = 0
 	}
@@ -509,13 +529,14 @@ func contextRoleBar(s *RunState, width int) string {
 		{weight: asst * scale, color: palette.Assistant, glyph: '█'},
 		{weight: skill * scale, color: palette.Primary, glyph: '█'},
 		{weight: agent * scale, color: palette.Secondary, glyph: '█'},
+		{weight: instruction * scale, color: palette.Info, glyph: '█'},
 		{weight: other * scale, color: palette.Tool, glyph: '█'},
 		{weight: free, color: palette.Muted, glyph: '░'},
 	}, width), width)
 }
 
 // contextRoleLegend labels the role bar with per-role message counts,
-// matching the bar's colours. A second line surfaces skill / agent content
+// matching the bar's colours. A second line surfaces skill / agent / instruction content
 // only when present so the common case stays one line. Returns one row per
 // line so the caller can draw each on its own screen row.
 func contextRoleLegend(s *RunState) []string {
@@ -529,10 +550,11 @@ func contextRoleLegend(s *RunState) []string {
 			swatch(palette.Tool, "tool", s.ctxToolMsgs) + " " +
 			palette.Muted.On("░ free"),
 	}
-	if s.ctxSkillBytes > 0 || s.ctxAgentBytes > 0 {
+	if s.ctxSkillBytes > 0 || s.ctxAgentBytes > 0 || s.ctxInstructionBytes > 0 {
 		out = append(out,
 			palette.Primary.On("█")+palette.Subtle.On(" skills")+"  "+
-				palette.Secondary.On("█")+palette.Subtle.On(" agents")+
+				palette.Secondary.On("█")+palette.Subtle.On(" agents")+"  "+
+				palette.Info.On("█")+palette.Subtle.On(" instructions")+
 				palette.Muted.On("  (of tool)"))
 	}
 	return out
@@ -711,7 +733,7 @@ func (s *RunState) sessionTotalsLine() string {
 	if s.sessionToolCalls > 0 {
 		parts = append(parts, palette.Fg.On(fmtCount(s.sessionToolCalls))+palette.Subtle.On(" calls"))
 	}
-	if s.hasPricing() {
+	if s.hasPricing() || s.hasSessionCost() {
 		parts = append(parts, palette.Fg.On(fmtUSD(s.sessionCost()))+palette.Subtle.On(" spend"))
 	}
 	return strings.Join(parts, palette.Muted.On(" · "))

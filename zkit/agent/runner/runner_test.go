@@ -21,14 +21,16 @@ import (
 // fakeProvider scripts a sequence of CompletionChunk arrays — one
 // array per Complete() call, in the order the runner makes them.
 type fakeProvider struct {
-	mu    sync.Mutex
-	turns [][]llm.CompletionChunk
-	calls int
+	mu       sync.Mutex
+	turns    [][]llm.CompletionChunk
+	calls    int
+	requests []llm.CompletionRequest
 }
 
-func (f *fakeProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (f *fakeProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.requests = append(f.requests, req)
 	if f.calls >= len(f.turns) {
 		return nil, fmt.Errorf("fakeProvider: out of scripted turns (call #%d)", f.calls+1)
 	}
@@ -49,6 +51,12 @@ func (f *fakeProvider) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+func (f *fakeProvider) request(i int) llm.CompletionRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests[i]
 }
 
 func (f *fakeProvider) Name() string { return "fake" }
@@ -117,6 +125,37 @@ func chunkDoneUsage(prompt, completion int) llm.CompletionChunk {
 }
 
 // --- tests ---
+
+func TestRun_SkipsToolsWithEmptyNames(t *testing.T) {
+	t.Parallel()
+
+	provider := &fakeProvider{
+		turns: [][]llm.CompletionChunk{
+			{chunkText("ok"), chunkDone()},
+		},
+	}
+	reg := newRegistry(
+		stubTool{name: "", result: "bad"},
+		stubTool{name: "read", result: "good"},
+	)
+
+	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg), runner.WithMaxIterations(1))
+	res := r.Run(t.Context(), runner.TaskSpec{
+		ID:     taskscope.ID(uuid.NewString()),
+		Prompt: "hello",
+	})
+	if res.Err != nil {
+		t.Fatalf("Run: %v", res.Err)
+	}
+
+	req := provider.request(0)
+	if len(req.Tools) != 1 {
+		t.Fatalf("tool count = %d, want 1 (%+v)", len(req.Tools), req.Tools)
+	}
+	if got := req.Tools[0].Function.Name; got != "read" {
+		t.Fatalf("tool name = %q, want read", got)
+	}
+}
 
 func TestRun_TextOnlyResponseEndsAsCompleted(t *testing.T) {
 	t.Parallel()

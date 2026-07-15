@@ -15,8 +15,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime/debug"
+	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/cli"
+	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 	"github.com/zarldev/zarlmono/zarlcode/version"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
@@ -120,5 +124,28 @@ func Main() {
 		MaxIter:   *maxIterFlag,
 		PprofAddr: *pprofAddr,
 		TraceFile: *traceFile,
-	}).Run(context.Background()))
+	}, zapp.WithPanicHandler[*tui.Zarlcode](recordPanic)).Run(context.Background()))
+}
+
+func recordPanic(appName string, recovered any) {
+	stack := debug.Stack()
+	now := time.Now()
+	body := fmt.Sprintf("%s panic recovered at %s\n\npanic: %v\n\n%s", appName, now.Format(time.RFC3339Nano), recovered, stack)
+
+	path := ""
+	if cacheDir, err := home.CacheDir(); err == nil {
+		logDir := filepath.Join(cacheDir, "logs")
+		if err := os.MkdirAll(logDir, 0o700); err == nil {
+			path = filepath.Join(logDir, fmt.Sprintf("%s_crash_%s.log", appName, now.Format("2006-01-02_15-04-05")))
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				path = ""
+			}
+		}
+	}
+
+	if path != "" {
+		fmt.Fprintf(os.Stderr, "%s: panic recovered; crash log written to %s\n", appName, path)
+		return
+	}
+	fmt.Fprintln(os.Stderr, body)
 }

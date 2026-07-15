@@ -26,8 +26,8 @@ import (
 )
 
 // Agent is one named agent profile. The execution fields (provider, model,
-// iterations, thinking, workspace) are optional in the frontmatter; an empty
-// value means "inherit the shell default".
+// iterations, thinking, mode, workspace) are optional in the frontmatter; an
+// empty value means "inherit the shell default" unless documented otherwise.
 type Agent struct {
 	Name          string
 	Description   string
@@ -35,6 +35,7 @@ type Agent struct {
 	Model         string
 	MaxIterations int
 	Thinking      bool
+	Mode          string
 	// Workspace is parsed from the agent definition but NOT yet enforced: a
 	// delegated sub-agent runs in the parent's workspace, not this one. It
 	// is intentionally not advertised in the system prompt or list_agents so
@@ -102,6 +103,7 @@ type agentFrontmatter struct {
 	MaxIterations    int    `yaml:"max_iterations"`
 	Thinking         *bool  `yaml:"thinking"`
 	ToolOutputFormat string `yaml:"tool_output_format"`
+	Mode             string `yaml:"mode"`
 	Workspace        string `yaml:"workspace"`
 	WorkspaceRoot    string `yaml:"workspace_root"`
 }
@@ -268,6 +270,10 @@ func loadAgentFile(path string) (Agent, error) {
 	if fm.Description == "" {
 		return Agent{}, errors.New("frontmatter is missing required field `description`")
 	}
+	mode, err := parseAgentMode(fm.Mode)
+	if err != nil {
+		return Agent{}, err
+	}
 	thinking := false
 	if fm.Thinking != nil {
 		thinking = *fm.Thinking
@@ -279,11 +285,22 @@ func loadAgentFile(path string) (Agent, error) {
 		Model:            strings.TrimSpace(fm.Model),
 		MaxIterations:    fm.MaxIterations,
 		Thinking:         thinking,
+		Mode:             mode,
 		Workspace:        firstNonEmpty(strings.TrimSpace(fm.WorkspaceRoot), strings.TrimSpace(fm.Workspace)),
 		ToolOutputFormat: strings.TrimSpace(fm.ToolOutputFormat),
 		Body:             strings.TrimSpace(body),
 		Source:           path,
 	}, nil
+}
+
+func parseAgentMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "", "explore", "verify", "implement":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("frontmatter mode %q must be one of explore, verify, implement", raw)
+	}
 }
 
 func loadSkillFile(path string) (Skill, error) {

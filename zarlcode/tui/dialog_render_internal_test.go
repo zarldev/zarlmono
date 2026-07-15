@@ -8,6 +8,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -49,6 +50,24 @@ func TestModelQuickPick_RendersFramedBox(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("model picker render missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestModelQuickPick_CyclesCodexReasoningEffort(t *testing.T) {
+	var got string
+	p := newModelQuickPickWithEffort(
+		[]string{backends.NameOpenAICodex.String()},
+		map[string][]string{backends.NameOpenAICodex.String(): {"gpt-5.3-codex-spark"}},
+		backends.NameOpenAICodex.String(), "gpt-5.3-codex-spark", "",
+		func(string, string) {}, func(effort string) { got = effort }, nil,
+	)
+	p.handleKey(tkey("]"))
+	if got != "low" || p.effort != "low" {
+		t.Fatalf("effort = %q callback = %q, want low", p.effort, got)
+	}
+	p.handleKey(tkey("]"))
+	if got != "" || p.effort != "" {
+		t.Fatalf("second cycle effort = %q callback = %q, want auto/empty", p.effort, got)
 	}
 }
 

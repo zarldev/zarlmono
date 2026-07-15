@@ -116,14 +116,12 @@ var effortVariants = map[string][]reasoningEffort{
 	modelGPT56Terra: gpt56Efforts(),
 	modelGPT56Luna:  gpt56Efforts(),
 	modelGPT55: {
-		reasoningEffortNone,
 		reasoningEffortLow,
 		reasoningEffortMedium,
 		reasoningEffortHigh,
 		reasoningEffortXHigh,
 	},
 	modelGPT54: {
-		reasoningEffortNone,
 		reasoningEffortLow,
 		reasoningEffortMedium,
 		reasoningEffortHigh,
