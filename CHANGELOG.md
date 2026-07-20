@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [zarlcode/v0.5.0] — 2026-07-20
+`zarlcode/v0.5.0`
+
+### Added
+
+- Immutable embedded prompt core with additive `~/.zarlcode/preferences.md` guidance and explicit `~/.zarlcode/prompt.override.md` full BUILD-mode overrides.
+- Conservative migration handling for legacy `~/.zarlcode/prompt.md` files, including known shipped-seed detection.
+- Prompt inspector metadata for active source, preferences source, resolution mode, and rendered prompt size.
+- Golden rendered-prompt coverage plus resolver/materialisation/runtime-inspector regression tests.
+
+### Changed
+
+- `zarlcode init` no longer materialises the embedded system prompt into `~/.zarlcode/prompt.md` for new installs.
+- Runtime prompt dispatch and inspector rendering now share the same resolved prompt path.
+- Prompt rendering now gates tool-authoring and tool-registration guidance separately.
+- Plan/build prompt text was tightened around durable preferences, plan persistence order, and tool capability claims.
+
+### Fixed
+
+- Existing users with untouched generated prompt copies now receive shipped prompt fixes again.
+- Inspector output no longer diverges from the next provider request when prompt overrides/preferences exist.
+- Stale prompt prose was corrected, including the plan-mode keybinding claim, a malformed `spawn_agent` sentence, and a concatenated markdown heading.
+
 ## [zkit/v0.4.0] — 2026-07-15
 `zkit/v0.4.0`
 
