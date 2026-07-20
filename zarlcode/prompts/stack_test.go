@@ -43,6 +43,15 @@ func TestNewStackTotalsContributingFragmentsWithoutRenderedTotal(t *testing.T) {
 	if stack.TotalLines != 1 {
 		t.Fatalf("total lines = %d, want 1", stack.TotalLines)
 	}
+	if stack.RenderedWords != 4 {
+		t.Fatalf("rendered words = %d, want 4", stack.RenderedWords)
+	}
+	if stack.RenderedBytes != len([]byte("system words plus rendered")) {
+		t.Fatalf("rendered bytes = %d, want %d", stack.RenderedBytes, len([]byte("system words plus rendered")))
+	}
+	if stack.RenderedLines != 1 {
+		t.Fatalf("rendered lines = %d, want 1", stack.RenderedLines)
+	}
 }
 
 func TestNewFragmentEmptyTextHasZeroLines(t *testing.T) {

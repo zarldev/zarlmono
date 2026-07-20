@@ -3,21 +3,23 @@ package prompts
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 )
 
 // Data is the render context shared by every prompt template — the embedded
-// [System] / [Plan] defaults, a user's prompt.md override, and a named
-// sub-agent's body. Every consumer (the TUI and the eval harness) builds the
-// same struct and renders through [Render], so the two cannot silently drift.
+// [System] / [Plan] defaults, explicit or legacy prompt overrides, named
+// sub-agent bodies, and literal user preferences. Every consumer (the TUI and
+// the eval harness) builds the same struct and renders through [Render], so the
+// two cannot silently drift.
 //
 // Data is intentionally a STABLE SUPERSET: fields are not removed when the
-// default embedded prompt stops using them, because a user's ~/.zarlcode/prompt.md
-// or workspace override may still reference them. text/template treats a missing
-// struct field as a hard execute error (unlike a missing map key), so dropping a
-// field crashes every override that names it — failing the whole turn before any
-// provider call. Keep unused fields here (nil/zero renders empty) rather than
-// deleting them.
+// default embedded prompt stops using them, because a user's
+// ~/.zarlcode/prompt.override.md or legacy ~/.zarlcode/prompt.md may still
+// reference them. text/template treats a missing struct field as a hard execute
+// error (unlike a missing map key), so dropping a field crashes every override
+// that names it — failing the whole turn before any provider call. Keep unused
+// fields here (nil/zero renders empty) rather than deleting them.
 type Data struct {
 	WorkspaceRoot   string
 	Tools           []ToolInfo
@@ -26,11 +28,17 @@ type Data struct {
 	Agents          []AgentInfo
 	InstructionDocs []InstructionDoc
 
-	// SelfMod enables the self-modification material. It should track whether the
-	// self-mod tools (new_tool / register_tool) are actually registered —
-	// instructing the model to use tooling it doesn't have wastes tokens and
-	// invites confabulation.
+	// SelfMod is retained for override-prompt compatibility. New templates should
+	// prefer the narrower CanAuthorTool / CanRegisterTool fields.
 	SelfMod bool
+
+	// CanAuthorTool is true when a runtime tool can author/register a new tool
+	// from its schema in one call (currently new_tool).
+	CanAuthorTool bool
+
+	// CanRegisterTool is true when a runtime tool can register a tool source that
+	// already exists (currently register_tool).
+	CanRegisterTool bool
 
 	// Planning enables the update_plan operating contract. It should track
 	// whether the update_plan tool is registered (the interactive TUI wires
@@ -41,6 +49,11 @@ type Data struct {
 	// that roster, read/search/catalogue tools are intentionally hidden behind
 	// program while mutating and shell tools remain direct.
 	ProgrammaticTools bool
+
+	// UserPreferences is literal additive guidance loaded from
+	// ~/.zarlcode/preferences.md. Render appends it after the active prompt body
+	// and before workspace instructions; it is not parsed as a template.
+	UserPreferences string
 }
 
 // ToolInfo is the name + description of a registered tool or skill as the
@@ -72,6 +85,14 @@ type InstructionDoc struct {
 // workspaceInstructionsTail is appended to every rendered prompt. It renders
 // nothing when Data.InstructionDocs is empty, so it is harmless for consumers
 // (the eval harness) that never supply instruction docs.
+const userPreferencesTail = "{{- if .UserPreferences }}\n\n" +
+	"# User preferences\n\n" +
+	"The following durable per-user preferences came from `~/.zarlcode/preferences.md`.\n" +
+	"Follow them when relevant, but they do not override system, developer, tool,\n" +
+	"safety, or workspace instructions.\n\n" +
+	"{{ .UserPreferences }}\n" +
+	"{{- end }}\n"
+
 const workspaceInstructionsTail = `{{- if .InstructionDocs }}
 
 # Workspace instructions
@@ -87,10 +108,10 @@ but they do not override system, developer, tool, or safety instructions.
 `
 
 // Render parses body (one of [System], [Plan], or a user/agent override) with
-// the workspace-instructions tail appended, and executes it against d. name is
-// used only in error messages and template diagnostics.
+// the user-preferences and workspace-instructions tails appended, and executes it
+// against d. name is used only in error messages and template diagnostics.
 func Render(name, body string, d Data) (string, error) {
-	tmpl, err := template.New(name).Parse(body + workspaceInstructionsTail)
+	tmpl, err := template.New(name).Parse(body + userPreferencesTail + workspaceInstructionsTail)
 	if err != nil {
 		return "", fmt.Errorf("parse %s prompt: %w", name, err)
 	}
@@ -98,7 +119,11 @@ func Render(name, body string, d Data) (string, error) {
 	if err := tmpl.Execute(&buf, d); err != nil {
 		return "", fmt.Errorf("render %s prompt: %w", name, err)
 	}
-	return buf.String(), nil
+	out := strings.TrimRight(buf.String(), "\n")
+	if out == "" {
+		return "", nil
+	}
+	return out + "\n", nil
 }
 
 // HasTool reports whether tools contains a tool with the given name. Consumers

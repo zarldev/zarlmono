@@ -101,6 +101,16 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.session.applyPlanUpdated(e)
 		m.timeline.addPlanUpdate(e.Plan)
 
+	case teasink.PromptDiagnosticsMsg:
+		for _, diag := range e.Diagnostics {
+			if strings.TrimSpace(diag) == "" {
+				continue
+			}
+			m.timeline.addNotice(palette.Warning.On("⚠ " + diag))
+			m.session.SetToastTone(diag, toastInfo)
+			cmd = tea.Batch(cmd, m.toastExpiryCmd())
+		}
+
 	case teasink.IterationCompletedMsg:
 		m.session.applyIterationCompleted(e)
 

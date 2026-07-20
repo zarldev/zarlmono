@@ -95,7 +95,7 @@ func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
 		t.Fatalf("plan mode leaked a mutating tool: %v", planNames)
 	}
 
-	prompt, err := RenderLivePrompt("plan", LivePlanPromptTemplate, "/repo", nil, nil, nil, ToolInfoFromSource(t.Context(), visible))
+	prompt, err := RenderLivePrompt("plan", LivePlanPromptTemplate, "/repo", nil, nil, nil, ToolInfoFromSource(t.Context(), visible), "")
 	if err != nil {
 		t.Fatal(err)
 	}

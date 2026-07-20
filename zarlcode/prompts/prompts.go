@@ -1,9 +1,8 @@
 // Package prompts holds the default prompt markdown that ships
 // embedded in the binary. The source-of-truth .md files live next to
 // this file; go:embed snapshots them at build time so the binary stays
-// standalone. User overrides (workspace, source-tree, per-user) are
-// resolved at runtime by the loader in the parent package — these are
-// only the fallbacks when no override exists.
+// standalone. Runtime resolution composes these embedded fallbacks with
+// per-user preferences or explicit full overrides when present.
 package prompts
 
 import _ "embed"

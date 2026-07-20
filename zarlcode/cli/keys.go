@@ -38,7 +38,7 @@ func RunKeys(args []string, stdout io.Writer) int {
 	ctx := context.Background()
 	// db.Open creates ~/.zarlcode (MkdirAll) on first use, so we don't
 	// pre-seed the full home here — `zarlcode keys` only needs the
-	// state.db to exist, not prompt.md / skills/ / tools/ (those are
+	// state.db to exist, not skills/ / tools/ / hooks/ (those are
 	// seeded by `zarlcode init` and the implicit TUI first-run).
 	store, err := db.Open(ctx, "")
 	if err != nil {

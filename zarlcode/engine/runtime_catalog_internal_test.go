@@ -57,7 +57,7 @@ You review code changes.
 	}
 
 	prompt, err := RenderLivePrompt("test", LiveSystemPromptTemplate,
-		root, l.catalog.Skills(), l.catalog.Agents(), nil, []promptTool{{Name: "spawn_agent"}})
+		root, l.catalog.Skills(), l.catalog.Agents(), nil, []promptTool{{Name: "spawn_agent"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,6 +19,9 @@ const (
 	FragmentSkill FragmentKind = "skill"
 	// FragmentAgent is a named sub-agent prompt body.
 	FragmentAgent FragmentKind = "agent"
+	// FragmentUserPreferences is additive per-user guidance appended to rendered
+	// prompts from ~/.zarlcode/preferences.md.
+	FragmentUserPreferences FragmentKind = "user_preferences"
 	// FragmentRenderedTotal is the fully-rendered prompt sent as the system
 	// message for the next run.
 	FragmentRenderedTotal FragmentKind = "rendered_total"
@@ -48,6 +51,10 @@ type Stack struct {
 	TotalBytes int
 	TotalWords int
 	TotalLines int
+
+	RenderedBytes int
+	RenderedWords int
+	RenderedLines int
 }
 
 // NewFragment measures body and returns prompt fragment accounting metadata.
@@ -70,7 +77,13 @@ func NewFragment(kind FragmentKind, name, source, reason string, order int, body
 func NewStack(fragments []Fragment) Stack {
 	out := Stack{Fragments: append([]Fragment(nil), fragments...)}
 	for _, f := range out.Fragments {
-		if !f.Contributes || f.Kind == FragmentRenderedTotal {
+		if f.Kind == FragmentRenderedTotal {
+			out.RenderedBytes = f.Bytes
+			out.RenderedWords = f.Words
+			out.RenderedLines = f.Lines
+			continue
+		}
+		if !f.Contributes {
 			continue
 		}
 		out.TotalBytes += f.Bytes

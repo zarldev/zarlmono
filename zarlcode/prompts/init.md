@@ -47,3 +47,8 @@ Exclude:
 When in doubt, omit. Prefer short sections and bullets. If the repo is simple, keep the file simple. If the repo is large, summarize the few structural facts that actually change how an agent should work.
 
 If `AGENTS.md` already exists at the repo root, improve it in place rather than rewriting blindly. Preserve verified useful guidance, delete fluff or stale claims, and reconcile it with the current codebase.
+
+Package-local guidance belongs in the narrowest applicable `AGENTS.md` rather
+than being hoisted to the root. Do not duplicate inherited guidance that already
+exists in a higher-level instruction file; keep only the local deltas an agent
+would otherwise miss.

@@ -144,6 +144,12 @@ type PlanUpdatedMsg struct {
 	Plan code.Plan
 }
 
+// PromptDiagnosticsMsg surfaces non-fatal prompt resolution diagnostics such as
+// legacy full overrides or unreadable optional files.
+type PromptDiagnosticsMsg struct {
+	Diagnostics []string
+}
+
 // SteerInjectedMsg fires when the runner picks up queued user
 // messages between iterations.
 type SteerInjectedMsg struct {

@@ -1,7 +1,7 @@
 // Package db is the zarlcode persistence layer. State that is
 // machine-managed and queryable lives here (sessions, settings, api
-// keys, future cost ledger). Human-editable artefacts (prompt.md,
-// skills/, tools/) stay on the filesystem under ~/.zarlcode.
+// keys, future cost ledger). Human-editable artefacts (preferences.md,
+// prompt.override.md, skills/, tools/) stay on the filesystem under ~/.zarlcode.
 //
 // The store wraps the sqlc-generated [gen.Queries] in domain methods
 // that map between gen's int64 timestamps + tagless rows and the
@@ -42,8 +42,9 @@ const AppName = "zarlcode"
 
 // DefaultDir is the on-disk home for zarlcode state. The sqlite
 // file lives at filepath.Join(DefaultDir(), "state.db"); per-user
-// editable artefacts (prompt.md, skills/, tools/) share the
-// directory.
+// editable artefacts (preferences.md, prompt.override.md, skills/, tools/)
+// share the directory. Legacy prompt.md files may still exist there as
+// migration-only full prompt overrides.
 //
 // The home is resolved with a guard against $HOME being unset or
 // relative — see [resolveUserHome]. Without the guard a stray

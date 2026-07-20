@@ -5,6 +5,7 @@ import (
 	"iter"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
+	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
@@ -19,21 +20,24 @@ import (
 // starts no run and mutates no persistent state. The TUI maps it into its own
 // presentation type; nothing here depends on the UI.
 type Inspection struct {
-	PlanMode      bool
-	Model         string
-	WorkspaceRoot string
-	SearxngURL    string
-	SpawnDepth    int
-	SpawnMaxIter  int
-	Processes     []code.ProcessInfo
-	Guardrails    guardrails.Deps
-	MCPActive     bool
-	Tools         []tools.ToolSpec
-	PromptSystem  string
-	PromptStack   prompts.Stack
-	Errors        []string
-	Skills        []catalog.Skill
-	Agents        []catalog.Agent
+	PlanMode                bool
+	Model                   string
+	WorkspaceRoot           string
+	SearxngURL              string
+	SpawnDepth              int
+	SpawnMaxIter            int
+	Processes               []code.ProcessInfo
+	Guardrails              guardrails.Deps
+	MCPActive               bool
+	Tools                   []tools.ToolSpec
+	PromptSystem            string
+	PromptStack             prompts.Stack
+	PromptSource            string
+	PromptPreferencesSource string
+	PromptResolutionMode    home.PromptResolutionMode
+	Errors                  []string
+	Skills                  []catalog.Skill
+	Agents                  []catalog.Agent
 	// Hooks is the discovered command-hook catalog — what the next turn's
 	// hook guardrail will arm.
 	Hooks []catalog.Hook
@@ -94,33 +98,26 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	for t := range visible.Tools(ctx) {
 		ins.Tools = append(ins.Tools, t.Definition())
 	}
-	promptName := inspectorPromptName(ins.PlanMode)
-	promptBody := inspectorPromptBody(ins.PlanMode)
+	selection := selectLivePrompt(ins.PlanMode)
+	ins.PromptSource = selection.BodySource
+	ins.PromptPreferencesSource = selection.PreferencesSource
+	ins.PromptResolutionMode = selection.ResolutionMode
+	ins.Errors = append(ins.Errors, selection.Diagnostics...)
 	promptSkills := l.catalogSnapshotSkills()
 	promptAgents := l.catalogSnapshotAgents()
 	promptDocs := l.instructionSnapshotDocs()
-	prompt, err := RenderLivePrompt(promptName, promptBody, l.ws.Root(), promptSkills, promptAgents, promptDocs, ToolInfoFromSource(ctx, visible))
+	prompt, err := RenderLivePrompt(selection.Name, selection.Body, l.ws.Root(), promptSkills, promptAgents, promptDocs, ToolInfoFromSource(ctx, visible), selection.Preferences)
 	if err != nil {
 		ins.Errors = append(ins.Errors, "prompt: "+err.Error())
 	} else {
 		ins.PromptSystem = prompt
-		ins.PromptStack = BuildPromptStack(promptName, promptBody, prompt, promptSkills, promptAgents, promptDocs)
+		ins.PromptStack = buildPromptStackWithSources(selection.Name, selection.Body, prompt, promptStackSources{
+			BodySource:            selection.BodySource,
+			UserPreferences:       selection.Preferences,
+			UserPreferencesSource: selection.PreferencesSource,
+		}, promptSkills, promptAgents, promptDocs)
 	}
 	return ins
-}
-
-func inspectorPromptName(plan bool) string {
-	if plan {
-		return "inspector:plan"
-	}
-	return "inspector:system"
-}
-
-func inspectorPromptBody(plan bool) string {
-	if plan {
-		return LivePlanPromptTemplate
-	}
-	return LiveSystemPromptTemplate
 }
 
 // inspectorClient is an inert runner.Client: it never produces output, so the

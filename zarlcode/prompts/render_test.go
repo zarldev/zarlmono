@@ -18,22 +18,74 @@ func TestRender_SelfModGating(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Eval / no-self-mod-tools render: none of the self-modification material.
-	for _, banned := range []string{"You are zarlcode", "modify your own definition", "Building a new dynamic tool", "new_tool", "go mod init"} {
+	for _, banned := range []string{"new_tool", "Extending yourself", "prompt.override.md"} {
 		if strings.Contains(lean, banned) {
 			t.Errorf("lean render should not contain %q (SelfMod=false)", banned)
 		}
 	}
 
 	rich := base
+	rich.CanAuthorTool = true
 	rich.SelfMod = true
 	full, err := prompts.Render("system", prompts.System, rich)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"You are zarlcode", "new_tool", "Extending yourself"} {
+	for _, want := range []string{"You are zarlcode", "new_tool", "Extending yourself", "preferences.md"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("SelfMod render missing %q", want)
 		}
+	}
+}
+
+func TestRender_AuthorAndRegisterToolGating(t *testing.T) {
+	base := prompts.Data{WorkspaceRoot: "/repo"}
+
+	registerOnly := base
+	registerOnly.CanRegisterTool = true
+	registerOnly.SelfMod = true
+	out, err := prompts.Render("system", prompts.System, registerOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Use `new_tool`") || strings.Contains(out, "Author a reusable tool") {
+		t.Fatalf("register-only render advertised authoring:\n%s", out)
+	}
+	if !strings.Contains(out, "registration tool is available") {
+		t.Fatalf("register-only render missing registration guidance:\n%s", out)
+	}
+
+	author := base
+	author.CanAuthorTool = true
+	author.SelfMod = true
+	out, err = prompts.Render("system", prompts.System, author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Use `new_tool`") || !strings.Contains(out, "Author a reusable tool") {
+		t.Fatalf("author render missing new_tool guidance:\n%s", out)
+	}
+}
+
+func TestRender_UserPreferencesAreLiteralAndBeforeWorkspaceInstructions(t *testing.T) {
+	d := prompts.Data{
+		WorkspaceRoot:   "/repo",
+		UserPreferences: "Prefer {{.WorkspaceRoot}} literally.",
+		InstructionDocs: []prompts.InstructionDoc{
+			{Path: "AGENTS.md", Content: "Workspace rule."},
+		},
+	}
+	out, err := prompts.Render("system", "Body for {{.WorkspaceRoot}}.", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Body for /repo.", "# User preferences", "Prefer {{.WorkspaceRoot}} literally.", "# Workspace instructions", "Workspace rule."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("render missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "# User preferences") > strings.Index(out, "# Workspace instructions") {
+		t.Fatalf("preferences should render before workspace instructions:\n%s", out)
 	}
 }
 
@@ -68,8 +120,8 @@ func TestRender_CommonOperatingCoreAlwaysPresent(t *testing.T) {
 	// The load-bearing operating discipline must render in BOTH the lean
 	// (eval) and rich (TUI) shapes — this is the content the anti-drift
 	// guarantee is about.
-	for _, selfMod := range []bool{false, true} {
-		d := prompts.Data{WorkspaceRoot: "/repo", SelfMod: selfMod}
+	for _, authorTool := range []bool{false, true} {
+		d := prompts.Data{WorkspaceRoot: "/repo", CanAuthorTool: authorTool, SelfMod: authorTool}
 		out, err := prompts.Render("system", prompts.System, d)
 		if err != nil {
 			t.Fatal(err)
@@ -83,7 +135,7 @@ func TestRender_CommonOperatingCoreAlwaysPresent(t *testing.T) {
 			"/repo",                      // workspace root interpolation
 		} {
 			if !strings.Contains(out, want) {
-				t.Errorf("SelfMod=%v render missing core content %q", selfMod, want)
+				t.Errorf("CanAuthorTool=%v render missing core content %q", authorTool, want)
 			}
 		}
 	}

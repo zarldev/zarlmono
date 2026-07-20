@@ -2,10 +2,8 @@ package engine
 
 import (
 	"context"
-	"errors"
-	"io/fs"
-	"log/slog"
-	"os"
+	"fmt"
+	"strings"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/home"
@@ -18,8 +16,8 @@ import (
 // LiveSystemPromptTemplate and LivePlanPromptTemplate are the canonical
 // build/plan-mode prompt bodies (zarlcode/prompts). They are the SAME assets
 // the eval harness renders, so the interactive agent and the eval agent can't
-// drift on operating instructions. The TUI additionally honors a user's
-// ~/.zarlcode/prompt.md override at build time (see systemPromptBody).
+// drift on operating instructions. The TUI additionally resolves per-user
+// preferences and explicit/legacy build-prompt overrides at turn time.
 var (
 	LiveSystemPromptTemplate = prompts.System
 	LivePlanPromptTemplate   = prompts.Plan
@@ -30,82 +28,132 @@ var (
 // shared renderer agree without a conversion hop.
 type promptTool = prompts.ToolInfo
 
+type livePromptSelection struct {
+	Name              string
+	Body              string
+	BodySource        string
+	Preferences       string
+	PreferencesSource string
+	ResolutionMode    home.PromptResolutionMode
+	Diagnostics       []string
+}
+
+func selectLivePrompt(plan bool) livePromptSelection {
+	resolved := home.ResolveBuildPrompt(prompts.System)
+	selection := livePromptSelection{
+		Name:           "system",
+		Body:           resolved.Body,
+		BodySource:     resolved.BodySource,
+		ResolutionMode: resolved.Mode,
+		Diagnostics:    append([]string(nil), resolved.Diagnostics...),
+	}
+	if resolved.UsePreferences {
+		selection.Preferences = resolved.Preferences
+		selection.PreferencesSource = resolved.PreferencesSource
+	}
+	if plan {
+		selection.Name = "plan"
+		selection.Body = prompts.Plan
+		selection.BodySource = "embedded plan prompt"
+		selection.Preferences = resolved.Preferences
+		selection.PreferencesSource = resolved.PreferencesSource
+	}
+	return selection
+}
+
 // promptFunc renders the build/plan-mode system prompt for a top-level turn.
-// Build mode uses the user's ~/.zarlcode/prompt.md when present, falling back
-// to the embedded default; plan mode uses the embedded plan prompt. Reloaded
-// each turn so edits to prompt.md take effect without a restart.
+// Build mode may use an explicit/legacy full override; plan mode always uses
+// the embedded plan prompt. Literal preferences are reloaded each turn.
 func (l *LiveRunner) promptFunc(src func() tools.Source) runner.PromptFunc {
 	return func(ctx context.Context, _ runner.PromptVars) (string, error) {
 		l.mu.Lock()
 		plan := l.target.Plan
 		l.mu.Unlock()
-		name, body := "system", systemPromptBody()
-		if plan {
-			name, body = "plan", prompts.Plan
-		}
-		return RenderLivePrompt(name, body, l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, src()))
+
+		selection := selectLivePrompt(plan)
+		l.publishPromptDiagnostics(selection.Diagnostics)
+		return RenderLivePrompt(selection.Name, selection.Body, l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, src()), selection.Preferences)
 	}
 }
 
 func (l *LiveRunner) agentPromptFunc(agent catalog.Agent, src func() tools.Source) runner.PromptFunc {
 	return func(ctx context.Context, _ runner.PromptVars) (string, error) {
-		return RenderLivePrompt("agent:"+agent.Name, agent.Body, l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, src()))
+		resolved := home.ResolveBuildPrompt(prompts.System)
+		return RenderLivePrompt("agent:"+agent.Name, agent.Body, l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, src()), resolved.Preferences)
 	}
 }
 
-// systemPromptBody returns the build-mode prompt body: the user's
-// ~/.zarlcode/prompt.md when it exists and is non-empty, else the embedded
-// default. A read error other than not-exist is logged and falls back to the
-// embedded prompt so a permissions glitch can't strand the agent without a
-// system prompt.
-func systemPromptBody() string {
-	path, err := home.RootPromptPath()
-	if err != nil {
-		slog.Warn("prompt: resolve prompt.md path; using embedded default", "err", err)
-		return prompts.System
+type promptDiagnosticsSink interface {
+	PromptDiagnostics([]string)
+}
+
+func (l *LiveRunner) publishPromptDiagnostics(diags []string) {
+	if l == nil || len(diags) == 0 || l.sink == nil {
+		return
 	}
-	data, err := os.ReadFile(path)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return prompts.System
-	case err != nil:
-		slog.Warn("prompt: read prompt.md; using embedded default", "path", path, "err", err)
-		return prompts.System
+	sink, ok := l.sink.(promptDiagnosticsSink)
+	if !ok {
+		return
 	}
-	if len(data) == 0 {
-		return prompts.System
-	}
-	return string(data)
+	sink.PromptDiagnostics(diags)
 }
 
 // RenderLivePrompt renders one of the prompt bodies against the live workspace
-// state via the shared prompts.Render. The SelfMod / Planning capability flags
-// are derived from the actual tool roster so the self-modification material and
-// the update_plan contract only appear when the matching tools are registered.
-func RenderLivePrompt(name, body, wsRoot string, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document, toolInfo []promptTool) (string, error) {
+// state via the shared prompts.Render. Capability flags are derived from the
+// actual tool roster so conditional guidance only appears when the matching
+// tools are registered.
+func RenderLivePrompt(name, body, wsRoot string, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document, toolInfo []promptTool, userPreferences string) (string, error) {
+	canAuthorTool := prompts.HasTool(toolInfo, "new_tool")
+	canRegisterTool := prompts.HasTool(toolInfo, "register_tool")
 	data := prompts.Data{
 		WorkspaceRoot:     wsRoot,
 		Tools:             toolInfo,
 		InstructionDocs:   promptInstructionDocs(instructionDocs),
-		SelfMod:           prompts.HasTool(toolInfo, "new_tool") || prompts.HasTool(toolInfo, "register_tool"),
+		SelfMod:           canAuthorTool || canRegisterTool,
+		CanAuthorTool:     canAuthorTool,
+		CanRegisterTool:   canRegisterTool,
 		Planning:          prompts.HasTool(toolInfo, "update_plan"),
 		ProgrammaticTools: prompts.HasTool(toolInfo, "program"),
+		UserPreferences:   userPreferences,
 	}
 	return prompts.Render(name, body, data)
 }
 
+type promptStackSources struct {
+	BodySource            string
+	UserPreferences       string
+	UserPreferencesSource string
+}
+
 func BuildPromptStack(name, body, rendered string, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document) prompts.Stack {
+	return buildPromptStackWithSources(name, body, rendered, promptStackSources{}, skills, agents, instructionDocs)
+}
+
+func buildPromptStackWithSources(name, body, rendered string, sources promptStackSources, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document) prompts.Stack {
 	kind := prompts.FragmentSystem
-	source := "embedded system prompt or user override"
+	source := sources.BodySource
+	if source == "" {
+		source = "embedded system prompt or user override"
+	}
 	if name == "plan" || name == "inspector:plan" {
 		kind = prompts.FragmentPlan
-		source = "embedded plan prompt"
+		if sources.BodySource == "" {
+			source = "embedded plan prompt"
+		}
 	}
 	order := 0
 	fragments := []prompts.Fragment{
 		prompts.NewFragment(kind, name, source, "active prompt body", order, body, true),
 	}
 	order++
+	if strings.TrimSpace(sources.UserPreferences) != "" {
+		prefSource := sources.UserPreferencesSource
+		if prefSource == "" {
+			prefSource = fmt.Sprintf("~/.zarlcode/%s", home.PreferencesFile)
+		}
+		fragments = append(fragments, prompts.NewFragment(prompts.FragmentUserPreferences, home.PreferencesFile, prefSource, "literal user preferences appended to prompt", order, sources.UserPreferences, true))
+		order++
+	}
 	for _, doc := range instructionDocs {
 		fragments = append(fragments, prompts.NewFragment(prompts.FragmentWorkspaceInstruction, doc.RelPath, doc.RelPath, "workspace instruction appended to prompt", order, doc.Content, true))
 		order++

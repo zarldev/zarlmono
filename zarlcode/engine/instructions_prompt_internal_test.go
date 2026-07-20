@@ -13,7 +13,7 @@ import (
 
 func TestRenderLivePromptIncludesWorkspaceInstructions(t *testing.T) {
 	docs := []instructions.Document{{RelPath: "AGENTS.md", Content: "Always run tests."}}
-	prompt, err := RenderLivePrompt("test", LiveSystemPromptTemplate, "/repo", nil, nil, docs, []promptTool{{Name: "read"}})
+	prompt, err := RenderLivePrompt("test", LiveSystemPromptTemplate, "/repo", nil, nil, docs, []promptTool{{Name: "read"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestRenderLivePromptIncludesWorkspaceInstructions(t *testing.T) {
 
 func TestRenderLivePlanPromptIncludesWorkspaceInstructions(t *testing.T) {
 	docs := []instructions.Document{{RelPath: "CLAUDE.md", Content: "Plan before editing."}}
-	prompt, err := RenderLivePrompt("plan", LivePlanPromptTemplate, "/repo", nil, nil, docs, []promptTool{{Name: "read"}})
+	prompt, err := RenderLivePrompt("plan", LivePlanPromptTemplate, "/repo", nil, nil, docs, []promptTool{{Name: "read"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestRenderLivePlanPromptIncludesWorkspaceInstructions(t *testing.T) {
 
 func TestRenderAgentPromptIncludesWorkspaceInstructions(t *testing.T) {
 	docs := []instructions.Document{{RelPath: "nested/AGENTS.md", Content: "Nested rules apply."}}
-	prompt, err := RenderLivePrompt("agent:reviewer", "You review code.", "/repo", nil, nil, docs, []promptTool{{Name: "read"}})
+	prompt, err := RenderLivePrompt("agent:reviewer", "You review code.", "/repo", nil, nil, docs, []promptTool{{Name: "read"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +70,28 @@ func TestBuildTurnReloadsWorkspaceInstructions(t *testing.T) {
 	assertInstructionSnapshotContains(t, l.instructionSnapshotDocs(), "Second version.")
 }
 
+func TestBuildPromptStackIncludesUserPreferencesFragment(t *testing.T) {
+	rendered, err := RenderLivePrompt("test", "Body.", "/repo", nil, nil, nil, []promptTool{{Name: "read"}}, "Prefer terse.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack := buildPromptStackWithSources("test", "Body.", rendered, promptStackSources{
+		BodySource:            "embedded system prompt",
+		UserPreferences:       "Prefer terse.",
+		UserPreferencesSource: "/home/me/.zarlcode/preferences.md",
+	}, nil, nil, nil)
+
+	assertFragment(t, stack, prompts.FragmentSystem, "test", true)
+	assertFragment(t, stack, prompts.FragmentUserPreferences, "preferences.md", true)
+	assertFragment(t, stack, prompts.FragmentRenderedTotal, "test", true)
+	if stack.TotalWords != 3 { // body 1 + preferences 2; rendered total does not double-count.
+		t.Fatalf("total words = %d, want 3; stack=%#v", stack.TotalWords, stack)
+	}
+	if stack.RenderedWords == 0 {
+		t.Fatalf("rendered words were not recorded: %#v", stack)
+	}
+}
+
 func assertPromptContains(t *testing.T, prompt string, wants ...string) {
 	t.Helper()
 	for _, want := range wants {
@@ -94,7 +116,7 @@ func TestBuildPromptStackAccountsFragmentsWithoutChangingPrompt(t *testing.T) {
 	skills := []catalog.Skill{{Name: "go-testing", Body: "Use table tests.", Source: "/skills/go-testing.md"}}
 	agents := []catalog.Agent{{Name: "reviewer", Body: "Review code.", Source: "/agents/reviewer.md"}}
 	body := "You are an agent."
-	rendered, err := RenderLivePrompt("test", body, "/repo", skills, agents, docs, []promptTool{{Name: "read"}})
+	rendered, err := RenderLivePrompt("test", body, "/repo", skills, agents, docs, []promptTool{{Name: "read"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -494,3 +494,13 @@ func (s *Sink) PlanUpdated(p code.Plan) {
 	s.flush()
 	s.dispatch(PlanUpdatedMsg{Plan: p})
 }
+
+// PromptDiagnostics forwards prompt resolution diagnostics. Not a runner event;
+// live prompt resolution calls it directly before a provider request.
+func (s *Sink) PromptDiagnostics(diags []string) {
+	if len(diags) == 0 {
+		return
+	}
+	s.flush()
+	s.dispatch(PromptDiagnosticsMsg{Diagnostics: append([]string(nil), diags...)})
+}

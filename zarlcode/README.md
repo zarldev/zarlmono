@@ -251,11 +251,33 @@ zarlcode --headless --max-iter 20 --prompt-file task.md  # Override iteration ca
 
 Exit codes: 0 = completed, 1 = max iterations / cancelled, 2 = error, 4 = bad invocation. Summary goes to stderr; final answer to stdout. Headless runs are recorded in `state.db` alongside interactive sessions.
 
+## Prompt customization
+
+zarlcode keeps its shipped operating contract embedded in the binary so upgrades can
+fix tool-use rules, plan/build behavior, and safety guidance for every normal run.
+Use these files under `~/.zarlcode` for customization:
+
+| File | Effect |
+|------|--------|
+| `preferences.md` | Additive, literal per-user guidance appended to BUILD, PLAN, and named sub-agent prompts. Use this for durable preferences such as response style or testing habits. |
+| `prompt.override.md` | Advanced full replacement for the BUILD-mode system prompt. It skips `preferences.md` for BUILD turns and can miss future shipped prompt fixes. |
+| `prompt.md` | Legacy full BUILD-mode override from older installs. New installs do not create it. If it matches a known shipped seed, zarlcode ignores it and uses the embedded core; unknown content is preserved and treated as customized. |
+
+Workspace instruction files such as `AGENTS.md` and `CLAUDE.md` are still appended
+per workspace after global preferences. Prompt files are re-read for each turn, and
+the inspector shows the active source, resolution mode, and rendered prompt that the
+next provider request will receive.
+
+To migrate an old `prompt.md`, move personal guidance into `preferences.md`. If you
+really want a complete BUILD-mode replacement, copy or rename it to
+`prompt.override.md`; otherwise leave generated seed files in place and zarlcode will
+ignore them without deleting user content.
+
 ## CLI subcommands
 
 | Command | What it does |
 |---------|-------------|
-| `zarlcode init` | Materialise `~/.zarlcode/` (prompt.md, skills, tools, config skeleton) |
+| `zarlcode init` | Materialise `~/.zarlcode/` (skills, tools, hooks, config skeleton) |
 | `zarlcode keys` | Manage credentials: `list`, `set`, `delete`, `oauth`, `protect status/on/off` |
 | `zarlcode upgrade` | Self-upgrade — download and replace the zarlcode binary |
 | `zarlcode --askpass` | Internal: sudo `SUDO_ASKPASS` shim used when `sudo_askpass` is enabled |

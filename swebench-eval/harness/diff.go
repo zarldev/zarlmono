@@ -32,7 +32,10 @@ func renderSystemPrompt(workspaceRoot string, reg *tools.Registry) (string, erro
 			Description: spec.Description,
 		})
 	}
-	data.SelfMod = prompts.HasTool(data.Tools, "new_tool") || prompts.HasTool(data.Tools, "register_tool")
+	data.CanAuthorTool = prompts.HasTool(data.Tools, "new_tool")
+	data.CanRegisterTool = prompts.HasTool(data.Tools, "register_tool")
+	data.SelfMod = data.CanAuthorTool || data.CanRegisterTool
 	data.Planning = prompts.HasTool(data.Tools, "update_plan")
+	data.ProgrammaticTools = prompts.HasTool(data.Tools, "program")
 	return prompts.Render("system", prompts.System, data)
 }

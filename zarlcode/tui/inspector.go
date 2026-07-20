@@ -15,6 +15,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -50,6 +51,12 @@ type InspectorSnapshot struct {
 	PromptSystem string
 	// PromptStack records neutral prompt-fragment accounting for inspection.
 	PromptStack prompts.Stack
+	// PromptSource is the active prompt body source selected by live resolution.
+	PromptSource string
+	// PromptPreferencesSource is the additive preferences source, when present.
+	PromptPreferencesSource string
+	// PromptResolutionMode identifies embedded, explicit override, or legacy override resolution.
+	PromptResolutionMode home.PromptResolutionMode
 	// Errors are non-fatal snapshot/render issues surfaced in the inspector.
 	Errors []string
 	// Guardrails is a summary of guardrail configuration.
@@ -337,7 +344,8 @@ func promptStackSummaryLines(stack prompts.Stack) []string {
 		return nil
 	}
 	lines := []string{
-		palette.Subtle.On(fmt.Sprintf("prompt stack: %d fragments · %d words · %d bytes", len(stack.Fragments), stack.TotalWords, stack.TotalBytes)),
+		palette.Subtle.On(fmt.Sprintf("prompt sent: %d words · %d bytes · %d lines", stack.RenderedWords, stack.RenderedBytes, stack.RenderedLines)),
+		palette.Subtle.On(fmt.Sprintf("raw fragments: %d fragments · %d words · %d bytes", len(stack.Fragments), stack.TotalWords, stack.TotalBytes)),
 	}
 	largest := make([]prompts.Fragment, 0, len(stack.Fragments))
 	for _, f := range stack.Fragments {
@@ -598,6 +606,9 @@ func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *
 		s.Tools = ins.Tools
 		s.Guardrails = guardrailSummary(ins.Guardrails)
 		s.PromptStack = ins.PromptStack
+		s.PromptSource = ins.PromptSource
+		s.PromptPreferencesSource = ins.PromptPreferencesSource
+		s.PromptResolutionMode = ins.PromptResolutionMode
 		s.Skills = ins.Skills
 		s.Agents = ins.Agents
 		s.Hooks = ins.Hooks
@@ -605,7 +616,7 @@ func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *
 			s.MCPServers = append(s.MCPServers, "MCP registry active")
 		}
 		if ins.PromptSystem != "" {
-			s.PromptSystem = inspectorPromptHeader(ins.PlanMode, ins.WorkspaceRoot, ins.Model) + ins.PromptSystem
+			s.PromptSystem = inspectorPromptHeader(ins.PlanMode, ins.WorkspaceRoot, ins.Model, ins.PromptSource, ins.PromptPreferencesSource, ins.PromptResolutionMode) + ins.PromptSystem
 		}
 		return s
 	}
@@ -627,7 +638,7 @@ func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *
 	return s
 }
 
-func inspectorPromptHeader(plan bool, workspace, model string) string {
+func inspectorPromptHeader(plan bool, workspace, model, source, preferencesSource string, resolution home.PromptResolutionMode) string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "[inspector] rendered next-turn %s prompt\n", modeLabel(plan))
 	if workspace != "" {
@@ -635,6 +646,15 @@ func inspectorPromptHeader(plan bool, workspace, model string) string {
 	}
 	if model != "" {
 		fmt.Fprintf(&b, "model: %s\n", model)
+	}
+	if resolution != "" {
+		fmt.Fprintf(&b, "build prompt resolution: %s\n", resolution)
+	}
+	if source != "" {
+		fmt.Fprintf(&b, "prompt source: %s\n", source)
+	}
+	if preferencesSource != "" {
+		fmt.Fprintf(&b, "preferences source: %s\n", preferencesSource)
 	}
 	b.WriteString("---\n")
 	return b.String()
