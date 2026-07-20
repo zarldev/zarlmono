@@ -13,12 +13,13 @@ import (
 type liveComputer struct {
 	owner *LiveRunner
 
-	mu      sync.Mutex
-	session computerSession
+	mu         sync.Mutex
+	session    computerSession
+	newSession computerSessionFactory
 }
 
 func (c *liveComputer) Observe(ctx context.Context, req model.ObserveRequest) (model.Observation, error) {
-	s, err := c.sessionFor(ctx)
+	s, err := c.sessionFor()
 	if err != nil {
 		return model.Observation{}, err
 	}
@@ -31,8 +32,14 @@ type computerSession interface {
 	Close() error
 }
 
+type computerSessionFactory func(context.Context, ...browser.Option) (computerSession, error)
+
+func newBrowserSession(ctx context.Context, opts ...browser.Option) (computerSession, error) {
+	return browser.New(ctx, opts...)
+}
+
 func (c *liveComputer) Act(ctx context.Context, req model.ActionRequest) (model.Observation, error) {
-	s, err := c.sessionFor(ctx)
+	s, err := c.sessionFor()
 	if err != nil {
 		return model.Observation{}, err
 	}
@@ -53,7 +60,7 @@ func (c *liveComputer) Close() error {
 	return nil
 }
 
-func (c *liveComputer) sessionFor(ctx context.Context) (computerSession, error) {
+func (c *liveComputer) sessionFor() (computerSession, error) {
 	if c == nil || c.owner == nil {
 		return nil, errors.New("computer browser backend is not configured")
 	}
@@ -69,7 +76,15 @@ func (c *liveComputer) sessionFor(ctx context.Context) (computerSession, error) 
 			opts = append(opts, browser.WithChromePath(cp))
 		}
 	}
-	s, err := browser.New(ctx, opts...)
+	newSession := c.newSession
+	if newSession == nil {
+		newSession = newBrowserSession
+	}
+	// A browser session spans tool calls and turns, so its lifetime must be
+	// rooted in the application context. The dispatch context is canceled as
+	// soon as the current tool returns, which would kill a session created by
+	// the first computer_observe before the next call can reuse it.
+	s, err := newSession(c.owner.parentContext(), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("start computer browser backend: %w", err)
 	}
