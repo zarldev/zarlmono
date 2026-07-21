@@ -63,7 +63,7 @@ func NewSkillHintGuardrail(skills SkillLookup) *SkillHintGuardrail {
 }
 
 // Name returns the guardrail's identifier.
-func (g *SkillHintGuardrail) Name() string { return "skill_hint" }
+func (g *SkillHintGuardrail) Name() string { return NameSkillHint }
 
 // Inspect appends a read-hint to result.Error when:
 //   - the lookup is non-nil,
