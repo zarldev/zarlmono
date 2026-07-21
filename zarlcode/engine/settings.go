@@ -228,14 +228,21 @@ func (s *Settings) PlanFirst(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyPlanFirst, "off") == "on"
 }
 
+// Guard-mode string values shared by the read-before-write, test-edit, and
+// shell-policy settings and the guardrail wiring in live.go that consumes them.
+const (
+	guardModeAdvisory = "advisory"
+	guardModeStrict   = "strict"
+)
+
 // ReadBeforeWriteMode resolves the read-before-write guardrail mode. "off"
 // disables it; "advisory" and "strict" both refuse blind edit/write calls
 // until the task has first established local context.
 func (s *Settings) ReadBeforeWriteMode(ctx context.Context) guardrails.ReadBeforeWriteMode {
 	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyReadBeforeWrite, "off"))) {
-	case "advisory":
+	case guardModeAdvisory:
 		return guardrails.ReadBeforeWriteAdvisory
-	case "strict":
+	case guardModeStrict:
 		return guardrails.ReadBeforeWriteStrict
 	default:
 		return guardrails.ReadBeforeWriteOff
@@ -247,10 +254,10 @@ func (s *Settings) ReadBeforeWriteMode(ctx context.Context) guardrails.ReadBefor
 // strict for eval determinism; see LiveRunner.guardrailDepsFor.
 func (s *Settings) TestEditMode(ctx context.Context) string {
 	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyTestEditGuard, "off"))) {
-	case "advisory":
-		return "advisory"
-	case "strict":
-		return "strict"
+	case guardModeAdvisory:
+		return guardModeAdvisory
+	case guardModeStrict:
+		return guardModeStrict
 	default:
 		return "off"
 	}
@@ -274,7 +281,7 @@ func (s *Settings) SkillHints(ctx context.Context) bool {
 // than a bare mode) so the sandbox-follows default lives in one place.
 func (s *Settings) ShellGuardLenient(ctx context.Context, sandboxOn bool) bool {
 	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyShellGuard, "auto"))) {
-	case "strict":
+	case guardModeStrict:
 		return false
 	case "lenient":
 		return true

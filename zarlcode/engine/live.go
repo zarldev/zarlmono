@@ -557,9 +557,9 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 		testEdit = guardrails.NewTestEditStrict()
 	case l.settings != nil:
 		switch l.settings.TestEditMode(l.parentContext()) {
-		case "advisory":
+		case guardModeAdvisory:
 			testEdit = guardrails.NewTestEditAdvisory()
-		case "strict":
+		case guardModeStrict:
 			testEdit = guardrails.NewTestEditStrict()
 		}
 	}
