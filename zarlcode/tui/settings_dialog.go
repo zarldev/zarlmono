@@ -218,6 +218,14 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "model for judge verdicts, from the judge provider's list. (active) reuses the active model."},
 				{label: "read before write", key: prefs.KeyReadBeforeWrite, kind: rowEnum, def: "off", opts: []string{"off", "advisory", "strict"},
 					desc: "require the task to read the target file or nearby context before edit/write. advisory and strict both refuse blind edits; strict is the strongest local-model setting."},
+				{label: "test edit guard", key: prefs.KeyTestEditGuard, kind: rowEnum, def: "off", opts: []string{"off", "advisory", "strict"},
+					desc: "watch for edits to test files that would make a failing test pass without fixing the code. advisory warns; strict refuses. headless runs are always strict."},
+				{label: "improvement loop", key: prefs.KeyImprovementGuard, kind: rowEnum, def: "on", opts: []string{"on", "off"},
+					desc: "keep the agent working while its verifiers still report failure instead of stopping early. off removes the guardrail from the chain."},
+				{label: "skill hints", key: prefs.KeySkillHints, kind: rowEnum, def: "on", opts: []string{"on", "off"},
+					desc: "suggest a recovery skill after a tool call keeps failing. off removes the guardrail from the chain."},
+				{label: "shell policy", key: prefs.KeyShellGuard, kind: rowEnum, def: "auto", opts: []string{"auto", "strict", "lenient"},
+					desc: "static shell-command guardrail leniency. auto follows the sandbox (strict when on, lenient when off); strict/lenient pin it regardless of the sandbox."},
 			}},
 			{name: "compaction", rows: []settingsRow{
 				{label: "engine", key: prefs.KeyCompactEngine, kind: rowEnum, def: "tiered", opts: compactEngineOpts(),
@@ -727,6 +735,9 @@ func (d *settingsDialog) fetchFor(p string) action {
 // onModelsLoaded records a completed fetch so the model picker can present
 // the list.
 func (d *settingsDialog) onModelsLoaded(provider string, models []string, err error) {
+	if d.providers != nil && d.providers.onModelsLoaded(provider, models, err) {
+		return
+	}
 	d.modelsLoading[provider] = false
 	if err != nil && len(models) == 0 {
 		d.setStatus("models: " + err.Error())

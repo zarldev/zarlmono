@@ -550,8 +550,17 @@ func (l *LiveRunner) headlessGuardrailDeps() guardrails.Deps {
 
 func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 	var testEdit guardrails.Guardrail
-	if headless {
+	switch {
+	case headless:
+		// Headless stays strict for eval determinism, whatever the user set.
 		testEdit = guardrails.NewTestEditStrict()
+	case l.settings != nil:
+		switch l.settings.TestEditMode(l.parentContext()) {
+		case "advisory":
+			testEdit = guardrails.NewTestEditAdvisory()
+		case "strict":
+			testEdit = guardrails.NewTestEditStrict()
+		}
 	}
 	// Shared fan-out caps from coderunner so they can't drift from the eval;
 	// StandardGuardrailDeps wires no language verifier by default. SkillLookup
@@ -590,7 +599,15 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 		if enabled, ok := sandbox.EnvOverride(); ok {
 			sandboxOn = enabled
 		}
-		deps.ShellLenient = !sandboxOn
+		deps.ShellLenient = l.settings.ShellGuardLenient(l.parentContext(), sandboxOn)
+		// Always-on guardrails the user can drop from the chain. Names come
+		// from the guardrails package so they can't drift from Name().
+		if !l.settings.ImprovementGuard(l.parentContext()) {
+			deps.Disabled = append(deps.Disabled, guardrails.NameImprovementLoop)
+		}
+		if !l.settings.SkillHints(l.parentContext()) {
+			deps.Disabled = append(deps.Disabled, guardrails.NameSkillHint)
+		}
 	}
 	return deps
 }

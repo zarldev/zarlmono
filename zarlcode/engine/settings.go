@@ -241,6 +241,47 @@ func (s *Settings) ReadBeforeWriteMode(ctx context.Context) guardrails.ReadBefor
 	}
 }
 
+// TestEditMode resolves the interactive test-edit guardrail policy: "off"
+// (default), "advisory", or "strict". Headless runs ignore this and stay
+// strict for eval determinism; see LiveRunner.guardrailDepsFor.
+func (s *Settings) TestEditMode(ctx context.Context) string {
+	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyTestEditGuard, "off"))) {
+	case "advisory":
+		return "advisory"
+	case "strict":
+		return "strict"
+	default:
+		return "off"
+	}
+}
+
+// ImprovementGuard resolves whether the improvement-loop guardrail is armed.
+// On by default; off drops it from the chain.
+func (s *Settings) ImprovementGuard(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyImprovementGuard, "on") == "on"
+}
+
+// SkillHints resolves whether the skill-hint guardrail is armed. On by default;
+// off drops it from the chain.
+func (s *Settings) SkillHints(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeySkillHints, "on") == "on"
+}
+
+// ShellGuardLenient resolves the shell policy's leniency for the given sandbox
+// state. "auto" (default) follows the sandbox — lenient only when it is off;
+// "strict" and "lenient" pin the choice regardless. Kept as a resolver (rather
+// than a bare mode) so the sandbox-follows default lives in one place.
+func (s *Settings) ShellGuardLenient(ctx context.Context, sandboxOn bool) bool {
+	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyShellGuard, "auto"))) {
+	case "strict":
+		return false
+	case "lenient":
+		return true
+	default:
+		return !sandboxOn
+	}
+}
+
 // Temperature resolves the sampling temperature for completion requests. A
 // zero return means "unset" — the runner leaves it off the request so the
 // server's own default applies. A low value (e.g. 0.2) improves determinism
