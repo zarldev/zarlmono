@@ -59,6 +59,48 @@ func TestSettingsDialog_ProvidersInline(t *testing.T) {
 	}
 }
 
+func TestSettingsDialog_ProviderModelsOpenPickerAndPersistSelection(t *testing.T) {
+	s := newTestSettingsWithVault(t)
+	if err := s.Registry.UpsertProvider(t.Context(), backends.ProviderDefinition{
+		Name:         "custom",
+		DisplayName:  "Custom",
+		AdapterType:  backends.AdapterTypes.OPENAICOMPATIBLE,
+		BaseURL:      "https://example.com/v1",
+		DefaultModel: "custom-a",
+		Enabled:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := newSettingsDialog(s)
+	if !gotoCat(d, "providers") {
+		t.Fatal("Providers category missing")
+	}
+	d.handleKey(skey(tea.KeyTab))
+	gotoProvider(d.providers, "custom")
+
+	a := d.handleKey(tkey("m"))
+	fetch, ok := a.(actionFetchModels)
+	if !ok || fetch.provider != "custom" {
+		t.Fatalf("models action = %#v, want custom fetch", a)
+	}
+	d.onModelsLoaded("custom", []string{"custom-a", "custom-b"}, nil)
+	if d.providers.modelPicker == nil {
+		t.Fatal("provider model fetch should open a picker")
+	}
+
+	d.handleKey(skey(tea.KeyDown))
+	d.handleKey(skey(tea.KeyEnter))
+	if d.providers.modelPicker != nil {
+		t.Fatal("selecting a model should close the picker")
+	}
+	if sv, ok, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider); !ok || sv.Value != "custom" {
+		t.Fatalf("provider setting = ok %v value %q, want custom", ok, sv.Value)
+	}
+	if sv, ok, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel); !ok || sv.Value != "custom-b" {
+		t.Fatalf("model setting = ok %v value %q, want custom-b", ok, sv.Value)
+	}
+}
+
 func TestStartOAuthLogin_ClaudeCodeUsesExec(t *testing.T) {
 	prev := openBrowser
 	openBrowser = func(string) {}
