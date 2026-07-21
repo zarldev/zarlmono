@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
@@ -307,6 +308,18 @@ func (s *Settings) ToolResultMaxBytes(ctx context.Context) int {
 // ToolResultMaxLines resolves the per-tool-result line cap. Default 2000.
 func (s *Settings) ToolResultMaxLines(ctx context.Context) int {
 	return s.intSetting(ctx, prefs.KeyToolResultMaxLines, 2000)
+}
+
+// ResponseTimeout resolves the stream-idle stall watchdog — how long the
+// runner waits with no chunk from the model before cancelling the iteration.
+// Default 90s. A non-positive setting falls back to the default rather than
+// disabling stall detection, so a stray 0 can't wedge a run forever.
+func (s *Settings) ResponseTimeout(ctx context.Context) time.Duration {
+	secs := s.intSetting(ctx, prefs.KeyResponseTimeout, 90)
+	if secs <= 0 {
+		secs = 90
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // FanoutCap resolves the per-tool exploration fan-out cap. 0 keeps the built-in

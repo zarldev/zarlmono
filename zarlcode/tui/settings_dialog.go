@@ -162,6 +162,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "headroom held back from the context window for the compactor."},
 				{label: "max iterations", key: prefs.KeyMaxIterations, kind: rowText, numeric: true, def: "20",
 					desc: "cap on the agent loop per turn before it must finalize."},
+				{label: "response timeout", key: prefs.KeyResponseTimeout, kind: rowText, numeric: true, def: "90",
+					desc: "seconds to wait with no output from the model before cancelling the iteration. raise it for slow local models/connections; non-positive falls back to 90."},
 				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, def: "20",
 					desc: "cap on sub-agent iterations per spawn_agent call. unset inherits the parent max."},
 				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, def: "(unset)",

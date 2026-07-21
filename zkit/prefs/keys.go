@@ -59,6 +59,11 @@ const (
 	// 0 keeps the built-in per-tool defaults; a positive value caps every capped
 	// exploration tool at that count to bound context growth.
 	KeyFanoutCap = "fanout_cap"
+	// KeyResponseTimeout overrides the stream-idle stall watchdog in whole
+	// seconds: how long the runner waits with no chunk from the model before
+	// cancelling the iteration. Default 90. Raise it for a slow local model or
+	// connection that legitimately pauses longer than 90s between chunks.
+	KeyResponseTimeout = "response_timeout"
 	// KeyEnableMCP / KeyEnableWeb / KeyEnableBackground gate optional tool
 	// clusters. On by default; turn off to shrink the tool surface for a lean
 	// local-model setup (MCP tools, web_search/web_fetch, background-process

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/hooks"
 	"github.com/zarldev/zarlmono/zarlcode/instructions"
@@ -842,17 +843,20 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	// truncator — turns are serialized) and sampling temperature. Read live so a
 	// settings change applies next turn without a restart.
 	var temperature float32
+	var streamIdle time.Duration
 	if settings != nil {
 		sctx := l.parentContext()
 		l.truncator.MaxBytes = settings.ToolResultMaxBytes(sctx)
 		l.truncator.MaxLines = settings.ToolResultMaxLines(sctx)
 		temperature = settings.Temperature(sctx)
+		streamIdle = settings.ResponseTimeout(sctx)
 	}
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{
 		Model:         model,
 		MaxIterations: maxIter,
 		ContextWindow: window,
+		StreamIdle:    streamIdle,
 	})
 	var visible tools.Source
 	opts = append(opts,

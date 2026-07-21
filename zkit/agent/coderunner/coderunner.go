@@ -259,6 +259,12 @@ type Tuning struct {
 	// (where local models lose tool-call discipline) that byte-pressure
 	// heuristics miss. Zero leaves the force-path off.
 	ContextWindow int
+
+	// StreamIdle overrides the no-chunk stall watchdog (see StreamIdleTimeout).
+	// Zero keeps the shared 90s default so every consumer stays identical
+	// unless a caller deliberately dials it — e.g. a slow local model or
+	// connection that legitimately pauses longer than 90s between chunks.
+	StreamIdle time.Duration
 }
 
 // Tuning constants shared by every consumer. Exported so a consumer
@@ -380,12 +386,16 @@ func DefaultTurnQuality() runner.TurnQuality {
 //	)
 //	r := runner.New(client, opts...)
 func StandardOptions(t Tuning) []options.Option[runner.Runner] {
+	streamIdle := StreamIdleTimeout
+	if t.StreamIdle > 0 {
+		streamIdle = t.StreamIdle
+	}
 	opts := []options.Option[runner.Runner]{
 		runner.WithAdaptiveKeepRecent(AdaptiveKeepTargetTokens, AdaptiveKeepMin, AdaptiveKeepMax),
 		runner.WithTurnQuality(DefaultTurnQuality()),
 		runner.WithFinalizeWarn(runner.FinalizeWarn{RemainingThreshold: FinalizeWarnThreshold}),
 		runner.WithIterationTimeout(IterationTimeout),
-		runner.WithStreamIdleTimeout(StreamIdleTimeout),
+		runner.WithStreamIdleTimeout(streamIdle),
 		runner.WithMaxTokens(MaxCompletionTokens),
 		runner.WithThinkingBudget(ThinkingOnlyBudgetBytes),
 	}
