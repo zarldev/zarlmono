@@ -263,6 +263,14 @@ func (s *Settings) TestEditMode(ctx context.Context) string {
 	}
 }
 
+// AutoCompact resolves whether the runner compacts history automatically under
+// context pressure. True (default) keeps the auto-compactor armed; "manual"
+// disarms it so the user compacts on demand while the cockpit warns near the
+// trigger. Manual compaction (CompactNow) works regardless of this setting.
+func (s *Settings) AutoCompact(ctx context.Context) bool {
+	return strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyCompactionMode, "auto"))) != "manual"
+}
+
 // ImprovementGuard resolves whether the improvement-loop guardrail is armed.
 // On by default; off drops it from the chain.
 func (s *Settings) ImprovementGuard(ctx context.Context) bool {

@@ -230,6 +230,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "static shell-command guardrail leniency. auto follows the sandbox (strict when on, lenient when off); strict/lenient pin it regardless of the sandbox."},
 			}},
 			{name: "compaction", rows: []settingsRow{
+				{label: "mode", key: prefs.KeyCompactionMode, kind: rowEnum, def: "auto", opts: []string{"auto", "manual"},
+					desc: "auto trims history under context pressure automatically. manual leaves it intact, warns in the cockpit near the limit, and waits for you to compact on demand (conversation actions › compact)."},
 				{label: "engine", key: prefs.KeyCompactEngine, kind: rowEnum, def: "tiered", opts: compactEngineOpts(),
 					desc: "how long chats are condensed: structural trims, tiered ramps, summary/executive use an llm."},
 				{label: "provider", key: prefs.KeyCompactProvider, kind: rowEnum, def: "(active)",

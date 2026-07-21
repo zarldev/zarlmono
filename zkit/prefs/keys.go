@@ -16,6 +16,11 @@ const (
 	KeyCompactEngine   = "compact_engine"
 	KeyCompactProvider = "compact_provider"
 	KeyCompactModel    = "compact_model"
+	// KeyCompactionMode controls whether the runner compacts automatically.
+	// "auto" (default) trims history under context pressure without asking;
+	// "manual" leaves the history intact, warns in the cockpit when it crosses
+	// the trigger, and waits for the user to compact on demand.
+	KeyCompactionMode = "compaction_mode"
 	// Decompose-judge rows: the constrained-verdict LLM judge the decompose
 	// guardrail consults on repeated tool failures. Off by default — the
 	// guardrail then keeps its deterministic advisory path. Provider/model

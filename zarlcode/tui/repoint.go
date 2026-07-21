@@ -96,6 +96,9 @@ func (m *UI) applyLimits() {
 	lim := m.settings.Limits(m.appContext())
 	m.live.SetLimits(lim.ReserveTokens, lim.MaxIterations, lim.SpawnMaxIterations, lim.SpawnMaxDepth)
 	m.SetPressureConfig(m.session.Run.window, lim.ReserveTokens)
+	// Mirror the compaction mode so the cockpit knows whether to warn on
+	// pressure (manual) or stay quiet because the runner auto-compacts.
+	m.session.AutoCompact = m.settings.AutoCompact(m.appContext())
 }
 
 // handleRepointMsg applies a completed provider switch: hot-swap the live

@@ -844,12 +844,14 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	// settings change applies next turn without a restart.
 	var temperature float32
 	var streamIdle time.Duration
+	autoCompact := true
 	if settings != nil {
 		sctx := l.parentContext()
 		l.truncator.MaxBytes = settings.ToolResultMaxBytes(sctx)
 		l.truncator.MaxLines = settings.ToolResultMaxLines(sctx)
 		temperature = settings.Temperature(sctx)
 		streamIdle = settings.ResponseTimeout(sctx)
+		autoCompact = settings.AutoCompact(sctx)
 	}
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{
@@ -862,11 +864,16 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	opts = append(opts,
 		runner.WithSteerer(l.queue),
 		runner.WithPrompt(l.promptFunc(func() tools.Source { return visible })),
-		runner.WithCompactor(coderunner.StandardCompactor(
-			buildLiveCompactor(engine, window, compactProv, compactModel, l), window, reserve)),
 		runner.WithResultTruncator(l.truncator),
 		runner.WithTemperature(temperature),
 	)
+	// Arm the auto-compactor only in auto mode. In manual mode the user
+	// compacts on demand (CompactNow builds its own compactor, so it still
+	// works) and the cockpit warns as pressure crosses the trigger.
+	if autoCompact {
+		opts = append(opts, runner.WithCompactor(coderunner.StandardCompactor(
+			buildLiveCompactor(engine, window, compactProv, compactModel, l), window, reserve)))
+	}
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
 	}

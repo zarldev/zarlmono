@@ -242,9 +242,10 @@ func TestSettingsDialog_CompactionEnginePicker(t *testing.T) {
 	if !gotoCat(d, "compaction") {
 		t.Fatal("compaction category missing")
 	}
-	d.handleKey(skey(tea.KeyTab)) // focus rows; row 0 = engine
+	d.handleKey(skey(tea.KeyTab))  // focus rows; row 0 = mode
+	d.handleKey(skey(tea.KeyDown)) // → engine
 	if d.curRow().key != prefs.KeyCompactEngine {
-		t.Fatalf("row 0 = %q, want compact engine", d.curRow().key)
+		t.Fatalf("engine row = %q, want compact engine", d.curRow().key)
 	}
 	push, ok := d.handleKey(skey(tea.KeyEnter)).(actionPush)
 	if !ok {
@@ -275,7 +276,8 @@ func TestSettingsDialog_CompactionProviderPicker(t *testing.T) {
 	if !gotoCat(d, "compaction") {
 		t.Fatal("compaction category missing")
 	}
-	d.handleKey(skey(tea.KeyTab))  // focus rows; row 0 = engine
+	d.handleKey(skey(tea.KeyTab))  // focus rows; row 0 = mode
+	d.handleKey(skey(tea.KeyDown)) // → engine
 	d.handleKey(skey(tea.KeyDown)) // → provider
 	if d.curRow().key != prefs.KeyCompactProvider {
 		t.Fatalf("expected compact provider row, got %q", d.curRow().key)
@@ -318,7 +320,8 @@ func TestSettingsDialog_CompactionModelUsesCompactProvider(t *testing.T) {
 	d.models["anthropic"] = []string{"claude-test"} // seed a fetched list
 
 	gotoCat(d, "compaction")
-	d.handleKey(skey(tea.KeyTab))  // engine
+	d.handleKey(skey(tea.KeyTab))  // mode
+	d.handleKey(skey(tea.KeyDown)) // engine
 	d.handleKey(skey(tea.KeyDown)) // provider
 	d.handleKey(skey(tea.KeyDown)) // model
 	if d.curRow().key != prefs.KeyCompactModel {

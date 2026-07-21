@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -54,6 +55,13 @@ type Session struct {
 
 	// User preferences loaded from the settings store.
 	ConfirmQuit bool
+
+	// AutoCompact mirrors the compaction_mode setting: true (default) means the
+	// runner auto-compacts; false means manual, so the cockpit warns near the
+	// trigger instead. compactWarned latches the one-shot warning so it fires
+	// once per crossing rather than every iteration.
+	AutoCompact   bool
+	compactWarned bool
 
 	// Transient notification — shown at the right of the status bar.
 	Toast     string
@@ -111,6 +119,7 @@ const (
 	toastInfo toastTone = iota
 	toastSuccess
 	toastError
+	toastWarn
 )
 
 // NewSession returns a Session with sensible defaults.
@@ -120,11 +129,29 @@ func NewSession(workspace, workspaceDir, branch string) *Session {
 		WorkspaceDir: workspaceDir,
 		Branch:       branch,
 		StartedAt:    time.Now(),
+		AutoCompact:  true,
 		WorkingSet:   NewWorkingSet(workspaceDir),
 		Checkpoints:  NewCheckpoints(workspaceDir),
 		EventLog:     NewEventRing(64),
 		ModelCache:   make(map[string][]string),
 	}
+}
+
+// maybeWarnCompaction raises a one-shot cockpit toast when auto-compaction is
+// off and the live context has crossed the compaction trigger, so the user
+// knows to compact on demand. The warning latches until pressure falls back
+// under the threshold (e.g. after a manual compaction), so it fires once per
+// crossing instead of every iteration.
+func (s *Session) maybeWarnCompaction() {
+	if s.AutoCompact || !s.Run.overPressure() {
+		s.compactWarned = false
+		return
+	}
+	if s.compactWarned {
+		return
+	}
+	s.compactWarned = true
+	s.SetToastTone(fmt.Sprintf("⚠ context %d%% full — compact to free space", int(s.Run.fillFrac()*100)), toastWarn)
 }
 
 // SetToast records a status-bar notification with an expiry timestamp. The tone

@@ -466,6 +466,16 @@ func (s *RunState) recordSample() {
 	}
 }
 
+// overPressure reports whether the live context has crossed the compaction
+// trigger point (window minus reserve) — the same threshold the auto-compactor
+// and the gauge's marker use. False when no pressure config is set.
+func (s *RunState) overPressure() bool {
+	if s.pressureWindow <= 0 || s.pressureReserve < 0 {
+		return false
+	}
+	return s.effectiveUsed() >= s.pressureWindow-s.pressureReserve
+}
+
 // fillFrac is the live context occupancy as a fraction of the window.
 func (s *RunState) fillFrac() float64 {
 	if s.window <= 0 {

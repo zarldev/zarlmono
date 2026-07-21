@@ -32,3 +32,25 @@ func TestResponseTimeout(t *testing.T) {
 		t.Fatalf("zero should floor to default, got %s", got)
 	}
 }
+
+// AutoCompact defaults on and flips off only for the explicit "manual" value.
+func TestAutoCompact(t *testing.T) {
+	s := newJudgeTestSettings(t)
+	ctx := t.Context()
+
+	if !s.AutoCompact(ctx) {
+		t.Fatal("default should be auto (true)")
+	}
+	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyCompactionMode, "manual"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if s.AutoCompact(ctx) {
+		t.Fatal("manual should disable auto-compaction")
+	}
+	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyCompactionMode, "auto"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !s.AutoCompact(ctx) {
+		t.Fatal("auto should re-enable auto-compaction")
+	}
+}
