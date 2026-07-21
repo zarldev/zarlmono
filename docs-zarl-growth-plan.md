@@ -539,30 +539,32 @@ If everyone only comments on the local HAL/avatar, the article needs stronger zk
 
 ### Phase 1: article draft
 
-- [ ] Generate headings first; do **not** draft the full post in LLM prose.
-- [ ] Use speech-to-text to talk through each heading in Steven's own words.
+- [ ] Draft is deferred; do not publish the long-form article yet.
+- [ ] Use speech-to-text to talk through each heading in Steven's own words before creating a public page.
 - [ ] Use LLM only for cleanup/structure after the spoken draft exists.
 - [ ] Run cleanup against `VOICE.md` when available so it avoids phrasing/style Steven dislikes.
-- [ ] Link the existing zarlai post early.
-- [ ] Include concrete package names and code snippets.
-- [ ] Include the daily-driver zarlcode paragraph.
+- [ ] Link the existing zarlai post early once the canonical URL is confirmed.
+- [ ] Include concrete package names and code snippets only after fact-checking against current APIs.
+- [ ] Include the daily-driver zarlcode paragraph in Steven's own words.
 - [ ] Include honest caveats: young project, APIs may move, local setup still has rough edges.
 - [ ] Final human pass before publishing; the post should sound like Steven, not an LLM.
 
 ### Phase 2: demo/widget
 
-- [ ] Decide v1: trace replay unless WASM is obviously easy.
-- [ ] Generate or mock a deterministic agent event trace.
-- [ ] Build simple play/step/reset UI.
-- [ ] Add CTA: “Want this against your repo? Try zarlcode.”
+- [x] Defer browser trace replay/WASM for v1; use the zarlcode docs and VHS-backed workflow demo instead.
+- [x] Add `zarlcode/docs/images/workflow-demo.tape` as the deterministic source for the narrative clip.
+- [x] Render `workflow-demo.gif` and copy it to `site/public/zarlcode-workflow-demo.gif`.
+- [x] Embed the workflow demo in the zarlcode README and site guide.
+- [x] Add CTA: “Want this against your repo? Try zarlcode.”
 
 ### Phase 3: conversion polish
 
-- [ ] Update zarlcode README top.
-- [ ] Update zkit README top.
-- [ ] Check install commands and latest tags.
-- [ ] Verify local/Ollama path before claiming zero-key first run.
-- [ ] Ensure existing GIFs render correctly from article.
+- [x] Update zarlcode README top.
+- [x] Update zkit README top.
+- [x] Check install commands and latest tags: repository tags show `zarlcode/v0.4.0` as latest; a clean external `go install .../cmd@latest` builds a binary named `cmd`, so public quick starts now prefer Homebrew or `go tool task zarlcode` from a checkout and mention the Go-install caveat instead of leading with it.
+- [ ] Fix public Go-install packaging so `go install` produces a `zarlcode` binary instead of `cmd`.
+- [x] Verify local/Ollama path before claiming zero-key first run: docs now explicitly say zarlcode does not start model servers and avoid zero-config local claims.
+- [x] Ensure workflow GIFs render correctly from docs.
 
 ### Phase 4: publish and distribute
 

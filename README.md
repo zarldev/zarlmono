@@ -1,60 +1,86 @@
-[![ci](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml)
-[![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8.svg)](https://go.dev/)
-[![license MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<div align="center">
 
 # zarlmono
 
-**zarlmono is the monorepo for zarlcode, zkit, zarlai, and the eval/examples that keep them honest.**
+**The Go-native agent monorepo — zarlcode / zkit / zarlai**
 
-- **[`zarlcode`](zarlcode/)** — a terminal coding agent/TUI that reads, edits, runs commands, searches the web, and delegates to sub-agents while keeping sessions local and resumable.
-- **[`zkit`](zkit/)** — the reusable Go toolkit underneath: streaming runner, tool registry, provider adapters, guardrails, compaction, MCP, sandboxing, and small foundation packages.
-- **[`zarlai`](zarlai/)** — a local multimodal assistant built on the same runner and tool system.
+[![ci](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml)
+[![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8.svg)](https://go.dev/)
+[![license MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![docs](https://img.shields.io/badge/docs-zarldev.github.io%2Fzarlmono-8B5CF6)](https://zarldev.github.io/zarlmono)
 
-Docs: **[zarldev.github.io/zarlmono](https://zarldev.github.io/zarlmono)**
+</div>
+
+<div align="center">
 
 ![zarlcode in action](https://zarldev.github.io/zarlmono/zarlcode-hero2.gif)
+
+</div>
+
+---
+
+## What's here
+
+| Asset | Module | What it does |
+|---|---|---|
+| **zarlcode** | [`zarlcode/`](zarlcode/) | Terminal coding-agent TUI/CLI — plan, build, switch models, resume sessions, inspect diffs, verify. |
+| **zkit** | [`zkit/`](zkit/) | The Go agent substrate: streaming runner, tool registry, LLM providers, guardrails, compaction, MCP, sandboxing, vault. |
+| **zarlai** | [`zarlai/`](zarlai/) | Local multimodal/smart-home assistant — sensors, events, gRPC, frontend. |
+| **swebench-eval** | [`swebench-eval/`](swebench-eval/) | SWE-bench evaluation driver on the same coding-agent assembly. |
+| **examples** | [`examples/`](examples/) | Deterministic harnesses that isolate individual patterns, runnable with no LLM. |
+
+---
 
 ## Try zarlcode
 
 ```bash
-# install the latest tagged CLI
-go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.6
-
-# or via Homebrew
+# Homebrew
 brew install zarldev/tap/zarlcode
+
+# or build from source
+cd zarlmono && go tool task zarlcode
 
 # first run
 zarlcode init
-zarlcode keys set <provider>   # anthropic, openai, gemini, deepseek, ...
+zarlcode keys set anthropic "$ANTHROPIC_API_KEY"
 zarlcode
 ```
 
-Common commands:
-
 ```bash
 zarlcode                               # interactive TUI
-zarlcode -continue                     # resume the last session in this workspace
-zarlcode --headless --prompt-file t.md # one non-interactive task for scripts/CI
-zarlcode keys list                     # show configured provider keys, masked
+zarlcode -continue                     # resume the last session
+zarlcode --headless --prompt-file t.md # one-shot for scripts/CI
+zarlcode keys list                     # show provider keys (masked)
+zarlcode upgrade                       # self-update from GitHub Releases
 ```
 
-`zarlcode upgrade` self-updates from GitHub Releases:
+Supported providers: **Anthropic**, **OpenAI**, **DeepSeek**, **Gemini**, **Vertex AI**, **llama.cpp**, **Ollama**, plus OAuth-backed **Claude Code** and **OpenAI Codex** surfaces.
 
-```bash
-zarlcode upgrade source set zarldev/zarlmono
-zarlcode upgrade
-```
+> [!NOTE]
+> zarlcode configures model endpoints but doesn't start model servers. Run Ollama, llama.cpp, LM Studio, or another OpenAI-compatible server yourself for local inference.
 
-Supported providers include Anthropic, OpenAI, DeepSeek, Gemini, Google Vertex,
-llama.cpp, Ollama, and OAuth-backed Claude Code / OpenAI Codex surfaces.
+---
+
+## At a glance
+
+| Mode | Tools | Use case |
+|---|---|---|
+| **Plan** | Read-only | Investigate the codebase, propose a strategy — no edits, no shell. |
+| **Build** | Full tool surface | Read, edit, patch, bash, web, MCP, plans, sub-agents — subject to guardrails. |
+
+The TUI streams everything live: model output, tool calls, command results, diffs, plan state, and the file-change log. Sessions persist locally — `zarlcode -continue` picks up right where you left off.
+
+See the [interface tour](https://zarldev.github.io/zarlmono/zarlcode-interface/) →
+
+---
 
 ## Use zkit in your own Go app
 
 ```bash
-go get github.com/zarldev/zarlmono/zkit@v0.2.1
+go get github.com/zarldev/zarlmono/zkit@latest
 ```
 
-A minimal agent is an LLM provider, a tool registry, and the runner:
+A minimal agent is just a provider, a tool registry, and the runner:
 
 ```go
 package main
@@ -103,119 +129,97 @@ func main() {
 		runner.WithMaxIterations(8),
 	)
 
-	res, err := r.Run(context.Background(), runner.TaskSpec{Prompt: "What is the weather in Oslo?"})
-	if err != nil {
-		log.Fatal(err)
+	res := r.Run(context.Background(), runner.TaskSpec{Prompt: "What is the weather in Oslo?"})
+	if res.Err != nil {
+		log.Fatal(res.Err)
 	}
 	fmt.Println(res.FinalContent)
 }
 ```
 
-Swap the provider for OpenAI, Gemini, DeepSeek, llama.cpp, or Ollama and the
-runner code stays the same. Add guardrails, compaction, sandboxing, retrieval,
-and verified completion as options when you need them.
+Swap `anthropic` for `openai`, `gemini`, `deepseek`, `ollama`, or `llamacpp` — the runner stays the same. To run without a key or network:
 
-## Why this repo exists
-
-Most agent frameworks make the demo easy and the production edges vague.
-This monorepo is shaped the other way around: the abstractions are small because
-they are shared by multiple real consumers.
-
-- **Terminal-first coding workflow.** zarlcode is not just an example app; it is
-  the product surface for the coding agent.
-- **Go-native composition.** No framework runtime or YAML graph is required. The
-  important contracts are ordinary Go interfaces.
-- **Tool execution is explicit.** Tools declare schemas, effects, errors, and
-  purity; guardrails wrap dispatch instead of hiding inside prompts.
-- **Long runs are expected.** Sessions persist, processes are tracked,
-  compaction is built in, and sub-agents isolate exploratory work.
-- **Verification beats vibes.** `pursue` can re-drive an agent against real
-  world checks such as tests passing or files existing.
-
-## Repository layout
-
-`go.work` joins six Go modules:
-
-| Path | Module | Purpose |
-|---|---|---|
-| `zarlcode/` | `github.com/zarldev/zarlmono/zarlcode` | Terminal coding agent/TUI and CLI, built on `zkit`. |
-| `zkit/` | `github.com/zarldev/zarlmono/zkit` | Shared agent toolkit: runner, providers, tools, guardrails, compaction, MCP, sandboxing, foundation packages. |
-| `zarlai/` | `github.com/zarldev/zarlmono/zarlai` | Local multimodal/smart-home assistant. Has CGO/system dependencies and its own CI path. |
-| `swebench-eval/` | `github.com/zarldev/zarlmono/swebench-eval` | SWE-bench evaluation driver using the same coding-agent assembly as zarlcode. |
-| `examples/` | `github.com/zarldev/zarlmono/examples` | Small runnable harnesses that isolate individual zkit patterns. |
-| `.` | `github.com/zarldev/zarlmono` | Root tooling and workspace coordination. |
-
-```
-zarlcode/       Coding-agent TUI and CLI
-zkit/           Reusable agent libraries and foundation packages
-zarlai/         Local assistant backend/frontend
-swebench-eval/  SWE-bench evaluation driver
-examples/       Deterministic harnesses and patterns
-site/           Astro/Starlight documentation site
+```bash
+go run -C examples ./shared_infra
+go run -C examples ./releasegate -scripted
 ```
 
-## zarlcode at a glance
+Add guardrails, compaction, sandboxing, retrieval, and verified completion as options when you need them.
 
-zarlcode has two main work modes:
-
-| Mode | What happens |
-|---|---|
-| **Plan** | Read-only investigation. The agent can inspect files and propose a plan, but cannot edit or run shell commands. |
-| **Build** | Full tool surface: read, edit, patch, bash, web, MCP, plans, and sub-agent dispatch, subject to guardrails. |
-
-The TUI shows the run as it happens: model output, tool calls, command results,
-diffs, plan state, and the files changed this session. File and shell tools are
-workspace-scoped and routed through guardrails. Sub-agents handle focused side
-work without flooding the parent context. Sessions persist locally, so
-`zarlcode -continue` resumes the last run for the current repo.
-
-See [`zarlcode/README.md`](zarlcode/README.md) and the
-[interface tour](https://zarldev.github.io/zarlmono/zarlcode-interface/).
+---
 
 ## zkit building blocks
 
-Start with:
+| Layer | Package | Docs |
+|---|---|---|
+| Runner | [`zkit/agent/runner`](zkit/agent/runner/) | [Streaming tool-calling loop](https://zarldev.github.io/zarlmono/runner/) |
+| Tools | [`zkit/ai/tools`](zkit/ai/tools/) | [Registry, schemas, effects, MCP](https://zarldev.github.io/zarlmono/tools/) |
+| Guardrails | [`zkit/agent/guardrails`](zkit/agent/guardrails/) | [Schema repair, shell policy, caps, verifier feedback](https://zarldev.github.io/zarlmono/guardrails/) |
+| Compaction | [`zkit/agent/compact`](zkit/agent/compact/) | [Keeping long sessions inside context](https://zarldev.github.io/zarlmono/compaction/) |
+| MCP | [`zkit/mcp`](zkit/mcp/) | Model Context Protocol client/server |
+| Vault | [`zkit/vault`](zkit/vault/) | Encrypted credential storage |
+| Vector store | [`zkit/vectorstore`](zkit/vectorstore/) | Embedding + retrieval |
+| Docstore | [`zkit/docstore`](zkit/docstore/) | Document storage layer |
+| zhttp | [`zkit/zhttp`](zkit/zhttp/) | HTTP client foundation |
 
-- [Architecture](https://zarldev.github.io/zarlmono/architecture/) — package map and dependency direction.
-- [Runner](https://zarldev.github.io/zarlmono/runner/) — the streaming tool-calling loop.
-- [Tools](https://zarldev.github.io/zarlmono/tools/) — registry, schemas, effects, dynamic tools, MCP.
-- [Guardrails](https://zarldev.github.io/zarlmono/guardrails/) — schema repair, shell policy, fan-out caps, verifier feedback.
-- [Compaction](https://zarldev.github.io/zarlmono/compaction/) — keeping long sessions inside context.
-- [Examples](examples/) — deterministic harnesses, most runnable with no LLM.
+[Architecture overview →](https://zarldev.github.io/zarlmono/architecture/)
 
-## Build and test
+---
 
-A plain `go test ./...` only covers the current Go module. To run the normal
-multi-module checks:
+## Repository layout
 
-```bash
-go tool task check
+```
+zarlcode/       --- Coding-agent TUI & CLI
+zkit/           --- Reusable agent libraries
+zarlai/         --- Local assistant backend/frontend
+swebench-eval/  --- SWE-bench evaluation driver
+examples/       --- Deterministic harnesses & patterns
+site/           --- Astro/Starlight docs site
+docker/         --- Container setup for eval runs
+dist/           --- Release artifacts
 ```
 
-Common local commands:
+---
+
+## Build & test
 
 ```bash
-go tool task zarlcode              # build + install zarlcode to ~/.local/bin
-go run ./zarlcode/cmd              # run zarlcode from source
+go tool task check          # build -> vet -> test (examples, zkit, zarlcode, swebench-eval)
+go tool task lint           # golangci-lint across CI-covered modules
+go tool task race           # zkit race-detector suite
+```
+
+```bash
+go tool task zarlcode              # build+install to ~/.local/bin
+zarlcode
+
+go run ./zarlcode/cmd              # run from source
 go run ./zarlcode/cmd -continue    # resume last session
 ```
 
-`zarlai` is intentionally outside the standard pure-Go check loop because parts
-of it require CGO libraries for dlib/go-face and sherpa-onnx.
+> [!TIP]
+> `zarlai` is excluded from standard pure-Go checks — parts of it require CGO (dlib/go-face, sherpa-onnx). Use `go tool task zarlai:test` for its focused suite.
+
+---
 
 ## Trust boundaries
 
-zarlcode and zkit code tools can execute processes, mutate files, fetch web
-pages, connect to MCP servers, and call external LLM APIs. Guardrails and
-sandboxing reduce risk; they do not turn your user account into a disposable
-sandbox. Review tool calls when using powerful models or unfamiliar workspaces.
+zarlcode and zkit code tools can execute processes, mutate files, fetch web pages, connect to MCP servers, and call external LLM APIs. Guardrails and sandboxing reduce risk but don't turn your user account into a disposable sandbox. Review tool calls when using powerful models or unfamiliar workspaces.
+
+---
 
 ## Community
 
-- [Documentation site](https://zarldev.github.io/zarlmono)
+- [Docs site](https://zarldev.github.io/zarlmono)
 - [zarlcode README](zarlcode/README.md)
 - [zkit README](zkit/README.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CHANGELOG.md](CHANGELOG.md)
 
-MIT — see [LICENSE](LICENSE).
+---
+
+<div align="center">
+
+MIT — [LICENSE](LICENSE)
+
+</div>
