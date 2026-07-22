@@ -145,6 +145,75 @@ func TestEditFileHLTool_BatchRejectsStaleWithoutWriting(t *testing.T) {
 	}
 }
 
+// A replace whose original line ended in a newline stays newline-terminated
+// even when new_string omits the trailing newline — the tool must not
+// silently un-terminate the line or drop the file's final newline.
+func TestEditFileHLTool_PreservesTrailingNewline(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "nl.txt")
+
+	// Replace a middle line without a trailing newline: must not merge lines.
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path:  "nl.txt",
+		Edits: []code.HashlineEdit{{StartLine: 2, StartHash: testHashlineHash("two", 4), NewString: "TWO"}},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "one\nTWO\nthree\n" {
+		t.Fatalf("mid-line replace = %q, want newline preserved", got)
+	}
+
+	// Replace the last line without a trailing newline: file keeps its final \n.
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res = execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path:  "nl.txt",
+		Edits: []code.HashlineEdit{{StartLine: 3, StartHash: testHashlineHash("three", 4), NewString: "THREE"}},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "one\ntwo\nTHREE\n" {
+		t.Fatalf("last-line replace = %q, want trailing newline preserved", got)
+	}
+
+	// A file with no final newline stays that way (nothing to preserve).
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res = execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path:  "nl.txt",
+		Edits: []code.HashlineEdit{{StartLine: 3, StartHash: testHashlineHash("three", 4), NewString: "THREE"}},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "one\ntwo\nTHREE" {
+		t.Fatalf("no-EOL file replace = %q, want no trailing newline added", got)
+	}
+
+	// An explicit trailing newline in new_string is not doubled.
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res = execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path:  "nl.txt",
+		Edits: []code.HashlineEdit{{StartLine: 2, StartHash: testHashlineHash("two", 4), NewString: "TWO\n"}},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "one\nTWO\nthree\n" {
+		t.Fatalf("explicit newline = %q, want single newline", got)
+	}
+}
+
 func TestEditFileHLTool_ReturnsFreshAnchorWindow(t *testing.T) {
 	t.Parallel()
 	ws, root := mustWS(t)
