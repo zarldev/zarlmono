@@ -137,7 +137,7 @@ type HashlineEdit struct {
 	StartHash string `json:"start_hash" doc:"3- or 4-character base64 SHA-256 hash for start_line from the read output."`
 	EndLine   int    `json:"end_line,omitempty" doc:"Inclusive 1-based end line for replace/delete. Omit for a single-line edit."`
 	EndHash   string `json:"end_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for end_line from the read output."`
-	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; use a single cohesive range edit when changing adjacent lines."`
+	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; a replace whose line already ended in a newline stays newline-terminated even if you omit the trailing newline. Use a single cohesive range edit when changing adjacent lines."`
 	Mode      string `json:"mode,omitempty" enum:"replace,delete,insert_before,insert_after" doc:"Edit mode: replace (default), delete, insert_before, or insert_after."`
 }
 
@@ -204,6 +204,7 @@ func (t *EditFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 		return tools.Failure(call.ID, tools.Validation("edit", err.Error())), nil
 	}
 
+	preserveLineTerminators(body, resolved)
 	updated := applyResolvedHashlineEdits(body, resolved)
 	if err := t.ws.WriteFileInRoot(abs, []byte(updated), filesystem.ModePublicFile); err != nil {
 		return tools.Failure(call.ID, tools.Fatal("edit", fmt.Errorf("write %q: %w", args.Path, err))), nil
@@ -399,6 +400,32 @@ func validateResolvedHashlineEdits(path string, edits []resolvedHashlineEdit) er
 		}
 	}
 	return nil
+}
+
+// preserveLineTerminators keeps a replaced line range line-terminated. The edit
+// tool anchors on whole lines, so a replace whose spliced-out range ended in a
+// newline should stay newline-terminated. Models routinely omit the trailing
+// newline in new_string (and some providers drop a trailing newline while
+// streaming the argument), which would silently un-terminate the line — merging
+// it with the next one, or dropping the file's final newline. When the removed
+// range ended in "\n" but the replacement doesn't, re-append it (matching the
+// original CRLF/LF terminator). Deletes (empty replacement) and inserts
+// (zero-width splice) are unaffected by construction.
+func preserveLineTerminators(body string, edits []resolvedHashlineEdit) {
+	for i := range edits {
+		e := &edits[i]
+		if e.SpliceEnd <= e.SpliceStart || e.Replacement == "" {
+			continue
+		}
+		if body[e.SpliceEnd-1] != '\n' || strings.HasSuffix(e.Replacement, "\n") {
+			continue
+		}
+		if e.SpliceEnd >= 2 && body[e.SpliceEnd-2] == '\r' {
+			e.Replacement += "\r\n"
+			continue
+		}
+		e.Replacement += "\n"
+	}
 }
 
 func applyResolvedHashlineEdits(body string, edits []resolvedHashlineEdit) string {
