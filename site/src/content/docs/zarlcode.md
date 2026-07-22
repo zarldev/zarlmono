@@ -3,21 +3,19 @@ title: zarlcode
 description: Install and use the terminal coding agent built on zkit.
 ---
 
-zarlcode is a terminal coding agent. It runs in the workspace you launched it
-from, shows every model turn and tool call in a TUI, and lets you switch
-between read-only planning and file-changing build work. It can read and edit
-files, run commands, search the web, connect MCP tools, and delegate focused
-work to sub-agents.
+zarlcode is a local, inspectable terminal coding-agent workbench. It runs in the
+workspace you launched it from, shows every model turn and tool call in a TUI,
+and makes model/provider switching part of the workflow instead of a side quest.
+Use it to plan read-only, build with visible file and shell tools, inspect diffs,
+delegate focused sub-agents, run headless eval-like tasks, and resume local
+sessions later.
 
 ![zarlcode in action](/zarlmono/zarlcode-hero2.gif)
 
 ## Install
 
 ```bash
-# latest tagged release
-go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.6
-
-# or Homebrew
+# Homebrew installs the binary as zarlcode
 brew install zarldev/tap/zarlcode
 ```
 
@@ -29,17 +27,55 @@ go tool task zarlcode
 go run ./zarlcode/cmd
 ```
 
-## First run
+> Note: `go install github.com/zarldev/zarlmono/zarlcode/cmd@latest` currently
+> builds a binary named `cmd` because the CLI package directory is `cmd`. Use
+> Homebrew, GitHub release archives, or `go tool task zarlcode` from a checkout
+> until the public Go-install path is renamed or wrapped.
+
+## First three minutes
+
+### API-backed provider
 
 ```bash
 zarlcode init
-zarlcode keys set <provider>   # anthropic, openai, gemini, deepseek, ...
-zarlcode
+zarlcode keys set <provider> <key>   # anthropic, openai, gemini, deepseek, ...
+zarlcode                            # run from the repository you want to work on
 ```
 
-Supported providers include `anthropic`, `openai`, `deepseek`, `gemini`,
-`google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and
-`openai-codex`.
+For OAuth-backed product surfaces, use the provider-specific flow instead:
+
+```bash
+zarlcode keys oauth claude-code
+zarlcode keys oauth openai-codex
+```
+
+Run `zarlcode keys --help` for credential commands. Supported providers include
+`anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`,
+`ollama`, plus OAuth-backed `claude-code` and `openai-codex`.
+
+### Local or OpenAI-compatible provider
+
+zarlcode configures model endpoints but does not start model servers. Start
+Ollama, llama.cpp, LM Studio, or another OpenAI-compatible server yourself, then
+launch zarlcode and select or add the provider in **Settings → Providers**
+(`Ctrl+S`) or the model picker (`Ctrl+E`).
+
+### The loop to try first
+
+1. Start in **Plan** mode and ask for a design before mutation.
+2. Press `Shift+Tab` to switch to **Build** when you want edits or shell commands.
+3. Watch tool calls, command output, changed files, and diffs in the timeline and working set.
+4. Press `Ctrl+E` to switch provider/model without leaving the session.
+5. Quit and resume later with `zarlcode -continue` from the same workspace.
+6. For eval-like or scripted work, run the same task headlessly:
+
+```bash
+zarlcode --headless --prompt-file task.md
+```
+
+The workflow demo shows that full loop: Plan mode, model switching, Build, diff inspection, and a headless follow-up.
+
+![zarlcode workflow demo: plan, switch model, build, inspect diff, and run headless](/zarlmono/zarlcode-workflow-demo.gif)
 
 Common commands:
 

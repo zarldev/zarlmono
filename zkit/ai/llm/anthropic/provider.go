@@ -88,6 +88,7 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (ite
 // broke / the attempt was cancelled).
 func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
 	messages := convertMessagesToSDK(req.Messages)
+	setLastMessageCacheBreakpoint(messages)
 
 	// Build request parameters
 	params := anthropic.MessageNewParams{
@@ -285,6 +286,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 // nonStreamCompletion handles non-streaming responses.
 func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
 	messages := convertMessagesToSDK(req.Messages)
+	setLastMessageCacheBreakpoint(messages)
 
 	// Build request parameters
 	params := anthropic.MessageNewParams{
@@ -488,6 +490,39 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 	flushUser()
 
 	return sdkMessages
+}
+
+// setLastMessageCacheBreakpoint marks the final content block of the final
+// message with cache_control:ephemeral — a rolling breakpoint that lets
+// Anthropic serve the whole conversation prefix from cache on the next turn.
+// The tool_result blocks carrying file reads and every prior turn sit before
+// it, so on a long agentic loop this is where the real prompt-token savings
+// live (the system-prompt breakpoint only covers tools+system, which is a
+// fraction of a deep conversation).
+//
+// Combined with the static system breakpoint this is the standard two-
+// breakpoint incremental pattern: each turn writes cache for the newly
+// appended suffix and reads the longest matching prefix (everything up to the
+// previous turn's breakpoint) from cache. Anthropic allows up to 4
+// breakpoints, so two leaves headroom.
+//
+// Safe on any conversation: an empty message list or a block type that can't
+// carry cache_control is a no-op, and a prefix shorter than the model's
+// minimum cacheable length is silently ignored by the API rather than erroring.
+func setLastMessageCacheBreakpoint(messages []anthropic.MessageParam) {
+	if len(messages) == 0 {
+		return
+	}
+	last := messages[len(messages)-1]
+	if len(last.Content) == 0 {
+		return
+	}
+	// GetCacheControl returns a pointer into the block's shared underlying
+	// param struct (the union holds pointer fields), so assigning through it
+	// mutates the block in the slice.
+	if cc := last.Content[len(last.Content)-1].GetCacheControl(); cc != nil {
+		*cc = anthropic.NewCacheControlEphemeralParam()
+	}
 }
 
 func appendUserContent(blocks *[]anthropic.ContentBlockParamUnion, msg llm.Message) {

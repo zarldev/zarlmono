@@ -20,6 +20,8 @@ This directory holds visual assets and VHS source tapes for `zarlcode`.
 | `screen-planmode.gif` | GIF | Rendered output from `screen-planmode.tape`. |
 | `screen-subagents.gif` | GIF | Rendered output from `screen-subagents.tape`. |
 | `screen-workingset.gif` | GIF | Rendered output from `screen-workingset.tape`. |
+| `workflow-demo.tape` | VHS tape | Narrative workflow demo: create a tiny repo, Plan → model switch → Build → working set diff → headless follow-up. |
+| `workflow-demo.gif` | Rendered media | Output from `workflow-demo.tape`. |
 
 ## Prerequisites
 
@@ -43,6 +45,7 @@ vhs zarlcode/docs/images/screen-modelpicker.tape
 vhs zarlcode/docs/images/screen-planmode.tape
 vhs zarlcode/docs/images/screen-subagents.tape
 vhs zarlcode/docs/images/screen-workingset.tape
+vhs zarlcode/docs/images/workflow-demo.tape
 ```
 
 That will write GIFs next to the tapes:
@@ -54,12 +57,14 @@ That will write GIFs next to the tapes:
 - `zarlcode/docs/images/screen-planmode.gif`
 - `zarlcode/docs/images/screen-subagents.gif`
 - `zarlcode/docs/images/screen-workingset.gif`
+- `zarlcode/docs/images/workflow-demo.gif`
 
 ## Notes
 
 - `hero.tape` and `screen-cockpit.tape` use `web_fetch` prompts so they work even in an empty directory.
 - `screen-fileviewer.tape`, `screen-subagents.tape`, and `screen-workingset.tape` ask zarlcode to shallow-clone `gohugoio/hugo` into `demo-repo` so the recordings have real files to browse, map, and edit.
 - `screen-workingset.tape` records a real file edit; run it in a throwaway workspace (it will create and modify `demo-repo`).
+- `workflow-demo.tape` copies the fixture in `workflow-demo-fixture/` to `/tmp/zarlcode-workflow-demo`, initializes a throwaway git repo there, and records against that temp workspace. The setup is hidden so the clip starts inside zarlcode instead of echoing fixture code.
 - If your model/backend is slow, increase the `Sleep` durations in the tape.
 - For a polished recording, prefer a warmed-up backend and a stable local model/provider.
 ## Common workflow

@@ -1,26 +1,52 @@
 # zkit
 
-`zkit` is the shared-services Go module for the Zarldev monorepo.
+`zkit` is the ordinary-Go agent substrate extracted from zarlai and used by zarlcode.
 
-It provides reusable contracts and infrastructure used by `zarlcode`, `zarlai`,
-`swebench-eval`, and root examples: agent runtime, LLM providers, tool
-execution, MCP, code/workspace tooling, cache, document store, filesystem,
-message bus, HTTP/RPC helpers, logging, environment handling, notifications,
-app lifecycle, and synchronization primitives.
+It provides reusable contracts and infrastructure for the hard parts that showed up in real products: agent runtime, LLM providers, tool execution, MCP, code/workspace tooling, guardrails, compaction, cache, document store, filesystem, message bus, HTTP/RPC helpers, logging, environment handling, notifications, app lifecycle, and synchronization primitives.
 
-Although it lives in the monorepo, `zkit` has its own `go.mod` and is built,
-tested, linted, and versioned as an independent Go module.
+zarlcode is the fastest way to try that substrate against a real repository. zkit is the library layer when you want to build your own agent system without adopting a framework runtime or YAML graph.
+
+Although it lives in the monorepo, `zkit` has its own `go.mod` and is built, tested, linted, and versioned as an independent Go module.
 
 ```text
 zkit
   ↑
-  ├── zarlcode
-  ├── zarlai
-  ├── swebench-eval
-  └── root examples/tools
+  ├── zarlcode        terminal coding-agent workbench
+  ├── zarlai          local multimodal assistant
+  ├── swebench-eval   repeatable coding-agent evaluation
+  └── examples/tools  deterministic harnesses and demos
 ```
 
 `zkit` must not import downstream app modules.
+
+---
+
+## Try it
+
+For the product surface, install zarlcode and run it inside a repository:
+
+```bash
+brew install zarldev/tap/zarlcode
+zarlcode init
+zarlcode
+```
+
+From a source checkout, use `go tool task zarlcode` to build and install the binary as `zarlcode`.
+
+For the library, add zkit to your Go module:
+
+```bash
+go get github.com/zarldev/zarlmono/zkit@latest
+```
+
+Run deterministic examples without an LLM key:
+
+```bash
+go run -C examples ./shared_infra
+go run -C examples ./releasegate -scripted
+```
+
+The smallest useful composition is still ordinary Go: a provider/client, a tool registry, and the runner. See the docs site getting-started guide for a complete snippet and the `examples/` module for credential-free harnesses.
 
 ---
 

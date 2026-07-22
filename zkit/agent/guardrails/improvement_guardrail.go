@@ -83,7 +83,7 @@ func NewImprovementGuardrail(root string, watch []tools.ToolName, verifiers ...V
 }
 
 // Name returns the guardrail's identifier.
-func (g *ImprovementGuardrail) Name() string { return "improvement_loop" }
+func (g *ImprovementGuardrail) Name() string { return NameImprovementLoop }
 
 // Inspect runs the in-loop verification. Always returns nil — the
 // guardrail never fails or reverts the call. When a verifier reports

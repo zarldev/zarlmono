@@ -145,6 +145,101 @@ func TestEditFileHLTool_BatchRejectsStaleWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestEditFileHLTool_ReturnsFreshAnchorWindow(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "window.txt")
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\nfour\nfive\nsix\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Replace a single line with two lines, shifting everything below it.
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "window.txt",
+		Edits: []code.HashlineEdit{
+			{
+				StartLine: 3,
+				StartHash: testHashlineHash("three", 4),
+				NewString: "THREE-A\nTHREE-B\n",
+			},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	msg, _ := res.Data.(string)
+	if !strings.Contains(msg, "fresh anchors") {
+		t.Fatalf("missing fresh-anchor window in:\n%s", msg)
+	}
+	// The replacement lands at its new line numbers with recomputed hashes.
+	if !strings.Contains(msg, "3:"+testHashlineHash("THREE-A", 4)+"|THREE-A") {
+		t.Fatalf("missing anchor for new line 3 in:\n%s", msg)
+	}
+	// A line below the splice reports its shifted number, not the stale one —
+	// this is what lets the model keep editing without re-reading.
+	if !strings.Contains(msg, "5:"+testHashlineHash("four", 4)+"|four") {
+		t.Fatalf("expected 'four' anchored at shifted line 5 in:\n%s", msg)
+	}
+}
+
+func TestEditFileHLTool_DeleteWindowAnchorsSurvivingLines(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "window-delete.txt")
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "window-delete.txt",
+		Edits: []code.HashlineEdit{
+			{
+				StartLine: 2,
+				StartHash: testHashlineHash("two", 4),
+				Mode:      "delete",
+			},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	msg, _ := res.Data.(string)
+	// "three" moved up to line 2 after the delete; the window proves it.
+	if !strings.Contains(msg, "2:"+testHashlineHash("three", 4)+"|three") {
+		t.Fatalf("expected 'three' anchored at shifted line 2 in:\n%s", msg)
+	}
+}
+
+func TestEditFileHLTool_LargeReplacementSkipsWindow(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "window-large.txt")
+	if err := os.WriteFile(path, []byte("anchor\ntail\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// A replacement bigger than the window cap (80 lines) should not reflate
+	// the result into a full dump — the summary stands alone and the model
+	// re-reads instead.
+	big := strings.Repeat("x\n", 200)
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "window-large.txt",
+		Edits: []code.HashlineEdit{
+			{
+				StartLine: 1,
+				StartHash: testHashlineHash("anchor", 4),
+				NewString: big,
+			},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	if msg, _ := res.Data.(string); strings.Contains(msg, "fresh anchors") {
+		t.Fatalf("expected no window past the line cap, got:\n%s", msg)
+	}
+}
+
 func TestEditFileHLTool_BatchRejectsOverlappingRanges(t *testing.T) {
 	t.Parallel()
 	ws, root := mustWS(t)

@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/hooks"
 	"github.com/zarldev/zarlmono/zarlcode/instructions"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
@@ -18,6 +22,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -355,7 +360,7 @@ func (l *LiveRunner) TopTools() []compact.ToolUsage     { return nil }
 // executive need an LLM provider; without one they fall back to tiered so a
 // misconfigured engine never breaks compaction. structural and tiered are
 // no-LLM; anything unknown is tiered (the quiet progressive default).
-func buildLiveCompactor(engine string, window int, prov llm.Provider, model string, state compact.StateProvider) compact.Compactor {
+func buildLiveCompactor(engine string, window int, prov llm.Provider, model string, state compact.StateProvider, wsRoot string) compact.Compactor {
 	switch engine {
 	case "structural":
 		return compact.NewStructural()
@@ -367,8 +372,33 @@ func buildLiveCompactor(engine string, window int, prov llm.Provider, model stri
 		if prov != nil {
 			return compact.NewExecutive(prov, model, state)
 		}
+	case "handover":
+		if prov != nil {
+			return compact.NewHandover(prov, model, state, handoverWriter(wsRoot))
+		}
 	}
 	return compact.NewTiered(window)
+}
+
+// handoverWriter persists a handover document under <wsRoot>/.zarlcode/handovers
+// as a timestamped markdown file, returning its path. Empty wsRoot (or a nil
+// return) leaves the handover in-context only — the reseed still works, just
+// without a durable artifact.
+func handoverWriter(wsRoot string) compact.HandoverWriter {
+	if wsRoot == "" {
+		return nil
+	}
+	return func(_ context.Context, doc string) (string, error) {
+		dir := filepath.Join(home.WorkspaceDir(wsRoot), "handovers")
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return "", fmt.Errorf("handovers dir: %w", err)
+		}
+		path := filepath.Join(dir, time.Now().Format("2006-01-02-150405")+".md")
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			return "", fmt.Errorf("write %q: %w", path, err)
+		}
+		return path, nil
+	}
 }
 
 // QueueInput appends user text to the live-turn injection queue. The running
@@ -550,8 +580,17 @@ func (l *LiveRunner) headlessGuardrailDeps() guardrails.Deps {
 
 func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 	var testEdit guardrails.Guardrail
-	if headless {
+	switch {
+	case headless:
+		// Headless stays strict for eval determinism, whatever the user set.
 		testEdit = guardrails.NewTestEditStrict()
+	case l.settings != nil:
+		switch l.settings.TestEditMode(l.parentContext()) {
+		case guardModeAdvisory:
+			testEdit = guardrails.NewTestEditAdvisory()
+		case guardModeStrict:
+			testEdit = guardrails.NewTestEditStrict()
+		}
 	}
 	// Shared fan-out caps from coderunner so they can't drift from the eval;
 	// StandardGuardrailDeps wires no language verifier by default. SkillLookup
@@ -578,6 +617,14 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 				code.ToolNameGlob: fanoutCap,
 			}
 		}
+		// Per-task spawn_agent budget, applied after the discovery-cap block
+		// (which replaces the whole map and would otherwise drop it). 0 flows
+		// through as "uncapped" since the guardrail treats a non-positive limit
+		// as unbounded.
+		if deps.FanoutLimits == nil {
+			deps.FanoutLimits = map[tools.ToolName]int{}
+		}
+		deps.FanoutLimits[spawn.ToolNameSpawnAgent] = l.settings.SpawnFanoutCap(l.parentContext())
 		deps.ReadBeforeWriteMode = l.settings.ReadBeforeWriteMode(l.parentContext())
 		// Strict profile follows the sandbox: ON (the kernel is the real
 		// boundary) keeps the static shell/read-before-write blocks; OFF is
@@ -590,7 +637,15 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 		if enabled, ok := sandbox.EnvOverride(); ok {
 			sandboxOn = enabled
 		}
-		deps.ShellLenient = !sandboxOn
+		deps.ShellLenient = l.settings.ShellGuardLenient(l.parentContext(), sandboxOn)
+		// Always-on guardrails the user can drop from the chain. Names come
+		// from the guardrails package so they can't drift from Name().
+		if !l.settings.ImprovementGuard(l.parentContext()) {
+			deps.Disabled = append(deps.Disabled, guardrails.NameImprovementLoop)
+		}
+		if !l.settings.SkillHints(l.parentContext()) {
+			deps.Disabled = append(deps.Disabled, guardrails.NameSkillHint)
+		}
 	}
 	return deps
 }
@@ -825,27 +880,37 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	// truncator — turns are serialized) and sampling temperature. Read live so a
 	// settings change applies next turn without a restart.
 	var temperature float32
+	var streamIdle time.Duration
+	autoCompact := true
 	if settings != nil {
 		sctx := l.parentContext()
 		l.truncator.MaxBytes = settings.ToolResultMaxBytes(sctx)
 		l.truncator.MaxLines = settings.ToolResultMaxLines(sctx)
 		temperature = settings.Temperature(sctx)
+		streamIdle = settings.ResponseTimeout(sctx)
+		autoCompact = settings.AutoCompact(sctx)
 	}
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{
 		Model:         model,
 		MaxIterations: maxIter,
 		ContextWindow: window,
+		StreamIdle:    streamIdle,
 	})
 	var visible tools.Source
 	opts = append(opts,
 		runner.WithSteerer(l.queue),
 		runner.WithPrompt(l.promptFunc(func() tools.Source { return visible })),
-		runner.WithCompactor(coderunner.StandardCompactor(
-			buildLiveCompactor(engine, window, compactProv, compactModel, l), window, reserve)),
 		runner.WithResultTruncator(l.truncator),
 		runner.WithTemperature(temperature),
 	)
+	// Arm the auto-compactor only in auto mode. In manual mode the user
+	// compacts on demand (CompactNow builds its own compactor, so it still
+	// works) and the cockpit warns as pressure crosses the trigger.
+	if autoCompact {
+		opts = append(opts, runner.WithCompactor(coderunner.StandardCompactor(
+			buildLiveCompactor(engine, window, compactProv, compactModel, l, l.ws.Root()), window, reserve)))
+	}
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
 	}
@@ -896,7 +961,7 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 		engineName = settings.CompactEngine(ctx)
 		compactProv, compactModel = settings.CompactorProvider(ctx, prov, model)
 	}
-	return l.conv.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l), l.sink)
+	return l.conv.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l, l.ws.Root()), l.sink)
 }
 
 func (l *LiveRunner) RunTurn(prompt string) error {

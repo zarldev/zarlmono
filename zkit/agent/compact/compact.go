@@ -56,6 +56,7 @@ const (
 	EngineTiered     = "tiered"
 	EngineSummary    = "summary"
 	EngineExecutive  = "executive"
+	EngineHandover   = "handover"
 )
 
 // Result is what an engine returns from a Compact call. History is
@@ -142,6 +143,8 @@ func ParseEngine(name string) (string, error) {
 		return EngineSummary, nil
 	case EngineExecutive:
 		return EngineExecutive, nil
+	case EngineHandover:
+		return EngineHandover, nil
 	}
-	return "", fmt.Errorf("unknown compact engine %q (want structural | tiered | summary | executive)", name)
+	return "", fmt.Errorf("unknown compact engine %q (want structural | tiered | summary | executive | handover)", name)
 }

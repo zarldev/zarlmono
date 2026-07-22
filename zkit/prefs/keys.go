@@ -16,6 +16,11 @@ const (
 	KeyCompactEngine   = "compact_engine"
 	KeyCompactProvider = "compact_provider"
 	KeyCompactModel    = "compact_model"
+	// KeyCompactionMode controls whether the runner compacts automatically.
+	// "auto" (default) trims history under context pressure without asking;
+	// "manual" leaves the history intact, warns in the cockpit when it crosses
+	// the trigger, and waits for the user to compact on demand.
+	KeyCompactionMode = "compaction_mode"
 	// Decompose-judge rows: the constrained-verdict LLM judge the decompose
 	// guardrail consults on repeated tool failures. Off by default — the
 	// guardrail then keeps its deterministic advisory path. Provider/model
@@ -31,6 +36,21 @@ const (
 	// it; "advisory" and "strict" both refuse blind edit/write calls until the
 	// task reads the target or enough nearby context first.
 	KeyReadBeforeWrite = "read_before_write"
+	// KeyTestEditGuard controls the test-edit guardrail for interactive runs.
+	// "off" (default) leaves test edits unchecked; "advisory" warns when the
+	// model edits a test rather than the code under test; "strict" refuses.
+	// Headless runs stay strict for eval determinism regardless of this value.
+	KeyTestEditGuard = "test_edit_guard"
+	// KeyImprovementGuard toggles the improvement-loop guardrail, which keeps
+	// the agent working while its verifiers still report failure. "on" default.
+	KeyImprovementGuard = "improvement_guard"
+	// KeySkillHints toggles the skill-hint guardrail, which suggests a recovery
+	// skill after a tool call keeps failing. "on" default.
+	KeySkillHints = "skill_hints"
+	// KeyShellGuard controls the static shell policy's leniency. "auto" (default)
+	// follows the sandbox setting — strict when the sandbox is on, lenient when
+	// off; "strict" and "lenient" pin the choice regardless of the sandbox.
+	KeyShellGuard = "shell_guard"
 	// KeyTemperature sets the sampling temperature on completion requests.
 	// Empty/"(default)" leaves it unset (server default). A low value (e.g. 0.2)
 	// improves determinism and tool-call reliability for local models.
@@ -44,6 +64,15 @@ const (
 	// 0 keeps the built-in per-tool defaults; a positive value caps every capped
 	// exploration tool at that count to bound context growth.
 	KeyFanoutCap = "fanout_cap"
+	// KeySpawnFanoutCap caps how many spawn_agent calls a single task may issue
+	// before the fanout guardrail refuses further ones. Default 8; 0 removes the
+	// cap (lets a task fan out sub-agents unbounded).
+	KeySpawnFanoutCap = "spawn_fanout_cap"
+	// KeyResponseTimeout overrides the stream-idle stall watchdog in whole
+	// seconds: how long the runner waits with no chunk from the model before
+	// cancelling the iteration. Default 90. Raise it for a slow local model or
+	// connection that legitimately pauses longer than 90s between chunks.
+	KeyResponseTimeout = "response_timeout"
 	// KeyEnableMCP / KeyEnableWeb / KeyEnableBackground gate optional tool
 	// clusters. On by default; turn off to shrink the tool surface for a lean
 	// local-model setup (MCP tools, web_search/web_fetch, background-process

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
@@ -109,10 +110,12 @@ func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, erro
 	}
 
 	engine, compactProv, compactModel := compact.EngineTiered, parentProv, parentModel
+	var streamIdle time.Duration
 	if settings != nil {
 		ctx := l.parentContext()
 		engine = settings.CompactEngine(ctx)
 		compactProv, compactModel = settings.CompactorProvider(ctx, parentProv, parentModel)
+		streamIdle = settings.ResponseTimeout(ctx)
 	}
 
 	var visible tools.Source
@@ -120,11 +123,15 @@ func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, erro
 		Model:         model,
 		MaxIterations: maxIter,
 		ContextWindow: window,
+		StreamIdle:    streamIdle,
 	})
 	opts = append(opts,
 		runner.WithPrompt(l.agentPromptFunc(agent, func() tools.Source { return visible })),
 		runner.WithCompactor(coderunner.StandardCompactor(
-			buildLiveCompactor(engine, window, compactProv, compactModel, l), window, reserve)),
+			// Empty wsRoot: a sub-agent handover reseeds its own context but
+			// does not write a file (sub-agents run unattended and would spam
+			// the handovers dir).
+			buildLiveCompactor(engine, window, compactProv, compactModel, l, ""), window, reserve)),
 		runner.WithResultTruncator(l.truncator),
 		// Sub-agent iterations feed the same cockpit context graph.
 		runner.WithContextBreakdown(),

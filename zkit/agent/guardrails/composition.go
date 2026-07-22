@@ -66,6 +66,15 @@ type Deps struct {
 	Disabled []string
 }
 
+// Guardrail names, exported so consumers can reference them via the Disabled
+// ablation knob without hardcoding string literals that would silently rot if a
+// Name() changed. Only the always-on guardrails a consumer might realistically
+// toggle are named here; the rest have dedicated config fields.
+const (
+	NameImprovementLoop = "improvement_loop"
+	NameSkillHint       = "skill_hint"
+)
+
 // PostSchemaGuardrails returns the production guardrails that compose after
 // schema, in order. "Post-schema" is the chain position; the returned set mixes
 // PreCall and PostCall guardrails.

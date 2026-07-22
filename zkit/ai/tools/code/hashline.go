@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -25,6 +26,14 @@ const (
 	hashlineModeInsertAfter  = "insert_after"
 
 	hashlineMaxBatchEdits = 64
+
+	// hashlineEditWindowContext is the number of unchanged lines shown on
+	// each side of a spliced region in the post-edit anchor window.
+	hashlineEditWindowContext = 3
+	// hashlineEditWindowMaxLines caps the total lines emitted across all
+	// windows so a large batch edit can't reflate the result back into a
+	// full-file read — past the cap the model is better off re-reading.
+	hashlineEditWindowMaxLines = 80
 )
 
 // ReadFileHLTool reads a file with line-number + hash anchors for the edit
@@ -145,6 +154,7 @@ func (t *EditFileHLTool) Definition() tools.ToolSpec {
 			"Prefer one well-scoped range edit for a cohesive change instead of many tiny adjacent edits. " +
 			"Replaces or deletes anchored line ranges, or inserts before/after anchored lines. " +
 			"The hash identifies the line by content, so anchors survive line-number shifts from earlier edits. " +
+			"On success the result returns fresh line/hash anchors around the edited region — use those to make further edits to the same file without re-reading it. " +
 			"A stale error means the content changed; re-read that file and retry with fresh anchors.",
 		Parameters: tools.SchemaFor[EditFileHLArgs](),
 		Mutates:    true,
@@ -200,7 +210,15 @@ func (t *EditFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 	}
 	effect := tools.NewFileEffect(tools.FileModify, args.Path)
 	effect.File.BytesAfter = int64(len(updated))
-	return tools.Success(call.ID, fmt.Sprintf("edited %s (%s, hashline anchors verified)", args.Path, hashlineEditSummary(resolved)), effect), nil
+	msg := fmt.Sprintf("edited %s (%s, hashline anchors verified)", args.Path, hashlineEditSummary(resolved))
+	// Emit fresh LINE:HASH|text anchors around each spliced region so the
+	// model can chain further edits to this file without a re-read — the
+	// line numbers and hashes below every splice have just shifted, which is
+	// what otherwise forces the read→edit→read→edit loop.
+	if window := hashlineEditWindows(updated, resolved); window != "" {
+		msg += "\n\nfresh anchors after this edit (continue editing without re-reading):\n" + window
+	}
+	return tools.Success(call.ID, msg, effect), nil
 }
 
 type resolvedHashlineEdit struct {
@@ -396,6 +414,96 @@ func applyResolvedHashlineEdits(body string, edits []resolvedHashlineEdit) strin
 		updated = updated[:edit.SpliceStart] + edit.Replacement + updated[edit.SpliceEnd:]
 	}
 	return updated
+}
+
+// hashlineEditWindows renders fresh LINE:HASH|text anchors around every
+// spliced region of the post-edit body, so the model can keep editing the
+// same file without re-reading it. Line numbers and hashes are recomputed on
+// updated (the bytes just written); windows that overlap or sit within one
+// line of each other merge, and the whole block is dropped when it would
+// exceed hashlineEditWindowMaxLines — past that a re-read is cheaper than
+// bloating every edit result. Returns "" when there is nothing useful to show.
+func hashlineEditWindows(updated string, edits []resolvedHashlineEdit) string {
+	lines := hashlineLines(updated)
+	if len(lines) == 0 {
+		return ""
+	}
+
+	// New byte position of each replacement, ascending by original splice,
+	// accumulating the length delta of all earlier edits. This mirrors
+	// applyResolvedHashlineEdits, which splices from the tail so an earlier
+	// edit's prefix is never disturbed by a later one.
+	sorted := slices.Clone(edits)
+	slices.SortFunc(sorted, func(a, b resolvedHashlineEdit) int {
+		if a.SpliceStart != b.SpliceStart {
+			return a.SpliceStart - b.SpliceStart
+		}
+		return a.Index - b.Index
+	})
+
+	type span struct{ lo, hi int } // inclusive line indices
+	spans := make([]span, 0, len(sorted))
+	delta := 0
+	for _, e := range sorted {
+		newStart := e.SpliceStart + delta
+		newEnd := newStart + len(e.Replacement) // exclusive
+		delta += len(e.Replacement) - (e.SpliceEnd - e.SpliceStart)
+
+		lo := hashlineLineIndexAt(lines, newStart)
+		hiByte := newEnd - 1
+		if hiByte < newStart {
+			// Zero-length replacement (delete): anchor on the splice line so
+			// the model sees where the removed range used to be.
+			hiByte = newStart
+		}
+		hi := hashlineLineIndexAt(lines, hiByte)
+
+		lo = max(lo-hashlineEditWindowContext, 0)
+		hi = min(hi+hashlineEditWindowContext, len(lines)-1)
+		spans = append(spans, span{lo, hi})
+	}
+
+	// Merge overlapping or single-line-adjacent spans; spans are already in
+	// ascending order because sorted is.
+	merged := make([]span, 0, len(spans))
+	for _, s := range spans {
+		if n := len(merged); n > 0 && s.lo <= merged[n-1].hi+1 {
+			merged[n-1].hi = max(merged[n-1].hi, s.hi)
+			continue
+		}
+		merged = append(merged, s)
+	}
+
+	total := 0
+	for _, s := range merged {
+		total += s.hi - s.lo + 1
+	}
+	if total > hashlineEditWindowMaxLines {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, s := range merged {
+		if i > 0 {
+			fmt.Fprintf(&b, "... (%d unchanged)\n", s.lo-merged[i-1].hi-1)
+		}
+		for j := s.lo; j <= s.hi; j++ {
+			line := lines[j]
+			fmt.Fprintf(&b, "%d:%s|%s\n", j+1, hashlineHash(line.Content, hashlineDefaultHashLen), line.Content)
+		}
+	}
+	return b.String()
+}
+
+// hashlineLineIndexAt returns the index of the line whose [Start,End) byte
+// range contains off. Lines are contiguous and ascending, so a binary search
+// on End finds it; an offset at end-of-file clamps to the last line.
+func hashlineLineIndexAt(lines []hashlineLine, off int) int {
+	i := sort.Search(len(lines), func(i int) bool { return lines[i].End > off })
+	if i >= len(lines) {
+		return len(lines) - 1
+	}
+	return i
 }
 
 func hashlineEditMode(edit HashlineEdit) string {

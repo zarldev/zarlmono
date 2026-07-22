@@ -259,6 +259,12 @@ type Tuning struct {
 	// (where local models lose tool-call discipline) that byte-pressure
 	// heuristics miss. Zero leaves the force-path off.
 	ContextWindow int
+
+	// StreamIdle overrides the no-chunk stall watchdog (see StreamIdleTimeout).
+	// Zero keeps the shared 90s default so every consumer stays identical
+	// unless a caller deliberately dials it — e.g. a slow local model or
+	// connection that legitimately pauses longer than 90s between chunks.
+	StreamIdle time.Duration
 }
 
 // Tuning constants shared by every consumer. Exported so a consumer
@@ -380,12 +386,16 @@ func DefaultTurnQuality() runner.TurnQuality {
 //	)
 //	r := runner.New(client, opts...)
 func StandardOptions(t Tuning) []options.Option[runner.Runner] {
+	streamIdle := StreamIdleTimeout
+	if t.StreamIdle > 0 {
+		streamIdle = t.StreamIdle
+	}
 	opts := []options.Option[runner.Runner]{
 		runner.WithAdaptiveKeepRecent(AdaptiveKeepTargetTokens, AdaptiveKeepMin, AdaptiveKeepMax),
 		runner.WithTurnQuality(DefaultTurnQuality()),
 		runner.WithFinalizeWarn(runner.FinalizeWarn{RemainingThreshold: FinalizeWarnThreshold}),
 		runner.WithIterationTimeout(IterationTimeout),
-		runner.WithStreamIdleTimeout(StreamIdleTimeout),
+		runner.WithStreamIdleTimeout(streamIdle),
 		runner.WithMaxTokens(MaxCompletionTokens),
 		runner.WithThinkingBudget(ThinkingOnlyBudgetBytes),
 	}
@@ -464,11 +474,20 @@ func StandardCompactor(inner compact.Compactor, window, reserve int) *compact.Pr
 // identical reads are already memoized per task.
 func StandardFanoutLimits() map[tools.ToolName]int {
 	return map[tools.ToolName]int{
-		code.ToolNameLs:   20,
-		code.ToolNameGrep: 30,
-		code.ToolNameGlob: 20,
+		code.ToolNameLs:          20,
+		code.ToolNameGrep:        30,
+		code.ToolNameGlob:        20,
+		spawn.ToolNameSpawnAgent: StandardSpawnFanoutCap,
 	}
 }
+
+// StandardSpawnFanoutCap bounds how many spawn_agent calls a single task may
+// issue before the fanout guardrail starts refusing them. Without it a model
+// can fan out sub-agents unbounded ("researcher + reviewer + coder" is the
+// intended handful, per the tool's own description). Zero in the fanout map
+// would mean unbounded, so this stays positive; consumers that want it off
+// remove the entry.
+const StandardSpawnFanoutCap = 8
 
 // StandardGuardrailDeps returns the guardrail dependencies every consumer
 // shares — the fan-out caps — rooted at root with the given test-edit policy

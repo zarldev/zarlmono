@@ -44,6 +44,9 @@ type providersDialog struct {
 
 	oauthBusy bool   // an OAuth sign-in is awaiting the browser callback
 	oauthURL  string // the sign-in URL (shown for manual copy)
+
+	modelsProvider string // provider awaiting/ascribing an async model fetch
+	modelPicker    *listPicker
 }
 
 func (d *providersDialog) summary() string {
@@ -95,6 +98,8 @@ func (d *providersDialog) onOAuthResult(account string, err error) {
 // providers pane is focused — sub-mode aware.
 func (d *providersDialog) footerHint() string {
 	switch {
+	case d.modelPicker != nil:
+		return keyLegend(keyHint{"↵", "select"}, keyHint{"esc", "cancel"})
 	case d.editing:
 		return keyLegend(keyHint{label: "type key"}, keyHint{"enter", "save"}, keyHint{"esc", "cancel"})
 	case d.adding:
@@ -168,6 +173,9 @@ func (d *providersDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (d *providersDialog) handleKeyInner(msg tea.KeyPressMsg) action {
+	if d.modelPicker != nil {
+		return d.handleModelPickerKey(msg)
+	}
 	if d.editing {
 		return d.handleKeyEdit(msg)
 	}
@@ -204,7 +212,7 @@ func (d *providersDialog) handleKeyInner(msg tea.KeyPressMsg) action {
 		}
 	case "m":
 		if d.cursor < len(d.defs) {
-			d.fetchModels()
+			return d.fetchModels()
 		}
 	case "n":
 		d.openAddForm()
@@ -444,27 +452,101 @@ func (d *providersDialog) setActive() {
 	d.refresh()
 }
 
-func (d *providersDialog) fetchModels() {
+func (d *providersDialog) fetchModels() action {
 	if d.s == nil || d.s.Registry == nil {
-		return
+		return actionNone{}
 	}
 	name := d.cur().Name
-	ctx, cancel := context.WithTimeout(d.ctx, providerModelFetchTimeout)
-	defer cancel()
-	models, err := d.s.Registry.FetchModels(ctx, name)
+	d.modelsProvider = name
+	d.status = "loading models for " + name + "…"
+	return actionFetchModels{provider: name}
+}
+
+func (d *providersDialog) handleModelPickerKey(msg tea.KeyPressMsg) action {
+	picker := d.modelPicker
+	if picker == nil {
+		return actionNone{}
+	}
+	a := picker.handleKey(msg)
+	if _, ok := a.(actionClose); ok {
+		d.modelPicker = nil
+		d.modelsProvider = ""
+		if d.status == "" {
+			d.status = "model selection cancelled"
+		}
+	}
+	return actionNone{}
+}
+
+func (d *providersDialog) selectProviderModel(provider, model string) {
+	if d.s == nil || d.s.Svc == nil || d.s.Registry == nil {
+		d.status = "settings service unavailable"
+		return
+	}
+	if err := d.s.Svc.SetSetting(d.ctx, prefs.ScopeWorkspace, prefs.KeyModel, model); err != nil {
+		d.status = "set model: " + err.Error()
+		return
+	}
+	if d.active != provider {
+		if err := d.s.Svc.SetSetting(d.ctx, prefs.ScopeWorkspace, prefs.KeyProvider, provider); err != nil {
+			d.status = "set provider: " + err.Error()
+			return
+		}
+		d.s.Registry.SetActiveName(provider)
+		d.active = provider
+	}
+	d.status = provider + ": selected " + model + " (next run)"
+	d.refresh()
+}
+
+func (d *providersDialog) onModelsLoaded(provider string, models []string, err error) bool {
+	if provider == "" || provider != d.modelsProvider {
+		return false
+	}
 	if err != nil {
 		d.status = "fetch models: " + err.Error()
-		return
+		d.modelsProvider = ""
+		return true
 	}
 	if len(models) == 0 {
-		d.status = name + ": no models reported"
-		return
+		d.status = provider + ": no models reported"
+		d.modelsProvider = ""
+		return true
 	}
-	preview := strings.Join(models[:min(len(models), 3)], ", ")
-	if len(models) > 3 {
-		preview += ", …"
+	current := ""
+	if d.s != nil && d.s.Svc != nil {
+		if sv, ok, getErr := d.s.Svc.GetSetting(d.ctx, prefs.ScopeEffective, prefs.KeyModel); getErr == nil && ok {
+			current = sv.Value
+		}
 	}
-	d.status = fmt.Sprintf("%s: %d models (%s)", name, len(models), preview)
+	d.modelPicker = newListPicker("models · "+provider, models, current, func(model string) {
+		d.selectProviderModel(provider, model)
+	})
+	d.status = fmt.Sprintf("%s: %d models", provider, len(models))
+	return true
+}
+
+func (d *providersDialog) modelPickerLines(width int) []string {
+	picker := d.modelPicker
+	if picker == nil {
+		return nil
+	}
+	start := 0
+	if picker.cursor >= listPickerVisible {
+		start = picker.cursor - listPickerVisible + 1
+	}
+	end := min(start+listPickerVisible, len(picker.items))
+	lines := []string{palette.Assistant.On(picker.title), ""}
+	for i := start; i < end; i++ {
+		prefix := "  "
+		item := palette.Subtle.On(picker.items[i])
+		if i == picker.cursor {
+			prefix = palette.Primary.On("▸ ")
+			item = palette.Primary.On(picker.items[i])
+		}
+		lines = append(lines, ansi.Truncate(prefix+item, width, ""))
+	}
+	return lines
 }
 
 func (d *providersDialog) deleteCustom() {
@@ -486,6 +568,9 @@ func (d *providersDialog) deleteCustom() {
 // active). It returns rows only — the surface owns the footer hint + the
 // status toast, so the list never grows its own.
 func (d *providersDialog) detailLines(width int) []string {
+	if d.modelPicker != nil {
+		return d.modelPickerLines(width)
+	}
 	if d.adding {
 		return d.addFormLines()
 	}

@@ -155,6 +155,7 @@ func (s *Session) applyIterationCompleted(e teasink.IterationCompletedMsg) {
 	if e.Depth == 0 {
 		s.Run.foldIteration(e.Usage, e.Delta)
 		s.Run.setContextBreakdown(e.Context)
+		s.maybeWarnCompaction()
 	}
 }
 

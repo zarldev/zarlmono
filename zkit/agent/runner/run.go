@@ -209,6 +209,11 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			Temperature:        r.temperature,
 			Thinking:           llm.ThinkingConfig{Enabled: t.thinking},
 			ChatTemplateKwargs: r.template.ThinkingKwargs(t.thinking),
+			// Pin every iteration of this task to one prompt_cache_key so the
+			// OpenAI/codex Responses API routes them to the same cache node,
+			// improving prefix-cache hit rate across the loop. Other providers
+			// ignore the option; an empty spec ID leaves it unset.
+			Options: llm.ModelOptions{"prompt_cache_key": string(spec.ID)},
 		}
 
 		// Per-iteration ctx so we can bail cleanly on

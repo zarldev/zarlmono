@@ -203,16 +203,20 @@ func TestBuildLiveCompactor_EngineSelection(t *testing.T) {
 	}
 	l := NewLiveRunner(nil, ws, nil, "local") // satisfies compact.StateProvider
 
-	if _, ok := buildLiveCompactor("structural", 32768, nil, "", l).(compact.Structural); !ok {
+	if _, ok := buildLiveCompactor("structural", 32768, nil, "", l, "").(compact.Structural); !ok {
 		t.Error("structural should build a Structural compactor")
 	}
-	if _, ok := buildLiveCompactor("tiered", 32768, nil, "", l).(*compact.Tiered); !ok {
+	if _, ok := buildLiveCompactor("tiered", 32768, nil, "", l, "").(*compact.Tiered); !ok {
 		t.Error("tiered should build a *Tiered compactor")
 	}
-	for _, eng := range []string{"summary", "executive", "bogus", ""} {
-		if _, ok := buildLiveCompactor(eng, 32768, nil, "", l).(*compact.Tiered); !ok {
+	for _, eng := range []string{"summary", "executive", "handover", "bogus", ""} {
+		if _, ok := buildLiveCompactor(eng, 32768, nil, "", l, "").(*compact.Tiered); !ok {
 			t.Errorf("%q without a provider should fall back to tiered", eng)
 		}
+	}
+	// With a provider, handover builds the clear-and-reseed compactor.
+	if _, ok := buildLiveCompactor("handover", 32768, fakeJudgeProvider{}, "m", l, t.TempDir()).(*compact.Handover); !ok {
+		t.Error("handover with a provider should build a *Handover compactor")
 	}
 }
 

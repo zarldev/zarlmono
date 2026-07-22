@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
@@ -123,4 +124,39 @@ func TestConvertMessagesToSDK_EmptyAssistantSkippedAndEmptyArgsDefault(t *testin
 	if raw, ok := tu.Input.(json.RawMessage); !ok || string(raw) != "{}" {
 		t.Errorf("blank arguments should default to {} object, got %#v", tu.Input)
 	}
+}
+
+// The rolling cache breakpoint lands on the final content block of the final
+// message (where the growing conversation ends) and nowhere else, so Anthropic
+// can serve the prior turns — tool results carrying file reads — from cache.
+func TestSetLastMessageCacheBreakpoint_MarksOnlyFinalBlock(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: "read x"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+			ID:       "t1",
+			Function: llm.ToolCallFunction{Name: "read", Arguments: `{"path":"x"}`},
+		}}},
+		{Role: llm.RoleTool, ToolCallID: "t1", Content: "big file contents"},
+	}
+
+	out := convertMessagesToSDK(msgs)
+	setLastMessageCacheBreakpoint(out)
+
+	last := out[len(out)-1]
+	tail := last.Content[len(last.Content)-1]
+	if cc := tail.GetCacheControl(); cc == nil || cc.Type != "ephemeral" {
+		t.Fatalf("final block should carry ephemeral cache_control, got %+v", cc)
+	}
+	// The earlier user text block must stay unmarked — a breakpoint there
+	// would cache a stale short prefix instead of the whole conversation.
+	first := out[0].Content[0]
+	if cc := first.GetCacheControl(); cc != nil && cc.Type == "ephemeral" {
+		t.Fatal("first block should not carry a cache breakpoint")
+	}
+}
+
+// The helper never panics on a degenerate conversation.
+func TestSetLastMessageCacheBreakpoint_NoOpOnEmpty(t *testing.T) {
+	setLastMessageCacheBreakpoint(nil)
+	setLastMessageCacheBreakpoint([]anthropic.MessageParam{})
 }

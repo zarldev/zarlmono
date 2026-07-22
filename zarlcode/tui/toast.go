@@ -68,6 +68,8 @@ func toastForeground(tone toastTone) string {
 		return palette.Success.FG()
 	case toastError:
 		return palette.Error.FG()
+	case toastWarn:
+		return palette.Warning.FG()
 	default:
 		return palette.Subtle.FG()
 	}

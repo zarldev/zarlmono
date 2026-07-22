@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zarlcode/v0.6.0] — 2026-07-22
+`zarlcode/v0.6.0`
+
+### Added
+
+- Every guardrail is now configurable in Settings: test-edit (off/advisory/strict), improvement-loop, skill-hints, and shell-policy (auto/strict/lenient).
+- Inline model picker in the providers settings panel — asynchronous model fetch, selection, and persist/switch without leaving the panel.
+- Configurable response timeout: how long to wait with no output from the model before cancelling an iteration (default 90s; 0 falls back to the default).
+- Manual compaction mode: turn off automatic compaction and get a cockpit warning when the context nears the compaction trigger, compacting on demand instead.
+- Configurable per-task `spawn_agent` fan-out cap to bound a model that keeps firing sub-agents (default 8; 0 removes the cap).
+- Handover compaction engine: clears the whole conversation and reseeds the model from a self-contained handover document written to `.zarlcode/handovers/`.
+- Narrative VHS workflow demo and refreshed getting-started/docs.
+
+### Changed
+
+- Codex requests now carry a stable per-task `prompt_cache_key` so all iterations of a task share a cache route.
+
+## [zkit/v0.5.0] — 2026-07-22
+`zkit/v0.5.0`
+
+### Added
+
+- The hashline `edit` result returns fresh line/hash anchors around each edited region, so the model can chain further edits to a file without re-reading it.
+- Anthropic provider caches the conversation prefix via a rolling ephemeral cache breakpoint on the last message, so large tool results are served from cache across turns rather than reprocessed each iteration.
+- Codex Responses provider honours a `prompt_cache_key` request option for prefix-cache routing.
+- Configurable stream-idle ("no response") timeout through `coderunner.Tuning.StreamIdle` (zero keeps the shared 90s default).
+- Per-task `spawn_agent` fan-out cap in `StandardFanoutLimits` (default 8) so a task cannot fan out sub-agents unbounded.
+- `compact` handover engine: collapses the whole conversation to a self-contained handover document and reseeds from it, with an injected writer for persistence.
+- Exported guardrail name constants (`NameImprovementLoop`, `NameSkillHint`) so consumers can drop those guardrails via `Deps.Disabled` without hardcoded strings.
+
 ## [zarlcode/v0.5.1] — 2026-07-20
 `zarlcode/v0.5.1`
 

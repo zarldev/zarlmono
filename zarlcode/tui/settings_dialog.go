@@ -162,6 +162,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "headroom held back from the context window for the compactor."},
 				{label: "max iterations", key: prefs.KeyMaxIterations, kind: rowText, numeric: true, def: "20",
 					desc: "cap on the agent loop per turn before it must finalize."},
+				{label: "response timeout", key: prefs.KeyResponseTimeout, kind: rowText, numeric: true, def: "90",
+					desc: "seconds to wait with no output from the model before cancelling the iteration. raise it for slow local models/connections; non-positive falls back to 90."},
 				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, def: "20",
 					desc: "cap on sub-agent iterations per spawn_agent call. unset inherits the parent max."},
 				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, def: "(unset)",
@@ -176,6 +178,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "line cap on a tool result before tail-truncation + spill to disk."},
 				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, def: "0",
 					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly."},
+				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, def: "8",
+					desc: "max spawn_agent calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap."},
 			}},
 			{name: "integrations", rows: []settingsRow{
 				{label: "web search", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,
@@ -218,10 +222,20 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "model for judge verdicts, from the judge provider's list. (active) reuses the active model."},
 				{label: "read before write", key: prefs.KeyReadBeforeWrite, kind: rowEnum, def: "off", opts: []string{"off", "advisory", "strict"},
 					desc: "require the task to read the target file or nearby context before edit/write. advisory and strict both refuse blind edits; strict is the strongest local-model setting."},
+				{label: "test edit guard", key: prefs.KeyTestEditGuard, kind: rowEnum, def: "off", opts: []string{"off", "advisory", "strict"},
+					desc: "watch for edits to test files that would make a failing test pass without fixing the code. advisory warns; strict refuses. headless runs are always strict."},
+				{label: "improvement loop", key: prefs.KeyImprovementGuard, kind: rowEnum, def: "on", opts: []string{"on", "off"},
+					desc: "keep the agent working while its verifiers still report failure instead of stopping early. off removes the guardrail from the chain."},
+				{label: "skill hints", key: prefs.KeySkillHints, kind: rowEnum, def: "on", opts: []string{"on", "off"},
+					desc: "suggest a recovery skill after a tool call keeps failing. off removes the guardrail from the chain."},
+				{label: "shell policy", key: prefs.KeyShellGuard, kind: rowEnum, def: "auto", opts: []string{"auto", "strict", "lenient"},
+					desc: "static shell-command guardrail leniency. auto follows the sandbox (strict when on, lenient when off); strict/lenient pin it regardless of the sandbox."},
 			}},
 			{name: "compaction", rows: []settingsRow{
+				{label: "mode", key: prefs.KeyCompactionMode, kind: rowEnum, def: "auto", opts: []string{"auto", "manual"},
+					desc: "auto trims history under context pressure automatically. manual leaves it intact, warns in the cockpit near the limit, and waits for you to compact on demand (conversation actions › compact)."},
 				{label: "engine", key: prefs.KeyCompactEngine, kind: rowEnum, def: "tiered", opts: compactEngineOpts(),
-					desc: "how long chats are condensed: structural trims, tiered ramps, summary/executive use an llm."},
+					desc: "how chats are condensed: structural trims, tiered ramps, summary/executive use an llm. handover clears the whole context and reseeds from a handover document written to .zarlcode/handovers/."},
 				{label: "provider", key: prefs.KeyCompactProvider, kind: rowEnum, def: "(active)",
 					desc: "provider for llm compaction (summary/executive). (active) reuses the active provider."},
 				{label: "model", key: prefs.KeyCompactModel, kind: rowModel, def: "(active)",
@@ -249,7 +263,9 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 
 // compactEngineOpts is the selectable compaction engines, default (tiered)
 // first. Mirrors compact.ParseEngine's accepted names.
-func compactEngineOpts() []string { return []string{"tiered", "structural", "summary", "executive"} }
+func compactEngineOpts() []string {
+	return []string{"tiered", "structural", "summary", "executive", "handover"}
+}
 
 func providerNames(s *engine.Settings) []string {
 	if s == nil || s.Registry == nil {
@@ -727,6 +743,9 @@ func (d *settingsDialog) fetchFor(p string) action {
 // onModelsLoaded records a completed fetch so the model picker can present
 // the list.
 func (d *settingsDialog) onModelsLoaded(provider string, models []string, err error) {
+	if d.providers != nil && d.providers.onModelsLoaded(provider, models, err) {
+		return
+	}
 	d.modelsLoading[provider] = false
 	if err != nil && len(models) == 0 {
 		d.setStatus("models: " + err.Error())

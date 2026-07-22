@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
@@ -227,17 +229,73 @@ func (s *Settings) PlanFirst(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyPlanFirst, "off") == "on"
 }
 
+// Guard-mode string values shared by the read-before-write, test-edit, and
+// shell-policy settings and the guardrail wiring in live.go that consumes them.
+const (
+	guardModeAdvisory = "advisory"
+	guardModeStrict   = "strict"
+)
+
 // ReadBeforeWriteMode resolves the read-before-write guardrail mode. "off"
 // disables it; "advisory" and "strict" both refuse blind edit/write calls
 // until the task has first established local context.
 func (s *Settings) ReadBeforeWriteMode(ctx context.Context) guardrails.ReadBeforeWriteMode {
 	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyReadBeforeWrite, "off"))) {
-	case "advisory":
+	case guardModeAdvisory:
 		return guardrails.ReadBeforeWriteAdvisory
-	case "strict":
+	case guardModeStrict:
 		return guardrails.ReadBeforeWriteStrict
 	default:
 		return guardrails.ReadBeforeWriteOff
+	}
+}
+
+// TestEditMode resolves the interactive test-edit guardrail policy: "off"
+// (default), "advisory", or "strict". Headless runs ignore this and stay
+// strict for eval determinism; see LiveRunner.guardrailDepsFor.
+func (s *Settings) TestEditMode(ctx context.Context) string {
+	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyTestEditGuard, "off"))) {
+	case guardModeAdvisory:
+		return guardModeAdvisory
+	case guardModeStrict:
+		return guardModeStrict
+	default:
+		return "off"
+	}
+}
+
+// AutoCompact resolves whether the runner compacts history automatically under
+// context pressure. True (default) keeps the auto-compactor armed; "manual"
+// disarms it so the user compacts on demand while the cockpit warns near the
+// trigger. Manual compaction (CompactNow) works regardless of this setting.
+func (s *Settings) AutoCompact(ctx context.Context) bool {
+	return strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyCompactionMode, "auto"))) != "manual"
+}
+
+// ImprovementGuard resolves whether the improvement-loop guardrail is armed.
+// On by default; off drops it from the chain.
+func (s *Settings) ImprovementGuard(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyImprovementGuard, "on") == "on"
+}
+
+// SkillHints resolves whether the skill-hint guardrail is armed. On by default;
+// off drops it from the chain.
+func (s *Settings) SkillHints(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeySkillHints, "on") == "on"
+}
+
+// ShellGuardLenient resolves the shell policy's leniency for the given sandbox
+// state. "auto" (default) follows the sandbox — lenient only when it is off;
+// "strict" and "lenient" pin the choice regardless. Kept as a resolver (rather
+// than a bare mode) so the sandbox-follows default lives in one place.
+func (s *Settings) ShellGuardLenient(ctx context.Context, sandboxOn bool) bool {
+	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyShellGuard, "auto"))) {
+	case guardModeStrict:
+		return false
+	case "lenient":
+		return true
+	default:
+		return !sandboxOn
 	}
 }
 
@@ -266,6 +324,26 @@ func (s *Settings) ToolResultMaxBytes(ctx context.Context) int {
 // ToolResultMaxLines resolves the per-tool-result line cap. Default 2000.
 func (s *Settings) ToolResultMaxLines(ctx context.Context) int {
 	return s.intSetting(ctx, prefs.KeyToolResultMaxLines, 2000)
+}
+
+// SpawnFanoutCap resolves the per-task spawn_agent budget: how many sub-agents
+// a single task may spawn before the fanout guardrail refuses further ones.
+// Default 8; 0 removes the cap. The fanout guardrail treats a non-positive
+// limit as unbounded, so 0 flows through as "uncapped" without special-casing.
+func (s *Settings) SpawnFanoutCap(ctx context.Context) int {
+	return s.intSetting(ctx, prefs.KeySpawnFanoutCap, coderunner.StandardSpawnFanoutCap)
+}
+
+// ResponseTimeout resolves the stream-idle stall watchdog — how long the
+// runner waits with no chunk from the model before cancelling the iteration.
+// Default 90s. A non-positive setting falls back to the default rather than
+// disabling stall detection, so a stray 0 can't wedge a run forever.
+func (s *Settings) ResponseTimeout(ctx context.Context) time.Duration {
+	secs := s.intSetting(ctx, prefs.KeyResponseTimeout, 90)
+	if secs <= 0 {
+		secs = 90
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // FanoutCap resolves the per-tool exploration fan-out cap. 0 keeps the built-in

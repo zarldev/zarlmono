@@ -9,9 +9,9 @@
                            ╲________╱╲___╱____╱╲____╱___╱╲________╱╲________╱╲________╱╲________╱╲_______╱
 ```
 
-**zarlcode is a terminal coding agent.**
+**zarlcode is a local, inspectable terminal coding-agent workbench.**
 
-It runs in the workspace you launched it from, shows every model turn and tool call in a TUI, and lets you switch between read-only planning and file-changing build work. It can read and edit files, run commands, search the web, connect MCP tools, and delegate focused work to sub-agents. Sessions, settings, plans, and encrypted keys live locally under `~/.zarlcode`.
+It runs in the workspace you launched it from, shows every model turn and tool call in a TUI, and makes model/provider switching part of the workflow instead of a side quest. Use it to plan read-only, build with visible file and shell tools, inspect diffs, delegate focused sub-agents, run headless eval-like tasks, and resume local sessions later. Sessions, settings, plans, and encrypted keys live locally under `~/.zarlcode`.
 
 Built on [`zkit`](../zkit/), the reusable Go agent toolkit in this repo.
 
@@ -20,27 +20,57 @@ Built on [`zkit`](../zkit/), the reusable Go agent toolkit in this repo.
 ## Install
 
 ```bash
-# latest tagged release
-go install github.com/zarldev/zarlmono/zarlcode/cmd@v0.1.6
-
-# or Homebrew
+# Homebrew installs the binary as zarlcode
 brew install zarldev/tap/zarlcode
 
-# or from a checkout
+# or install from a checkout
 go tool task zarlcode
 ```
 
-First run:
+> Note: `go install github.com/zarldev/zarlmono/zarlcode/cmd@latest` currently
+> builds a binary named `cmd` because the CLI package directory is `cmd`. Use
+> Homebrew, GitHub release archives, or `go tool task zarlcode` from a checkout
+> until the public Go-install path is renamed or wrapped.
+
+## First three minutes
+
+### API-backed provider
 
 ```bash
 zarlcode init
-zarlcode keys set <provider>   # anthropic, openai, gemini, deepseek, ...
-zarlcode
+zarlcode keys set <provider> <key>   # anthropic, openai, gemini, deepseek, ...
+zarlcode                            # run from the repository you want to work on
 ```
 
-Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and `openai-codex`. Run `zarlcode keys --help` for provider-specific setup. zarlcode configures model endpoints but does not start or manage model servers; for local inference, run Ollama, llama.cpp, LM Studio, or another OpenAI-compatible server yourself and select or add it in Settings → Providers.
+For OAuth-backed product surfaces, use the provider-specific flow instead:
 
-Optional local services are controlled from **Settings → integrations → local web_search service**. Use that action to install/start the bundled SearXNG Docker Compose service for `web_search`, inspect health, or view recent logs. If you already run SearXNG elsewhere, set `search_searxng_url` under integrations instead.
+```bash
+zarlcode keys oauth claude-code
+zarlcode keys oauth openai-codex
+```
+
+Run `zarlcode keys --help` for credential commands. Keys written by the CLI are encrypted and stored globally; workspace settings can still select different providers or models per repo.
+
+### Local or OpenAI-compatible provider
+
+zarlcode configures model endpoints but does not start model servers. Start Ollama, llama.cpp, LM Studio, or another OpenAI-compatible server yourself, then launch zarlcode and select or add the provider in **Settings → Providers** (`Ctrl+S`) or the model picker (`Ctrl+E`). Do not assume zero-config local inference unless you have already tested the server and model outside zarlcode.
+
+### The loop to try first
+
+1. Start in **Plan** mode and ask for a design before mutation: “read the code and propose the smallest safe change.”
+2. Press `Shift+Tab` to switch to **Build** when you want edits or shell commands.
+3. Watch tool calls, command output, changed files, and diffs in the timeline and working set.
+4. Press `Ctrl+E` to switch provider/model without leaving the session.
+5. Quit and resume later with `zarlcode -continue` from the same workspace.
+6. For eval-like or scripted work, run the same task headlessly:
+
+```bash
+zarlcode --headless --prompt-file task.md
+```
+
+The workflow demo shows that full loop: Plan mode, model switching, Build, diff inspection, and a headless follow-up.
+
+![zarlcode workflow demo: plan, switch model, build, inspect diff, and run headless](https://zarldev.github.io/zarlmono/zarlcode-workflow-demo.gif)
 
 ## Why use it
 
@@ -58,6 +88,8 @@ model works, instead of disappearing into a log stream.
 Sessions are local and resumable. Provider keys live in the local vault,
 workspace settings can override global defaults, and `zarlcode -continue` picks
 up the last session for the current repo.
+
+Model switching and headless runs are especially useful for open-LLM and eval-heavy work: compare providers on the same repository state, keep the session inspectable, and re-run focused prompts without turning the TUI into a black box.
 
 ## Common commands
 
@@ -92,35 +124,6 @@ curl http://127.0.0.1:6060/debug/metrics/runtime
 GC, scheduler, goroutine, and mutex counters can be scraped during longer runs.
 The `-trace` flag writes a full Go execution trace until zarlcode exits; inspect
 it with `go tool trace /tmp/zarlcode.trace`.
-
-## Concepts
-
-
-zarlcode has two modes, toggled with `Shift+Tab`:
-
-| Mode | What it does |
-|------|-------------|
-| **Plan** | Read-only investigation. The agent can read files, search, and think — but cannot write, edit, or run commands. Use it to explore a codebase, design a change, or sanity-check an idea before anything gets mutated. |
-| **Build** | Full tool surface. Read, write, edit, patch, bash, grep, web search, MCP tools, sub-agent dispatch. Guardrails still apply (shell policy, fanout caps, schema validation). |
-
-Every session persists to `~/.zarlcode/state.db`. Pick up where you left off with `zarlcode -continue`.
-
-## Quick start
-
-```bash
-# Build and install to ~/.local/bin/zarlcode
-go tool task zarlcode
-
-# First-time setup
-zarlcode init
-zarlcode keys set <provider>   # anthropic, openai, gemini, deepseek, etc.
-
-# Launch
-zarlcode                       # Interactive TUI
-zarlcode -continue             # Resume last session
-```
-
-Supported providers: `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`, `ollama`, plus OAuth-backed `claude-code` and `openai-codex`. Run `zarlcode keys --help` for provider-specific setup.
 
 ## What it can do
 
