@@ -160,3 +160,25 @@ func TestSetLastMessageCacheBreakpoint_NoOpOnEmpty(t *testing.T) {
 	setLastMessageCacheBreakpoint(nil)
 	setLastMessageCacheBreakpoint([]anthropic.MessageParam{})
 }
+
+// The static prefix (system/tools) uses the 1-hour TTL so it survives idle
+// gaps, while the rolling last-message breakpoint keeps the default 5-minute
+// TTL — its tail is superseded each turn, so a 1-hour write there would waste
+// the 2x multiplier.
+func TestCacheTTLs_StaticIs1hRollingIsDefault(t *testing.T) {
+	if got := staticCacheControl().TTL; got != anthropic.CacheControlEphemeralTTLTTL1h {
+		t.Fatalf("static prefix TTL = %q, want 1h", got)
+	}
+
+	out := convertMessagesToSDK([]llm.Message{
+		{Role: llm.RoleUser, Content: "hi"},
+	})
+	setLastMessageCacheBreakpoint(out)
+	cc := out[len(out)-1].Content[0].GetCacheControl()
+	if cc == nil {
+		t.Fatal("rolling breakpoint not set")
+	}
+	if cc.TTL != "" {
+		t.Fatalf("rolling breakpoint TTL = %q, want default (empty = 5m)", cc.TTL)
+	}
+}
