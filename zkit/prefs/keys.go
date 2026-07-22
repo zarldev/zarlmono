@@ -64,6 +64,10 @@ const (
 	// 0 keeps the built-in per-tool defaults; a positive value caps every capped
 	// exploration tool at that count to bound context growth.
 	KeyFanoutCap = "fanout_cap"
+	// KeySpawnFanoutCap caps how many spawn_agent calls a single task may issue
+	// before the fanout guardrail refuses further ones. Default 8; 0 removes the
+	// cap (lets a task fan out sub-agents unbounded).
+	KeySpawnFanoutCap = "spawn_fanout_cap"
 	// KeyResponseTimeout overrides the stream-idle stall watchdog in whole
 	// seconds: how long the runner waits with no chunk from the model before
 	// cancelling the iteration. Default 90. Raise it for a slow local model or

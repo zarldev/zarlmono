@@ -19,6 +19,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -588,6 +589,14 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 				code.ToolNameGlob: fanoutCap,
 			}
 		}
+		// Per-task spawn_agent budget, applied after the discovery-cap block
+		// (which replaces the whole map and would otherwise drop it). 0 flows
+		// through as "uncapped" since the guardrail treats a non-positive limit
+		// as unbounded.
+		if deps.FanoutLimits == nil {
+			deps.FanoutLimits = map[tools.ToolName]int{}
+		}
+		deps.FanoutLimits[spawn.ToolNameSpawnAgent] = l.settings.SpawnFanoutCap(l.parentContext())
 		deps.ReadBeforeWriteMode = l.settings.ReadBeforeWriteMode(l.parentContext())
 		// Strict profile follows the sandbox: ON (the kernel is the real
 		// boundary) keeps the static shell/read-before-write blocks; OFF is

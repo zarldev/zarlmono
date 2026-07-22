@@ -4,7 +4,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/prefs"
@@ -153,6 +155,39 @@ func TestZarlcodeGuardrailDepsDoNotDefaultLoadGoVerifier(t *testing.T) {
 	}
 	if got := live.headlessGuardrailDeps().Verifiers; len(got) != 0 {
 		t.Fatalf("headless verifiers = %d, want none by default", len(got))
+	}
+}
+
+// spawn_agent carries a per-task fanout cap (default 8) so a task can't fan out
+// sub-agents unbounded; a 0 setting removes it.
+func TestSpawnFanoutCapApplied(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	s := newJudgeTestSettings(t)
+	live := NewLiveRunner(nil, ws, nil, "local")
+	live.SetSettingsHandle(s)
+
+	// Default: capped at the standard 8.
+	if got := live.guardrailDeps().FanoutLimits[spawn.ToolNameSpawnAgent]; got != coderunner.StandardSpawnFanoutCap {
+		t.Fatalf("default spawn cap = %d, want %d", got, coderunner.StandardSpawnFanoutCap)
+	}
+
+	// Override to a custom cap.
+	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "3"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := live.guardrailDeps().FanoutLimits[spawn.ToolNameSpawnAgent]; got != 3 {
+		t.Fatalf("override spawn cap = %d, want 3", got)
+	}
+
+	// Zero disables it — the guardrail treats a non-positive limit as unbounded.
+	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "0"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := live.guardrailDeps().FanoutLimits[spawn.ToolNameSpawnAgent]; got != 0 {
+		t.Fatalf("zero spawn cap = %d, want 0 (uncapped)", got)
 	}
 }
 

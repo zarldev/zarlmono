@@ -474,11 +474,20 @@ func StandardCompactor(inner compact.Compactor, window, reserve int) *compact.Pr
 // identical reads are already memoized per task.
 func StandardFanoutLimits() map[tools.ToolName]int {
 	return map[tools.ToolName]int{
-		code.ToolNameLs:   20,
-		code.ToolNameGrep: 30,
-		code.ToolNameGlob: 20,
+		code.ToolNameLs:          20,
+		code.ToolNameGrep:        30,
+		code.ToolNameGlob:        20,
+		spawn.ToolNameSpawnAgent: StandardSpawnFanoutCap,
 	}
 }
+
+// StandardSpawnFanoutCap bounds how many spawn_agent calls a single task may
+// issue before the fanout guardrail starts refusing them. Without it a model
+// can fan out sub-agents unbounded ("researcher + reviewer + coder" is the
+// intended handful, per the tool's own description). Zero in the fanout map
+// would mean unbounded, so this stays positive; consumers that want it off
+// remove the entry.
+const StandardSpawnFanoutCap = 8
 
 // StandardGuardrailDeps returns the guardrail dependencies every consumer
 // shares — the fan-out caps — rooted at root with the given test-edit policy

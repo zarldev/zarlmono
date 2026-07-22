@@ -178,6 +178,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "line cap on a tool result before tail-truncation + spill to disk."},
 				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, def: "0",
 					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly."},
+				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, def: "8",
+					desc: "max spawn_agent calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap."},
 			}},
 			{name: "integrations", rows: []settingsRow{
 				{label: "web search", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,

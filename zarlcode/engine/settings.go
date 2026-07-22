@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
@@ -323,6 +324,14 @@ func (s *Settings) ToolResultMaxBytes(ctx context.Context) int {
 // ToolResultMaxLines resolves the per-tool-result line cap. Default 2000.
 func (s *Settings) ToolResultMaxLines(ctx context.Context) int {
 	return s.intSetting(ctx, prefs.KeyToolResultMaxLines, 2000)
+}
+
+// SpawnFanoutCap resolves the per-task spawn_agent budget: how many sub-agents
+// a single task may spawn before the fanout guardrail refuses further ones.
+// Default 8; 0 removes the cap. The fanout guardrail treats a non-positive
+// limit as unbounded, so 0 flows through as "uncapped" without special-casing.
+func (s *Settings) SpawnFanoutCap(ctx context.Context) int {
+	return s.intSetting(ctx, prefs.KeySpawnFanoutCap, coderunner.StandardSpawnFanoutCap)
 }
 
 // ResponseTimeout resolves the stream-idle stall watchdog — how long the

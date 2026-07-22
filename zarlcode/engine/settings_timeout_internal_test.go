@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
@@ -30,6 +31,29 @@ func TestResponseTimeout(t *testing.T) {
 	}
 	if got := s.ResponseTimeout(ctx); got != 90*time.Second {
 		t.Fatalf("zero should floor to default, got %s", got)
+	}
+}
+
+// SpawnFanoutCap defaults to the standard cap, honours an override, and passes
+// 0 through as uncapped.
+func TestSpawnFanoutCap(t *testing.T) {
+	s := newJudgeTestSettings(t)
+	ctx := t.Context()
+
+	if got := s.SpawnFanoutCap(ctx); got != coderunner.StandardSpawnFanoutCap {
+		t.Fatalf("default = %d, want %d", got, coderunner.StandardSpawnFanoutCap)
+	}
+	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "4"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := s.SpawnFanoutCap(ctx); got != 4 {
+		t.Fatalf("override = %d, want 4", got)
+	}
+	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "0"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := s.SpawnFanoutCap(ctx); got != 0 {
+		t.Fatalf("zero = %d, want 0 (uncapped)", got)
 	}
 }
 
