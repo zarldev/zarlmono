@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zarlcode/v0.6.1] — 2026-07-22
+`zarlcode/v0.6.1`
+
+### Changed
+
+- Picks up zkit v0.5.1: `grep`/`head` (and the grep family) run in bash again, the Anthropic static prompt prefix is cached with a 1-hour TTL, and hashline edits keep replaced lines newline-terminated.
+
+## [zkit/v0.5.1] — 2026-07-22
+`zkit/v0.5.1`
+
+### Changed
+
+- The shell policy no longer treats the grep family (`grep`/`egrep`/`fgrep`/`rg`/`ripgrep`/`ag`) or `head` as shell read-discovery helpers, so they run in bash — grep is routinely used to filter the output of real commands (`go test ./... | grep FAIL`), where blocking it was pure friction. `cat`/`sed`/`find`/`ls`/`tail` stay steered toward the workspace tools.
+- The Anthropic static prompt prefix (tools + system) is cached with a 1-hour TTL so it survives the multi-minute idle gaps between turns, instead of being evicted at the 5-minute default and re-warmed at write pricing on resume. The rolling last-message breakpoint keeps the 5-minute default.
+
+### Fixed
+
+- The hashline `edit` tool keeps a replaced line newline-terminated when `new_string` omits the trailing newline, instead of silently un-terminating the line (merging it with the next) or dropping the file's final newline. Deletes and inserts are unaffected; files with no final newline are left alone.
+
 ## [zarlcode/v0.6.0] — 2026-07-22
 `zarlcode/v0.6.0`
 
