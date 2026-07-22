@@ -128,7 +128,10 @@ func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, erro
 	opts = append(opts,
 		runner.WithPrompt(l.agentPromptFunc(agent, func() tools.Source { return visible })),
 		runner.WithCompactor(coderunner.StandardCompactor(
-			buildLiveCompactor(engine, window, compactProv, compactModel, l), window, reserve)),
+			// Empty wsRoot: a sub-agent handover reseeds its own context but
+			// does not write a file (sub-agents run unattended and would spam
+			// the handovers dir).
+			buildLiveCompactor(engine, window, compactProv, compactModel, l, ""), window, reserve)),
 		runner.WithResultTruncator(l.truncator),
 		// Sub-agent iterations feed the same cockpit context graph.
 		runner.WithContextBreakdown(),

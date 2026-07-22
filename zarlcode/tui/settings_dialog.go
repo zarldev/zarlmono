@@ -235,7 +235,7 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 				{label: "mode", key: prefs.KeyCompactionMode, kind: rowEnum, def: "auto", opts: []string{"auto", "manual"},
 					desc: "auto trims history under context pressure automatically. manual leaves it intact, warns in the cockpit near the limit, and waits for you to compact on demand (conversation actions › compact)."},
 				{label: "engine", key: prefs.KeyCompactEngine, kind: rowEnum, def: "tiered", opts: compactEngineOpts(),
-					desc: "how long chats are condensed: structural trims, tiered ramps, summary/executive use an llm."},
+					desc: "how chats are condensed: structural trims, tiered ramps, summary/executive use an llm. handover clears the whole context and reseeds from a handover document written to .zarlcode/handovers/."},
 				{label: "provider", key: prefs.KeyCompactProvider, kind: rowEnum, def: "(active)",
 					desc: "provider for llm compaction (summary/executive). (active) reuses the active provider."},
 				{label: "model", key: prefs.KeyCompactModel, kind: rowModel, def: "(active)",
@@ -263,7 +263,9 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 
 // compactEngineOpts is the selectable compaction engines, default (tiered)
 // first. Mirrors compact.ParseEngine's accepted names.
-func compactEngineOpts() []string { return []string{"tiered", "structural", "summary", "executive"} }
+func compactEngineOpts() []string {
+	return []string{"tiered", "structural", "summary", "executive", "handover"}
+}
 
 func providerNames(s *engine.Settings) []string {
 	if s == nil || s.Registry == nil {

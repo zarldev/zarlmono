@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/hooks"
 	"github.com/zarldev/zarlmono/zarlcode/instructions"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
@@ -357,7 +360,7 @@ func (l *LiveRunner) TopTools() []compact.ToolUsage     { return nil }
 // executive need an LLM provider; without one they fall back to tiered so a
 // misconfigured engine never breaks compaction. structural and tiered are
 // no-LLM; anything unknown is tiered (the quiet progressive default).
-func buildLiveCompactor(engine string, window int, prov llm.Provider, model string, state compact.StateProvider) compact.Compactor {
+func buildLiveCompactor(engine string, window int, prov llm.Provider, model string, state compact.StateProvider, wsRoot string) compact.Compactor {
 	switch engine {
 	case "structural":
 		return compact.NewStructural()
@@ -369,8 +372,33 @@ func buildLiveCompactor(engine string, window int, prov llm.Provider, model stri
 		if prov != nil {
 			return compact.NewExecutive(prov, model, state)
 		}
+	case "handover":
+		if prov != nil {
+			return compact.NewHandover(prov, model, state, handoverWriter(wsRoot))
+		}
 	}
 	return compact.NewTiered(window)
+}
+
+// handoverWriter persists a handover document under <wsRoot>/.zarlcode/handovers
+// as a timestamped markdown file, returning its path. Empty wsRoot (or a nil
+// return) leaves the handover in-context only — the reseed still works, just
+// without a durable artifact.
+func handoverWriter(wsRoot string) compact.HandoverWriter {
+	if wsRoot == "" {
+		return nil
+	}
+	return func(_ context.Context, doc string) (string, error) {
+		dir := filepath.Join(home.WorkspaceDir(wsRoot), "handovers")
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return "", fmt.Errorf("handovers dir: %w", err)
+		}
+		path := filepath.Join(dir, time.Now().Format("2006-01-02-150405")+".md")
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			return "", fmt.Errorf("write %q: %w", path, err)
+		}
+		return path, nil
+	}
 }
 
 // QueueInput appends user text to the live-turn injection queue. The running
@@ -881,7 +909,7 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	// works) and the cockpit warns as pressure crosses the trigger.
 	if autoCompact {
 		opts = append(opts, runner.WithCompactor(coderunner.StandardCompactor(
-			buildLiveCompactor(engine, window, compactProv, compactModel, l), window, reserve)))
+			buildLiveCompactor(engine, window, compactProv, compactModel, l, l.ws.Root()), window, reserve)))
 	}
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
@@ -933,7 +961,7 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 		engineName = settings.CompactEngine(ctx)
 		compactProv, compactModel = settings.CompactorProvider(ctx, prov, model)
 	}
-	return l.conv.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l), l.sink)
+	return l.conv.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l, l.ws.Root()), l.sink)
 }
 
 func (l *LiveRunner) RunTurn(prompt string) error {
