@@ -56,7 +56,7 @@ const (
 	ReasonRedirect ReasonCode = "redirect"
 
 	// ReasonShellReadTool indicates the command is using a shell file-discovery
-	// helper (`grep`, `sed -n`, `find`, `head`, `tail`, `cat`, etc.) even though
+	// helper (`sed -n`, `find`, `tail`, `cat`, etc.; grep and head are excluded) even though
 	// workspace-aware read/search/list tools can do that job with bounded,
 	// structured output. Treated as Block in the standard profile so the model
 	// gets a direct correction instead of burning context on shell pipelines.

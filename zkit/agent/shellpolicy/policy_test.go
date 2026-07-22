@@ -100,7 +100,7 @@ func TestPolicy_DecisionEchoesReasonCodes(t *testing.T) {
 
 func TestPolicy_ShellReadToolsBlockWithGuidance(t *testing.T) {
 	t.Parallel()
-	for _, cmd := range []string{"grep -r foo .", "sed -n '1,20p' main.go", "find . -name '*.go'", "head -20 README.md"} {
+	for _, cmd := range []string{"cat main.go", "sed -n '1,20p' main.go", "find . -name '*.go'", "ls -la"} {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			ir, _ := shellpolicy.NewUnixParser().Parse(cmd)
@@ -110,6 +110,21 @@ func TestPolicy_ShellReadToolsBlockWithGuidance(t *testing.T) {
 			}
 			if !strings.Contains(d.BlockReason, "registered workspace tools") {
 				t.Errorf("BlockReason = %q, want registered-tool guidance", d.BlockReason)
+			}
+		})
+	}
+}
+
+// grep and head are no longer shell read tools, so the policy lets them run —
+// including grep filtering the output of a real command.
+func TestPolicy_GrepAndHeadAllowed(t *testing.T) {
+	t.Parallel()
+	for _, cmd := range []string{"grep -r foo .", "head -20 README.md", "grep foo bar.txt"} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			ir, _ := shellpolicy.NewUnixParser().Parse(cmd)
+			if d := shellpolicy.NewPolicyEngine().Decide(ir); d.IsBlocked {
+				t.Errorf("Decide(%q): want allowed, blocked with %q", cmd, d.BlockReason)
 			}
 		})
 	}

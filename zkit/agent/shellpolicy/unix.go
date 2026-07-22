@@ -320,23 +320,21 @@ func interpreterReadsStdin(args []*syntax.Word, depth int) bool {
 // helpers that duplicate registered workspace tools. They are safe as shell
 // commands, but using them for repository discovery burns context and loses the
 // bounded, structured results the tools provide.
+//
+// The grep family (grep/egrep/fgrep/rg/ripgrep/ag) and head are intentionally
+// absent: grep is routinely used to filter the output of real commands
+// (`go test ./... | grep FAIL`, `git log | grep …`), and blocking it there is
+// pure friction rather than tool-routing, so shell grep and head are allowed.
 var shellReadTools = map[string]bool{
-	"ag":      true,
-	"awk":     true,
-	"cat":     true,
-	"egrep":   true,
-	"fd":      true,
-	"fgrep":   true,
-	"find":    true,
-	"grep":    true,
-	"head":    true,
-	"less":    true,
-	"ls":      true,
-	"more":    true,
-	"rg":      true,
-	"ripgrep": true,
-	"sed":     true,
-	"tail":    true,
+	"awk":  true,
+	"cat":  true,
+	"fd":   true,
+	"find": true,
+	"less": true,
+	"ls":   true,
+	"more": true,
+	"sed":  true,
+	"tail": true,
 }
 
 func callUsesShellReadTool(call *syntax.CallExpr) bool {
