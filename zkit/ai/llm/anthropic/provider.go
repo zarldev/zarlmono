@@ -104,18 +104,19 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		params.Temperature = anthropic.Float(float64(req.Temperature))
 	}
 
-	// Add system prompt if present. Mark with cache_control:ephemeral
-	// so Anthropic serves the (typically multi-kilobyte) system
-	// prompt from its KV cache on subsequent turns, saving prompt
-	// tokens on every iteration within a 5-minute window. The cost
-	// of a cache write is ~25% extra on the first request; the
-	// payoff is ~90% off on every cached read after that.
+	// Add system prompt if present. Mark with cache_control:ephemeral so
+	// Anthropic serves the (typically multi-kilobyte) system prompt — and the
+	// tools that precede it in the cache prefix — from its KV cache on
+	// subsequent turns. The static prefix uses the 1-hour TTL (see
+	// staticCacheControl): a cache read is ~90% off, and the extra write cost
+	// buys survival across the multi-minute idle gaps between turns that would
+	// otherwise evict the default 5-minute cache and force a full re-warm.
 	systemPrompt := extractSystemPrompt(req.Messages)
 	if systemPrompt != "" {
 		params.System = []anthropic.TextBlockParam{
 			{
 				Text:         systemPrompt,
-				CacheControl: anthropic.NewCacheControlEphemeralParam(),
+				CacheControl: staticCacheControl(),
 			},
 		}
 	}
@@ -302,14 +303,14 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 		params.Temperature = anthropic.Float(float64(req.Temperature))
 	}
 
-	// Add system prompt if present, marked for ephemeral caching
-	// (see streaming path for rationale).
+	// Add system prompt if present, marked for 1-hour ephemeral caching
+	// (see streaming path + staticCacheControl for rationale).
 	systemPrompt := extractSystemPrompt(req.Messages)
 	if systemPrompt != "" {
 		params.System = []anthropic.TextBlockParam{
 			{
 				Text:         systemPrompt,
-				CacheControl: anthropic.NewCacheControlEphemeralParam(),
+				CacheControl: staticCacheControl(),
 			},
 		}
 	}
@@ -509,6 +510,21 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 // Safe on any conversation: an empty message list or a block type that can't
 // carry cache_control is a no-op, and a prefix shorter than the model's
 // minimum cacheable length is silently ignored by the API rather than erroring.
+// staticCacheControl marks the static prefix (tools + system) with a 1-hour
+// cache TTL rather than the default 5 minutes. That prefix is identical for a
+// whole session, so it is written once and read on every turn; the 1-hour TTL
+// lets it survive the multi-minute idle gaps between turns (user think-time,
+// tool-approval waits) that would otherwise evict the 5-minute cache and force
+// a full re-warm. The extra write cost (2x base vs 1.25x) is paid on that
+// one-time write; every read stays ~90% off. The rolling last-message
+// breakpoint keeps the cheaper 5-minute default because its tail is superseded
+// each turn — a 1-hour write there would pay 2x for content used briefly.
+func staticCacheControl() anthropic.CacheControlEphemeralParam {
+	cc := anthropic.NewCacheControlEphemeralParam()
+	cc.TTL = anthropic.CacheControlEphemeralTTLTTL1h
+	return cc
+}
+
 func setLastMessageCacheBreakpoint(messages []anthropic.MessageParam) {
 	if len(messages) == 0 {
 		return
