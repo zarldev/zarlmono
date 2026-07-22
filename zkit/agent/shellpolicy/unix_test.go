@@ -97,7 +97,7 @@ func TestUnixParser_RisksTriggeredCorrectly(t *testing.T) {
 		{"pipe raises ReasonOperator", "ls | wc -l", shellpolicy.ReasonOperator},
 		{"&& raises ReasonOperator", "ls && pwd", shellpolicy.ReasonOperator},
 		{"semicolon between stmts raises ReasonOperator", "ls; pwd", shellpolicy.ReasonOperator},
-		{"grep raises ReasonShellReadTool", "grep -r foo .", shellpolicy.ReasonShellReadTool},
+		{"cat raises ReasonShellReadTool", "cat main.go", shellpolicy.ReasonShellReadTool},
 		{"sed raises ReasonShellReadTool", "sed -n '1,20p' main.go", shellpolicy.ReasonShellReadTool},
 		{"read-helper pipe raises ReasonShellReadTool", "ls | grep foo", shellpolicy.ReasonShellReadTool},
 		{"opaque interpreter pipe raises ReasonOpaqueInterpreter", "echo 'print(1)' | python3", shellpolicy.ReasonOpaqueInterpreter},
@@ -111,6 +111,24 @@ func TestUnixParser_RisksTriggeredCorrectly(t *testing.T) {
 			}
 			if !slices.Contains(ir.RiskFlags, tc.want) {
 				t.Errorf("RiskFlags = %v, want to contain %q", ir.RiskFlags, tc.want)
+			}
+		})
+	}
+}
+
+// grep (and its family) and head are no longer treated as shell read tools, so
+// bare or output-filtering uses don't raise ReasonShellReadTool.
+func TestUnixParser_GrepAndHeadAreNotReadTools(t *testing.T) {
+	t.Parallel()
+	for _, cmd := range []string{"grep -r foo .", "rg foo", "egrep foo x", "head -20 README.md"} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			ir, err := shellpolicy.NewUnixParser().Parse(cmd)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", cmd, err)
+			}
+			if slices.Contains(ir.RiskFlags, shellpolicy.ReasonShellReadTool) {
+				t.Errorf("%q raised ReasonShellReadTool, want it allowed", cmd)
 			}
 		})
 	}

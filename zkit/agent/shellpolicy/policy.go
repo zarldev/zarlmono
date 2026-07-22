@@ -62,9 +62,10 @@ func NewPolicyEngine(opts ...Option) *PolicyEngine {
 //  4. Unsafe output redirect — there's already a write_file / edit
 //     tool that respects the workspace; the model should use that.
 //
-// In addition, shell-side read/discovery helpers (grep, sed -n, find, ls,
-// head, tail, cat, rg, and pipelines around them) are blocked with guidance to
-// the registered read/search/list tools. Expansion and Subshell flags are
+// In addition, shell-side read/discovery helpers (sed -n, find, ls, tail, cat,
+// and pipelines around them) are blocked with guidance to the registered
+// read/search/list tools. grep (and rg/head) are deliberately not in this set —
+// they are commonly used to filter real command output. Expansion and Subshell flags are
 // informational only; the agent is meant to be capable, not nannied.
 // In the relaxed profile the ergonomic `cd` and redirect blocks step aside
 // (the kernel sandbox is off; see PolicyEngine.relaxed). Shell read-tool
@@ -103,7 +104,7 @@ func (PolicyEngine) decide(ir ParsedIR, relaxed bool, blockReadTools bool) Decis
 
 	if blockReadTools && hasRisk(ir, ReasonShellReadTool) {
 		d.IsBlocked = true
-		d.BlockReason = "shell policy: use the registered workspace tools for file reading and discovery instead of shell grep/sed/find/ls/head/tail/cat or pipelines around them. " +
+		d.BlockReason = "shell policy: use the registered workspace tools for file reading and discovery instead of shell sed/find/ls/tail/cat or pipelines around them. " +
 			"Use `program`/`grep`/`read`/`ls`/`glob`/`file_map` for workspace files; reserve bash for builds, tests, package managers, git, servers, and other real processes."
 		return d
 	}
