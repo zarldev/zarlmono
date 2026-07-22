@@ -9,4 +9,4 @@ use (
 	./zkit
 )
 
-replace github.com/zarldev/zarlmono/zkit v0.4.0 => ./zkit
+replace github.com/zarldev/zarlmono/zkit v0.5.0 => ./zkit
