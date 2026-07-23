@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zarlcode/v0.6.2] — 2026-07-23
+`zarlcode/v0.6.2`
+
+### Changed
+
+- Picks up zkit v0.5.2: the hashline `edit` tool no longer merges inserted text into a neighbouring line, and no longer shreds a range edit that shares its start with an insert.
+
+## [zkit/v0.5.2] — 2026-07-23
+`zkit/v0.5.2`
+
+### Fixed
+
+- The hashline `edit` tool keeps inserted text on lines of its own. An insert splices zero bytes, so — unlike a replace — it borrows no line terminator from what it displaces: an `insert_before`/`insert_after` whose `new_string` omitted the trailing newline fused onto the following line, and an `insert_after` on a final line with no newline fused onto the anchor line. The terminator now matches the file's own LF/CRLF, and a file with no final newline stays that way. This is the case v0.5.1 recorded as unaffected.
+- A batch `edit` no longer corrupts a range edit that resolves to the same splice start as an insert (`insert_before` on the first line of a replaced range). Splices run from the tail, and the insert could go down first, shifting the bytes under the range's end offset so that splice landed mid-file — dropping the inserted text and resurrecting part of the replaced range. The wider range is now applied first. The fresh-anchor window returned by `edit` takes the same ordering, so it no longer reports shifted line numbers for that case.
+
 ## [zarlcode/v0.6.1] — 2026-07-22
 `zarlcode/v0.6.1`
 
