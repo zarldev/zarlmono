@@ -214,6 +214,131 @@ func TestEditFileHLTool_PreservesTrailingNewline(t *testing.T) {
 	}
 }
 
+// An insert splices zero bytes, so it borrows no line terminator from what it
+// displaces: without help it fuses onto the line after it (new_string with no
+// trailing newline) or the line before it (insert_after on an unterminated
+// final line).
+func TestEditFileHLTool_InsertsStayOnTheirOwnLines(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		seed string
+		edit code.HashlineEdit
+		want string
+	}{
+		{
+			name: "insert_after without trailing newline",
+			seed: "one\ntwo\nthree\n",
+			edit: code.HashlineEdit{StartLine: 1, StartHash: testHashlineHash("one", 4), Mode: "insert_after", NewString: "NEW"},
+			want: "one\nNEW\ntwo\nthree\n",
+		},
+		{
+			name: "insert_before without trailing newline",
+			seed: "one\ntwo\nthree\n",
+			edit: code.HashlineEdit{StartLine: 2, StartHash: testHashlineHash("two", 4), Mode: "insert_before", NewString: "NEW"},
+			want: "one\nNEW\ntwo\nthree\n",
+		},
+		{
+			name: "insert_after an unterminated final line",
+			seed: "one\ntwo\nthree",
+			edit: code.HashlineEdit{StartLine: 3, StartHash: testHashlineHash("three", 4), Mode: "insert_after", NewString: "NEW\n"},
+			want: "one\ntwo\nthree\nNEW\n",
+		},
+		{
+			name: "insert at end of an unterminated file stays unterminated",
+			seed: "one\ntwo\nthree",
+			edit: code.HashlineEdit{StartLine: 3, StartHash: testHashlineHash("three", 4), Mode: "insert_after", NewString: "NEW"},
+			want: "one\ntwo\nthree\nNEW",
+		},
+		{
+			name: "insert at end of a terminated file stays terminated",
+			seed: "one\ntwo\n",
+			edit: code.HashlineEdit{StartLine: 2, StartHash: testHashlineHash("two", 4), Mode: "insert_after", NewString: "NEW"},
+			want: "one\ntwo\nNEW\n",
+		},
+		{
+			name: "explicit newline is not doubled",
+			seed: "one\ntwo\n",
+			edit: code.HashlineEdit{StartLine: 1, StartHash: testHashlineHash("one", 4), Mode: "insert_after", NewString: "NEW\n"},
+			want: "one\nNEW\ntwo\n",
+		},
+		{
+			name: "multi-line insert terminates only the last line",
+			seed: "one\ntwo\n",
+			edit: code.HashlineEdit{StartLine: 1, StartHash: testHashlineHash("one", 4), Mode: "insert_after", NewString: "A\nB"},
+			want: "one\nA\nB\ntwo\n",
+		},
+		{
+			name: "CRLF file gets a CRLF terminator",
+			seed: "one\r\ntwo\r\n",
+			edit: code.HashlineEdit{StartLine: 1, StartHash: testHashlineHash("one", 4), Mode: "insert_after", NewString: "NEW"},
+			want: "one\r\nNEW\r\ntwo\r\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ws, root := mustWS(t)
+			path := filepath.Join(root, "ins.txt")
+			if err := os.WriteFile(path, []byte(tt.seed), 0o644); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+				Path:  "ins.txt",
+				Edits: []code.HashlineEdit{tt.edit},
+			})
+			if !res.Success {
+				t.Fatalf("edit failed: %s", res.Error)
+			}
+			if got := readFile(t, path); got != tt.want {
+				t.Fatalf("content = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An insert and a replace can resolve to the same splice start. Splicing runs
+// from the tail, so the wider range must go first — otherwise the insert
+// shifts the bytes under the replace's end offset and that splice lands
+// mid-file, shredding the region instead of replacing it.
+func TestEditFileHLTool_InsertSharingASpliceStartWithARange(t *testing.T) {
+	t.Parallel()
+	ws, root := mustWS(t)
+	path := filepath.Join(root, "shared-start.txt")
+
+	// The insert is listed second, so it is also the later index — the case
+	// where a descending-index tie-break alone would apply it first.
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res := execTyped(t, code.NewEditFileHLTool(ws), code.EditFileHLArgs{
+		Path: "shared-start.txt",
+		Edits: []code.HashlineEdit{
+			{
+				StartLine: 2,
+				StartHash: testHashlineHash("two", 4),
+				EndLine:   3,
+				EndHash:   testHashlineHash("three", 4),
+				NewString: "TWO-THREE\n",
+			},
+			{
+				StartLine: 2,
+				StartHash: testHashlineHash("two", 4),
+				Mode:      "insert_before",
+				NewString: "HEADER\n",
+			},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	if got := readFile(t, path); got != "one\nHEADER\nTWO-THREE\nfour\n" {
+		t.Fatalf("content = %q", got)
+	}
+}
+
 func TestEditFileHLTool_ReturnsFreshAnchorWindow(t *testing.T) {
 	t.Parallel()
 	ws, root := mustWS(t)

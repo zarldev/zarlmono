@@ -137,7 +137,7 @@ type HashlineEdit struct {
 	StartHash string `json:"start_hash" doc:"3- or 4-character base64 SHA-256 hash for start_line from the read output."`
 	EndLine   int    `json:"end_line,omitempty" doc:"Inclusive 1-based end line for replace/delete. Omit for a single-line edit."`
 	EndHash   string `json:"end_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for end_line from the read output."`
-	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; a replace whose line already ended in a newline stays newline-terminated even if you omit the trailing newline. Use a single cohesive range edit when changing adjacent lines."`
+	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; edits are line-anchored, so text stays on lines of its own even if you omit the trailing newline. Use a single cohesive range edit when changing adjacent lines."`
 	Mode      string `json:"mode,omitempty" enum:"replace,delete,insert_before,insert_after" doc:"Edit mode: replace (default), delete, insert_before, or insert_after."`
 }
 
@@ -402,37 +402,86 @@ func validateResolvedHashlineEdits(path string, edits []resolvedHashlineEdit) er
 	return nil
 }
 
-// preserveLineTerminators keeps a replaced line range line-terminated. The edit
-// tool anchors on whole lines, so a replace whose spliced-out range ended in a
-// newline should stay newline-terminated. Models routinely omit the trailing
-// newline in new_string (and some providers drop a trailing newline while
-// streaming the argument), which would silently un-terminate the line — merging
-// it with the next one, or dropping the file's final newline. When the removed
-// range ended in "\n" but the replacement doesn't, re-append it (matching the
-// original CRLF/LF terminator). Deletes (empty replacement) and inserts
-// (zero-width splice) are unaffected by construction.
+// preserveLineTerminators keeps every edited region line-terminated. The edit
+// tool anchors on whole lines, so no edit may fuse its text onto a neighbouring
+// line. Models routinely omit the trailing newline in new_string (and some
+// providers drop one while streaming the argument), which would silently
+// un-terminate the line — merging it with the next one, or dropping the file's
+// final newline.
+//
+// Replace: when the spliced-out range ended in "\n" but the replacement
+// doesn't, re-append it. Insert: see preserveInsertTerminators — a zero-width
+// splice inherits no terminator at all, so both sides need checking. Deletes
+// (empty replacement) are unaffected by construction.
 func preserveLineTerminators(body string, edits []resolvedHashlineEdit) {
 	for i := range edits {
 		e := &edits[i]
-		if e.SpliceEnd <= e.SpliceStart || e.Replacement == "" {
+		if e.Replacement == "" {
+			continue
+		}
+		if e.SpliceEnd == e.SpliceStart {
+			preserveInsertTerminators(body, e)
 			continue
 		}
 		if body[e.SpliceEnd-1] != '\n' || strings.HasSuffix(e.Replacement, "\n") {
 			continue
 		}
-		if e.SpliceEnd >= 2 && body[e.SpliceEnd-2] == '\r' {
-			e.Replacement += "\r\n"
-			continue
-		}
-		e.Replacement += "\n"
+		e.Replacement += hashlineEOL(body, e.SpliceEnd)
 	}
 }
 
+// preserveInsertTerminators keeps an inserted block on lines of its own. An
+// insert splices zero bytes, so it borrows no terminator from what it displaces
+// and merges with whatever it lands against: a new_string without a trailing
+// newline fuses onto the following line, and insert_after on a final line that
+// has no newline fuses onto the anchor line itself. A newline goes in front
+// whenever the splice point isn't already at a line boundary, and behind unless
+// the insert appends to a file that never had a final newline — there, staying
+// unterminated preserves the file's existing shape.
+func preserveInsertTerminators(body string, e *resolvedHashlineEdit) {
+	at := e.SpliceStart
+	eol := hashlineEOL(body, at)
+	if at > 0 && body[at-1] != '\n' {
+		e.Replacement = eol + e.Replacement
+	}
+	if strings.HasSuffix(e.Replacement, "\n") {
+		return
+	}
+	if at < len(body) || strings.HasSuffix(body, "\n") {
+		e.Replacement += eol
+	}
+}
+
+// hashlineEOL reports the line terminator in use around byte offset off:
+// "\r\n" when the nearest newline behind (then ahead of) off is the tail of a
+// CRLF pair, "\n" otherwise. Used so a terminator this package adds matches
+// the file it is added to.
+func hashlineEOL(body string, off int) string {
+	if i := strings.LastIndexByte(body[:off], '\n'); i > 0 && body[i-1] == '\r' {
+		return "\r\n"
+	}
+	if i := strings.IndexByte(body[off:], '\n'); i > 0 && body[off+i-1] == '\r' {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// applyResolvedHashlineEdits splices every edit into body from the tail
+// forwards, so each splice's byte offsets are still valid when it runs.
+//
+// The tie-breaks matter. An insert may share a splice start with the replace
+// or delete it sits in front of; the wider range must go first, or the insert
+// shifts the bytes under the range's end offset and the range splice lands
+// mid-file. Among edits at one zero-width point, descending index puts the
+// last-listed text down first, leaving the model's array order in the file.
 func applyResolvedHashlineEdits(body string, edits []resolvedHashlineEdit) string {
 	sorted := slices.Clone(edits)
 	slices.SortFunc(sorted, func(a, b resolvedHashlineEdit) int {
 		if a.SpliceStart != b.SpliceStart {
 			return b.SpliceStart - a.SpliceStart
+		}
+		if a.SpliceEnd != b.SpliceEnd {
+			return b.SpliceEnd - a.SpliceEnd
 		}
 		return b.Index - a.Index
 	})
@@ -456,14 +505,18 @@ func hashlineEditWindows(updated string, edits []resolvedHashlineEdit) string {
 		return ""
 	}
 
-	// New byte position of each replacement, ascending by original splice,
-	// accumulating the length delta of all earlier edits. This mirrors
-	// applyResolvedHashlineEdits, which splices from the tail so an earlier
-	// edit's prefix is never disturbed by a later one.
+	// New byte position of each replacement, accumulating the length delta of
+	// all earlier edits. The order is applyResolvedHashlineEdits' order
+	// reversed — that function splices from the tail, so reversing it walks
+	// the replacements in the order they lie in the file, which is what makes
+	// a running delta correct.
 	sorted := slices.Clone(edits)
 	slices.SortFunc(sorted, func(a, b resolvedHashlineEdit) int {
 		if a.SpliceStart != b.SpliceStart {
 			return a.SpliceStart - b.SpliceStart
+		}
+		if a.SpliceEnd != b.SpliceEnd {
+			return a.SpliceEnd - b.SpliceEnd
 		}
 		return a.Index - b.Index
 	})
