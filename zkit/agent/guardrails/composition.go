@@ -73,6 +73,7 @@ type Deps struct {
 const (
 	NameImprovementLoop = "improvement_loop"
 	NameSkillHint       = "skill_hint"
+	NameShellPolicy     = "shell_policy"
 )
 
 // PostSchemaGuardrails returns the production guardrails that compose after

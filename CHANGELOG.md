@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zarlcode/v0.6.3] — 2026-07-24
+`zarlcode/v0.6.3`
+
+### Added
+
+- Shell policy gains an `off` mode: it drops the static shell guardrail from the chain entirely, so no bash command is parsed or blocked. A deliberate high-trust opt-in beyond `lenient`, which keeps the guardrail and only steps aside the ergonomic `cd`/redirect steers.
+
+### Changed
+
+- Picks up zkit v0.5.3 for the exported `NameShellPolicy` guardrail handle.
+
+## [zkit/v0.5.3] — 2026-07-24
+`zkit/v0.5.3`
+
+### Added
+
+- Exported the `NameShellPolicy` guardrail name constant, and `ShellGuardrail.Name()` now returns it, so consumers can drop the static shell guardrail via `Deps.Disabled` without a hardcoded string — matching `NameImprovementLoop`/`NameSkillHint`.
+
 ## [zarlcode/v0.6.2] — 2026-07-23
 `zarlcode/v0.6.2`
 

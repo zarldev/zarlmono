@@ -141,6 +141,18 @@ func TestShellGuardLenientModes(t *testing.T) {
 	if !live.guardrailDeps().ShellLenient {
 		t.Fatal("lenient pin → want ShellLenient true regardless of sandbox")
 	}
+	// off: the guardrail is dropped from the chain entirely, not merely
+	// relaxed — Disabled carries its name regardless of the sandbox state.
+	setGuard("off")
+	setSandbox("on")
+	if d := live.guardrailDeps().Disabled; !slices.Contains(d, guardrails.NameShellPolicy) {
+		t.Fatalf("off → Disabled = %v, want to contain %q", d, guardrails.NameShellPolicy)
+	}
+	// Any non-off mode leaves the guardrail in the chain.
+	setGuard("lenient")
+	if d := live.guardrailDeps().Disabled; slices.Contains(d, guardrails.NameShellPolicy) {
+		t.Fatalf("lenient → Disabled = %v, want not to contain %q", d, guardrails.NameShellPolicy)
+	}
 }
 
 func TestZarlcodeGuardrailDepsDoNotDefaultLoadGoVerifier(t *testing.T) {

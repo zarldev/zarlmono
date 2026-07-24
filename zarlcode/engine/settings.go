@@ -284,15 +284,39 @@ func (s *Settings) SkillHints(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeySkillHints, "on") == "on"
 }
 
+// Shell-policy mode strings for KeyShellGuard.
+const (
+	shellGuardLenient = "lenient"
+	shellGuardOff     = "off"
+)
+
+// shellGuardMode returns the normalised KeyShellGuard value: "auto" (default),
+// "strict", "lenient", or "off".
+func (s *Settings) shellGuardMode(ctx context.Context) string {
+	return strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyShellGuard, "auto")))
+}
+
+// ShellGuardOff reports whether the static shell policy is switched off
+// entirely — the guardrail is dropped from the chain, so no bash command is
+// parsed or blocked (the verify-mode write-target blocks included). This is a
+// deliberate high-trust opt-in, distinct from "lenient": lenient keeps the
+// guardrail and only steps aside the ergonomic cd/redirect steers, while off
+// removes the guardrail outright. live.go maps it to Deps.Disabled.
+func (s *Settings) ShellGuardOff(ctx context.Context) bool {
+	return s.shellGuardMode(ctx) == shellGuardOff
+}
+
 // ShellGuardLenient resolves the shell policy's leniency for the given sandbox
 // state. "auto" (default) follows the sandbox — lenient only when it is off;
-// "strict" and "lenient" pin the choice regardless. Kept as a resolver (rather
-// than a bare mode) so the sandbox-follows default lives in one place.
+// "strict" and "lenient" pin the choice regardless. "off" is moot here (the
+// guardrail is dropped via ShellGuardOff before this is consulted) and falls to
+// the auto branch. Kept as a resolver (rather than a bare mode) so the
+// sandbox-follows default lives in one place.
 func (s *Settings) ShellGuardLenient(ctx context.Context, sandboxOn bool) bool {
-	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyShellGuard, "auto"))) {
+	switch s.shellGuardMode(ctx) {
 	case guardModeStrict:
 		return false
-	case "lenient":
+	case shellGuardLenient:
 		return true
 	default:
 		return !sandboxOn
