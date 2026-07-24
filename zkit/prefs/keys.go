@@ -47,9 +47,11 @@ const (
 	// KeySkillHints toggles the skill-hint guardrail, which suggests a recovery
 	// skill after a tool call keeps failing. "on" default.
 	KeySkillHints = "skill_hints"
-	// KeyShellGuard controls the static shell policy's leniency. "auto" (default)
-	// follows the sandbox setting — strict when the sandbox is on, lenient when
-	// off; "strict" and "lenient" pin the choice regardless of the sandbox.
+	// KeyShellGuard controls the static shell policy. "auto" (default) follows
+	// the sandbox setting — strict when the sandbox is on, lenient when off;
+	// "strict" and "lenient" pin the leniency regardless of the sandbox; "off"
+	// drops the shell guardrail from the chain entirely (no bash command is
+	// parsed or blocked).
 	KeyShellGuard = "shell_guard"
 	// KeyTemperature sets the sampling temperature on completion requests.
 	// Empty/"(default)" leaves it unset (server default). A low value (e.g. 0.2)

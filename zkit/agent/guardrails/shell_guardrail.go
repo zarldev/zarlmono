@@ -67,8 +67,9 @@ func WithShellLenient(lenient bool) options.Option[ShellGuardrail] {
 }
 
 // Name returns the guardrail's identifier — surfaces in the failed
-// ToolResult's Error string as `guardrail "shell_policy": …`.
-func (g *ShellGuardrail) Name() string { return "shell_policy" }
+// ToolResult's Error string as `guardrail "shell_policy": …`, and is the
+// handle the Disabled knob drops it by.
+func (g *ShellGuardrail) Name() string { return NameShellPolicy }
 
 // Before parses call.Arguments["command"] (when the call targets
 // the configured shell tool) and returns a tools.Validation error

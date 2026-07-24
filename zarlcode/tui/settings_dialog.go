@@ -228,8 +228,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "keep the agent working while its verifiers still report failure instead of stopping early. off removes the guardrail from the chain."},
 				{label: "skill hints", key: prefs.KeySkillHints, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "suggest a recovery skill after a tool call keeps failing. off removes the guardrail from the chain."},
-				{label: "shell policy", key: prefs.KeyShellGuard, kind: rowEnum, def: "auto", opts: []string{"auto", "strict", "lenient"},
-					desc: "static shell-command guardrail leniency. auto follows the sandbox (strict when on, lenient when off); strict/lenient pin it regardless of the sandbox."},
+				{label: "shell policy", key: prefs.KeyShellGuard, kind: rowEnum, def: "auto", opts: []string{"auto", "strict", "lenient", "off"},
+					desc: "static shell-command guardrail leniency. auto follows the sandbox (strict when on, lenient when off); strict/lenient pin it regardless of the sandbox; off removes the guardrail from the chain entirely."},
 			}},
 			{name: "compaction", rows: []settingsRow{
 				{label: "mode", key: prefs.KeyCompactionMode, kind: rowEnum, def: "auto", opts: []string{"auto", "manual"},

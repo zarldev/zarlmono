@@ -640,6 +640,12 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 		deps.ShellLenient = l.settings.ShellGuardLenient(l.parentContext(), sandboxOn)
 		// Always-on guardrails the user can drop from the chain. Names come
 		// from the guardrails package so they can't drift from Name().
+		if l.settings.ShellGuardOff(l.parentContext()) {
+			// "off" removes the shell guardrail outright — a high-trust opt-in
+			// beyond "lenient" (which keeps it and only relaxes the steers).
+			// ShellLenient is then moot since the guardrail is gone.
+			deps.Disabled = append(deps.Disabled, guardrails.NameShellPolicy)
+		}
 		if !l.settings.ImprovementGuard(l.parentContext()) {
 			deps.Disabled = append(deps.Disabled, guardrails.NameImprovementLoop)
 		}
