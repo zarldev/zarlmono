@@ -147,10 +147,7 @@ func TestRendererCloseIdempotent(t *testing.T) {
 }
 
 func TestRendererIntegration(t *testing.T) {
-	chromePath, err := resolveChromeBinary("")
-	if err != nil {
-		t.Skipf("Chrome unavailable: %v", err)
-	}
+	chromePath := integrationChromePath(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		switch req.URL.Path {
@@ -229,9 +226,7 @@ func TestRendererIntegration(t *testing.T) {
 }
 
 func TestWebFetchToolReusesRenderer(t *testing.T) {
-	if _, err := resolveChromeBinary(""); err != nil {
-		t.Skipf("Chrome unavailable: %v", err)
-	}
+	_ = integrationChromePath(t)
 	setShortChromeCacheRoot(t)
 	tool := New()
 	t.Cleanup(func() { _ = tool.Close() })
@@ -253,6 +248,18 @@ func TestWebFetchToolReusesRenderer(t *testing.T) {
 	if _, err := tool.browserRenderer(t.Context()); !errors.Is(err, errWebFetchClosed) {
 		t.Fatalf("browserRenderer after Close error = %v, want errWebFetchClosed", err)
 	}
+}
+
+func integrationChromePath(t *testing.T) string {
+	t.Helper()
+	if os.Getenv("ZKIT_CHROME_INTEGRATION") == "" {
+		t.Skip("set ZKIT_CHROME_INTEGRATION=1 to run Chrome integration tests")
+	}
+	chromePath, err := resolveChromeBinary("")
+	if err != nil {
+		t.Fatalf("Chrome integration requested but unavailable: %v", err)
+	}
+	return chromePath
 }
 
 func setShortChromeCacheRoot(t *testing.T) {

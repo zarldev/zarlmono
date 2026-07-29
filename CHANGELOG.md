@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Browser renderer tests keep Chrome's Unix socket path below platform limits on CI runners.
+- Chrome-backed renderer integration tests are now explicit opt-ins via `ZKIT_CHROME_INTEGRATION=1`, so the generic full-module race job does not depend on launching Chromium under peak CI load.
 - Renderer shutdown now waits for Chrome to exit before deleting its profile tree, preventing intermittent `directory not empty` cleanup failures.
 
 ## [zkit/v0.6.0] — 2026-07-25
