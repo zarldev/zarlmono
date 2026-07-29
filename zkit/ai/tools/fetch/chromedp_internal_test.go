@@ -227,3 +227,30 @@ func TestRendererIntegration(t *testing.T) {
 		t.Fatalf("scratch root stat error = %v, want not exist", err)
 	}
 }
+
+func TestWebFetchToolReusesRenderer(t *testing.T) {
+	if _, err := resolveChromeBinary(""); err != nil {
+		t.Skipf("Chrome unavailable: %v", err)
+	}
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	tool := New()
+	t.Cleanup(func() { _ = tool.Close() })
+
+	first, err := tool.browserRenderer(t.Context())
+	if err != nil {
+		t.Fatalf("first browserRenderer: %v", err)
+	}
+	second, err := tool.browserRenderer(t.Context())
+	if err != nil {
+		t.Fatalf("second browserRenderer: %v", err)
+	}
+	if first != second {
+		t.Fatal("browserRenderer returned different renderer instances")
+	}
+	if err := tool.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := tool.browserRenderer(t.Context()); !errors.Is(err, errWebFetchClosed) {
+		t.Fatalf("browserRenderer after Close error = %v, want errWebFetchClosed", err)
+	}
+}

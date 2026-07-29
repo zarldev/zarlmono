@@ -151,6 +151,9 @@ type LiveRunner struct {
 	// computer owns the lazy browser session backing computer_observe and
 	// computer_act. The session is process-local and closed with the LiveRunner.
 	computer *liveComputer
+	// fetchTool owns the reusable browser renderer used by web_fetch fallbacks.
+	// It persists across per-turn registries and closes with the LiveRunner.
+	fetchTool *fetch.WebFetchTool
 
 	mcp     *dynamic.MCPRegistry
 	mcpHost *tools.Registry
@@ -215,6 +218,7 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, sink LiveSink, model st
 		planStore: &livePlanStore{},
 		catalog:   newRuntimeCatalog(ws.Root()),
 		truncator: &runner.SpillingTruncator{Prefix: "zarlcode-"},
+		fetchTool: fetch.New(),
 	}
 	l.computer = &liveComputer{owner: l}
 	// Only populate the sink seams when a real sink was supplied; callers	// disable events by passing a nil LiveSink.
@@ -268,12 +272,16 @@ func (l *LiveRunner) Close(ctx context.Context) error {
 		l.mu.Lock()
 		mcp := l.mcp
 		computer := l.computer
+		fetchTool := l.fetchTool
 		l.mu.Unlock()
 		if mcp != nil {
 			_ = mcp.CloseAll()
 		}
 		if computer != nil {
 			_ = computer.Close()
+		}
+		if fetchTool != nil {
+			_ = fetchTool.Close()
 		}
 	}()
 	if ctx == nil {
@@ -746,11 +754,12 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// web_fetch — HTTP GET fast path, chromedp fallback for JS-heavy pages.
 	// Gated with web_search under the enable_web cluster toggle.
 	if enableWeb {
-		ft := fetch.New()
+		ft := l.fetchTool
+		if ft == nil {
+			ft = fetch.New()
+		}
 		if l.settings != nil {
-			if cp := l.settings.ChromeBinPath(l.parentContext()); cp != "" {
-				ft.WithChromeBinPath(cp)
-			}
+			ft.WithChromeBinPath(l.settings.ChromeBinPath(l.parentContext()))
 		}
 		_ = reg.Register(ft)
 	}

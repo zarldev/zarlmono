@@ -8,11 +8,13 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -56,8 +58,12 @@ const maxBodyBytes = 16 << 20 // 16 MiB
 // binary path for the browser fallback. When unset, chromedp searches the
 // standard platform paths.
 type WebFetchTool struct {
-	client        *zhttp.Client
+	client *zhttp.Client
+
+	browserMu     sync.Mutex
 	chromeBinPath string
+	renderer      *renderer
+	closed        bool
 }
 
 // FetchArgs is the typed argument struct decoded from ToolCall.Arguments.
@@ -86,9 +92,19 @@ func New() *WebFetchTool {
 
 // WithChromeBinPath sets the absolute path to a Chrome or Chromium binary
 // for the chromedp browser fallback. When empty (the default), chromedp
-// searches standard platform paths via exec.LookPath.
+// searches standard platform paths via exec.LookPath. Changing the path closes
+// an existing renderer so the next browser fetch starts the configured binary.
 func (t *WebFetchTool) WithChromeBinPath(path string) *WebFetchTool {
+	t.browserMu.Lock()
+	defer t.browserMu.Unlock()
+	if path == t.chromeBinPath {
+		return t
+	}
 	t.chromeBinPath = path
+	if t.renderer != nil {
+		_ = t.renderer.Close()
+		t.renderer = nil
+	}
 	return t
 }
 
@@ -188,19 +204,53 @@ func (t *WebFetchTool) httpFetch(ctx context.Context, rawURL string, maxChars in
 	return title, body, nil
 }
 
-// browserFetch launches a browser renderer for this compatibility path.
-// Long-lived owners should install and reuse a renderer instead.
+// browserFetch reuses the tool-owned renderer across fallback requests.
 func (t *WebFetchTool) browserFetch(ctx context.Context, rawURL, sel string, maxChars int) (string, string, error) {
-	r, err := newRenderer(ctx, withChromePath(t.chromeBinPath))
+	r, err := t.browserRenderer(ctx)
 	if err != nil {
 		return "", "", err
 	}
-	defer r.Close()
 	page, err := r.render(ctx, renderRequest{URL: rawURL, Selector: sel, MaxChars: maxChars})
 	if err != nil {
 		return "", "", err
 	}
 	return page.Title, page.Text, nil
+}
+
+func (t *WebFetchTool) browserRenderer(ctx context.Context) (*renderer, error) {
+	t.browserMu.Lock()
+	defer t.browserMu.Unlock()
+	if t.closed {
+		return nil, errWebFetchClosed
+	}
+	if t.renderer != nil {
+		return t.renderer, nil
+	}
+	r, err := newRenderer(context.WithoutCancel(ctx), withChromePath(t.chromeBinPath))
+	if err != nil {
+		return nil, err
+	}
+	t.renderer = r
+	return r, nil
+}
+
+var errWebFetchClosed = errors.New("web fetch tool closed")
+
+// Close releases the browser process and scratch tree, if browser fallback was used.
+// It is safe to call more than once.
+func (t *WebFetchTool) Close() error {
+	if t == nil {
+		return nil
+	}
+	t.browserMu.Lock()
+	defer t.browserMu.Unlock()
+	t.closed = true
+	if t.renderer == nil {
+		return nil
+	}
+	err := t.renderer.Close()
+	t.renderer = nil
+	return err
 }
 
 // decodeAndValidate decodes the tool call arguments and runs pre-flight
