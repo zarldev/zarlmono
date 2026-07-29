@@ -287,16 +287,22 @@ func (r *renderer) Close() error {
 		r.mu.Lock()
 		r.closed = true
 		r.mu.Unlock()
+		r.active.Wait()
+
+		var cleanupErr error
+		if r.browserCtx != nil {
+			cleanupErr = chromedp.Cancel(r.browserCtx)
+		}
 		if r.browserCancel != nil {
 			r.browserCancel()
 		}
 		if r.allocCancel != nil {
 			r.allocCancel()
 		}
-		r.active.Wait()
 		if r.scratch.root != "" {
-			r.closeErr = os.RemoveAll(r.scratch.root)
+			cleanupErr = errors.Join(cleanupErr, os.RemoveAll(r.scratch.root))
 		}
+		r.closeErr = cleanupErr
 	})
 	return r.closeErr
 }
