@@ -168,7 +168,7 @@ func TestRendererIntegration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	setShortChromeCacheRoot(t)
 	r, err := newRenderer(t.Context(),
 		withChromePath(chromePath),
 		withRenderConcurrency(1),
@@ -232,7 +232,7 @@ func TestWebFetchToolReusesRenderer(t *testing.T) {
 	if _, err := resolveChromeBinary(""); err != nil {
 		t.Skipf("Chrome unavailable: %v", err)
 	}
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	setShortChromeCacheRoot(t)
 	tool := New()
 	t.Cleanup(func() { _ = tool.Close() })
 
@@ -253,4 +253,9 @@ func TestWebFetchToolReusesRenderer(t *testing.T) {
 	if _, err := tool.browserRenderer(t.Context()); !errors.Is(err, errWebFetchClosed) {
 		t.Fatalf("browserRenderer after Close error = %v, want errWebFetchClosed", err)
 	}
+}
+
+func setShortChromeCacheRoot(t *testing.T) {
+	t.Helper()
+	t.Setenv("XDG_CACHE_HOME", "/tmp")
 }
