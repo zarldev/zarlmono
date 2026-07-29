@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.6.0] — 2026-07-25
+`zkit/v0.6.0`
+
+### Added
+
+- Added `zsync.Set.AddIfAbsent`, an atomic insertion operation that reports which concurrent caller inserted a value.
+
+### Changed
+
+- `web_fetch` now reuses one tool-owned Chrome process across browser fallback requests, with isolated tabs, bounded concurrency, caller-aware cancellation, and deterministic lifecycle cleanup.
+
 ## [zarlcode/v0.6.3] — 2026-07-24
 `zarlcode/v0.6.3`
 
