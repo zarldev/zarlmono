@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.6.1] — 2026-07-29
+`zkit/v0.6.1`
+
+### Fixed
+
+- Browser renderer tests keep Chrome's Unix socket path below platform limits on CI runners.
+- Renderer shutdown now waits for Chrome to exit before deleting its profile tree, preventing intermittent `directory not empty` cleanup failures.
+
 ## [zkit/v0.6.0] — 2026-07-25
 `zkit/v0.6.0`
 
