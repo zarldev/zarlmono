@@ -188,10 +188,19 @@ func (t *WebFetchTool) httpFetch(ctx context.Context, rawURL string, maxChars in
 	return title, body, nil
 }
 
-// browserFetch launches headless Chrome via chromedp, navigates to
-// rawURL, waits for the page to settle, and extracts text content.
+// browserFetch launches a browser renderer for this compatibility path.
+// Long-lived owners should install and reuse a renderer instead.
 func (t *WebFetchTool) browserFetch(ctx context.Context, rawURL, sel string, maxChars int) (string, string, error) {
-	return fetchWithBrowser(ctx, rawURL, sel, maxChars, t.chromeBinPath)
+	r, err := newRenderer(ctx, withChromePath(t.chromeBinPath))
+	if err != nil {
+		return "", "", err
+	}
+	defer r.Close()
+	page, err := r.render(ctx, renderRequest{URL: rawURL, Selector: sel, MaxChars: maxChars})
+	if err != nil {
+		return "", "", err
+	}
+	return page.Title, page.Text, nil
 }
 
 // decodeAndValidate decodes the tool call arguments and runs pre-flight

@@ -15,6 +15,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"github.com/zarldev/zarlmono/zkit/filesystem"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // syncBuffer is a bytes.Buffer guarded by a mutex. chromedp's
@@ -55,37 +56,110 @@ type chromeScratchDirs struct {
 	xdgConfig  string
 }
 
-// browserActionTimeout bounds a single chromedp action. Without it, a
-// broken selector or hung page makes chromedp wait until the runner's
-// tool timeout — a multi-minute silent stall. With it, a bad page
-// fails in seconds with a clear error.
+// browserActionTimeout bounds all actions for one page render.
 const browserActionTimeout = 20 * time.Second
 
-// browserSettleWait is the time chromedp waits after the page reaches
-// "complete" readyState before extracting text. Gives JS-rendered
-// content (React/Vue/Svelte hydration) time to appear.
+// browserSettleWait gives client-side frameworks time to hydrate after body readiness.
 const browserSettleWait = 1500 * time.Millisecond
 
-// fetchWithBrowser launches headless Chrome via chromedp, navigates to
-// rawURL, waits for the page to settle, and returns the page title and
-// visible text content (or targeted selector text when sel is set).
-// chromeBinPath is an optional absolute path to a Chrome/Chromium binary;
-// empty means chromedp searches standard platform paths.
-func fetchWithBrowser(ctx context.Context, rawURL, sel string, maxChars int, chromeBinPath string) (string, string, error) {
-	resolvedChrome, err := resolveChromeBinary(chromeBinPath)
-	if err != nil {
-		return "", "", err
+const defaultRenderConcurrency = 2
+
+var errRendererClosed = errors.New("renderer closed")
+
+type rendererConfig struct {
+	chromePath  string
+	concurrency int
+	settleWait  time.Duration
+	actionLimit time.Duration
+	newScratch  func() (chromeScratchDirs, error)
+}
+
+type rendererOption = options.Option[rendererConfig]
+
+func withChromePath(path string) rendererOption {
+	return func(cfg *rendererConfig) { cfg.chromePath = path }
+}
+
+func withRenderConcurrency(n int) rendererOption {
+	return func(cfg *rendererConfig) { cfg.concurrency = n }
+}
+
+func withSettleWait(wait time.Duration) rendererOption {
+	return func(cfg *rendererConfig) { cfg.settleWait = wait }
+}
+
+func withActionTimeout(timeout time.Duration) rendererOption {
+	return func(cfg *rendererConfig) { cfg.actionLimit = timeout }
+}
+
+type renderer struct {
+	allocCancel   context.CancelFunc
+	browserCtx    context.Context
+	browserCancel context.CancelFunc
+	scratch       chromeScratchDirs
+	chromePath    string
+	chromeOut     syncBuffer
+	slots         chan struct{}
+	settleWait    time.Duration
+	actionLimit   time.Duration
+
+	mu        sync.Mutex
+	closed    bool
+	active    sync.WaitGroup
+	closeOnce sync.Once
+	closeErr  error
+}
+
+type renderRequest struct {
+	URL        string
+	Selector   string
+	MaxChars   int
+	SettleWait time.Duration
+}
+
+type renderedPage struct {
+	URL   string
+	Title string
+	Text  string
+}
+
+func newRenderer(ctx context.Context, opts ...rendererOption) (*renderer, error) {
+	cfg := rendererConfig{
+		concurrency: defaultRenderConcurrency,
+		settleWait:  browserSettleWait,
+		actionLimit: browserActionTimeout,
+		newScratch:  newChromeScratchDirs,
 	}
-	scratch, err := newChromeScratchDirs()
-	if err != nil {
-		return "", "", fmt.Errorf("prepare chrome scratch dirs: %w", err)
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if cfg.concurrency <= 0 {
+		return nil, fmt.Errorf("render concurrency must be positive: %d", cfg.concurrency)
+	}
+	if cfg.settleWait < 0 {
+		return nil, fmt.Errorf("settle wait must not be negative: %s", cfg.settleWait)
+	}
+	if cfg.actionLimit <= 0 {
+		return nil, fmt.Errorf("action timeout must be positive: %s", cfg.actionLimit)
 	}
 
-	var chromeOut syncBuffer
+	resolvedChrome, err := resolveChromeBinary(cfg.chromePath)
+	if err != nil {
+		return nil, err
+	}
+	scratch, err := cfg.newScratch()
+	if err != nil {
+		return nil, fmt.Errorf("prepare chrome scratch dirs: %w", err)
+	}
 
-	// Create a browser context separate from the caller's so the
-	// action timeout doesn't race with the runner's tool timeout.
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+	r := &renderer{
+		scratch:     scratch,
+		chromePath:  resolvedChrome,
+		slots:       make(chan struct{}, cfg.concurrency),
+		settleWait:  cfg.settleWait,
+		actionLimit: cfg.actionLimit,
+	}
+	execOpts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.UserDataDir(scratch.profile),
 		chromedp.NoSandbox,
 		chromedp.DisableGPU,
@@ -104,87 +178,127 @@ func fetchWithBrowser(ctx context.Context, rawURL, sel string, maxChars int, chr
 			"XDG_CACHE_HOME="+scratch.xdgCache,
 			"XDG_CONFIG_HOME="+scratch.xdgConfig,
 		),
-		chromedp.CombinedOutput(&chromeOut),
+		chromedp.CombinedOutput(&r.chromeOut),
+		chromedp.ExecPath(resolvedChrome),
 	)
-	opts = append(opts, chromedp.ExecPath(resolvedChrome))
-	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
-	defer func() {
-		allocCancel()
-		_ = os.RemoveAll(scratch.root)
-	}()
+	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, execOpts...)
+	r.allocCancel = allocCancel
+	r.browserCtx, r.browserCancel = chromedp.NewContext(allocCtx)
 
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	defer browserCancel()
+	if err := chromedp.Run(r.browserCtx); err != nil {
+		cleanupErr := r.Close()
+		return nil, errors.Join(chromeFailure("start chrome", resolvedChrome, r.chromeOut.String(), err), cleanupErr)
+	}
+	return r, nil
+}
 
-	// Warm the browser — a missing Chrome binary fails here, not mid-action.
-	if err := chromedp.Run(browserCtx); err != nil {
-		return "", "", chromeFailure("start chrome", resolvedChrome, chromeOut.String(), err)
+func (r *renderer) render(ctx context.Context, request renderRequest) (renderedPage, error) {
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return renderedPage{}, errRendererClosed
+	}
+	select {
+	case r.slots <- struct{}{}:
+		defer func() { <-r.slots }()
+	case <-ctx.Done():
+		return renderedPage{}, ctx.Err()
 	}
 
-	// Navigate and wait for the page to settle.
-	actx, actCancel := context.WithTimeout(browserCtx, browserActionTimeout)
-	defer actCancel()
-	stop := context.AfterFunc(ctx, actCancel)
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return renderedPage{}, errRendererClosed
+	}
+	r.active.Add(1)
+	r.mu.Unlock()
+	defer r.active.Done()
+
+	tabCtx, tabCancel := chromedp.NewContext(r.browserCtx)
+	defer tabCancel()
+	actionCtx, actionCancel := context.WithTimeout(tabCtx, r.actionLimit)
+	defer actionCancel()
+	stop := context.AfterFunc(ctx, actionCancel)
 	defer stop()
 
-	if err := chromedp.Run(actx,
-		chromedp.Navigate(rawURL),
+	wait := r.settleWait
+	if request.SettleWait > 0 {
+		wait = request.SettleWait
+	}
+	if err := chromedp.Run(actionCtx,
+		chromedp.Navigate(request.URL),
 		chromedp.WaitReady("body"),
-		chromedp.Sleep(browserSettleWait),
+		chromedp.Sleep(wait),
 	); err != nil {
-		return "", "", chromeFailure("navigate", resolvedChrome, chromeOut.String(), err)
+		return renderedPage{}, r.pageFailure(ctx, "navigate", request.URL, err)
 	}
 
-	// Extract title.
-	var title string
-	actx2, actCancel2 := context.WithTimeout(browserCtx, browserActionTimeout)
-	defer actCancel2()
-	stop2 := context.AfterFunc(ctx, actCancel2)
-	defer stop2()
-
-	if err := chromedp.Run(actx2,
-		chromedp.Title(&title),
+	page := renderedPage{}
+	if err := chromedp.Run(actionCtx,
+		chromedp.Location(&page.URL),
+		chromedp.Title(&page.Title),
 	); err != nil {
-		// Title failure is non-fatal — return what we can.
-		title = ""
+		return renderedPage{}, r.pageFailure(ctx, "extract page metadata", request.URL, err)
 	}
 
-	// Extract body text.
-	actx3, actCancel3 := context.WithTimeout(browserCtx, browserActionTimeout)
-	defer actCancel3()
-	stop3 := context.AfterFunc(ctx, actCancel3)
-	defer stop3()
-
-	var body string
-	if sel != "" {
-		// Targeted extraction: get the text of the selected element.
-		var elText string
-		if err := chromedp.Run(actx3,
-			chromedp.Text(sel, &elText, chromedp.ByQuery),
-		); err != nil {
-			return title, "", chromeFailure(fmt.Sprintf("extract selector %q", sel), resolvedChrome, chromeOut.String(), err)
+	var err error
+	if request.Selector != "" {
+		err = chromedp.Run(actionCtx, chromedp.Text(request.Selector, &page.Text, chromedp.ByQuery))
+		if err != nil {
+			return renderedPage{}, r.pageFailure(ctx, fmt.Sprintf("extract selector %q", request.Selector), request.URL, err)
 		}
-		body = strings.TrimSpace(elText)
 	} else {
-		// Full page: get document.body.innerText.
-		var pageText string
-		if err := chromedp.Run(actx3,
-			chromedp.Evaluate(`document.body ? document.body.innerText : document.documentElement.innerText`, &pageText),
-		); err != nil {
-			return title, "", chromeFailure("extract body text", resolvedChrome, chromeOut.String(), err)
+		err = chromedp.Run(actionCtx, chromedp.Evaluate(
+			`document.body ? document.body.innerText : document.documentElement.innerText`, &page.Text,
+		))
+		if err != nil {
+			return renderedPage{}, r.pageFailure(ctx, "extract body text", request.URL, err)
 		}
-		body = strings.TrimSpace(pageText)
 	}
+	page.Text = truncateRenderedText(page.Text, request.MaxChars)
+	return page, nil
+}
 
-	body = collapseWS(body)
-	if len(body) > maxChars {
-		body = body[:maxChars]
-		if lastDot := strings.LastIndex(body, ". "); lastDot > maxChars/2 {
-			body = body[:lastDot+1]
-		}
-		body += "\n\n[truncated]"
+func (r *renderer) pageFailure(ctx context.Context, stage, rawURL string, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
-	return title, body, nil
+	return chromeFailure(fmt.Sprintf("%s %q", stage, rawURL), r.chromePath, r.chromeOut.String(), err)
+}
+
+func truncateRenderedText(body string, maxChars int) string {
+	body = collapseWS(strings.TrimSpace(body))
+	if len(body) <= maxChars {
+		return body
+	}
+	body = body[:maxChars]
+	if lastDot := strings.LastIndex(body, ". "); lastDot > maxChars/2 {
+		body = body[:lastDot+1]
+	}
+	return body + "\n\n[truncated]"
+}
+
+func (r *renderer) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		r.closed = true
+		r.mu.Unlock()
+		if r.browserCancel != nil {
+			r.browserCancel()
+		}
+		if r.allocCancel != nil {
+			r.allocCancel()
+		}
+		r.active.Wait()
+		if r.scratch.root != "" {
+			r.closeErr = os.RemoveAll(r.scratch.root)
+		}
+	})
+	return r.closeErr
 }
 
 // resolveChromeBinary returns the browser executable path to use for chromedp.
