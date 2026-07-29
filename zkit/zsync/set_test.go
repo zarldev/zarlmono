@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/zsync"
@@ -50,6 +51,59 @@ func TestSet_Add(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSet_AddIfAbsent(t *testing.T) {
+	s := zsync.NewSet[string]()
+
+	if !s.AddIfAbsent("x") {
+		t.Fatal("first AddIfAbsent(x) = false, want true")
+	}
+	if s.AddIfAbsent("x") {
+		t.Fatal("second AddIfAbsent(x) = true, want false")
+	}
+	if !s.Contains("x") {
+		t.Fatal("Contains(x) = false after AddIfAbsent")
+	}
+	if !s.Remove("x") {
+		t.Fatal("Remove(x) = false, want true")
+	}
+	if !s.AddIfAbsent("x") {
+		t.Fatal("AddIfAbsent(x) after Remove = false, want true")
+	}
+}
+
+func TestSet_AddIfAbsentConcurrent(t *testing.T) {
+	s := zsync.NewSet[string]()
+	const callers = 100
+
+	var winners atomic.Int64
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Go(func() {
+			if s.AddIfAbsent("claim") {
+				winners.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+
+	if got := winners.Load(); got != 1 {
+		t.Fatalf("AddIfAbsent winners = %d, want 1", got)
+	}
+	if got := s.Len(); got != 1 {
+		t.Fatalf("Len() = %d, want 1", got)
+	}
+}
+
+func TestSet_ZeroValuePanicsConsistently(t *testing.T) {
+	var s zsync.Set[string]
+	defer func() {
+		if recover() == nil {
+			t.Fatal("zero-value Set.AddIfAbsent did not panic")
+		}
+	}()
+	s.AddIfAbsent("x")
 }
 
 func TestSet_Contains(t *testing.T) {

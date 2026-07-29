@@ -20,6 +20,13 @@ func (s *Set[T]) Add(value T) {
 	s.m.Set(value, struct{}{})
 }
 
+// AddIfAbsent inserts value when it is not already present.
+// It reports whether this call inserted the value.
+func (s *Set[T]) AddIfAbsent(value T) bool {
+	_, loaded := s.m.LoadOrStore(value, struct{}{})
+	return !loaded
+}
+
 // Contains reports whether value is in the set.
 func (s *Set[T]) Contains(value T) bool {
 	_, err := s.m.Get(value)
