@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.8.0] — 2026-07-31
+`zkit/v0.8.0`
+
+### Added
+
+- `zkit/vault` now provides a versioned wrapped-DEK composition with bounded Argon2id headers, stable header/wrapped-key/envelope persistence encoding, explicit associated data, password rotation by DEK rewrapping, and close-to-wipe backend sessions.
+- Wrapped-DEK tests cover wrong passwords, tampering, cross-record substitution, password rotation, closed sessions, malformed persistence, and unsupported versions.
+
+
 ## [zkit/v0.7.0] — 2026-07-30
 `zkit/v0.7.0`
 
