@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
@@ -24,10 +25,33 @@ func ScaffoldAgent(name string) (string, error) {
 	return scaffold("agents", name, agentTemplate(name))
 }
 
-// ScaffoldSkill writes a templated skill definition to the user config dir
-// (~/.zarlcode/config/skills/<slug>.md) and returns its path.
+// ScaffoldSkill writes a standard Agent Skills package to the user config dir
+// (~/.zarlcode/config/skills/<slug>/SKILL.md) and returns its path.
 func ScaffoldSkill(name string) (string, error) {
-	return scaffold("skills", name, skillTemplate(name))
+	slug := slugify(name)
+	if slug == "" {
+		return "", errors.New("catalog: name has no usable filename characters")
+	}
+	return scaffoldFile(filepath.Join("skills", slug), "SKILL.md", skillTemplate(slug))
+}
+
+// CreateSkill writes a complete standard Agent Skills package to the user
+// config directory. It never overwrites an existing skill.
+func CreateSkill(name, description, instructions string) (string, error) {
+	slug := slugify(name)
+	if slug == "" || slug != name || len(slug) > 64 {
+		return "", errors.New("catalog: skill name must be 1-64 lowercase letters, numbers, or hyphens")
+	}
+	description = strings.TrimSpace(description)
+	if description == "" || len(description) > 1024 {
+		return "", errors.New("catalog: skill description must be 1-1024 characters")
+	}
+	instructions = strings.TrimSpace(instructions)
+	if instructions == "" {
+		return "", errors.New("catalog: skill instructions are required")
+	}
+	body := "---\nname: " + slug + "\ndescription: " + strconv.Quote(description) + "\n---\n\n" + instructions + "\n"
+	return scaffoldFile(filepath.Join("skills", slug), "SKILL.md", body)
 }
 
 // ScaffoldHook writes a templated hook definition to the user config dir
@@ -43,6 +67,10 @@ func scaffold(subdir, name, body string) (string, error) {
 	if slug == "" {
 		return "", errors.New("catalog: name has no usable filename characters")
 	}
+	return scaffoldFile(subdir, slug+".md", body)
+}
+
+func scaffoldFile(subdir, filename, body string) (string, error) {
 	cfg, err := home.ConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("config dir: %w", err)
@@ -51,12 +79,21 @@ func scaffold(subdir, name, body string) (string, error) {
 	if err := os.MkdirAll(dir, filesystem.ModePublicDir); err != nil {
 		return "", fmt.Errorf("mkdir %q: %w", dir, err)
 	}
-	path := filepath.Join(dir, slug+".md")
-	if _, err := os.Stat(path); err == nil {
+	path := filepath.Join(dir, filename)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filesystem.ModePublicFile)
+	if errors.Is(err, os.ErrExist) {
 		return path, ErrExists
 	}
-	if err := os.WriteFile(path, []byte(body), filesystem.ModePublicFile); err != nil {
+	if err != nil {
+		return "", fmt.Errorf("create %q: %w", path, err)
+	}
+	if _, err := file.WriteString(body); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
 		return "", fmt.Errorf("write %q: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("close %q: %w", path, err)
 	}
 	return path, nil
 }
@@ -80,7 +117,7 @@ func agentTemplate(name string) string {
 func skillTemplate(name string) string {
 	return "---\n" +
 		"name: " + name + "\n" +
-		"description: TODO when should the agent load this skill\n" +
+		"description: TODO describe what this skill does and when to use it\n" +
 		"---\n\n" +
 		"TODO write the capability guide the agent reads when this skill's\ndescription matches the task at hand.\n"
 }

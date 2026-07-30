@@ -292,7 +292,8 @@ func browseHelpSections() []helpSection {
 		{
 			title: "browse transcript",
 			rows: [][]keyHint{
-				{{"↑↓ / j k", "move"}, {"pgup / pgdn", "page"}, {"g/home / end", "top / bottom"}},
+				{{"↑↓ / j k", "move"}, {"pgup / pgdn", "page"}, {"g/home / G/end", "top / bottom"}},
+				{{"v", "select lines"}, {"y", "copy selection"}, {"esc", "cancel selection / compose"}},
 				{{"enter / space", "expand / collapse"}, {"i / esc", "back to compose"}},
 			},
 		},

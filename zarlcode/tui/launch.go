@@ -16,6 +16,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	agentmcp "github.com/zarldev/zarlmono/zkit/agent/mcp"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
@@ -92,6 +93,12 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	ws, err := code.NewWorkspace(root)
 	if err != nil {
 		return nil, fmt.Errorf("workspace %q: %w", root, err)
+	}
+	if _, err := home.Materialise(); err != nil {
+		return nil, fmt.Errorf("seed zarlcode home: %w", err)
+	}
+	if _, err := home.MaterialiseWorkspace(root); err != nil {
+		return nil, fmt.Errorf("seed workspace extensions: %w", err)
 	}
 
 	// Peek at the persisted theme so the pre-settings splash (vault unlock)

@@ -50,7 +50,7 @@ You review code changes.
 	for tool := range src.Tools(t.Context()) {
 		seen[tool.Definition().Name] = true
 	}
-	for _, name := range []tools.ToolName{ToolNameLoadSkill, ToolNameListAgents} {
+	for _, name := range []tools.ToolName{ToolNameCreateSkill, ToolNameLoadSkill, ToolNameListAgents} {
 		if !seen[name] {
 			t.Fatalf("tool %s not registered; saw %#v", name, seen)
 		}
@@ -146,6 +146,42 @@ Loaded after refresh.
 	}
 	if res == nil || !res.Success || !strings.Contains(res.Data.(string), "Loaded after refresh") {
 		t.Fatalf("load_skill did not refresh on miss: %#v", res)
+	}
+}
+
+func TestCreateSkillToolWritesPortablePackageAndReloadsCatalog(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cat := newRuntimeCatalog(t.TempDir())
+	res, err := NewCreateSkillTool(cat).Execute(t.Context(), tools.ToolCall{
+		ID:       "create",
+		ToolName: ToolNameCreateSkill,
+		Arguments: tools.ToolParameters{
+			"name":         "self-extension",
+			"description":  "Teach zarlcode how to extend itself when adding reusable workflows.",
+			"instructions": "Use the canonical creation tools and verify discovery.",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.Success {
+		t.Fatalf("create_skill result = %#v", res)
+	}
+	skill, ok := cat.Skill("self-extension")
+	if !ok {
+		t.Fatal("created skill was not reloaded into runtime catalog")
+	}
+	if !strings.HasSuffix(skill.Source, filepath.Join("self-extension", "SKILL.md")) {
+		t.Fatalf("skill source = %q, want portable package", skill.Source)
+	}
+	data, err := os.ReadFile(skill.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"name: self-extension", "description: \"Teach zarlcode", "canonical creation tools"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("SKILL.md missing %q:\n%s", want, data)
+		}
 	}
 }
 

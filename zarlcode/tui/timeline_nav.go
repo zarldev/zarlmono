@@ -1,5 +1,9 @@
 package tui
 
+import (
+	lg "charm.land/lipgloss/v2"
+)
+
 // collapsible is an item whose render state can be toggled (e.g. an
 // assistant item's thinking block, or a tool/edit group). toggleSelected
 // calls toggle() on the selected item.
@@ -161,7 +165,10 @@ func (tl *timeline) enterBrowse() {
 	tl.scrollToSel()
 }
 
-func (tl *timeline) exitBrowse() { tl.browsing = false }
+func (tl *timeline) exitBrowse() {
+	tl.browsing = false
+	tl.cancelSelection()
+}
 
 // scrollToSel nudges scrollTop only enough to keep the selected item visible
 // (its start, if it's taller than the pane). No-jump: an already-visible
@@ -431,6 +438,18 @@ func (tl *timeline) renderBrowse(width, height int) []string {
 		}
 	}
 	tl.visItem, tl.visLocal = vItem, vLocal
+
+	if tl.selectionActive() {
+		lo, hi := tl.selectionRange()
+		style := lg.NewStyle().Background(lgColor(palette.Highlight))
+		for abs := max(lo, top); abs <= min(hi, end-1); abs++ {
+			vi := abs - top
+			if vi >= 0 && vi < len(view) {
+				view[vi] = style.Render(padStyled(view[vi], width))
+			}
+		}
+		return view
+	}
 
 	tl.clampSelLocal(width)
 	rail := palette.Primary.On("▎")

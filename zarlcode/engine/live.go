@@ -770,6 +770,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 		// token cost unless the user asks for a skill/sub-agent or the task clearly
 		// needs one.
 		_ = reg.Register(NewListSkillsTool(l.catalog))
+		_ = reg.Register(NewCreateSkillTool(l.catalog))
 		_ = reg.Register(NewLoadSkillTool(l.catalog))
 		_ = reg.Register(NewListAgentsTool(l.catalog))
 	}

@@ -48,28 +48,46 @@ func Materialise() (Result, error) {
 		return Result{}, fmt.Errorf("home dir: %w", err)
 	}
 	res := Result{Dir: dir}
+	seeded, err := materialiseDirs(dir, []string{"skills", "tools", "hooks"})
+	if err != nil {
+		return res, err
+	}
+	res.Created = seeded.Created
+	res.Existed = seeded.Existed
 
+	return res, nil
+}
+
+// MaterialiseWorkspace ensures a workspace has empty local extension
+// directories. It never creates definition files or changes existing content.
+func MaterialiseWorkspace(workspaceRoot string) (Result, error) {
+	dir := WorkspaceDir(workspaceRoot)
+	if dir == "" {
+		return Result{}, errors.New("workspace root is required")
+	}
+	return materialiseDirs(dir, []string{"agents", "skills", "tools", "hooks"})
+}
+
+func materialiseDirs(dir string, subdirs []string) (Result, error) {
+	res := Result{Dir: dir}
 	if err := os.MkdirAll(dir, filesystem.ModePublicDir); err != nil {
 		return res, fmt.Errorf("mkdir %q: %w", dir, err)
 	}
-
-	// Make user-editable directories discoverable. Empty is fine —
-	// the shell scans them at every launch; a freshly-installed user
-	// finds out where to drop content by listing the home directory.
-	for _, sub := range []string{"skills", "tools", "hooks"} {
+	for _, sub := range subdirs {
 		path := filepath.Join(dir, sub)
-		switch _, err := os.Stat(path); {
-		case err == nil:
+		switch info, err := os.Stat(path); {
+		case err == nil && info.IsDir():
 			res.Existed = append(res.Existed, sub+"/")
+		case err == nil:
+			return res, fmt.Errorf("seed %q: path exists and is not a directory", path)
 		case errors.Is(err, fs.ErrNotExist):
-			if merr := os.MkdirAll(path, filesystem.ModePublicDir); merr != nil {
-				return res, fmt.Errorf("mkdir %q: %w", path, merr)
+			if err := os.MkdirAll(path, filesystem.ModePublicDir); err != nil {
+				return res, fmt.Errorf("mkdir %q: %w", path, err)
 			}
 			res.Created = append(res.Created, sub+"/")
 		default:
 			return res, fmt.Errorf("stat %q: %w", path, err)
 		}
 	}
-
 	return res, nil
 }

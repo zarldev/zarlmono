@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.7.0] — 2026-07-30
+`zkit/v0.7.0`
+
+### Added
+
+- zlog now supports independent JSON, plain-text, and console formats for file and stdout destinations through `WithFileFormat` and `WithStdoutFormat`.
+
+### Changed
+
+- zlog files default to structured JSON, while stdout defaults to terminal-aware console output. Console formatting never writes ANSI colour into files, and redirected stdout is uncoloured.
+- `WithJSONOutput` remains available as a deprecated compatibility option, mapping to destination-specific formats.
+
+## [zarlcode/v0.7.0] — 2026-07-30
+`zarlcode/v0.7.0`
+
+### Added
+
+- zarlcode can create reusable Agent Skills through the new BUILD-mode `create_skill` tool. Skills use the portable `<name>/SKILL.md` package layout, become available in the live catalog immediately, and remain compatible with existing flat markdown skills.
+- zarlcode transcript browse mode now supports visual line selection with `v`, keyboard range extension, and `y` clipboard copy. Copied text strips ANSI styling and timeline rails.
+
+### Changed
+
+- zarlcode materialises canonical user and workspace extension directories at launch so agents, skills, tools, and hooks have discoverable homes.
+- zarlcode now depends on zkit v0.7.0.
+
 ## [zkit/v0.6.1] — 2026-07-29
 `zkit/v0.6.1`
 

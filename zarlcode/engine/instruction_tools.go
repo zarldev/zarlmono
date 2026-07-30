@@ -99,11 +99,11 @@ func (t *loadInstructionTool) Definition() tools.ToolSpec {
 			schemaType: schemaTypeObject,
 			schemaProperties: map[string]any{
 				"path": map[string]any{
-					schemaType:    "string",
-					"description": "Workspace-relative path from list_instructions.",
+					schemaType:        schemaTypeString,
+					schemaDescription: "Workspace-relative path from list_instructions.",
 				},
 			},
-			"required":       []string{"path"},
+			schemaRequired:   []string{"path"},
 			schemaAdditional: false,
 		})}
 }

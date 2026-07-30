@@ -628,6 +628,7 @@ func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *
 	reg := tools.NewRegistry()
 	if catalog != nil {
 		_ = reg.Register(engine.NewListSkillsTool(catalog))
+		_ = reg.Register(engine.NewCreateSkillTool(catalog))
 		_ = reg.Register(engine.NewLoadSkillTool(catalog))
 		_ = reg.Register(engine.NewListAgentsTool(catalog))
 	}

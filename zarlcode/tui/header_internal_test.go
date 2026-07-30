@@ -137,11 +137,18 @@ func TestStatusHintListsCurrentShortcuts(t *testing.T) {
 
 	m.session.PlanMode = false
 	m.timeline.browsing = true
-	for _, want := range []string{"↑↓/jk move", "pgup/pgdn page", "esc/i compose", "ctrl+g"} {
+	for _, want := range []string{"↑↓/jk move", "v select", "pgup/pgdn page", "esc/i compose", "ctrl+g"} {
 		if got := m.statusHint(); !strings.Contains(got, want) {
 			t.Fatalf("browse status hint missing %q:\n%s", want, got)
 		}
 	}
+	m.timeline.selection = transcriptSelection{active: true}
+	for _, want := range []string{"VISUAL", "↑↓/jk extend", "y copy", "esc cancel", "ctrl+c quit"} {
+		if got := m.statusHint(); !strings.Contains(got, want) {
+			t.Fatalf("visual selection status hint missing %q:\n%s", want, got)
+		}
+	}
+	m.timeline.selection = transcriptSelection{}
 
 	m.timeline.browsing = false
 	m.session.SetCockpitExpanded(true)

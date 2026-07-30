@@ -14,23 +14,72 @@ import (
 )
 
 const (
-	schemaAdditional = "additionalProperties"
-	schemaType       = "type"
-	schemaTypeObject = "object"
-	schemaProperties = "properties"
-	schemaPropName   = "name"
+	schemaAdditional       = "additionalProperties"
+	schemaDescription      = "description"
+	schemaProperties       = "properties"
+	schemaPropName         = "name"
+	schemaRequired         = "required"
+	schemaType             = "type"
+	schemaTypeObject       = "object"
+	schemaPropInstructions = "instructions"
+	schemaTypeString       = "string"
 )
 
 const (
-	ToolNameLoadSkill  tools.ToolName = "load_skill"
-	ToolNameListSkills tools.ToolName = "list_skills"
-	ToolNameListAgents tools.ToolName = "list_agents"
+	ToolNameCreateSkill tools.ToolName = "create_skill"
+	ToolNameLoadSkill   tools.ToolName = "load_skill"
+	ToolNameListSkills  tools.ToolName = "list_skills"
+	ToolNameListAgents  tools.ToolName = "list_agents"
 )
 
 type loadSkillTool struct{ catalog *RuntimeCatalog }
 
 type loadSkillArgs struct {
 	Name string `json:"name"`
+}
+
+type createSkillTool struct{ catalog *RuntimeCatalog }
+
+type createSkillArgs struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Instructions string `json:"instructions"`
+}
+
+// NewCreateSkillTool creates the BUILD-mode self-extension tool.
+func NewCreateSkillTool(c *RuntimeCatalog) *createSkillTool { return &createSkillTool{catalog: c} }
+
+func (t *createSkillTool) Definition() tools.ToolSpec {
+	return tools.ToolSpec{
+		Name: ToolNameCreateSkill,
+		Description: "Create a new reusable Agent Skill in the canonical user skill directory. " +
+			"Use when the user asks to add, author, or save a skill. The tool chooses the path, " +
+			"writes standard <name>/SKILL.md frontmatter, and never overwrites an existing skill.",
+		Parameters: llm.SchemaFromMap(map[string]any{
+			schemaType: schemaTypeObject,
+			schemaProperties: map[string]any{
+				schemaPropName:         map[string]any{schemaType: schemaTypeString, schemaDescription: "Portable skill name: 1-64 lowercase letters, numbers, and hyphens."},
+				schemaDescription:      map[string]any{schemaType: schemaTypeString, schemaDescription: "What the skill does and when the agent should load it."},
+				schemaPropInstructions: map[string]any{schemaType: schemaTypeString, schemaDescription: "Complete markdown instructions for performing the skill."},
+			},
+			schemaRequired:   []string{schemaPropName, schemaDescription, schemaPropInstructions},
+			schemaAdditional: false,
+		})}
+}
+
+func (t *createSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	args, err := tools.DecodeArgs[createSkillArgs](call.Arguments)
+	if err != nil {
+		return tools.Failure(call.ID, err), nil
+	}
+	path, err := catalog.CreateSkill(strings.TrimSpace(args.Name), args.Description, args.Instructions)
+	if err != nil {
+		return tools.Failure(call.ID, tools.Validation("create_skill", err.Error())), nil
+	}
+	if t.catalog != nil {
+		t.catalog.ReloadCurrent()
+	}
+	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: "created skill: " + path, ExecutedAt: time.Now()}, nil
 }
 
 func NewLoadSkillTool(c *RuntimeCatalog) *loadSkillTool { return &loadSkillTool{catalog: c} }

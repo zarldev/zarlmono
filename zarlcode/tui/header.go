@@ -35,7 +35,10 @@ func (m *UI) statusHint() string {
 		return " tab/←→ switch  ·  ↑↓/jk scroll  ·  pgup/pgdn page  ·  home/end jump  ·  ctrl+l / esc / q close  ·  " + stopKey + "  ·  ctrl+g keys"
 	}
 	if m.timeline.browsing {
-		return " ↑↓/jk move  ·  enter expand  ·  pgup/pgdn page  ·  esc/i compose  ·  " + stopKey + "  ·  ctrl+g keys"
+		if m.timeline.selectionActive() {
+			return " VISUAL  ·  ↑↓/jk extend  ·  pgup/pgdn page  ·  y copy  ·  esc cancel  ·  " + stopKey + "  ·  ctrl+g keys"
+		}
+		return " ↑↓/jk move  ·  v select  ·  enter expand  ·  pgup/pgdn page  ·  esc/i compose  ·  " + stopKey + "  ·  ctrl+g keys"
 	}
 	if m.session.PlanMode {
 		return " enter submit  ·  shift+enter newline  ·  shift+tab build  ·  " + stopKey + "  ·  ctrl+g keys"

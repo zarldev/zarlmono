@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -269,6 +270,9 @@ func (m *UI) handleDashboardShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 }
 
 func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
+	if m.timeline.selectionActive() {
+		return m.handleSelectionKey(msg)
+	}
 	if cmd, ok := m.handleDashboardShortcut(msg); ok {
 		return cmd
 	}
@@ -287,8 +291,45 @@ func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.timeline.pageUp()
 	case "pgdown":
 		m.timeline.pageDown()
+	case "v":
+		if !m.timeline.startSelection() {
+			m.session.SetToast("nothing to select")
+			return m.toastExpiryCmd()
+		}
 	case "enter", "space", " ":
 		m.timeline.toggleSelected()
+	}
+	return nil
+}
+
+func (m *UI) handleSelectionKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		m.timeline.cancelSelection()
+	case "up", "k":
+		m.timeline.moveSelection(-1)
+	case "down", "j":
+		m.timeline.moveSelection(1)
+	case "pgup":
+		m.timeline.moveSelection(-m.timeline.pageStep())
+	case "pgdown":
+		m.timeline.moveSelection(m.timeline.pageStep())
+	case "g", "home":
+		m.timeline.moveSelectionTop()
+	case "G", "end":
+		m.timeline.moveSelectionBottom()
+	case "y":
+		text := m.timeline.finishSelection()
+		if text == "" {
+			m.session.SetToast("nothing selected")
+			return m.toastExpiryCmd()
+		}
+		lines := strings.Count(text, "\n") + 1
+		m.session.SetSuccessToast(fmt.Sprintf("copied %d lines", lines))
+		return tea.Batch(tea.SetClipboard(text), m.toastExpiryCmd())
+	case "enter", "space", " ":
+		m.session.SetToast("cancel selection before expanding")
+		return m.toastExpiryCmd()
 	}
 	return nil
 }

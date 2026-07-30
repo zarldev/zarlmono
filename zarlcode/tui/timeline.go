@@ -62,6 +62,8 @@ type timeline struct {
 	// toggleAtViewportLine.
 	visItem  []int
 	visLocal []int
+
+	selection transcriptSelection
 }
 
 type pendingToolChild struct {

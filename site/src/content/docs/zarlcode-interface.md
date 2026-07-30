@@ -51,9 +51,12 @@ kinds include:
 
 Press **`Tab`** to enter **browse mode**: the view freezes, arrow keys
 move the selection item-by-item, and `Space`/`Enter` collapse or expand
-the selected item. `Esc` (or `i`) returns to the live tail. This is how
-you scroll back through a long run, fold away noisy tool output, or
-open a sub-agent to see what it did.
+the selected item. Press **`v`** to start visual line selection, extend it
+with `↑`/`↓`, `j`/`k`, page keys, or `g`/`G`, then press **`y`** to copy
+clean transcript text without ANSI styling or timeline rails. `Esc` cancels
+selection first, then `Esc` again (or `i`) returns to the live tail. This is
+how you scroll back through a long run, fold away noisy tool output, copy a
+useful excerpt, or open a sub-agent to see what it did.
 
 ## The cockpit and dashboard
 
@@ -146,6 +149,7 @@ interleaved output.
 | `Shift+Enter` / `Ctrl+J` | newline in the composer |
 | `↑` / `↓` | browse input history (in the composer) |
 | `Tab` | enter timeline browse mode |
+| `v` / `y` | select transcript lines / copy selection in browse mode |
 | `Esc` | stop the running turn / leave browse / close an overlay |
 | `Shift+Tab` | toggle plan ⇄ build mode |
 | `Ctrl+L` | expand / collapse the context dashboard |

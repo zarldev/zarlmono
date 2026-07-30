@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
@@ -87,5 +88,25 @@ func TestMaterialiseIsIdempotent(t *testing.T) {
 	}
 	if len(second.Existed) != len(first.Created) {
 		t.Fatalf("second Existed = %v, want %d entries", second.Existed, len(first.Created))
+	}
+}
+
+func TestMaterialiseWorkspaceCreatesEmptyExtensionDirs(t *testing.T) {
+	root := t.TempDir()
+	res, err := home.MaterialiseWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"agents/", "skills/", "tools/", "hooks/"} {
+		if !slices.Contains(res.Created, name) {
+			t.Errorf("Created = %v, want %s", res.Created, name)
+		}
+		entries, err := os.ReadDir(filepath.Join(res.Dir, strings.TrimSuffix(name, "/")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("%s contains %d entries, want empty", name, len(entries))
+		}
 	}
 }

@@ -7,7 +7,8 @@
 // Discovery mirrors the historical lookup order: per-user config first, then
 // the canonical home, then the source tree, then the workspace-local dir
 // (later directories win on a name collision, but first-seen order is kept so
-// listings stay stable).
+// listings stay stable). Skills support both the Agent Skills standard
+// `<name>/SKILL.md` layout and legacy flat `*.md` files.
 package catalog
 
 import (
@@ -151,7 +152,7 @@ func LoadSkills(workspaceRoot string) ([]Skill, []error) {
 	var out []Skill
 	idx := map[string]int{}
 	var errs []error
-	walkMarkdown(skillDirs(workspaceRoot), &errs, func(path string) error {
+	walkSkills(skillDirs(workspaceRoot), &errs, func(path string) error {
 		s, err := loadSkillFile(path)
 		if err != nil {
 			return err
@@ -206,6 +207,42 @@ func walkMarkdown(dirs []string, errs *[]error, load func(path string) error) {
 				continue
 			}
 			path := filepath.Join(dir, ent.Name())
+			if err := load(path); err != nil {
+				*errs = append(*errs, fmt.Errorf("%q: %w", path, err))
+			}
+		}
+	}
+}
+
+// walkSkills accepts the portable Agent Skills `<name>/SKILL.md` package
+// layout while retaining flat markdown compatibility for existing zarlcode
+// installations. Other files inside a skill package are resources, not skills.
+func walkSkills(dirs []string, errs *[]error, load func(path string) error) {
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			*errs = append(*errs, fmt.Errorf("read dir %q: %w", dir, err))
+			continue
+		}
+		for _, ent := range entries {
+			var path string
+			switch {
+			case ent.IsDir():
+				path = filepath.Join(dir, ent.Name(), "SKILL.md")
+				if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+					continue
+				} else if err != nil {
+					*errs = append(*errs, fmt.Errorf("stat %q: %w", path, err))
+					continue
+				}
+			case strings.HasSuffix(ent.Name(), ".md"):
+				path = filepath.Join(dir, ent.Name())
+			default:
+				continue
+			}
 			if err := load(path); err != nil {
 				*errs = append(*errs, fmt.Errorf("%q: %w", path, err))
 			}
