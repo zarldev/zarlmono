@@ -76,6 +76,14 @@ type retrieveCodePayload struct {
 	Errors    []fileMapError      `json:"errors,omitempty"`
 }
 
+type retrieveCodeRole string
+
+const (
+	retrieveCodeRoleDefinition retrieveCodeRole = "definition"
+	retrieveCodeRoleTest       retrieveCodeRole = "test"
+	retrieveCodeRoleReference  retrieveCodeRole = "reference"
+)
+
 type retrieveCodeChunk struct {
 	Path      string                `json:"path"`
 	ID        string                `json:"id,omitempty"`
@@ -85,7 +93,9 @@ type retrieveCodeChunk struct {
 	StartLine int                   `json:"start_line,omitempty"`
 	EndLine   int                   `json:"end_line,omitempty"`
 	Score     int                   `json:"score"`
+	Role      retrieveCodeRole      `json:"role"`
 	Text      string                `json:"text"`
+	Truncated bool                  `json:"truncated,omitempty"`
 }
 
 // RetrieveCodeResult is retrieve_code's structured result and renderer.
@@ -104,6 +114,25 @@ func (r RetrieveCodeResult) String() string {
 		return string(b)
 	}
 	return renderRetrieveCode(r.Payload)
+}
+
+// Paths returns the workspace paths represented by the retrieved chunks in
+// result order, with duplicates removed. The returned slice is independent of
+// the result and may be mutated by the caller.
+func (r RetrieveCodeResult) Paths() []string {
+	paths := make([]string, 0, len(r.Payload.Chunks))
+	seen := make(map[string]struct{}, len(r.Payload.Chunks))
+	for _, chunk := range r.Payload.Chunks {
+		if chunk.Path == "" {
+			continue
+		}
+		if _, exists := seen[chunk.Path]; exists {
+			continue
+		}
+		seen[chunk.Path] = struct{}{}
+		paths = append(paths, chunk.Path)
+	}
+	return paths
 }
 
 // Execute scans files, syntax-chunks them, ranks chunks deterministically, and returns the top matches.
@@ -206,6 +235,7 @@ func rankRetrieveCode(query string, docs []airetrieval.SourceChunk, limit, maxBy
 	scored := make([]scoredChunk, 0, len(docs))
 	for i, doc := range docs {
 		chunk := buildRetrieveCodeChunk(doc, maxBytes)
+		chunk.Role = classifyRetrieveCodeRole(tokens, chunk)
 		chunk.Score = scoreRetrieveCodeChunk(tokens, chunk)
 		if chunk.Score <= 0 {
 			continue
@@ -214,6 +244,9 @@ func rankRetrieveCode(query string, docs []airetrieval.SourceChunk, limit, maxBy
 	}
 	sort.SliceStable(scored, func(i, j int) bool {
 		a, b := scored[i].chunk, scored[j].chunk
+		if a.Role != b.Role {
+			return retrieveCodeRoleOrder(a.Role) < retrieveCodeRoleOrder(b.Role)
+		}
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}
@@ -237,8 +270,9 @@ func rankRetrieveCode(query string, docs []airetrieval.SourceChunk, limit, maxBy
 
 func buildRetrieveCodeChunk(doc airetrieval.SourceChunk, maxBytes int) retrieveCodeChunk {
 	text := doc.Text
-	if maxBytes > 0 && len(text) > maxBytes {
-		text = text[:maxBytes] + fmt.Sprintf("\n... [truncated: %d more bytes]", len(doc.Text)-maxBytes)
+	truncated := maxBytes > 0 && len(text) > maxBytes
+	if truncated {
+		text = text[:maxBytes] + fmt.Sprintf("\n... [truncated: %d more bytes; raise max_bytes_per_chunk or read this file range directly]", len(doc.Text)-maxBytes)
 	}
 	return retrieveCodeChunk{
 		Path:      doc.Path,
@@ -249,6 +283,7 @@ func buildRetrieveCodeChunk(doc airetrieval.SourceChunk, maxBytes int) retrieveC
 		StartLine: doc.Symbol.StartLine,
 		EndLine:   doc.Symbol.EndLine,
 		Text:      text,
+		Truncated: truncated,
 	}
 }
 
@@ -270,6 +305,32 @@ func scoreRetrieveCodeChunk(tokens []string, chunk retrieveCodeChunk) int {
 		score += min(strings.Count(hayText, tok), 12)
 	}
 	return score
+}
+
+func classifyRetrieveCodeRole(tokens []string, chunk retrieveCodeChunk) retrieveCodeRole {
+	if strings.HasSuffix(strings.ToLower(chunk.Path), "_test.go") {
+		return retrieveCodeRoleTest
+	}
+	name := strings.ToLower(chunk.Name)
+	for _, token := range tokens {
+		if name == token {
+			return retrieveCodeRoleDefinition
+		}
+	}
+	return retrieveCodeRoleReference
+}
+
+func retrieveCodeRoleOrder(role retrieveCodeRole) int {
+	switch role {
+	case retrieveCodeRoleDefinition:
+		return 0
+	case retrieveCodeRoleTest:
+		return 1
+	case retrieveCodeRoleReference:
+		return 2
+	default:
+		return 3
+	}
 }
 
 var queryTokenRe = regexp.MustCompile(`[A-Za-z0-9_]+`)
@@ -299,12 +360,12 @@ func renderRetrieveCode(payload retrieveCodePayload) string {
 		header += "  root: " + payload.Root
 	}
 	if payload.Truncated {
-		header += "  (file scan truncated)"
+		header += "  (file scan truncated — narrow root/pattern or raise max_files)"
 	}
 	b.WriteString(header)
 	b.WriteByte('\n')
 	for i, chunk := range payload.Chunks {
-		fmt.Fprintf(&b, "\n[%d] %s:L%d-L%d score=%d %s %s", i+1, chunk.Path, chunk.StartLine, chunk.EndLine, chunk.Score, chunk.Kind, chunk.Name)
+		fmt.Fprintf(&b, "\n[%d] [%s] %s:L%d-L%d score=%d %s %s", i+1, chunk.Role, chunk.Path, chunk.StartLine, chunk.EndLine, chunk.Score, chunk.Kind, chunk.Name)
 		if chunk.Receiver != "" {
 			fmt.Fprintf(&b, " receiver=%s", chunk.Receiver)
 		}

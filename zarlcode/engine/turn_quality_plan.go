@@ -13,6 +13,8 @@ const finalizePlanCorrection = "Have you marked the plan correctly before callin
 	"If you used update_plan this turn, call update_plan once more so the plan pane matches reality: mark finished steps completed, " +
 	"and if you are intentionally skipping or abandoning a step, say why in explanation. Then give your final answer."
 
+const verifyAfterChangeCorrection = "The workspace changed after the latest successful verification. Run the narrowest relevant check for the changed code, or explain in the final answer why no executable check applies."
+
 // planAwareTurnQuality composes the production empty-response detector with a
 // zarlcode-specific completion guardrail: if the agent updated the structured
 // plan during this run and then tries to finish with steps still pending or
@@ -26,16 +28,22 @@ type planAwareTurnQuality struct {
 	store        *livePlanStore
 	isPlan       func() bool
 	startVersion uint64
+	evidence     *completionEvidence
 
 	malformedCorrectionSent bool
 	emptyCorrectionSent     bool
 	planCorrectionSent      bool
+	evidenceCorrectionSent  bool
 }
 
-func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool) runner.TurnQuality {
+func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool, evidence ...*completionEvidence) runner.TurnQuality {
 	var startVersion uint64
 	if store != nil {
 		_, startVersion = store.Snapshot()
+	}
+	var runEvidence *completionEvidence
+	if len(evidence) > 0 {
+		runEvidence = evidence[0]
 	}
 	return &planAwareTurnQuality{
 		base:         coderunner.DefaultEmptyResponseDetector(),
@@ -43,6 +51,7 @@ func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool) runner.Tu
 		store:        store,
 		isPlan:       isPlan,
 		startVersion: startVersion,
+		evidence:     runEvidence,
 	}
 }
 
@@ -56,6 +65,13 @@ func (q *planAwareTurnQuality) Inspect(content string, toolCalls []llm.ToolCall)
 	if decision := q.inspectEmpty(content, toolCalls); decision.Correction != "" {
 		return decision
 	}
+	if decision := q.inspectPlan(); decision.Correction != "" {
+		return decision
+	}
+	return q.inspectEvidence()
+}
+
+func (q *planAwareTurnQuality) inspectPlan() runner.TurnQualityDecision {
 	if q.planCorrectionSent || q.store == nil {
 		return runner.TurnQualityDecision{}
 	}
@@ -68,6 +84,28 @@ func (q *planAwareTurnQuality) Inspect(content string, toolCalls []llm.ToolCall)
 	}
 	q.planCorrectionSent = true
 	return runner.TurnQualityDecision{Correction: finalizePlanCorrection}
+}
+
+func (q *planAwareTurnQuality) inspectEvidence() runner.TurnQualityDecision {
+	if q.evidenceCorrectionSent || q.evidence == nil {
+		return runner.TurnQualityDecision{}
+	}
+	if q.isPlan != nil && q.isPlan() {
+		return runner.TurnQualityDecision{}
+	}
+	snapshot := q.evidence.snapshot()
+	if snapshot.LastMutation == 0 || !hasVerifiableCode(snapshot.MutatedPaths) {
+		return runner.TurnQualityDecision{}
+	}
+	if snapshot.LastVerification > snapshot.LastMutation && snapshot.VerificationPassed {
+		return runner.TurnQualityDecision{}
+	}
+
+	q.evidenceCorrectionSent = true
+	if snapshot.LastVerification > snapshot.LastMutation && !snapshot.VerificationPassed {
+		return runner.TurnQualityDecision{Correction: "The latest verification command failed: `" + snapshot.VerificationCommand + "`. Address that failure, run a narrower relevant check, or explain the unresolved failure in the final answer."}
+	}
+	return runner.TurnQualityDecision{Correction: verifyAfterChangeCorrection}
 }
 
 func (q *planAwareTurnQuality) inspectMalformed(content string, toolCalls []llm.ToolCall) runner.TurnQualityDecision {

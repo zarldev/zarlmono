@@ -96,6 +96,10 @@ type ZarlcodeDriver struct {
 	ToolConcurrency int
 	// ContextWindow sizes the compactor. Zero uses defaultContextWindow.
 	ContextWindow int
+	// StreamIdle caps the gap between consecutive stream chunks before the
+	// stall watchdog fires. Zero uses coderunner.StreamIdleTimeout (90s);
+	// raise it for local models with slow prefills (e.g. Qwen3.8 hybrid).
+	StreamIdle time.Duration
 	// LlamacppResetURL, when set, is POSTed before each task to flush
 	// the local llama-server's KV cache slot so tasks don't inherit each
 	// other's state. Canonical value:
@@ -348,6 +352,7 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 		MaxIterations:   d.MaxIter,
 		ToolConcurrency: d.ToolConcurrency,
 		ContextWindow:   ctxWindow,
+		StreamIdle:      d.StreamIdle,
 	})
 	// Iteration + stream-idle watchdogs now live in StandardOptions (shared
 	// with the TUI so the two can't drift); eval no longer sets its own.

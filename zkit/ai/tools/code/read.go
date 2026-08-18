@@ -119,7 +119,7 @@ func (t *ReadTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolR
 		fmt.Fprintf(&b, "%d\t%s\n", i+1, lines[i])
 	}
 	if truncated {
-		fmt.Fprintf(&b, "... (truncated at line %d of %d)\n", end, len(lines))
+		fmt.Fprintf(&b, "... (truncated at line %d of %d; continue with offset=%d limit=%d)\n", end, len(lines), end, limit)
 	}
-	return tools.Success(call.ID, b.String()), nil
+	return tools.Success(call.ID, appendGeneratedFileNotice(b.String(), data)), nil
 }

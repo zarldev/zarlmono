@@ -114,9 +114,9 @@ func (t *ReadFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 		fmt.Fprintf(&b, "%d:%s|%s\n", i+1, hashlineHash(line.Content, hashLen), line.Content)
 	}
 	if truncated {
-		fmt.Fprintf(&b, "... (truncated at line %d of %d)\n", end, len(lines))
+		fmt.Fprintf(&b, "... (truncated at line %d of %d; continue with offset=%d limit=%d)\n", end, len(lines), end, limit)
 	}
-	return tools.Success(call.ID, b.String()), nil
+	return tools.Success(call.ID, appendGeneratedFileNotice(b.String(), data)), nil
 }
 
 // EditFileHLTool edits a workspace file through the read output's line/hash
@@ -188,6 +188,9 @@ func (t *EditFileHLTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 	data, fail := readHashlineFileAt(t.ws, abs, args.Path, call.ID.String(), "edit")
 	if fail != nil {
 		return fail, nil
+	}
+	if err := generatedEditError(args.Path, data); err != nil {
+		return tools.Failure(call.ID, tools.Validation("edit", err.Error())), nil
 	}
 	body := string(data)
 	lines := hashlineLines(body)
@@ -492,6 +495,33 @@ func applyResolvedHashlineEdits(body string, edits []resolvedHashlineEdit) strin
 	return updated
 }
 
+const hashlineStaleWindowRadius = 3
+
+// hashlineStaleWindow renders a bounded current-file view around the requested
+// anchor position. A stale edit can usually recover from this window without a
+// whole-file read; positions beyond EOF receive the current tail instead.
+func hashlineStaleWindow(lines []hashlineLine, lineNo, hashLen int) string {
+	if len(lines) == 0 {
+		return "current file is empty"
+	}
+	center := lineNo - 1
+	if center < 0 {
+		center = 0
+	}
+	if center >= len(lines) {
+		center = len(lines) - 1
+	}
+	start := max(0, center-hashlineStaleWindowRadius)
+	end := min(len(lines), center+hashlineStaleWindowRadius+1)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "current anchors around the requested line (file has %d lines):\n", len(lines))
+	for i := start; i < end; i++ {
+		fmt.Fprintf(&b, "%d:%s|%s\n", i+1, hashlineHash(lines[i].Content, hashLen), lines[i].Content)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // hashlineEditWindows renders fresh LINE:HASH|text anchors around every
 // spliced region of the post-edit body, so the model can keep editing the
 // same file without re-reading it. Line numbers and hashes are recomputed on
@@ -722,8 +752,8 @@ func verifyHashlineAnchor(path, label string, lines []hashlineLine, lineNo int, 
 		return hashlineLine{}, tools.Stale(
 			"edit",
 			fmt.Sprintf(
-				"%q: %s_line %d no longer matches hash %s — the file changed since it was read; re-run read on this file and retry with fresh anchors",
-				path, label, lineNo, hash,
+				"%q: %s_line %d no longer matches hash %s — the file changed since it was read.\n%s\nRetry with these anchors if they show the intended region; otherwise re-run read on this file with a narrow range around it.",
+				path, label, lineNo, hash, hashlineStaleWindow(lines, lineNo, len(hash)),
 			),
 		)
 	default:
@@ -732,8 +762,8 @@ func verifyHashlineAnchor(path, label string, lines []hashlineLine, lineNo int, 
 			return hashlineLine{}, tools.Stale(
 				"edit",
 				fmt.Sprintf(
-					"%q: %s_line %d hash %s matches %d lines equally far from the anchor; re-run read on this file and retry with fresh anchors",
-					path, label, lineNo, hash, len(matches),
+					"%q: %s_line %d hash %s matches %d lines equally far from the anchor.\n%s\nRetry with unambiguous anchors from the current file.",
+					path, label, lineNo, hash, len(matches), hashlineStaleWindow(lines, lineNo, len(hash)),
 				),
 			)
 		}

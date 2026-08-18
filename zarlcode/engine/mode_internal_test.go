@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -72,6 +73,32 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	if _, err := src.Execute(ctx, tools.ToolCall{ToolName: code.ToolNameWrite}); err != nil {
 		t.Errorf("build: dispatching write should be allowed: %v", err)
 	}
+}
+
+func TestModeFilterForwardsForgetTask(t *testing.T) {
+	t.Parallel()
+	inner := &forgettingToolSource{}
+	src := NewModeFilteredSource(inner, func() bool { return false })
+	src.ForgetTask("task-1")
+	if len(inner.forgotten) != 1 || inner.forgotten[0] != "task-1" {
+		t.Fatalf("forgotten = %v", inner.forgotten)
+	}
+}
+
+type forgettingToolSource struct {
+	forgotten []taskscope.ID
+}
+
+func (*forgettingToolSource) Tools(context.Context) iter.Seq[tools.Tool] {
+	return func(func(tools.Tool) bool) {}
+}
+
+func (*forgettingToolSource) Execute(context.Context, tools.ToolCall) (*tools.ToolResult, error) {
+	return tools.Success("", "ok"), nil
+}
+
+func (s *forgettingToolSource) ForgetTask(id taskscope.ID) {
+	s.forgotten = append(s.forgotten, id)
 }
 
 func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {

@@ -15,14 +15,18 @@ import (
 // assert the executive briefing wires the structured sections from
 // state into the rendered output verbatim.
 type fakeStateProvider struct {
-	plan  []compact.PlanStep
-	files []compact.FileTouch
-	tools []compact.ToolUsage
+	plan         []compact.PlanStep
+	files        []compact.FileTouch
+	tools        []compact.ToolUsage
+	verification *compact.VerificationState
+	failures     []compact.FailureState
 }
 
-func (f *fakeStateProvider) Plan() []compact.PlanStep          { return f.plan }
-func (f *fakeStateProvider) WorkingFiles() []compact.FileTouch { return f.files }
-func (f *fakeStateProvider) TopTools() []compact.ToolUsage     { return f.tools }
+func (f *fakeStateProvider) Plan() []compact.PlanStep                   { return f.plan }
+func (f *fakeStateProvider) WorkingFiles() []compact.FileTouch          { return f.files }
+func (f *fakeStateProvider) TopTools() []compact.ToolUsage              { return f.tools }
+func (f *fakeStateProvider) Verification() *compact.VerificationState   { return f.verification }
+func (f *fakeStateProvider) UnresolvedFailures() []compact.FailureState { return f.failures }
 
 // execFakeProvider produces a scripted narrative for the LLM call.
 // Embeds llm.Provider so we inherit nil methods we don't need.
@@ -53,6 +57,8 @@ func TestExecutive_FullBriefingShape(t *testing.T) {
 			{Path: "/ws/pkg/foo.go", Action: "edit"},
 			{Path: "/ws/cmd/main.go", Action: "read"},
 		},
+		verification: &compact.VerificationState{Command: "go test ./pkg", Passed: false},
+		failures:     []compact.FailureState{{Tool: "edit", Kind: "stale", Summary: "anchors changed"}},
 		tools: []compact.ToolUsage{
 			{Name: "read", Count: 12},
 			{Name: "grep", Count: 7},
@@ -91,6 +97,10 @@ func TestExecutive_FullBriefingShape(t *testing.T) {
 		"TOOL USAGE",
 		"read × 12",
 		"NARRATIVE",
+		"VERIFICATION",
+		"go test ./pkg",
+		"UNRESOLVED FAILURES",
+		"anchors changed",
 		"Synthesised narrative",
 	} {
 		if !strings.Contains(briefing, want) {

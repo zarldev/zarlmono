@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -116,6 +118,80 @@ func TestPlanHasIncompleteSteps(t *testing.T) {
 				t.Fatalf("planHasIncompleteSteps() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPlanAwareTurnQuality_RequiresEvidenceAfterCodeMutation(t *testing.T) {
+	t.Parallel()
+	evidence := newCompletionEvidence()
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Success("", "edited", tools.NewFileEffect(tools.FileModify, "pkg/file.go")), nil)
+	q := newPlanAwareTurnQuality(nil, func() bool { return false }, evidence)
+
+	if got := q.Inspect("done", nil); got.Correction != verifyAfterChangeCorrection {
+		t.Fatalf("correction = %q, want %q", got.Correction, verifyAfterChangeCorrection)
+	}
+	if again := q.Inspect("done with explanation", nil); again.Correction != "" {
+		t.Fatalf("evidence correction should fire once, got %q", again.Correction)
+	}
+}
+
+func TestPlanAwareTurnQuality_AcceptsPassingVerificationAfterMutation(t *testing.T) {
+	t.Parallel()
+	evidence := newCompletionEvidence()
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Success("", "edited", tools.NewFileEffect(tools.FileModify, "pkg/file.go")), nil)
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameBash, Arguments: tools.ToolParameters{"command": "go test ./pkg"}}, tools.Success("", "ok", tools.NewProcessEffect("go test ./pkg", 0)), nil)
+	q := newPlanAwareTurnQuality(nil, func() bool { return false }, evidence)
+
+	if got := q.Inspect("done", nil); got.Correction != "" {
+		t.Fatalf("passing verification should allow completion, got %q", got.Correction)
+	}
+}
+
+func TestPlanAwareTurnQuality_ReportsFailedVerification(t *testing.T) {
+	t.Parallel()
+	evidence := newCompletionEvidence()
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Success("", "edited", tools.NewFileEffect(tools.FileModify, "pkg/file.go")), nil)
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameBash, Arguments: tools.ToolParameters{"command": "go test ./pkg"}}, tools.Success("", "failed", tools.NewProcessEffect("go test ./pkg", 1)), nil)
+	q := newPlanAwareTurnQuality(nil, func() bool { return false }, evidence)
+
+	got := q.Inspect("done", nil)
+	if !strings.Contains(got.Correction, "latest verification command failed") || !strings.Contains(got.Correction, "go test ./pkg") {
+		t.Fatalf("failed verification correction = %q", got.Correction)
+	}
+}
+
+func TestPlanAwareTurnQuality_RequiresFreshEvidenceAfterLaterMutation(t *testing.T) {
+	t.Parallel()
+	evidence := newCompletionEvidence()
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Success("", "edited", tools.NewFileEffect(tools.FileModify, "pkg/file.go")), nil)
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameBash, Arguments: tools.ToolParameters{"command": "go test ./pkg"}}, tools.Success("", "ok", tools.NewProcessEffect("go test ./pkg", 0)), nil)
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Success("", "edited again", tools.NewFileEffect(tools.FileModify, "pkg/file.go")), nil)
+	q := newPlanAwareTurnQuality(nil, func() bool { return false }, evidence)
+
+	if got := q.Inspect("done", nil); got.Correction != verifyAfterChangeCorrection {
+		t.Fatalf("stale verification correction = %q, want %q", got.Correction, verifyAfterChangeCorrection)
+	}
+}
+
+func TestPlanAwareTurnQuality_EvidenceDisabledInPlanMode(t *testing.T) {
+	t.Parallel()
+	evidence := newCompletionEvidence()
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Success("", "edited", tools.NewFileEffect(tools.FileModify, "pkg/file.go")), nil)
+	q := newPlanAwareTurnQuality(nil, func() bool { return true }, evidence)
+
+	if got := q.Inspect("plan", nil); got.Correction != "" {
+		t.Fatalf("plan mode evidence correction = %q, want empty", got.Correction)
+	}
+}
+
+func TestPlanAwareTurnQuality_DoesNotRequireEvidenceForDocsOnlyMutation(t *testing.T) {
+	t.Parallel()
+	evidence := newCompletionEvidence()
+	evidence.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Success("", "edited", tools.NewFileEffect(tools.FileModify, "README.md")), nil)
+	q := newPlanAwareTurnQuality(nil, func() bool { return false }, evidence)
+
+	if got := q.Inspect("done", nil); got.Correction != "" {
+		t.Fatalf("docs-only mutation should allow completion, got %q", got.Correction)
 	}
 }
 

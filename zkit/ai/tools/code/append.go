@@ -100,6 +100,13 @@ func (t *WriteAppendTool) Execute(_ context.Context, call tools.ToolCall) (*tool
 	// running total it gets back is non-deterministic. Serialise.
 	unlock := t.ws.LockPath(abs)
 	defer unlock()
+	if data, readErr := t.ws.ReadFileInRoot(abs); readErr == nil {
+		if err := generatedEditError(args.Path, data); err != nil {
+			return tools.Failure(call.ID, tools.Validation("write_append", err.Error())), nil
+		}
+	} else if !os.IsNotExist(readErr) {
+		return tools.Failure(call.ID, tools.Fatal("write_append", fmt.Errorf("read %q: %w", args.Path, readErr))), nil
+	}
 	// Route through the workspace's [*os.Root] handle so the open
 	// can't traverse a symlinked parent out of the boundary even if
 	// the directory tree changes between Resolve and OpenFile.

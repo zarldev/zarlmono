@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -75,5 +78,24 @@ func TestConversation_FailedTurnRecordsPartialWork(t *testing.T) {
 	}
 	if c.history[2].Content != "tool output" {
 		t.Errorf("partial tool result not threaded: %q", c.history[2].Content)
+	}
+}
+
+func TestConversation_CompactNowFailureLeavesHistoryUnchanged(t *testing.T) {
+	t.Parallel()
+	history := []llm.Message{
+		{Role: llm.RoleUser, Content: "first"},
+		{Role: llm.RoleAssistant, Content: "second"},
+		{Role: llm.RoleUser, Content: "third"},
+	}
+	c := conversation{history: append([]llm.Message(nil), history...)}
+	_, err := c.compactNow(t.Context(), compact.Func(func(context.Context, []llm.Message, int) (compact.Result, error) {
+		return compact.Result{}, errors.New("compact failed")
+	}), nil)
+	if err == nil {
+		t.Fatal("expected compaction error")
+	}
+	if diff := cmp.Diff(history, c.snapshot()); diff != "" {
+		t.Fatalf("history changed after failed compaction (-want +got):\n%s", diff)
 	}
 }

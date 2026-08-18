@@ -50,7 +50,7 @@ func TestEffectiveModePrecedence(t *testing.T) {
 			want: SpawnModeExplore,
 		},
 		{
-			name:     "invalid explicit falls back to implement",
+			name:     "invalid explicit is rejected before effective mode resolution",
 			args:     Args{Mode: "wat"},
 			explicit: true,
 			want:     SpawnModeImplement,

@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -89,6 +90,13 @@ func NewWithEventSink(base tools.Source, wsRoot string, classifier Classifier, o
 
 // Tools forwards to the wrapped source unchanged.
 func (r *Recorder) Tools(ctx context.Context) iter.Seq[tools.Tool] { return r.base.Tools(ctx) }
+
+// ForgetTask forwards task lifecycle cleanup to the wrapped source.
+func (r *Recorder) ForgetTask(id taskscope.ID) {
+	if forgetter, ok := r.base.(interface{ ForgetTask(taskscope.ID) }); ok {
+		forgetter.ForgetTask(id)
+	}
+}
 
 // Execute classifies the call and routes it:
 //

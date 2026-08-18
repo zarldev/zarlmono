@@ -17,6 +17,7 @@ import (
 const (
 	ToolNameListInstructions tools.ToolName = "list_instructions"
 	ToolNameLoadInstruction  tools.ToolName = "load_instruction"
+	schemaPath                              = "path"
 )
 
 // listInstructionsTool enumerates available nested instruction docs (the lazy
@@ -98,12 +99,12 @@ func (t *loadInstructionTool) Definition() tools.ToolSpec {
 		Parameters: llm.SchemaFromMap(map[string]any{
 			schemaType: schemaTypeObject,
 			schemaProperties: map[string]any{
-				"path": map[string]any{
+				schemaPath: map[string]any{
 					schemaType:        schemaTypeString,
 					schemaDescription: "Workspace-relative path from list_instructions.",
 				},
 			},
-			schemaRequired:   []string{"path"},
+			schemaRequired:   []string{schemaPath},
 			schemaAdditional: false,
 		})}
 }

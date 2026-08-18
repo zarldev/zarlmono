@@ -30,7 +30,7 @@ func TestHandover_ClearsAndReseeds(t *testing.T) {
 	state := &fakeStateProvider{plan: []compact.PlanStep{
 		{Title: "scaffold", Status: "completed"},
 		{Title: "wire it", Status: "in_progress"},
-	}}
+	}, files: []compact.FileTouch{{Path: "pkg/file.go", Action: "edit"}}, tools: []compact.ToolUsage{{Name: "edit", Count: 2}}, verification: &compact.VerificationState{Command: "go test ./pkg", Passed: false}, failures: []compact.FailureState{{Tool: "edit", Kind: "stale", Summary: "anchors changed"}}}
 	prov := execFakeProvider{body: "## Objective\nShip the feature.\n## Next steps\nWrite tests."}
 
 	var wrote string
@@ -58,14 +58,14 @@ func TestHandover_ClearsAndReseeds(t *testing.T) {
 	if seed.Role != llm.RoleUser {
 		t.Fatalf("seed role = %q, want user", seed.Role)
 	}
-	for _, want := range []string{"# Session handover", "## Objective", "PLAN PROGRESS", "Handover saved to /ws/.zarlcode/handovers/"} {
+	for _, want := range []string{"# Session handover", "## Objective", "PLAN PROGRESS", "WORKING FILES", "pkg/file.go", "TOOL USAGE", "edit × 2", "VERIFICATION", "go test ./pkg", "UNRESOLVED FAILURES", "anchors changed", "Handover saved to /ws/.zarlcode/handovers/"} {
 		if !strings.Contains(seed.Content, want) {
 			t.Fatalf("seed missing %q in:\n%s", want, seed.Content)
 		}
 	}
 	// The writer received the composed document (plan + body), sans the seed
 	// header and saved-note wrapper.
-	if !strings.Contains(wrote, "## Objective") || !strings.Contains(wrote, "PLAN PROGRESS") {
+	if !strings.Contains(wrote, "## Objective") || !strings.Contains(wrote, "PLAN PROGRESS") || !strings.Contains(wrote, "WORKING FILES") || !strings.Contains(wrote, "TOOL USAGE") {
 		t.Fatalf("writer got unexpected doc:\n%s", wrote)
 	}
 	if strings.Contains(wrote, "Handover saved to") {

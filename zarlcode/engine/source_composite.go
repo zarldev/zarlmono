@@ -6,6 +6,7 @@ import (
 	"iter"
 	"sync"
 
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -103,6 +104,16 @@ func (s *compositeSource) Execute(ctx context.Context, call tools.ToolCall) (*to
 		return src.Execute(ctx, call)
 	}
 	return nil, fmt.Errorf("tool not found: %s", call.ToolName)
+}
+
+// ForgetTask forwards task lifecycle cleanup to both source branches.
+func (s *compositeSource) ForgetTask(id taskscope.ID) {
+	if forgetter, ok := s.primary.(interface{ ForgetTask(taskscope.ID) }); ok {
+		forgetter.ForgetTask(id)
+	}
+	if forgetter, ok := s.secondary.(interface{ ForgetTask(taskscope.ID) }); ok {
+		forgetter.ForgetTask(id)
+	}
 }
 
 // versioned is the optional capability a tool source exposes when it can report

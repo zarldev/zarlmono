@@ -70,6 +70,25 @@ type StateProvider interface {
 	TopTools() []ToolUsage
 }
 
+// VerificationState is the latest mechanically observed verification command.
+type VerificationState struct {
+	Command string
+	Passed  bool
+	Stale   bool
+}
+
+// FailureState is one unresolved tool failure retained for compaction.
+type FailureState struct {
+	Tool    string
+	Kind    string
+	Summary string
+}
+
+type extendedStateProvider interface {
+	Verification() *VerificationState
+	UnresolvedFailures() []FailureState
+}
+
 // Executive is the structured-briefing compactor. Combines four
 // pieces into a single assistant-role briefing message that replaces
 // the older portion of history:
@@ -161,11 +180,15 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 	// Build the structured sections from StateProvider first. These
 	// go at the TOP of the briefing — a model scanning the message
 	// for orientation hits the operational state before the prose.
-	var plan, files, tools string
+	var plan, files, tools, verification, failures string
 	if e.State != nil {
 		plan = renderPlanSection(e.State.Plan())
 		files = renderFilesSection(e.State.WorkingFiles())
 		tools = renderToolsSection(e.State.TopTools())
+		if extended, ok := e.State.(extendedStateProvider); ok {
+			verification = renderVerificationSection(extended.Verification())
+			failures = renderFailuresSection(extended.UnresolvedFailures())
+		}
 	}
 
 	sysPrompt := e.SystemPrompt
@@ -206,7 +229,7 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 		narrativeBody = "(no narrative — briefing model returned empty content; structured state above is current)"
 	}
 
-	briefing := composeBriefing(len(older), plan, files, tools, narrativeBody)
+	briefing := composeBriefing(len(older), plan, files, tools, verification, failures, narrativeBody)
 
 	out := make([]llm.Message, 0, len(leading)+1+len(recent))
 	out = append(out, leading...)
@@ -230,7 +253,7 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 // structured sections + narrative. Sections elide cleanly when
 // empty — a session with no plan / no files / no tools just gets
 // the narrative.
-func composeBriefing(olderCount int, plan, files, tools, narrative string) string {
+func composeBriefing(olderCount int, plan, files, tools, verification, failures, narrative string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[compacted — executive briefing of %d older message(s)]\n\n", olderCount)
 	if plan != "" {
@@ -243,6 +266,14 @@ func composeBriefing(olderCount int, plan, files, tools, narrative string) strin
 	}
 	if tools != "" {
 		b.WriteString(tools)
+		b.WriteString("\n\n")
+	}
+	if verification != "" {
+		b.WriteString(verification)
+		b.WriteString("\n\n")
+	}
+	if failures != "" {
+		b.WriteString(failures)
 		b.WriteString("\n\n")
 	}
 	b.WriteString("## NARRATIVE\n\n")
@@ -312,6 +343,31 @@ func renderFilesSection(touches []FileTouch) string {
 		} else {
 			fmt.Fprintf(&b, "- %s (last action: %s)\n", p, action)
 		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderVerificationSection(state *VerificationState) string {
+	if state == nil || strings.TrimSpace(state.Command) == "" {
+		return ""
+	}
+	status := "failed"
+	if state.Stale {
+		status = "stale after later workspace changes"
+	} else if state.Passed {
+		status = "passed"
+	}
+	return fmt.Sprintf("## VERIFICATION\n- `%s` — %s", state.Command, status)
+}
+
+func renderFailuresSection(failures []FailureState) string {
+	if len(failures) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## UNRESOLVED FAILURES\n")
+	for _, failure := range failures {
+		fmt.Fprintf(&b, "- %s [%s]: %s\n", failure.Tool, failure.Kind, failure.Summary)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

@@ -10,6 +10,7 @@ import (
 	"iter"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/options"
 	"go.starlark.net/starlark"
@@ -144,6 +145,13 @@ func (s *Source) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolR
 		return s.inner.Execute(ctx, call)
 	}
 	return programTool{source: s}.Execute(ctx, call)
+}
+
+// ForgetTask forwards task lifecycle cleanup to the inner source.
+func (s *Source) ForgetTask(id taskscope.ID) {
+	if forgetter, ok := s.inner.(interface{ ForgetTask(taskscope.ID) }); ok {
+		forgetter.ForgetTask(id)
+	}
 }
 
 type programTool struct{ source *Source }

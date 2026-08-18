@@ -125,6 +125,9 @@ func (t *EditTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolR
 		}
 		return tools.Failure(call.ID, tools.Fatal("edit", fmt.Errorf("read %q: %w", args.Path, err))), nil
 	}
+	if err := generatedEditError(args.Path, data); err != nil {
+		return tools.Failure(call.ID, tools.Validation("edit", err.Error())), nil
+	}
 	body := string(data)
 
 	count := strings.Count(body, args.OldString)

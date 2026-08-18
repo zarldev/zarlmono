@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/fetch"
@@ -84,4 +85,11 @@ func (s *modeFilteredSource) Execute(ctx context.Context, c tools.ToolCall) (*to
 			c.ToolName)
 	}
 	return s.inner.Execute(ctx, c)
+}
+
+// ForgetTask forwards task lifecycle cleanup through the mode filter.
+func (s *modeFilteredSource) ForgetTask(id taskscope.ID) {
+	if forgetter, ok := s.inner.(interface{ ForgetTask(taskscope.ID) }); ok {
+		forgetter.ForgetTask(id)
+	}
 }

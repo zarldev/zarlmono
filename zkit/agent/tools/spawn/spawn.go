@@ -372,6 +372,11 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	if args.Prompt == "" {
 		return tools.Failure(call.ID, tools.Validation("spawn_agent", "prompt is required")), nil
 	}
+	explicitMode := argsModeExplicit(call.Arguments)
+	if explicitMode && strings.TrimSpace(args.Mode) != "" && !normalizeMode(args.Mode).Valid() {
+		return tools.Failure(call.ID, tools.Validation("spawn_agent",
+			fmt.Sprintf("mode %q is invalid; use explore, verify, or implement", args.Mode))), nil
+	}
 
 	// Optional planner rescue: when the agent omitted the name or
 	// picked one not in the registered set, ask a grammar-constrained
@@ -381,7 +386,6 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	// planner errored, returned invalid output) the original args
 	// flow through unchanged — today's soft-fallback path catches it
 	// later.
-	explicitMode := argsModeExplicit(call.Arguments)
 	plannerNote := t.applyPlanner(ctx, &args)
 
 	// Pick the runner the child should execute on (parent, or a named

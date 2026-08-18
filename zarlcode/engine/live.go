@@ -110,6 +110,10 @@ type LiveRunner struct {
 	// and loadable via load_instruction. Set by reloadInstructions and
 	// snapshotted per turn alongside instructionDocs.
 	nestedInstructionIndex []instructions.NestedDoc
+	// operational records bounded session-wide file touches and tool counts for
+	// executive/handover compaction state. It stays engine-owned so headless and
+	// TUI runs produce the same briefing without Bubble Tea state.
+	operational *operationalState
 
 	// truncator tail-caps oversized tool results and spills the full text to
 	// disk so a follow-up bash can grep it. One shared instance across every
@@ -214,11 +218,12 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, sink LiveSink, model st
 			Model:    model,
 			Window:   LiveContextWindow,
 		},
-		queue:     newQueueState(),
-		planStore: &livePlanStore{},
-		catalog:   newRuntimeCatalog(ws.Root()),
-		truncator: &runner.SpillingTruncator{Prefix: "zarlcode-"},
-		fetchTool: fetch.New(),
+		queue:       newQueueState(),
+		planStore:   &livePlanStore{},
+		catalog:     newRuntimeCatalog(ws.Root()),
+		truncator:   &runner.SpillingTruncator{Prefix: "zarlcode-"},
+		operational: newOperationalState(),
+		fetchTool:   fetch.New(),
 	}
 	l.computer = &liveComputer{owner: l}
 	// Only populate the sink seams when a real sink was supplied; callers	// disable events by passing a nil LiveSink.
@@ -358,11 +363,41 @@ func (l *LiveRunner) Plan() []compact.PlanStep {
 	return out
 }
 
-// WorkingFiles / TopTools also satisfy compact.StateProvider; v2's live runner
-// doesn't yet track those, so they stay empty — the executive briefing still
-// summarises the older history, just without that per-section detail.
-func (l *LiveRunner) WorkingFiles() []compact.FileTouch { return nil }
-func (l *LiveRunner) TopTools() []compact.ToolUsage     { return nil }
+// WorkingFiles returns the bounded, oldest-to-newest snapshot of files touched
+// by successful tool calls in this session. Repeated paths move to the tail with
+// their latest action.
+func (l *LiveRunner) WorkingFiles() []compact.FileTouch {
+	if l == nil || l.operational == nil {
+		return nil
+	}
+	return l.operational.workingFiles()
+}
+
+// TopTools returns session-wide tool counts ordered by count descending and
+// then name. Executive rendering applies its own display cap.
+func (l *LiveRunner) TopTools() []compact.ToolUsage {
+	if l == nil || l.operational == nil {
+		return nil
+	}
+	return l.operational.topTools()
+}
+
+// Verification returns the latest foreground verification command observed in
+// this session.
+func (l *LiveRunner) Verification() *compact.VerificationState {
+	if l == nil || l.operational == nil {
+		return nil
+	}
+	return l.operational.verificationState()
+}
+
+// UnresolvedFailures returns the bounded latest unresolved tool failures.
+func (l *LiveRunner) UnresolvedFailures() []compact.FailureState {
+	if l == nil || l.operational == nil {
+		return nil
+	}
+	return l.operational.unresolvedFailures()
+}
 
 // buildLiveCompactor builds the compactor for the resolved engine. summary /
 // executive need an LLM provider; without one they fall back to tiered so a
@@ -807,6 +842,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	if l.mcpHost != nil {
 		base = newCompositeSource(base, l.mcpHost)
 	}
+	base = newGuidanceSource(base, l.instructionNestedSnapshot())
 
 	// User-defined command hooks ride the same chain as the production
 	// guardrails, appended last so they only see calls the production set
@@ -937,9 +973,11 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	if err != nil {
 		return nil, false, err
 	}
-	visible = NewModeFilteredSource(src, l.isPlan)
+	src = newOperationalSource(src, l.operational)
+	evidence := newCompletionEvidence()
+	visible = NewModeFilteredSource(newEvidenceSource(src, evidence), l.isPlan)
 	opts = append(opts, extraOpts...)
-	opts = append(opts, runner.WithTurnQuality(newPlanAwareTurnQuality(l.planStore, l.isPlan)))
+	opts = append(opts, runner.WithTurnQuality(newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence)))
 	opts = append(opts, runner.WithTools(visible))
 	r := runner.New(runner.ClientFromProvider(prov), opts...)
 	// Late-register spawn onto the base registry now that the parent

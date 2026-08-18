@@ -20,7 +20,7 @@ const HandoverDefaultMaxTokens = 4000
 // whole prior conversation is cleared and replaced by this document.
 const HandoverDefaultSystemPrompt = `You are writing a HANDOVER DOCUMENT for a fresh coding agent that will take over this task with NO other context: the entire prior conversation is being cleared and replaced by your document. It must be self-contained — if it is not in your document, the successor will not know it.
 
-A PLAN PROGRESS section is already attached above your output — do NOT repeat it. Produce these markdown sections:
+A PLAN PROGRESS, WORKING FILES, and TOOL USAGE section may already be attached above your output — do NOT repeat them. Produce these markdown sections:
 
 ## Objective
 The user's goal in their own words where possible, and what "done" looks like.
@@ -103,9 +103,15 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 		olderBytes += len(msg.Content)
 	}
 
-	var plan string
+	var plan, files, toolUsage, verification, failures string
 	if h.State != nil {
 		plan = renderPlanSection(h.State.Plan())
+		files = renderFilesSection(h.State.WorkingFiles())
+		toolUsage = renderToolsSection(h.State.TopTools())
+		if extended, ok := h.State.(extendedStateProvider); ok {
+			verification = renderVerificationSection(extended.Verification())
+			failures = renderFailuresSection(extended.UnresolvedFailures())
+		}
 	}
 
 	sysPrompt := h.SystemPrompt
@@ -141,7 +147,7 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 	if doc == "" {
 		return Result{}, errors.New("compact.Handover: model returned an empty document")
 	}
-	doc = composeHandover(plan, doc)
+	doc = composeHandover(plan, files, toolUsage, verification, failures, doc)
 
 	// Persist the document. A write failure must not lose the reseed — the
 	// document is still valid context — so it degrades to a warning note.
@@ -170,13 +176,16 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 	return Result{History: out, Warning: warning, Engine: EngineHandover, BytesTrimmed: trimmed}, nil
 }
 
-// composeHandover prepends the mechanical PLAN PROGRESS section (elided when
-// empty) to the model-produced document body.
-func composeHandover(plan, body string) string {
-	if plan == "" {
-		return body
+// composeHandover prepends mechanical state sections (eliding empty sections)
+// to the model-produced document body.
+func composeHandover(plan, files, toolUsage, verification, failures, body string) string {
+	sections := make([]string, 0, 6)
+	for _, section := range []string{plan, files, toolUsage, verification, failures, body} {
+		if section = strings.TrimSpace(section); section != "" {
+			sections = append(sections, section)
+		}
 	}
-	return plan + "\n\n" + body
+	return strings.Join(sections, "\n\n")
 }
 
 // splitLeadingSystem partitions history into the leading run of system messages

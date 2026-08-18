@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.9.0] — 2026-08-18
+`zkit/v0.9.0`
+
+### Added
+
+- Code retrieval now labels and deterministically orders definition, test, and reference evidence so coding agents can assemble implementation context with fewer follow-up reads.
+- Hashline edit failures now return bounded current-anchor windows for direct stale-edit recovery.
+- Standard Go generated-file markers are detected: reads explain generator ownership, while edit and append tools refuse direct mutation before writing.
+- Executive and handover compaction can preserve mechanical verification state and bounded unresolved tool failures in addition to plans, working files, and tool usage.
+
+### Changed
+
+- `grep` JSON output is now an object carrying query inputs, match count, truncation state, `max_results`, and `hits`, rather than a bare hit array.
+- Read and retrieval truncation messages now identify the exact continuation controls (`offset`, `limit`, `max_files`, or `max_bytes_per_chunk`).
+- Explicit invalid `spawn_agent.mode` values return a typed validation failure instead of silently falling back to the unrestricted implement mode.
+- Tool-source wrappers forward task lifecycle cleanup so memo and guardrail state is released through composed source chains.
+
+## [zarlcode/v0.8.0] — 2026-08-18
+`zarlcode/v0.8.0`
+
+### Added
+
+- Reads and `retrieve_code` results now identify nearest applicable nested `AGENTS.md` / `CLAUDE.md` guidance without eagerly injecting instruction bodies into every request.
+- Build-mode completion is evidence-aware: code changes without fresh verification receive one precise correction, failed checks are named, later edits stale earlier checks, and documentation-only changes remain unaffected.
+- Executive and handover compaction now receive bounded session working files, tool counts, latest verification status, and unresolved failures from engine-owned operational state.
+- Added architecture guidance documenting capability composition, inspection parity, reversible registration, and reconstructable model-visible state.
+
+### Changed
+
+- Incomplete structured-plan correction is prioritized before the one-shot verification correction at completion.
+- Interactive, headless, programmatic, diff-recording, guidance, and mode-filter source layers now preserve task cleanup semantics.
+
+## [swebench-eval/v0.2.0] — 2026-08-18
+`swebench-eval/v0.2.0`
+
+### Added
+
+- Added `--zarlcode-stream-idle` to configure the maximum gap between provider stream chunks for slow-prefill local models.
+
+### Changed
+
+- The in-process zarlcode driver passes the configured stream-idle duration through shared `coderunner.Tuning`, keeping eval stall detection aligned with interactive zarlcode behavior.
+
 ## [zkit/v0.8.0] — 2026-07-31
 `zkit/v0.8.0`
 

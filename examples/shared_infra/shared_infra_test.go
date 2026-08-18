@@ -26,7 +26,7 @@ func TestRunSharedInfra(t *testing.T) {
 		"store.go  package sample",
 		"method (*Store).Save :: func (s *Store) Save(key, value string)",
 		`== retrieve_code: "save value to store" ==`,
-		"[1] store.go",
+		"[1] [definition] store.go",
 		"method Save",
 	} {
 		if !strings.Contains(out, want) {

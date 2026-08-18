@@ -99,8 +99,7 @@ func TestGrep_DefaultGroupsByFile(t *testing.T) {
 	}
 }
 
-// output="json" switches the model-facing rendering to a JSON array of
-// {file, line, text} — same structured hits, different String().
+// {pattern, path?, glob?, matches, truncated, max_results, hits} — same structured hits, different String().
 func TestGrep_JSONOutput(t *testing.T) {
 	t.Parallel()
 	g := grepHarness(t, map[string]string{
@@ -114,15 +113,21 @@ func TestGrep_JSONOutput(t *testing.T) {
 		t.Fatalf("Execute: %+v", res)
 	}
 	body := grepText(t, res)
-	if !strings.HasPrefix(strings.TrimSpace(body), "[") {
-		t.Errorf("json output should be a JSON array: %q", body)
+	if !strings.HasPrefix(strings.TrimSpace(body), "{") {
+		t.Errorf("json output should be a JSON object: %q", body)
 	}
-	var hits []code.GrepHit
-	if err := json.Unmarshal([]byte(body), &hits); err != nil {
+	var payload struct {
+		Pattern    string         `json:"pattern"`
+		Matches    int            `json:"matches"`
+		Truncated  bool           `json:"truncated"`
+		MaxResults int            `json:"max_results"`
+		Hits       []code.GrepHit `json:"hits"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
 		t.Fatalf("json output should parse: %v\n%s", err, body)
 	}
-	if len(hits) != 1 || hits[0].File != "a.go" || hits[0].Line != 3 {
-		t.Errorf("unexpected hits: %+v", hits)
+	if payload.Pattern != "Hello" || payload.Matches != 1 || len(payload.Hits) != 1 || payload.Hits[0].File != "a.go" || payload.Hits[0].Line != 3 {
+		t.Errorf("unexpected payload: %+v", payload)
 	}
 }
 
@@ -183,6 +188,16 @@ func TestGrep_MaxResultsTruncatesAndAnnounces(t *testing.T) {
 	}
 	if !strings.Contains(body, "truncated at cap 5") {
 		t.Errorf("output should announce truncation: %q", body)
+	}
+
+	jsonRes, _ := g.Execute(t.Context(), grepCall(map[string]any{
+		"pattern":     "Hello",
+		"max_results": 5,
+		"output":      "json",
+	}))
+	jsonBody := grepText(t, jsonRes)
+	if !strings.Contains(jsonBody, `"truncated":true`) || !strings.Contains(jsonBody, `"max_results":5`) {
+		t.Errorf("json output should preserve truncation metadata: %s", jsonBody)
 	}
 }
 

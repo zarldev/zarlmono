@@ -2,6 +2,7 @@ package spawn_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,7 +55,6 @@ func TestExecute_PlantsWorkModeOnChildCtx(t *testing.T) {
 		}
 		return probe.seen[0]
 	}
-
 	if got := run("verify"); got != taskscope.WorkModes.VERIFY {
 		t.Errorf("verify child saw mode %v, want VERIFY", got)
 	}
@@ -63,5 +63,26 @@ func TestExecute_PlantsWorkModeOnChildCtx(t *testing.T) {
 	}
 	if got := run(""); got != taskscope.WorkModes.IMPLEMENT {
 		t.Errorf("modeless child saw mode %v, want IMPLEMENT", got)
+	}
+}
+
+func TestExecuteRejectsInvalidExplicitMode(t *testing.T) {
+	t.Parallel()
+	tool := spawn.New(nil, spawn.WithMaxDepth(1))
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
+		ID: "invalid-mode",
+		Arguments: tools.ToolParameters{
+			"prompt": "probe it",
+			"mode":   "wat",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute invalid mode: %v", err)
+	}
+	if res.Success || res.Err == nil || res.Err.Kind != tools.Kinds.VALIDATION {
+		t.Fatalf("invalid mode result = %+v, want validation failure", res)
+	}
+	if !strings.Contains(res.Error, "explore, verify, or implement") {
+		t.Fatalf("invalid mode error is not actionable: %s", res.Error)
 	}
 }

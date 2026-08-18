@@ -49,7 +49,7 @@ func (t *GrepTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name: ToolNameGrep,
 		Description: "Search workspace contents with ripgrep. Hits are grouped by file as `LINE: text` rows " +
-			"under each path (set output=\"json\" for a JSON [{file, line, text}] array instead). " +
+			"under each path (set output=\"json\" for {pattern, path?, glob?, matches, truncated, max_results, hits:[{file,line,text}]}). " +
 			"Honors .gitignore by default. Use `glob` for path-only enumeration and `read` to fetch full file contents.",
 		Parameters: tools.SchemaFor[GrepArgs](),
 	}
@@ -65,9 +65,8 @@ type GrepHit struct {
 
 // GrepResult is grep's structured Data: the matches, whether the max-results
 // cap truncated them, and the call inputs needed to render. It is the tool's
-// typed payload — a consumer (the TUI) renders from Hits directly instead of
 // re-parsing a string, while the model sees String(): labelled plaintext or a
-// JSON array, per the requested Output.
+// JSON object, per the requested Output.
 type GrepResult struct {
 	Hits       []GrepHit
 	Truncated  bool
@@ -78,12 +77,26 @@ type GrepResult struct {
 	MaxResults int
 }
 
+type grepPayload struct {
+	Pattern    string    `json:"pattern"`
+	Path       string    `json:"path,omitempty"`
+	Glob       string    `json:"glob,omitempty"`
+	Matches    int       `json:"matches"`
+	Truncated  bool      `json:"truncated,omitempty"`
+	MaxResults int       `json:"max_results"`
+	Hits       []GrepHit `json:"hits"`
+}
+
 // String renders the model-facing form for the requested output mode.
 func (r GrepResult) String() string {
 	if r.Output == tools.OutputJSON {
-		b, err := json.Marshal(r.Hits)
+		b, err := json.Marshal(grepPayload{
+			Pattern: r.Pattern, Path: r.Path, Glob: r.Glob,
+			Matches: len(r.Hits), Truncated: r.Truncated, MaxResults: r.MaxResults,
+			Hits: r.Hits,
+		})
 		if err != nil {
-			return "[]"
+			return "{}"
 		}
 		return string(b)
 	}

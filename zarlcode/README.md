@@ -317,6 +317,12 @@ go run ./zarlcode/cmd              # Run from source
 
 ## Documentation
 
+## Architecture and extension points
+
+See [`docs/architecture.md`](docs/architecture.md) for the rules governing runtime composition, reversible tool registration, capability seams, inspection parity, and model-visible session state. New capabilities should extend the shared `LiveRunner` source and policy pipeline rather than fork the agent loop or hide behavior in the TUI.
+
+DeepSeek Harness is a useful reference for this design: its plugin tree, provider-tagged reversible effects, explicit composition profiles, and logged session model reinforce patterns already present in zarlcode's tool registry, MCP/dynamic tools, catalog snapshots, guardrails, `Inspect`, and resumable sessions.
+
 - [`AGENTS.md`](AGENTS.md) — Implementation notes: TUI, settings/prefs, storage
 - [`zkit/README.md`](../zkit/README.md) — Shared substrate (agent runner, LLM providers, tools, MCP)
 
