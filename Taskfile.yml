@@ -6,7 +6,7 @@ vars:
   ZARLCODE: '{{.BIN_DIR}}/zarlcode'
   SWEEVAL: '{{.BIN_DIR}}/sweeval'
   ZARLCODE_VERSION:
-    sh: 'printf "%s+%s" "$(git describe --tags --dirty --always 2>/dev/null || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
+    sh: 'printf "%s+%s" "$(git describe --tags --match "zarlcode/v*" --dirty --always 2>/dev/null || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
 
 tasks:
   default:
