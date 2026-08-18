@@ -103,6 +103,9 @@ type ZarlcodeDriver struct {
 	// IterationTimeout overrides the per-iteration wall-clock backstop
 	// (zero = coderunner default 5m). Raise it for slow-prefill local models.
 	IterationTimeout time.Duration
+	// DeadlineGrace is the time-before-deadline at which the wrap-up
+	// nudge fires (see FinalizeWarn.DeadlineGrace). Zero disables it.
+	DeadlineGrace time.Duration
 	// LlamacppResetURL, when set, is POSTed before each task to flush
 	// the local llama-server's KV cache slot so tasks don't inherit each
 	// other's state. Canonical value:
@@ -357,6 +360,7 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 		ContextWindow:    ctxWindow,
 		StreamIdle:       d.StreamIdle,
 		IterationTimeout: d.IterationTimeout,
+		DeadlineGrace:    d.DeadlineGrace,
 	})
 	// Iteration + stream-idle watchdogs now live in StandardOptions (shared
 	// with the TUI so the two can't drift); eval no longer sets its own.

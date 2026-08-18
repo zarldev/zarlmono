@@ -26,29 +26,22 @@ func TestShellGuardrail_SafeCommandPasses(t *testing.T) {
 	}
 }
 
-func TestShellGuardrail_ShellReadToolRejectsWithGuidance(t *testing.T) {
+func TestShellGuardrail_ReadOnlyCommandsAndPipelinesAllowed(t *testing.T) {
 	t.Parallel()
 	g := guardrails.NewShellGuardrail("bash")
-	err := g.Before(t.Context(), bashCall("cat main.go"))
-	if err == nil {
-		t.Fatal("shell read tool: want Validation rejection")
+	commands := []string{
+		"cat main.go",
+		"tail -20 app.log",
+		"sed -n '1,20p' main.go",
+		"find . -name '*.go'",
+		"ls -la",
+		"go test ./... | tail -50",
+		"grep -r TODO . | head -20",
 	}
-	e, _ := errors.AsType[*tools.Error](err)
-	if e == nil || e.Kind != tools.Kinds.VALIDATION {
-		t.Fatalf("err = %v, want Validation", err)
-	}
-	if !strings.Contains(e.Reason, "registered workspace tools") {
-		t.Errorf("Reason should suggest workspace tools: %q", e.Reason)
-	}
-}
-
-// grep is no longer a shell read tool — filtering real command output with it
-// passes the guardrail.
-func TestShellGuardrail_GrepAllowed(t *testing.T) {
-	t.Parallel()
-	g := guardrails.NewShellGuardrail("bash")
-	if err := g.Before(t.Context(), bashCall("grep -r TODO . | head -20")); err != nil {
-		t.Fatalf("grep should pass the shell policy, got: %v", err)
+	for _, cmd := range commands {
+		if err := g.Before(t.Context(), bashCall(cmd)); err != nil {
+			t.Errorf("read-only command %q should pass shell policy: %v", cmd, err)
+		}
 	}
 }
 

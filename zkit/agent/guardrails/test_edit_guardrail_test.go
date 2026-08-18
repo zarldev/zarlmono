@@ -197,6 +197,13 @@ func TestTestEditStrictGuardrail_RejectsBashTestMutations(t *testing.T) {
 		"/bin/rm foo_test.go",
 		"tee pkg/foo/foo_test.go",
 		"go build ./... && rm foo_test.go",
+		"shred pkg/foo/foo_test.go",
+		"patch -p1 < changes.diff",
+		"git reset --hard HEAD",
+		"git clean -fd",
+		"git apply changes.patch",
+		`awk 'BEGIN { system("rm pkg/foo/foo_test.go") }'`,
+		`lua -e "os.remove('pkg/foo/foo_test.go')"`,
 	}
 	for _, command := range cases {
 		t.Run(command, func(t *testing.T) {

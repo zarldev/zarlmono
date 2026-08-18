@@ -51,7 +51,8 @@ func NewCreateSkillTool(c *RuntimeCatalog) *createSkillTool { return &createSkil
 
 func (t *createSkillTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameCreateSkill,
+		Name:    ToolNameCreateSkill,
+		Mutates: true,
 		Description: "Create a new reusable Agent Skill in the canonical user skill directory. " +
 			"Use when the user asks to add, author, or save a skill. The tool chooses the path, " +
 			"writes standard <name>/SKILL.md frontmatter, and never overwrites an existing skill.",

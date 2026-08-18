@@ -9,5 +9,5 @@ use (
 	./zkit
 )
 
-replace github.com/zarldev/zarlmono/zkit v0.9.1 => ./zkit
-replace github.com/zarldev/zarlmono/zarlcode v0.8.0 => ./zarlcode
+replace github.com/zarldev/zarlmono/zkit v0.10.0 => ./zkit
+replace github.com/zarldev/zarlmono/zarlcode v0.9.0 => ./zarlcode

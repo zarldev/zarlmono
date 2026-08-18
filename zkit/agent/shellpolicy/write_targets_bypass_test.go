@@ -67,6 +67,25 @@ func TestWriteTargets_StillReadsAreNotTargets(t *testing.T) {
 	}
 }
 
+func TestUnscopedMutationCommand(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{"patch -p1 < changes.diff", "git reset --hard HEAD", "git clean -fd", "git apply changes.patch"} {
+		name, err := shellpolicy.UnscopedMutationCommand(command)
+		if err != nil {
+			t.Fatalf("UnscopedMutationCommand(%q): %v", command, err)
+		}
+		if name == "" {
+			t.Errorf("UnscopedMutationCommand(%q) did not detect mutation", command)
+		}
+	}
+	for _, command := range []string{"git status --short", "cat README.md"} {
+		name, err := shellpolicy.UnscopedMutationCommand(command)
+		if err != nil || name != "" {
+			t.Errorf("UnscopedMutationCommand(%q) = (%q, %v), want read-only", command, name, err)
+		}
+	}
+}
+
 func TestInterpreterInlineCode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -79,6 +98,9 @@ func TestInterpreterInlineCode(t *testing.T) {
 		{`perl -e 'unlink "b_test.go"'`, "b_test.go"},
 		{`env node -e "fs.writeFileSync('c_test.go','')"`, "c_test.go"},
 		{`sh -c "rm d_test.go"`, "d_test.go"},
+		{`awk 'BEGIN { system("rm awk_test.go") }'`, "awk_test.go"},
+		{`lua -e "os.remove('lua_test.go')"`, "lua_test.go"},
+		{`julia -e "rm(\"julia_test.go\")"`, "julia_test.go"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {

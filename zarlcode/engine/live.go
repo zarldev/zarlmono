@@ -747,7 +747,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	// shrink the surface. Resolved per turn (toggling re-shapes the next turn's
 	// roster). Background off → bash registers foreground-only and the
 	// bash_output/stop_process/list_processes trio is omitted (pm = nil).
-	enableWeb, enableMCP, enableBackground, enableProgrammatic := true, true, true, false
+	enableWeb, enableMCP, enableBackground, enableProgrammatic := true, true, true, true
 	programParallel := 0
 	if l.settings != nil {
 		sctx := l.parentContext()

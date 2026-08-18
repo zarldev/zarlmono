@@ -50,17 +50,11 @@ func (p *UnixParser) Parse(command string) (ParsedIR, error) {
 		switch n := node.(type) {
 		case *syntax.CallExpr:
 			recordCall(&ir, seenCmd, seenFlag, seenRisk, n)
-			if callUsesShellReadTool(n) {
-				addRisk(&ir, seenRisk, ReasonShellReadTool)
-			}
 		case *syntax.BinaryCmd:
 			addOperator(&ir, seenOp, n.Op.String())
 			addRisk(&ir, seenRisk, ReasonOperator)
 			if isPipe(n.Op) && stmtFeedsStdinInterpreter(n.Y) {
 				addRisk(&ir, seenRisk, ReasonOpaqueInterpreter)
-			}
-			if isPipe(n.Op) && (stmtUsesShellReadTool(n.X) || stmtUsesShellReadTool(n.Y)) {
-				addRisk(&ir, seenRisk, ReasonShellReadTool)
 			}
 		case *syntax.Stmt:
 			if stmtHasHeredoc(n) && stmtIsStdinInterpreter(n) {
@@ -228,8 +222,7 @@ func isUnsafeRedirect(r *syntax.Redirect) bool {
 		// will catch the dynamic part separately.
 		return true
 	}
-	switch target {
-	case "/dev/null", "/dev/stdout", "/dev/stderr":
+	if isSafeOutputDevice(target) {
 		return false
 	}
 	return true
@@ -314,46 +307,6 @@ func interpreterReadsStdin(args []*syntax.Word, depth int) bool {
 		}
 	}
 	return true
-}
-
-// shellReadTools are common shell-side file reading, listing, and filtering
-// helpers that duplicate registered workspace tools. They are safe as shell
-// commands, but using them for repository discovery burns context and loses the
-// bounded, structured results the tools provide.
-//
-// The grep family (grep/egrep/fgrep/rg/ripgrep/ag) and head are intentionally
-// absent: grep is routinely used to filter the output of real commands
-// (`go test ./... | grep FAIL`, `git log | grep …`), and blocking it there is
-// pure friction rather than tool-routing, so shell grep and head are allowed.
-var shellReadTools = map[string]bool{
-	"awk":  true,
-	"cat":  true,
-	"fd":   true,
-	"find": true,
-	"less": true,
-	"ls":   true,
-	"more": true,
-	"sed":  true,
-	"tail": true,
-}
-
-func callUsesShellReadTool(call *syntax.CallExpr) bool {
-	if call == nil || len(call.Args) == 0 {
-		return false
-	}
-	name, ok := resolveWord(call.Args[0])
-	if !ok || name == "" {
-		return false
-	}
-	return shellReadTools[commandBase(name)]
-}
-
-func stmtUsesShellReadTool(stmt *syntax.Stmt) bool {
-	if stmt == nil {
-		return false
-	}
-	call, ok := stmt.Cmd.(*syntax.CallExpr)
-	return ok && callUsesShellReadTool(call)
 }
 
 func addRisk(ir *ParsedIR, seen map[ReasonCode]bool, code ReasonCode) {

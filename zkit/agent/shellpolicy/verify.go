@@ -27,7 +27,7 @@ var verifyDeniedCommands = map[string]bool{
 	"rsync": true, "mkfifo": true,
 	// content mutators (also covered by WriteTargets when operands resolve)
 	"rm": true, "unlink": true, "mv": true, "cp": true, "tee": true,
-	"truncate": true, "ln": true, "install": true, "dd": true,
+	"truncate": true, "ln": true, commandInstall: true, "dd": true,
 	// wrapper executors: the wrapped command head is an argument word the
 	// IR can't see (`xargs rm` records only xargs), so the tunnel is
 	// closed wholesale; run the command directly instead.
@@ -65,7 +65,7 @@ func (e PolicyEngine) DecideVerify(ir ParsedIR, writeTargets []string) Decision 
 	// Verify is always strict: a verify sub-agent must not mutate the
 	// workspace whether or not a kernel sandbox confines it, so the
 	// ergonomic cd/redirect blocks apply even on a relaxed engine.
-	d := e.decide(ir, false, false)
+	d := e.decide(ir, false)
 	if d.IsBlocked {
 		return d
 	}

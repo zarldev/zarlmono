@@ -29,6 +29,19 @@ func TestPolicy_RelaxedAllowsCdAndRedirect(t *testing.T) {
 	}
 }
 
+func TestPolicy_RelaxedStillBlocksOpaqueInterpreterHeredoc(t *testing.T) {
+	t.Parallel()
+	cmd := "python3 - <<'PY'\nprint('hello')\nPY"
+	ir, err := shellpolicy.NewUnixParser().Parse(cmd)
+	if err != nil {
+		t.Fatalf("parse heredoc: %v", err)
+	}
+	d := shellpolicy.NewPolicyEngine(shellpolicy.WithRelaxed(true)).Decide(ir)
+	if !d.IsBlocked || !strings.Contains(d.BlockReason, "heredocing code into an interpreter") {
+		t.Fatalf("relaxed opaque interpreter heredoc should block, got %+v", d)
+	}
+}
+
 // Correctness blocks (version, syntax) are not nannying and hold in both
 // profiles.
 func TestPolicy_RelaxedStillBlocksSyntaxAndVersion(t *testing.T) {

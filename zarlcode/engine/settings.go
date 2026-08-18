@@ -391,7 +391,7 @@ func (s *Settings) EnableBackground(ctx context.Context) bool {
 }
 
 func (s *Settings) ProgrammaticTools(ctx context.Context) bool {
-	return s.setting(ctx, prefs.KeyProgrammaticTools, "off") == "on"
+	return s.setting(ctx, prefs.KeyProgrammaticTools, "on") == "on"
 }
 
 // ProgrammaticParallelCalls resolves the maximum number of nested program tool

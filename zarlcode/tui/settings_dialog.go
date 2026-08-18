@@ -190,7 +190,7 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "command to edit agents/skills (may carry flags, e.g. 'code -w'). empty falls back to $ZARLCODE_EDITOR / $VISUAL / $EDITOR, then vi."},
 				{label: "web tools", key: prefs.KeyEnableWeb, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register web_search + web_fetch. off drops both from the tool surface for a leaner local-model setup."},
-				{label: "programmatic tools", key: prefs.KeyProgrammaticTools, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+				{label: "programmatic tools", key: prefs.KeyProgrammaticTools, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "replace direct read/search/catalogue tools with one program tool for bounded Starlark fan-out and aggregation."},
 				{label: "local web_search service", kind: rowAction, def: "SearXNG",
 					desc: "install/start the optional bundled SearXNG Docker Compose service for web_search. model servers stay external.",

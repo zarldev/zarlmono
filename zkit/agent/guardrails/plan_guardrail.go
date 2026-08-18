@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/zarldev/zarlmono/zkit/agent/shellpolicy"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
 // PlanGuardrail enforces a plan-first workflow within a task: the first
@@ -67,6 +69,9 @@ func (g *PlanGuardrail) Before(ctx context.Context, call tools.ToolCall) error {
 	if taskscope.DepthFrom(ctx) > 0 {
 		return nil
 	}
+	if call.ToolName == code.ToolNameBash && readOnlyBashCall(call) {
+		return nil
+	}
 	if !g.changesWorkspace(ctx, call.ToolName) {
 		return nil
 	}
@@ -78,6 +83,22 @@ func (g *PlanGuardrail) Before(ctx context.Context, call tools.ToolCall) error {
 			"ordered step list first (mark the step you're starting as in_progress), then "+
 			"make the change. Planning before any change is required in this session.",
 		call.ToolName, g.planTool))
+}
+
+func readOnlyBashCall(call tools.ToolCall) bool {
+	command := call.Arguments.String("command", "")
+	if command == "" {
+		return false
+	}
+	ir, err := shellpolicy.NewUnixParser().Parse(command)
+	if err != nil {
+		return false
+	}
+	targets, err := shellpolicy.WriteTargets(command)
+	if err != nil {
+		return false
+	}
+	return !shellpolicy.NewPolicyEngine().DecideVerify(ir, targets).IsBlocked
 }
 
 // Inspect records a successful plan-tool call as satisfying the gate for the

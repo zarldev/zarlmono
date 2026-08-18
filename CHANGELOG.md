@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.10.0] — 2026-08-18
+`zkit/v0.10.0`
+
+### Added
+
+- Runner finalization warnings can fire before a context deadline, giving wall-clock-bounded coding tasks a last chance to commit useful work.
+- Shell mutation analysis now identifies unscoped repository rewrites and additional interpreter execution tunnels used by unattended integrity guardrails.
+
+### Changed
+
+- Read-before-write distinguishes file creation from existing-file mutation across write, append, edit, and patch operations.
+- Read-only shell commands and pipelines are allowed; mutation, redirect, opaque-interpreter, verify-mode, and test-fixture protections remain behavior-based.
+- Plan-first permits behaviorally read-only shell inspection while continuing to gate workspace-changing commands.
+- Tool mutation metadata and write-target extraction now classify process termination, patch paths, destinations, and safe output devices consistently.
+
+## [zarlcode/v0.9.0] — 2026-08-18
+`zarlcode/v0.9.0`
+
+### Changed
+
+- PLAN mode retains plan persistence and structured updates while exposing programmatic reads, computer observation, MCP/process inspection, and other read-only investigation tools.
+- Programmatic read/search tools are enabled by default, with the direct read/search surface restored when explicitly disabled.
+- Skill creation and process-control tools advertise mutation semantics so explore and verify sub-agents cannot change durable state through metadata gaps.
+
+## [swebench-eval/v0.3.0] — 2026-08-18
+`swebench-eval/v0.3.0`
+
+### Added
+
+- `--zarlcode-deadline-grace` forwards a wall-clock finalization warning window into the shared zarlcode runner configuration.
+
 ## [zkit/v0.9.1] — 2026-08-18
 `zkit/v0.9.1`
 

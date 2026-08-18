@@ -16,8 +16,8 @@ func TestWriteTargets(t *testing.T) {
 	}{
 		{"rm file", "rm pkg/foo/foo_test.go", []string{"pkg/foo/foo_test.go"}},
 		{"rm recursive dir", "rm -rf testdata", []string{"testdata"}},
-		{"mv both operands", "mv a_test.go b_test.go", []string{"a_test.go", "b_test.go"}},
-		{"cp both operands", "cp src.go dst_test.go", []string{"src.go", "dst_test.go"}},
+		{"mv destination", "mv a_test.go b_test.go", []string{"b_test.go"}},
+		{"cp destination", "cp src.go dst_test.go", []string{"dst_test.go"}},
 		{"tee target", "tee foo_test.go", []string{"foo_test.go"}},
 		{"truncate skips flag, keeps value+file", "truncate -s 0 foo_test.go", []string{"0", "foo_test.go"}},
 		{"unlink", "unlink foo_test.go", []string{"foo_test.go"}},
@@ -50,6 +50,10 @@ func TestWriteTargets(t *testing.T) {
 		{"read-only grep", "grep -r foo_test .", nil},
 		{"non-mutating ls", "ls -la testdata", nil},
 		{"test runner", "go test ./...", nil},
+		{"move destination only", "mv source.go destination.go", []string{"destination.go"}},
+		{"copy destination only", "cp source.go destination.go", []string{"destination.go"}},
+		{"tee dev null ignored", "echo hi | tee /dev/null", nil},
+		{"dd dev null ignored", "dd if=/dev/zero of=/dev/null count=1", nil},
 	}
 
 	for _, tt := range cases {

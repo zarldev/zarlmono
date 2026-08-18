@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -50,7 +51,7 @@ You review code changes.
 	for tool := range src.Tools(t.Context()) {
 		seen[tool.Definition().Name] = true
 	}
-	for _, name := range []tools.ToolName{ToolNameCreateSkill, ToolNameLoadSkill, ToolNameListAgents} {
+	for _, name := range []tools.ToolName{ToolNameCreateSkill, ToolNameLoadSkill, programtools.ToolName} {
 		if !seen[name] {
 			t.Fatalf("tool %s not registered; saw %#v", name, seen)
 		}
@@ -152,7 +153,11 @@ Loaded after refresh.
 func TestCreateSkillToolWritesPortablePackageAndReloadsCatalog(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cat := newRuntimeCatalog(t.TempDir())
-	res, err := NewCreateSkillTool(cat).Execute(t.Context(), tools.ToolCall{
+	tool := NewCreateSkillTool(cat)
+	if !tool.Definition().Mutates {
+		t.Fatal("create_skill must declare mutation for explore/verify gating")
+	}
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:       "create",
 		ToolName: ToolNameCreateSkill,
 		Arguments: tools.ToolParameters{

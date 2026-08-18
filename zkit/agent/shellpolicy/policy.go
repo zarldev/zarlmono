@@ -62,25 +62,18 @@ func NewPolicyEngine(opts ...Option) *PolicyEngine {
 //  4. Unsafe output redirect — there's already a write_file / edit
 //     tool that respects the workspace; the model should use that.
 //
-// In addition, shell-side read/discovery helpers (sed -n, find, ls, tail, cat,
-// and pipelines around them) are blocked with guidance to the registered
-// read/search/list tools. grep (and rg/head) are deliberately not in this set —
-// they are commonly used to filter real command output. Expansion and Subshell flags are
-// informational only; the agent is meant to be capable, not nannied.
-// In the relaxed profile the ergonomic `cd` and redirect blocks step aside
-// (the kernel sandbox is off; see PolicyEngine.relaxed). Shell read-tool
-// guidance still applies in relaxed mode because it is only a tool-routing
-// correction, not a filesystem safety boundary.
+// Read-only shell commands and pipelines are allowed. Registered workspace
+// tools remain preferable for bounded repository retrieval, but that routing
+// preference is not a safety boundary and does not justify rejecting a command.
+// Expansion, Subshell, and Operator flags are informational on their own.
 func (e PolicyEngine) Decide(ir ParsedIR) Decision {
-	return e.decide(ir, e.relaxed, true)
+	return e.decide(ir, e.relaxed)
 }
 
 // decide is the shared rule body. relaxed drops the ergonomic blocks;
 // callers pass e.relaxed for the standard profile and false for verify,
-// which must stay strict regardless of the engine's profile. blockReadTools
-// controls ergonomic steering away from shell read/discovery helpers; verify
-// mode leaves that off so read-only shell diagnostics can run.
-func (PolicyEngine) decide(ir ParsedIR, relaxed bool, blockReadTools bool) Decision {
+// which must stay strict regardless of the engine's profile.
+func (PolicyEngine) decide(ir ParsedIR, relaxed bool) Decision {
 	d := Decision{ReasonCodes: append([]ReasonCode(nil), ir.RiskFlags...)}
 
 	if ir.Version != IRVersion {
@@ -102,10 +95,10 @@ func (PolicyEngine) decide(ir ParsedIR, relaxed bool, blockReadTools bool) Decis
 		return d
 	}
 
-	if blockReadTools && hasRisk(ir, ReasonShellReadTool) {
+	if hasRisk(ir, ReasonOpaqueInterpreter) {
 		d.IsBlocked = true
-		d.BlockReason = "shell policy: use the registered workspace tools for file reading and discovery instead of shell sed/find/ls/tail/cat or pipelines around them. " +
-			"Use `program`/`grep`/`read`/`ls`/`glob`/`file_map` for workspace files; reserve bash for builds, tests, package managers, git, servers, and other real processes."
+		d.BlockReason = "shell policy: piping or heredocing code into an interpreter is blocked because static analysis cannot inspect that payload. " +
+			"Use registered tools directly; use `edit`/`write` for file changes, or pass short inspectable code with interpreter -c/-e only when a real process is necessary."
 		return d
 	}
 
@@ -129,13 +122,6 @@ func (PolicyEngine) decide(ir ParsedIR, relaxed bool, blockReadTools bool) Decis
 			"Use the `write` tool (creates a new file), `write_append` (appends to an existing one), " +
 			"or `edit` (in-place replacement) so the workspace tracks the change. " +
 			"Redirect to /dev/null is fine if you only want to drop output."
-		return d
-	}
-
-	if hasRisk(ir, ReasonOpaqueInterpreter) {
-		d.IsBlocked = true
-		d.BlockReason = "shell policy: piping or heredocing code into an interpreter is blocked because static analysis cannot inspect that payload. " +
-			"Use `edit`/`write` for file changes, or pass short inspectable code with interpreter -c/-e only when a real shell process is necessary."
 		return d
 	}
 

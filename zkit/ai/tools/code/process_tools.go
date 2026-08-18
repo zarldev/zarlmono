@@ -161,7 +161,8 @@ func NewStopProcessTool(m *ProcessManager) *StopProcessTool { return &StopProces
 // SIGTERM-with-5s-grace default and idempotent exit-code semantics.
 func (*StopProcessTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameStopProcess,
+		Name:    ToolNameStopProcess,
+		Mutates: true,
 		Description: "Terminate a background process. SIGTERM with 5s grace before SIGKILL by default. " +
 			"Returns {process_id, exit_code, killed_at}. Idempotent — calling on an already-exited " +
 			"process succeeds and returns the recorded exit code.",

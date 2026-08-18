@@ -20,13 +20,12 @@ const (
 	ReadBeforeWriteOff ReadBeforeWriteMode = iota
 	ReadBeforeWriteAdvisory
 	ReadBeforeWriteStrict
-
-	readBeforeWriteVerbWrite = "write"
 )
 
-// ReadBeforeWriteGuardrail refuses blind write/edit calls unless the task has
-// already established enough local context via successful pure read/search
-// calls recorded in the shared task ledger.
+// ReadBeforeWriteGuardrail refuses blind mutations of existing files unless the
+// task has already established enough local context via successful pure
+// read/search calls recorded in the shared task ledger. Creation-only write and
+// Add File patch operations are intentionally outside this guardrail.
 type ReadBeforeWriteGuardrail struct {
 	ledger TaskCallLedger
 	mode   ReadBeforeWriteMode
@@ -50,78 +49,52 @@ func NewReadBeforeWriteGuardrail(ledger TaskCallLedger, mode ReadBeforeWriteMode
 // Name returns the guardrail identifier.
 func (g *ReadBeforeWriteGuardrail) Name() string { return "read_before_write" }
 
-// Before rejects or nudges edit/write calls that have not first established
-// enough local file context in the current task.
+// Before rejects or nudges existing-file edits, appends, and patch updates that
+// have not first established enough local file context. Creation-only operations
+// do not require prior read or directory context.
 func (g *ReadBeforeWriteGuardrail) Before(ctx context.Context, call tools.ToolCall) error {
 	if g == nil || g.mode == ReadBeforeWriteOff {
 		return nil
 	}
-	if call.ToolName != code.ToolNameEdit && call.ToolName != code.ToolNameWrite {
-		return nil
-	}
-	path := normalizeEvidencePath(call.Arguments.String("path", ""))
-	if path == "" {
+	paths := existingMutationPaths(call)
+	if len(paths) == 0 {
 		return nil
 	}
 	calls := g.ledger.Calls(ctx)
-	if call.ToolName == code.ToolNameWrite && hasCreationEvidence(path, calls) {
-		return nil
+	for _, path := range paths {
+		if hasSufficientContext(path, calls) {
+			continue
+		}
+		return tools.Validation("read_before_write", readBeforeWriteReason(path, g.mode))
 	}
-	if hasSufficientContext(call.ToolName, path, calls) {
-		return nil
-	}
-	return tools.Validation("read_before_write", readBeforeWriteReason(call.ToolName, path, g.mode))
+	return nil
 }
 
-func hasSufficientContext(tool tools.ToolName, path string, calls []runner.ObservedCall) bool {
+func existingMutationPaths(call tools.ToolCall) []string {
+	switch call.ToolName {
+	case code.ToolNameEdit, code.ToolNameWriteAppend:
+		path := normalizeEvidencePath(call.Arguments.String("path", ""))
+		if path != "" {
+			return []string{path}
+		}
+	case code.ToolNameApplyPatch:
+		paths := code.PatchExistingPaths(call.Arguments.String("patch", ""))
+		out := make([]string, 0, len(paths))
+		for _, path := range paths {
+			if path = normalizeEvidencePath(path); path != "" {
+				out = append(out, path)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func hasSufficientContext(path string, calls []runner.ObservedCall) bool {
 	if hasReadPath(path, calls) || hasWritePath(path, calls) || hasTestPairRead(path, calls) {
 		return true
 	}
-	dir := filepath.Dir(path)
-	if tool == code.ToolNameWrite {
-		if hasDirListing(dir, calls) || hasReadInDir(dir, calls) {
-			return true
-		}
-	}
-	return hasReadInDir(dir, calls) && hasSearchEvidence(calls)
-}
-
-func hasCreationEvidence(path string, calls []runner.ObservedCall) bool {
-	dir := filepath.Dir(path)
-	if hasDirListing(dir, calls) || hasReadInDir(dir, calls) {
-		return true
-	}
-	for _, call := range calls {
-		if call.ToolName != code.ToolNameGlob {
-			continue
-		}
-		pattern := normalizeEvidencePath(call.Arguments.String("pattern", ""))
-		if pattern == "" {
-			continue
-		}
-		if globCouldCoverPath(pattern, path) || filepath.Dir(pattern) == dir {
-			return true
-		}
-	}
-	return false
-}
-
-func globCouldCoverPath(pattern, path string) bool {
-	if pattern == path {
-		return true
-	}
-	if strings.HasPrefix(pattern, "**/") {
-		if ok, _ := filepath.Match(strings.TrimPrefix(pattern, "**/"), filepath.Base(path)); ok {
-			return true
-		}
-	}
-	if strings.HasSuffix(pattern, "*") && strings.HasPrefix(path, strings.TrimSuffix(pattern, "*")) {
-		return true
-	}
-	if ok, _ := filepath.Match(pattern, path); ok {
-		return true
-	}
-	return false
+	return hasReadInDir(filepath.Dir(path), calls) && hasSearchEvidence(calls)
 }
 
 func hasReadPath(path string, calls []runner.ObservedCall) bool {
@@ -160,19 +133,6 @@ func hasReadInDir(dir string, calls []runner.ObservedCall) bool {
 		}
 		p := normalizeEvidencePath(call.Arguments.String("path", ""))
 		if p != "" && filepath.Dir(p) == dir {
-			return true
-		}
-	}
-	return false
-}
-
-func hasDirListing(dir string, calls []runner.ObservedCall) bool {
-	for _, call := range calls {
-		if call.ToolName != code.ToolNameLs {
-			continue
-		}
-		p := normalizeEvidencePath(call.Arguments.String("path", ""))
-		if p == dir || (p == "" && dir == ".") {
 			return true
 		}
 	}
@@ -225,19 +185,14 @@ func normalizeEvidencePath(path string) string {
 	return strings.TrimPrefix(clean, "./")
 }
 
-func readBeforeWriteReason(tool tools.ToolName, path string, mode ReadBeforeWriteMode) string {
-	verb := "modify"
-	if tool == code.ToolNameWrite {
-		verb = readBeforeWriteVerbWrite
-	}
+func readBeforeWriteReason(path string, mode ReadBeforeWriteMode) string {
 	prefix := ""
 	if mode == ReadBeforeWriteAdvisory {
 		prefix = "advisory: "
 	}
 	return fmt.Sprintf(
-		"%syou are about to %s %q without first reading that file or establishing enough nearby context in this task. "+
-			"For an existing file, call read(path=%q, ...) and use edit with the returned anchors. "+
-			"For a new file, first establish nearby context with ls/glob/read in the parent directory, then call write — do not fall back to bash/python just to create files.",
-		prefix, verb, path, path,
+		"%syou are about to modify %q without first reading that existing file or establishing enough nearby context in this task. "+
+			"Call read(path=%q, ...) and use edit with the returned anchors.",
+		prefix, path, path,
 	)
 }

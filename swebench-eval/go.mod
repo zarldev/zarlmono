@@ -73,8 +73,8 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
-	github.com/zarldev/zarlmono/zarlcode v0.8.0
-	github.com/zarldev/zarlmono/zkit v0.9.1
+	github.com/zarldev/zarlmono/zarlcode v0.9.0
+	github.com/zarldev/zarlmono/zkit v0.10.0
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.55.0 // indirect

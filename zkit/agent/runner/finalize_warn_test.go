@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -156,6 +157,28 @@ func TestRunner_FinalizeWarnFiresAtThreshold(t *testing.T) {
 	}
 	if got := countIterationNudges(res.Messages); got != 0 {
 		t.Errorf("nudge leaked into canonical history %d times, want 0", got)
+	}
+}
+
+func TestRunner_FinalizeWarnFiresBeforeDeadline(t *testing.T) {
+	t.Parallel()
+	reg := tools.NewRegistry()
+	reg.Register(&trivialTool{name: "noop"})
+	prov := &loopingProvider{toolName: "noop"}
+	r := runner.New(
+		runner.ClientFromProvider(prov),
+		runner.WithTools(reg),
+		runner.WithMaxIterations(2),
+		runner.WithFinalizeWarn(runner.FinalizeWarn{DeadlineGrace: time.Hour}),
+	)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	res := r.Run(ctx, runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
+	if res.Err != nil {
+		t.Fatalf("Run: %v", res.Err)
+	}
+	if got := prov.requestsWithUserContaining("wall-clock budget"); got != 1 {
+		t.Errorf("deadline nudge appeared in %d requests, want exactly 1", got)
 	}
 }
 

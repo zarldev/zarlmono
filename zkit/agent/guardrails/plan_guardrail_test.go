@@ -39,6 +39,18 @@ func TestPlanGuardrail_AllowsReadsWithoutPlan(t *testing.T) {
 	}
 }
 
+func TestPlanGuardrail_AllowsReadOnlyBashWithoutPlan(t *testing.T) {
+	t.Parallel()
+	g := guardrails.NewPlanGuardrail(planIter(), planToolName)
+	ctx := taskscope.WithID(t.Context(), "task-1")
+	for _, command := range []string{"git status --short", "cat README.md", "go env GOPATH"} {
+		call := tools.ToolCall{ID: "c", ToolName: "bash", Arguments: tools.ToolParameters{"command": command}}
+		if err := g.Before(ctx, call); err != nil {
+			t.Errorf("read-only bash %q before plan: %v", command, err)
+		}
+	}
+}
+
 // The planning tool itself must always be callable — otherwise the gate
 // could never be satisfied.
 func TestPlanGuardrail_AllowsPlanToolWithoutPlan(t *testing.T) {
@@ -50,16 +62,21 @@ func TestPlanGuardrail_AllowsPlanToolWithoutPlan(t *testing.T) {
 	}
 }
 
-// A file edit and a bash command are both refused before a plan exists; the
-// rejection is a Validation error naming the planning tool.
+// A file edit and a mutating bash command are both refused before a plan exists;
+// the rejection is a Validation error naming the planning tool.
 func TestPlanGuardrail_BlocksChangesBeforePlan(t *testing.T) {
 	t.Parallel()
-	for _, name := range []tools.ToolName{"edit", "bash"} {
+	cases := []tools.ToolCall{
+		planCall("edit"),
+		{ID: "c", ToolName: "bash", Arguments: tools.ToolParameters{"command": "rm generated.go"}},
+	}
+	for _, call := range cases {
+		name := call.ToolName
 		t.Run(name.String(), func(t *testing.T) {
 			t.Parallel()
 			g := guardrails.NewPlanGuardrail(planIter(), planToolName)
 			ctx := taskscope.WithID(t.Context(), "task-1")
-			err := g.Before(ctx, planCall(name))
+			err := g.Before(ctx, call)
 			if err == nil {
 				t.Fatalf("%s before plan: want rejection", name)
 			}

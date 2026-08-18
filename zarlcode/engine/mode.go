@@ -6,8 +6,12 @@ import (
 	"iter"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/fetch"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 )
@@ -36,7 +40,14 @@ func PlanAllows(name tools.ToolName) bool {
 		ToolNameLoadSkill,
 		ToolNameListSkills,
 		ToolNameListAgents,
-		"spawn_agent":
+		ToolNameListInstructions,
+		ToolNameLoadInstruction,
+		programtools.ToolName,
+		computertools.ToolNameComputerObserve,
+		dynamic.ToolNameMCPList,
+		code.ToolNameBashOutput,
+		code.ToolNameListProcesses,
+		spawn.ToolNameSpawnAgent:
 		return true
 	default:
 		return false

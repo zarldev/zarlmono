@@ -6,9 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
+
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
 )
 
 type fakeTool struct{ name tools.ToolName }
@@ -44,7 +48,11 @@ func listedNames(src tools.Source) map[tools.ToolName]bool {
 
 func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	inner := fakeSource{names: []tools.ToolName{
-		code.ToolNameRead, code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash, "web_search",
+		code.ToolNameRead, code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash,
+		code.ToolNameSavePlan, code.ToolNameSavePlanAppend, code.ToolNameUpdatePlan,
+		programtools.ToolName, ToolNameListInstructions, ToolNameLoadInstruction, "web_search",
+		computertools.ToolNameComputerObserve, dynamic.ToolNameMCPList,
+		code.ToolNameBashOutput, code.ToolNameListProcesses,
 	}}
 	plan := true // toggled below to prove the filter reads it live
 	src := NewModeFilteredSource(inner, func() bool { return plan })
@@ -55,6 +63,22 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	if !names[code.ToolNameRead] || !names["web_search"] {
 		t.Errorf("plan: read/web_search should be listed: %v", names)
 	}
+	for _, planTool := range []tools.ToolName{
+		code.ToolNameSavePlan,
+		code.ToolNameSavePlanAppend,
+		code.ToolNameUpdatePlan,
+		programtools.ToolName,
+		ToolNameListInstructions,
+		ToolNameLoadInstruction,
+		computertools.ToolNameComputerObserve,
+		dynamic.ToolNameMCPList,
+		code.ToolNameBashOutput,
+		code.ToolNameListProcesses,
+	} {
+		if !names[planTool] {
+			t.Errorf("plan: read/planning tool %q should be listed: %v", planTool, names)
+		}
+	}
 	if names[code.ToolNameWrite] || names[code.ToolNameEdit] || names[code.ToolNameBash] {
 		t.Errorf("plan: mutating tools/bash should be filtered out: %v", names)
 	}
@@ -63,6 +87,22 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	}
 	if _, err := src.Execute(ctx, tools.ToolCall{ToolName: code.ToolNameRead}); err != nil {
 		t.Errorf("plan: dispatching read should be allowed: %v", err)
+	}
+	for _, planTool := range []tools.ToolName{
+		code.ToolNameSavePlan,
+		code.ToolNameSavePlanAppend,
+		code.ToolNameUpdatePlan,
+		programtools.ToolName,
+		ToolNameListInstructions,
+		ToolNameLoadInstruction,
+		computertools.ToolNameComputerObserve,
+		dynamic.ToolNameMCPList,
+		code.ToolNameBashOutput,
+		code.ToolNameListProcesses,
+	} {
+		if _, err := src.Execute(ctx, tools.ToolCall{ToolName: planTool}); err != nil {
+			t.Errorf("plan: dispatching read/planning tool %q should be allowed: %v", planTool, err)
+		}
 	}
 	// --- BUILD (flip the live flag): full surface ---
 	plan = false

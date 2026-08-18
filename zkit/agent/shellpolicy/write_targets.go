@@ -15,20 +15,23 @@ import (
 // leaves the syntax rejection to the ShellGuardrail.
 var ErrUnparseable = errors.New("shellpolicy: unparseable command")
 
+const commandInstall = "install"
+
 // contentMutators are commands that create, overwrite, truncate, relocate, or
 // delete file CONTENT. Permission-only commands (chmod / chown) are
 // deliberately excluded — they can't alter a grader's test assertions, so
 // gating them would only add false rejections. Used by [WriteTargets] to
 // decide which CallExpr operands are write targets.
 var contentMutators = map[string]bool{
-	"rm":       true,
-	"unlink":   true,
-	"mv":       true,
-	"cp":       true,
-	"tee":      true,
-	"truncate": true,
-	"ln":       true,
-	"install":  true,
+	"rm":           true,
+	"unlink":       true,
+	"mv":           true,
+	"cp":           true,
+	"tee":          true,
+	"truncate":     true,
+	"ln":           true,
+	commandInstall: true,
+	"shred":        true,
 }
 
 // gitMutatingSubcommands are the `git <sub>` forms that remove, move, or
@@ -181,8 +184,10 @@ func dispatchWriteTargets(args []*syntax.Word, depth int) []string {
 	case transparentWrappers[name]:
 		eff := wrapperEffectiveArgs(name, args[1:])
 		return dispatchWriteTargets(eff, depth+1)
+	case name == "mv" || name == "cp" || name == "ln" || name == commandInstall:
+		return destinationOperand(args[1:])
 	case contentMutators[name]:
-		return operandWords(args[1:], false)
+		return filterSafeDeviceTargets(operandWords(args[1:], false))
 	}
 	return nil
 }
@@ -295,6 +300,33 @@ func operandWords(args []*syntax.Word, skipFirstNonFlag bool) []string {
 	return out
 }
 
+func destinationOperand(args []*syntax.Word) []string {
+	operands := filterSafeDeviceTargets(operandWords(args, false))
+	if len(operands) == 0 {
+		return nil
+	}
+	return operands[len(operands)-1:]
+}
+
+func filterSafeDeviceTargets(paths []string) []string {
+	out := paths[:0]
+	for _, path := range paths {
+		if isSafeOutputDevice(path) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
+func isSafeOutputDevice(path string) bool {
+	switch path {
+	case "/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/console":
+		return true
+	}
+	return strings.HasPrefix(path, "/dev/fd/") || strings.HasPrefix(path, "/dev/pts/")
+}
+
 // inPlaceEditorTargets returns the file operands of `sed`/`perl` only when an
 // in-place flag (-i, -i.bak, …) is present; otherwise the editor reads and
 // writes nothing. The leading non-flag word (the script) is skipped.
@@ -321,7 +353,7 @@ func ddWriteTargets(args []*syntax.Word) []string {
 		if !ok {
 			continue
 		}
-		if of, found := strings.CutPrefix(w, "of="); found && of != "" {
+		if of, found := strings.CutPrefix(w, "of="); found && of != "" && !isSafeOutputDevice(of) {
 			out = append(out, of)
 		}
 	}
@@ -399,6 +431,8 @@ var interpreters = map[string]bool{
 	"python": true, "python2": true, "python3": true,
 	"perl": true, "ruby": true, "node": true, "nodejs": true,
 	"php": true, "deno": true, "bun": true,
+	"lua": true, "luajit": true, "julia": true, "rscript": true, "tclsh": true,
+	"awk": true, "gawk": true, "mawk": true, "nawk": true,
 	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true,
 }
 
@@ -424,6 +458,16 @@ func interpreterPayloads(args []*syntax.Word, depth int) []string {
 		return nil
 	}
 	var out []string
+	if name == "awk" || name == "gawk" || name == "mawk" || name == "nawk" {
+		for _, arg := range args[1:] {
+			code, ok := resolveWord(arg)
+			if !ok || code == "" || strings.HasPrefix(code, "-") {
+				continue
+			}
+			return []string{code}
+		}
+		return nil
+	}
 	for i := 1; i < len(args); i++ {
 		w, ok := resolveWord(args[i])
 		if !ok {

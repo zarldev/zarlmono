@@ -91,27 +91,27 @@ func TestLiveRunner_ProgrammaticToolsSetting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source default: %v", err)
 	}
-	if hasTool(src, programtools.ToolName) {
-		t.Fatal("program tool should default off")
+	if !hasTool(src, programtools.ToolName) {
+		t.Fatal("program tool should default on")
 	}
-	if err := settings.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyProgrammaticTools, "on"); err != nil {
-		t.Fatalf("set programmatic tools: %v", err)
+	if err := settings.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyProgrammaticTools, "off"); err != nil {
+		t.Fatalf("disable programmatic tools: %v", err)
 	}
 	src, _, err = l.source("")
 	if err != nil {
-		t.Fatalf("source enabled: %v", err)
+		t.Fatalf("source disabled: %v", err)
 	}
-	if !hasTool(src, programtools.ToolName) {
-		t.Fatal("program tool should be present when enabled")
-		for _, name := range []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash} {
-			if !hasTool(src, name) {
-				t.Fatalf("programmatic tools must not hide mutating/shell tool %q", name)
-			}
+	if hasTool(src, programtools.ToolName) {
+		t.Fatal("program tool should be absent when disabled")
+	}
+	for _, name := range []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash} {
+		if !hasTool(src, name) {
+			t.Fatalf("disabling programmatic tools must not hide mutating/shell tool %q", name)
 		}
-		for _, name := range []tools.ToolName{code.ToolNameRead, code.ToolNameGrep, code.ToolNameGlob, code.ToolNameLs, code.ToolNameFileMap, code.ToolNameRetrieveCode} {
-			if hasTool(src, name) {
-				t.Fatalf("programmatic tools should hide direct read/search tool %q", name)
-			}
+	}
+	for _, name := range []tools.ToolName{code.ToolNameRead, code.ToolNameGrep, code.ToolNameGlob, code.ToolNameLs, code.ToolNameFileMap, code.ToolNameRetrieveCode} {
+		if !hasTool(src, name) {
+			t.Fatalf("disabling programmatic tools should restore direct read/search tool %q", name)
 		}
 	}
 }
@@ -136,8 +136,11 @@ func TestLiveRunner_WebSearchRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source on: %v", err)
 	}
-	if !hasTool(srcOn, tools.ToolNameWebSearch) {
-		t.Error("web_search should be registered when a SearXNG URL is set")
+	if !hasTool(srcOn, programtools.ToolName) {
+		t.Error("program should expose configured web_search through its read policy")
+	}
+	if hasTool(srcOn, tools.ToolNameWebSearch) {
+		t.Error("direct web_search should be hidden when programmatic tools are enabled")
 	}
 }
 

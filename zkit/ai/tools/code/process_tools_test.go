@@ -30,6 +30,14 @@ func newProcMgrForTest(t *testing.T) *code.ProcessManager {
 	return mgr
 }
 
+func TestStopProcessDeclaresMutation(t *testing.T) {
+	t.Parallel()
+	tool := code.NewStopProcessTool(newProcMgrForTest(t))
+	if !tool.Definition().Mutates {
+		t.Fatal("stop_process must declare mutation for explore-mode gating")
+	}
+}
+
 // waitForExit polls m.Info until the process exits or the deadline fires.
 func waitForExit(t *testing.T, m *code.ProcessManager, id code.ProcessID, timeout time.Duration) {
 	t.Helper()

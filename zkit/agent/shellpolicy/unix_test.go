@@ -97,9 +97,6 @@ func TestUnixParser_RisksTriggeredCorrectly(t *testing.T) {
 		{"pipe raises ReasonOperator", "ls | wc -l", shellpolicy.ReasonOperator},
 		{"&& raises ReasonOperator", "ls && pwd", shellpolicy.ReasonOperator},
 		{"semicolon between stmts raises ReasonOperator", "ls; pwd", shellpolicy.ReasonOperator},
-		{"cat raises ReasonShellReadTool", "cat main.go", shellpolicy.ReasonShellReadTool},
-		{"sed raises ReasonShellReadTool", "sed -n '1,20p' main.go", shellpolicy.ReasonShellReadTool},
-		{"read-helper pipe raises ReasonShellReadTool", "ls | grep foo", shellpolicy.ReasonShellReadTool},
 		{"opaque interpreter pipe raises ReasonOpaqueInterpreter", "echo 'print(1)' | python3", shellpolicy.ReasonOpaqueInterpreter},
 	}
 	for _, tc := range cases {
@@ -116,19 +113,35 @@ func TestUnixParser_RisksTriggeredCorrectly(t *testing.T) {
 	}
 }
 
-// grep (and its family) and head are no longer treated as shell read tools, so
-// bare or output-filtering uses don't raise ReasonShellReadTool.
-func TestUnixParser_GrepAndHeadAreNotReadTools(t *testing.T) {
+func TestUnixParser_ReadOnlyCommandsDoNotRaiseBlockingRisks(t *testing.T) {
 	t.Parallel()
-	for _, cmd := range []string{"grep -r foo .", "rg foo", "egrep foo x", "head -20 README.md"} {
+	commands := []string{
+		"awk '{print $1}' report.txt",
+		"cat main.go",
+		"fd -e go",
+		"find . -name '*.go'",
+		"less README.md",
+		"ls -la",
+		"more README.md",
+		"sed -n '1,20p' main.go",
+		"tail -20 app.log",
+		"grep -r foo .",
+		"head -20 README.md",
+		"go test ./... | tail -50",
+	}
+	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			ir, err := shellpolicy.NewUnixParser().Parse(cmd)
 			if err != nil {
 				t.Fatalf("Parse(%q): %v", cmd, err)
 			}
-			if slices.Contains(ir.RiskFlags, shellpolicy.ReasonShellReadTool) {
-				t.Errorf("%q raised ReasonShellReadTool, want it allowed", cmd)
+			for _, risk := range ir.RiskFlags {
+				switch risk {
+				case shellpolicy.ReasonOperator, shellpolicy.ReasonExpansion, shellpolicy.ReasonSubshell:
+				default:
+					t.Errorf("%q raised blocking risk %q", cmd, risk)
+				}
 			}
 		})
 	}
@@ -140,6 +153,8 @@ func TestUnixParser_SafeRedirectTargetsDoNotFlag(t *testing.T) {
 		"echo hi > /dev/null",
 		"echo hi 2> /dev/null",
 		"grep foo bar.txt 2>&1",
+		"echo hi > /dev/fd/1",
+		"echo hi > /dev/tty",
 		"cat foo.txt < bar.txt",
 	}
 	for _, cmd := range cases {

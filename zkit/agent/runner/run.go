@@ -177,11 +177,19 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// ctx cancel or stream error) before reaching the threshold
 		// never injects.
 		var finalizeNudge string // request-only; non-empty on the one trip iteration
-		if !t.st.finalizeWarned && r.finalizeWarn.RemainingThreshold > 0 {
-			remaining := maxIter - iter
-			if remaining <= r.finalizeWarn.RemainingThreshold {
-				t.st.finalizeWarned = true
-				finalizeNudge = finalizeWarnMessage(remaining, r.finalizeWarn.Message)
+		if !t.st.finalizeWarned {
+			if r.finalizeWarn.RemainingThreshold > 0 {
+				remaining := maxIter - iter
+				if remaining <= r.finalizeWarn.RemainingThreshold {
+					t.st.finalizeWarned = true
+					finalizeNudge = finalizeWarnMessage(remaining, r.finalizeWarn.Message)
+				}
+			}
+			if finalizeNudge == "" && r.finalizeWarn.DeadlineGrace > 0 {
+				if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= r.finalizeWarn.DeadlineGrace {
+					t.st.finalizeWarned = true
+					finalizeNudge = finalizeWarnTimeMessage(r.finalizeWarn.DeadlineGrace, r.finalizeWarn.Message)
+				}
 			}
 		}
 

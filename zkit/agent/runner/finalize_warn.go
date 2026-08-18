@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/options"
 )
@@ -38,6 +39,14 @@ type FinalizeWarn struct {
 	// defaultFinalizeWarnMessage, which is a generic "wrap up"
 	// nudge that names the actual remaining-iteration count.
 	Message string
+
+	// DeadlineGrace is the time-before-context-deadline at which the
+	// nudge also fires, even when the iteration threshold hasn't been
+	// reached. Zero disables the time-based trigger. When the Run ctx
+	// carries a deadline (a task wall-clock budget), this gives the model
+	// a "commit now" signal before the deadline cancels it — the
+	// iteration threshold alone misses that when iterations are slow.
+	DeadlineGrace time.Duration
 }
 
 // finalizeWarnMessage renders the warning text for the given
@@ -64,6 +73,22 @@ func pluralS(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// finalizeWarnTimeMessage renders the deadline-based warning text.
+func finalizeWarnTimeMessage(grace time.Duration, override string) string {
+	if override != "" {
+		return override
+	}
+	return fmt.Sprintf(
+		"The wall-clock budget is about to expire (less than %s left). "+
+			"Stop investigating and commit now: produce your final answer in "+
+			"plain text, or apply the implementation you've been building. "+
+			"If you're tracking a plan or checklist, make sure it reflects "+
+			"reality before signing off. Do NOT start a new tool chain — "+
+			"there isn't time. If you need a fact you don't already have, "+
+			"make your best inference from what's already in context.",
+		grace.Round(time.Second))
 }
 
 // WithFinalizeWarn installs a cap-warning nudge configuration. A

@@ -239,7 +239,7 @@ You review code.
 	for _, spec := range snap.Tools {
 		toolset[spec.Name.String()] = true
 	}
-	for _, want := range []string{"list_skills", "list_agents", "spawn_agent", "web_fetch", "update_plan"} {
+	for _, want := range []string{"program", "spawn_agent", "update_plan"} {
 		if !toolset[want] {
 			t.Fatalf("inspector tool list missing %q: %v", want, snap.Tools)
 		}
@@ -264,7 +264,7 @@ func TestInspectorToolsUsePlanFilteredLiveSurface(t *testing.T) {
 	for _, spec := range snap.Tools {
 		seen[string(spec.Name)] = true
 	}
-	for _, want := range []string{"read", "grep", "glob", "ls", "web_fetch", "update_plan"} {
+	for _, want := range []string{"program", "computer_observe", "update_plan"} {
 		if !seen[want] {
 			t.Fatalf("plan inspector tools missing %q; saw %#v", want, seen)
 		}

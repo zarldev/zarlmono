@@ -43,37 +43,58 @@ func TestReadBeforeWriteGuardrail_AllowsFollowUpEditAfterEdit(t *testing.T) {
 	}
 }
 
-func TestReadBeforeWriteGuardrail_AllowsWriteAfterDirContext(t *testing.T) {
-	ctx := t.Context()
-	ledger := runner.NewMemoryTaskCallLedger()
-	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameLs, tools.ToolParameters{"path": "pkg"})
-	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
-	call := tools.ToolCall{ToolName: code.ToolNameWrite, Arguments: tools.ToolParameters{"path": "pkg/new.go"}}
-	if err := g.Before(ctx, call); err != nil {
-		t.Fatalf("want dir listing to unlock new-file write, got %v", err)
-	}
-}
-
-func TestReadBeforeWriteGuardrail_AllowsWriteAfterGlobContext(t *testing.T) {
-	ctx := t.Context()
-	ledger := runner.NewMemoryTaskCallLedger()
-	ledger.RecordSuccessfulPureCall(ctx, code.ToolNameGlob, tools.ToolParameters{"pattern": "zkit/ai/llm/media*"})
-	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
-	call := tools.ToolCall{ToolName: code.ToolNameWrite, Arguments: tools.ToolParameters{"path": "zkit/ai/llm/media/image.go"}}
-	if err := g.Before(ctx, call); err != nil {
-		t.Fatalf("want glob context to unlock new-file write, got %v", err)
-	}
-}
-
-func TestReadBeforeWriteGuardrail_WriteNudgeDiscouragesShellFallback(t *testing.T) {
+func TestReadBeforeWriteGuardrail_AllowsNewFileWriteWithoutContext(t *testing.T) {
 	ledger := runner.NewMemoryTaskCallLedger()
 	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
 	call := tools.ToolCall{ToolName: code.ToolNameWrite, Arguments: tools.ToolParameters{"path": "pkg/new.go"}}
+	if err := g.Before(t.Context(), call); err != nil {
+		t.Fatalf("new-file write must not require prior context: %v", err)
+	}
+}
+
+func TestReadBeforeWriteGuardrail_AppendAndPatchRespectExistingFileContext(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		call tools.ToolCall
+	}{
+		{"append", tools.ToolCall{ToolName: code.ToolNameWriteAppend, Arguments: tools.ToolParameters{"path": "pkg/foo.go"}}},
+		{"patch update", tools.ToolCall{ToolName: code.ToolNameApplyPatch, Arguments: tools.ToolParameters{"patch": "*** Begin Patch\n*** Update File: pkg/foo.go\n@@\n-old\n+new\n*** End Patch"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ledger := runner.NewMemoryTaskCallLedger()
+			g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
+			if err := g.Before(t.Context(), tt.call); err == nil {
+				t.Fatal("existing-file mutation without read should be rejected")
+			}
+			ledger.RecordSuccessfulPureCall(t.Context(), code.ToolNameRead, tools.ToolParameters{"path": "pkg/foo.go"})
+			if err := g.Before(t.Context(), tt.call); err != nil {
+				t.Fatalf("read should unlock existing-file mutation: %v", err)
+			}
+		})
+	}
+}
+
+func TestReadBeforeWriteGuardrail_AllowsPatchAddWithoutContext(t *testing.T) {
+	ledger := runner.NewMemoryTaskCallLedger()
+	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
+	call := tools.ToolCall{ToolName: code.ToolNameApplyPatch, Arguments: tools.ToolParameters{"patch": "*** Begin Patch\n*** Add File: pkg/new.go\n+package pkg\n*** End Patch"}}
+	if err := g.Before(t.Context(), call); err != nil {
+		t.Fatalf("Add File patch must not require prior context: %v", err)
+	}
+}
+
+func TestReadBeforeWriteGuardrail_EditNudgeRequiresExistingFileRead(t *testing.T) {
+	ledger := runner.NewMemoryTaskCallLedger()
+	g := guardrails.NewReadBeforeWriteGuardrail(ledger, guardrails.ReadBeforeWriteAdvisory)
+	call := tools.ToolCall{ToolName: code.ToolNameEdit, Arguments: tools.ToolParameters{"path": "pkg/foo.go"}}
 	err := g.Before(t.Context(), call)
 	if err == nil {
 		t.Fatal("want nudge")
 	}
-	for _, want := range []string{"ls/glob/read", "call write", "do not fall back to bash/python"} {
+	for _, want := range []string{"existing file", "Call read", "use edit"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("nudge missing %q: %v", want, err)
 		}

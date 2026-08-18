@@ -43,10 +43,8 @@ type ReasonCode string
 
 const (
 	// ReasonOperator indicates a shell control operator (|, &&, ||,
-	// ;) was present. Informational on its own; combined with other
-	// rather than a single tool invocation. Pipelines are also blocked in the
-	// standard profile when they combine shell read helpers, because those are
-	// usually ad-hoc replacements for the registered file tools.
+	// ;) was present. Informational on its own; it indicates composition
+	// rather than a single tool invocation.
 	ReasonOperator ReasonCode = "operator"
 
 	// ReasonRedirect indicates an output redirection to a real file
@@ -54,13 +52,6 @@ const (
 	// the model should be using the write_file / edit tool, which
 	// the workspace tracks and which respects the workspace root.
 	ReasonRedirect ReasonCode = "redirect"
-
-	// ReasonShellReadTool indicates the command is using a shell file-discovery
-	// helper (`sed -n`, `find`, `tail`, `cat`, etc.; grep and head are excluded) even though
-	// workspace-aware read/search/list tools can do that job with bounded,
-	// structured output. Treated as Block in the standard profile so the model
-	// gets a direct correction instead of burning context on shell pipelines.
-	ReasonShellReadTool ReasonCode = "shell_read_tool"
 
 	// ReasonExpansion indicates a parameter/variable expansion
 	// ($VAR, ${VAR}, $(( ))) was present. Informational; the policy

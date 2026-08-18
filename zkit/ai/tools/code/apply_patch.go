@@ -81,6 +81,24 @@ func PatchPaths(text string) []string {
 	return out
 }
 
+// PatchExistingPaths returns only paths that a patch expects to already exist:
+// Update and Delete sources. Add destinations and Move-to destinations are
+// creations and therefore excluded.
+func PatchExistingPaths(text string) []string {
+	if text == "" {
+		return nil
+	}
+	var out []string
+	for line := range strings.SplitSeq(text, "\n") {
+		kind, path, ok := matchFileHeader(line)
+		if !ok || kind == opAdd || path == "" || slices.Contains(out, path) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
 // Definition advertises apply_patch with the single patch parameter
 // (the full *** Begin Patch / *** End Patch envelope); Mutates is true
 // because a committed patch adds, updates, deletes, or moves workspace

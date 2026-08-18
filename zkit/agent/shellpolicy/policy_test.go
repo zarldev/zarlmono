@@ -1,6 +1,7 @@
 package shellpolicy_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -83,43 +84,35 @@ func TestPolicy_SafeCommandPasses(t *testing.T) {
 	}
 }
 
-func TestPolicy_DecisionEchoesReasonCodes(t *testing.T) {
+func TestPolicy_DecisionEchoesInformationalReasonCodes(t *testing.T) {
 	t.Parallel()
 	ir, _ := shellpolicy.NewUnixParser().Parse("ls | grep foo")
 	d := shellpolicy.NewPolicyEngine().Decide(ir)
-	if !d.IsBlocked {
-		t.Fatalf("Decide(shell read pipeline): want block")
+	if d.IsBlocked {
+		t.Fatalf("Decide(read-only pipeline): want pass, got %q", d.BlockReason)
 	}
-	if !strings.Contains(d.BlockReason, "workspace tools") {
-		t.Errorf("BlockReason = %q, want workspace-tool guidance", d.BlockReason)
-	}
-	if len(d.ReasonCodes) == 0 {
-		t.Error("ReasonCodes = empty, want the operator flag echoed")
+	if !slices.Contains(d.ReasonCodes, shellpolicy.ReasonOperator) {
+		t.Errorf("ReasonCodes = %v, want operator signal", d.ReasonCodes)
 	}
 }
 
-func TestPolicy_ShellReadToolsBlockWithGuidance(t *testing.T) {
+func TestPolicy_ReadOnlyShellCommandsAllowed(t *testing.T) {
 	t.Parallel()
-	for _, cmd := range []string{"cat main.go", "sed -n '1,20p' main.go", "find . -name '*.go'", "ls -la"} {
-		t.Run(cmd, func(t *testing.T) {
-			t.Parallel()
-			ir, _ := shellpolicy.NewUnixParser().Parse(cmd)
-			d := shellpolicy.NewPolicyEngine().Decide(ir)
-			if !d.IsBlocked {
-				t.Fatalf("Decide(%q): want shell read-tool block", cmd)
-			}
-			if !strings.Contains(d.BlockReason, "registered workspace tools") {
-				t.Errorf("BlockReason = %q, want registered-tool guidance", d.BlockReason)
-			}
-		})
+	commands := []string{
+		"awk '{print $1}' report.txt",
+		"cat main.go",
+		"fd -e go",
+		"find . -name '*.go'",
+		"less README.md",
+		"ls -la",
+		"more README.md",
+		"sed -n '1,20p' main.go",
+		"tail -20 app.log",
+		"grep -r foo .",
+		"head -20 README.md",
+		"go test ./... | tail -50",
 	}
-}
-
-// grep and head are no longer shell read tools, so the policy lets them run —
-// including grep filtering the output of a real command.
-func TestPolicy_GrepAndHeadAllowed(t *testing.T) {
-	t.Parallel()
-	for _, cmd := range []string{"grep -r foo .", "head -20 README.md", "grep foo bar.txt"} {
+	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			ir, _ := shellpolicy.NewUnixParser().Parse(cmd)

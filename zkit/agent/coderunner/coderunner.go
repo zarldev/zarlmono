@@ -270,6 +270,11 @@ type Tuning struct {
 	// (see IterationTimeout). Zero keeps the shared 5m default; raise it
 	// for local models whose large-context prefills legitimately exceed 5m.
 	IterationTimeout time.Duration
+
+	// DeadlineGrace is the time-before-context-deadline at which the
+	// finalize-warn nudge also fires (see FinalizeWarn.DeadlineGrace).
+	// Zero disables the time-based trigger.
+	DeadlineGrace time.Duration
 }
 
 // Tuning constants shared by every consumer. Exported so a consumer
@@ -402,7 +407,7 @@ func StandardOptions(t Tuning) []options.Option[runner.Runner] {
 	opts := []options.Option[runner.Runner]{
 		runner.WithAdaptiveKeepRecent(AdaptiveKeepTargetTokens, AdaptiveKeepMin, AdaptiveKeepMax),
 		runner.WithTurnQuality(DefaultTurnQuality()),
-		runner.WithFinalizeWarn(runner.FinalizeWarn{RemainingThreshold: FinalizeWarnThreshold}),
+		runner.WithFinalizeWarn(runner.FinalizeWarn{RemainingThreshold: FinalizeWarnThreshold, DeadlineGrace: t.DeadlineGrace}),
 		runner.WithIterationTimeout(iterTimeout),
 		runner.WithStreamIdleTimeout(streamIdle),
 		runner.WithMaxTokens(MaxCompletionTokens),

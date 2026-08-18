@@ -126,6 +126,11 @@ func (g *TestEditStrictGuardrail) checkBash(call tools.ToolCall) error {
 		// closed separately, so don't guess at targets or double-handle it.
 		return nil
 	}
+	if commandName, cmdErr := shellpolicy.UnscopedMutationCommand(command); cmdErr == nil && commandName != "" {
+		return tools.Validation(string(call.ToolName), fmt.Sprintf(
+			"refused: %q may rewrite or remove grader-owned test files, and its targets cannot be narrowed statically in unattended mode. Modify SOURCE files only.",
+			commandName))
+	}
 	path := firstMatchingPath(targets, looksLikeTestPath)
 	if path == "" {
 		// Static path analysis can't see inside an interpreter's inline
