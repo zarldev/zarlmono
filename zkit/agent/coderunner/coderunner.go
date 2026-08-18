@@ -265,6 +265,11 @@ type Tuning struct {
 	// unless a caller deliberately dials it — e.g. a slow local model or
 	// connection that legitimately pauses longer than 90s between chunks.
 	StreamIdle time.Duration
+
+	// IterationTimeout overrides the per-iteration wall-clock backstop
+	// (see IterationTimeout). Zero keeps the shared 5m default; raise it
+	// for local models whose large-context prefills legitimately exceed 5m.
+	IterationTimeout time.Duration
 }
 
 // Tuning constants shared by every consumer. Exported so a consumer
@@ -390,11 +395,15 @@ func StandardOptions(t Tuning) []options.Option[runner.Runner] {
 	if t.StreamIdle > 0 {
 		streamIdle = t.StreamIdle
 	}
+	iterTimeout := IterationTimeout
+	if t.IterationTimeout > 0 {
+		iterTimeout = t.IterationTimeout
+	}
 	opts := []options.Option[runner.Runner]{
 		runner.WithAdaptiveKeepRecent(AdaptiveKeepTargetTokens, AdaptiveKeepMin, AdaptiveKeepMax),
 		runner.WithTurnQuality(DefaultTurnQuality()),
 		runner.WithFinalizeWarn(runner.FinalizeWarn{RemainingThreshold: FinalizeWarnThreshold}),
-		runner.WithIterationTimeout(IterationTimeout),
+		runner.WithIterationTimeout(iterTimeout),
 		runner.WithStreamIdleTimeout(streamIdle),
 		runner.WithMaxTokens(MaxCompletionTokens),
 		runner.WithThinkingBudget(ThinkingOnlyBudgetBytes),

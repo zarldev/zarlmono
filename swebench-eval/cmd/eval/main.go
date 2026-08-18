@@ -69,6 +69,7 @@ func run() error {
 	toolConcurrency := flag.Int("tool-concurrency", 0, "cap concurrent tool dispatch per iteration (0 = sequential)")
 	contextWindow := flag.Int("context-window", 0, "compactor context-window size in tokens (0 = 32768)")
 	zarlcodeStreamIdle := flag.Duration("zarlcode-stream-idle", 0, "zarlcode stream-idle watchdog: gap between chunks before the stall detector fires (0 = coderunner default 90s); raise for slow-prefill local models")
+	zarlcodeIterationTimeout := flag.Duration("zarlcode-iteration-timeout", 0, "zarlcode per-iteration wall-clock backstop (0 = coderunner default 5m); raise for slow-prefill local models")
 	zarlcodeVerifiedAttempts := flag.Int("zarlcode-verified-attempts", 0, "enable zarlcode harness re-drive with SWE-bench verifier; values >1 cap attempts, 0/1 = trust terminal reason")
 	zarlcodeVerifyWorkers := flag.Int("zarlcode-verify-workers", 1, "SWE-bench evaluator workers for per-attempt zarlcode verification")
 	zarlcodeVerifyWorkDir := flag.String("zarlcode-verify-workdir", "", "directory for per-attempt zarlcode verification logs (empty = tempdir per attempt)")
@@ -123,6 +124,7 @@ func run() error {
 		toolConcurrency:     *toolConcurrency,
 		contextWindow:       *contextWindow,
 		streamIdle:          *zarlcodeStreamIdle,
+		iterationTimeout:    *zarlcodeIterationTimeout,
 		provider:            *zarlcodeProvider,
 		model:               *zarlcodeModel,
 		codexEffort:         *zarlcodeCodexEffort,
@@ -247,6 +249,7 @@ type driverBuildOpts struct {
 	toolConcurrency     int
 	contextWindow       int
 	streamIdle          time.Duration
+	iterationTimeout    time.Duration
 	provider            string
 	model               string
 	codexEffort         string
@@ -290,6 +293,7 @@ func buildDrivers(o driverBuildOpts) []harness.Driver {
 					ToolConcurrency:     o.toolConcurrency,
 					ContextWindow:       o.contextWindow,
 					StreamIdle:          o.streamIdle,
+					IterationTimeout:    o.iterationTimeout,
 					Provider:            o.provider,
 					Model:               o.model,
 					CodexEffort:         o.codexEffort,

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.9.1] — 2026-08-18
+`zkit/v0.9.1`
+
+### Added
+
+- `coderunner.Tuning.IterationTimeout` allows consumers with slow-prefill local models to override the shared five-minute per-iteration wall-clock backstop while retaining the default when unset.
+
 ## [zkit/v0.9.0] — 2026-08-18
 `zkit/v0.9.0`
 
@@ -43,10 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `--zarlcode-stream-idle` to configure the maximum gap between provider stream chunks for slow-prefill local models.
+- Added `--zarlcode-iteration-timeout` to configure the per-iteration wall-clock backstop independently of the stream-idle watchdog.
 
 ### Changed
 
-- The in-process zarlcode driver passes the configured stream-idle duration through shared `coderunner.Tuning`, keeping eval stall detection aligned with interactive zarlcode behavior.
+- The in-process zarlcode driver passes configured stream-idle and iteration-timeout durations through shared `coderunner.Tuning`, keeping eval stall detection aligned with interactive zarlcode behavior.
 
 ## [zkit/v0.8.0] — 2026-07-31
 `zkit/v0.8.0`

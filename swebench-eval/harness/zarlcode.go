@@ -100,6 +100,9 @@ type ZarlcodeDriver struct {
 	// stall watchdog fires. Zero uses coderunner.StreamIdleTimeout (90s);
 	// raise it for local models with slow prefills (e.g. Qwen3.8 hybrid).
 	StreamIdle time.Duration
+	// IterationTimeout overrides the per-iteration wall-clock backstop
+	// (zero = coderunner default 5m). Raise it for slow-prefill local models.
+	IterationTimeout time.Duration
 	// LlamacppResetURL, when set, is POSTed before each task to flush
 	// the local llama-server's KV cache slot so tasks don't inherit each
 	// other's state. Canonical value:
@@ -348,11 +351,12 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 	defer func() { _ = truncator.Cleanup() }()
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{
-		Model:           d.Model,
-		MaxIterations:   d.MaxIter,
-		ToolConcurrency: d.ToolConcurrency,
-		ContextWindow:   ctxWindow,
-		StreamIdle:      d.StreamIdle,
+		Model:            d.Model,
+		MaxIterations:    d.MaxIter,
+		ToolConcurrency:  d.ToolConcurrency,
+		ContextWindow:    ctxWindow,
+		StreamIdle:       d.StreamIdle,
+		IterationTimeout: d.IterationTimeout,
 	})
 	// Iteration + stream-idle watchdogs now live in StandardOptions (shared
 	// with the TUI so the two can't drift); eval no longer sets its own.

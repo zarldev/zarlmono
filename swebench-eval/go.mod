@@ -34,6 +34,7 @@ require (
 	go.opentelemetry.io/otel v1.44.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
+	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/term v0.44.0 // indirect
@@ -72,8 +73,8 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
-	github.com/zarldev/zarlmono/zarlcode v0.1.2
-	github.com/zarldev/zarlmono/zkit v0.1.2
+	github.com/zarldev/zarlmono/zarlcode v0.8.0
+	github.com/zarldev/zarlmono/zkit v0.9.1
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
