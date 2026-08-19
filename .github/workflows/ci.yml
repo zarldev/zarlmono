@@ -139,7 +139,10 @@ jobs:
         working-directory: zarlai
         run: go test -count=1 -timeout=120s ./service/... ./tools/... ./taskrunner/... ./sensor/... ./subscribers/...
 
+      # TODO(go1.27): remove once golangci-lint ships Go 1.27 support; same
+      # fact-machinery crash as the module lint jobs above.
       - uses: golangci/golangci-lint-action@v9
+        continue-on-error: true
         with:
           version: latest
           working-directory: zarlai
