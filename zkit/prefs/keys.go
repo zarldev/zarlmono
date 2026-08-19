@@ -66,7 +66,7 @@ const (
 	// 0 keeps the built-in per-tool defaults; a positive value caps every capped
 	// exploration tool at that count to bound context growth.
 	KeyFanoutCap = "fanout_cap"
-	// KeySpawnFanoutCap caps how many spawn_agent calls a single task may issue
+	// KeySpawnFanoutCap caps how many agent_spawn calls a single task may issue
 	// before the fanout guardrail refuses further ones. Default 8; 0 removes the
 	// cap (lets a task fan out sub-agents unbounded).
 	KeySpawnFanoutCap = "spawn_fanout_cap"

@@ -127,7 +127,7 @@ func TestRender_CommonOperatingCoreAlwaysPresent(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"spawn_agent",                // delegation discipline
+			"agent_spawn",                // delegation discipline
 			"[compacted —",               // compaction-recovery marker
 			"spill path",                 // tool-result truncation behaviour
 			"through the tool interface", // tools come via the API, not enumerated in the prompt
@@ -138,6 +138,45 @@ func TestRender_CommonOperatingCoreAlwaysPresent(t *testing.T) {
 				t.Errorf("CanAuthorTool=%v render missing core content %q", authorTool, want)
 			}
 		}
+	}
+}
+
+func TestRender_CompactPromptRetainsInvariantsAndSizeGate(t *testing.T) {
+	t.Parallel()
+
+	data := prompts.Data{
+		WorkspaceRoot:     "/repo",
+		CanAuthorTool:     true,
+		Planning:          true,
+		ProgrammaticTools: true,
+	}
+	standard, err := prompts.Render("standard", prompts.System, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := prompts.Render("compact", prompts.SystemCompact, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"BUILD MODE",
+		"/repo",
+		"User updates override",
+		"Inspect relevant files",
+		"Preserve user work",
+		"narrowest relevant verification",
+		"program` owns read/search/catalogue",
+		"list/load tools",
+		"update_plan",
+		"sudo -A",
+		"plain text",
+	} {
+		if !strings.Contains(compact, want) {
+			t.Errorf("compact prompt missing invariant %q", want)
+		}
+	}
+	if got, limit := len(compact), len(standard)*65/100; got > limit {
+		t.Errorf("compact prompt bytes = %d, want <= %d (35%% reduction from %d)", got, limit, len(standard))
 	}
 }
 

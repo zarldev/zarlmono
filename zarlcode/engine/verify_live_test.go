@@ -49,7 +49,7 @@ func TestRunHeadlessVerifiedLoop_Live(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	live := engine.NewLiveRunner(prov, ws, nil, "local")
+	live := engine.NewLiveRunner(prov, ws, "local")
 	live.SetVerifyLoop("go test ./...", 3)
 	live.SetContextWindow(131072)
 

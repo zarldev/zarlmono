@@ -51,14 +51,16 @@ type Zarlcode struct {
 // zarlcode.Main and threaded through here so Create/Run never touch the flag
 // package — they read intent off the struct.
 type Launch struct {
-	EnvFile   string
-	AgentName string
-	Resume    bool
-	Headless  bool
-	Prompt    string // pre-resolved in Main from --prompt-file/--prompt-text
-	MaxIter   int
-	PprofAddr string
-	TraceFile string
+	EnvFile       string
+	AgentName     string
+	Resume        bool
+	Headless      bool
+	Prompt        string // pre-resolved in Main from --prompt-file/--prompt-text
+	MaxIter       int
+	PprofAddr     string
+	TraceFile     string
+	PromptProfile engine.PromptProfile
+	ReportFile    string
 }
 
 // Name identifies the program to the zapp harness (errors, signals).
@@ -217,6 +219,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	ctxWindow := settings.ContextWindow(ctx, spec)
 
 	m := New()
+	m.ctx = ctx
 	m.SetWorkspace(root, spec.Model)
 	m.SetProvider(spec.Name)
 	m.SetContextWindow(ctxWindow)
@@ -224,8 +227,17 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	m.SetProviderContext(fallback, spec)
 	m.appliedReasoning, m.appliedWindow = activeProviderPolicy(settings, spec.Name) // baseline for maybeRepoint
 
-	live := engine.NewLiveRunner(prov, ws, sink, spec.Model)
-	live.SetContext(ctx)
+	live := engine.NewLiveRunner(
+		prov,
+		ws,
+		spec.Model,
+		engine.WithPromptProfile(p.PromptProfile),
+		engine.WithLiveSink(sink),
+		engine.WithSettings(settings),
+		engine.WithProcessManager(pm),
+		engine.WithSandbox(sb),
+		engine.WithToolEnvironment(toolEnv),
+	)
 	_ = app.AddCloser("live", closerFunc(func() error {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -241,14 +253,10 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	mcpReg := dynamic.NewMCPRegistry(mcpHost, agentmcp.NotifierFor(live.QueueInjector()))
 	connectConfiguredMCPServers(ctx, settings, mcpReg)
 
-	live.SetProcessManager(pm)
-	live.SetSandbox(sb)
-	live.SetToolEnv(toolEnv)
-	live.SetMCP(mcpReg, mcpHost)
+	live.AttachMCP(mcpReg, mcpHost)
 	live.SetProviderSpec(prov, spec)
 	live.SetContextWindow(ctxWindow)
 	live.SetSearxngURL(settings.SearxngURL(ctx)) // enable web_search (SearXNG)
-	live.SetSettingsHandle(settings)             // resolve compaction engine live per turn
 	lim := settings.Limits(ctx)
 	live.SetLimits(lim.ReserveTokens, lim.MaxIterations, lim.SpawnMaxIterations, lim.SpawnMaxDepth)
 	live.SetVerifyLoop(settings.VerifyLoop(ctx)) // headless verified re-drive (verify_tests / verify_attempts)
@@ -279,7 +287,17 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 // then persists the resumable session.
 func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) int {
 	if p.Headless {
-		return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter)
+		var report *os.File
+		if p.ReportFile != "" {
+			f, err := os.Create(p.ReportFile)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "headless: report:", err)
+				return zapp.ExitFailure
+			}
+			defer f.Close()
+			report = f
+		}
+		return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter, report)
 	}
 	prog := tea.NewProgram(z.model, tea.WithContext(ctx))
 	if z.sink != nil {
@@ -391,7 +409,7 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 // but functional). All failures are non-fatal: launch must not be blocked.
 func resolveMCPAuthToken(ctx context.Context, settings *engine.Settings, srv db.MCPServerRow) string {
 	if settings.Svc != nil {
-		if k, ok, err := settings.Svc.GetKey(ctx, prefs.ScopeEffective, mcpAuthKeyProvider(srv.Name)); err == nil && ok && k != "" {
+		if k, err := settings.Svc.GetKey(ctx, prefs.ScopeEffective, mcpAuthKeyProvider(srv.Name)); err == nil && k != "" {
 			return k
 		}
 	}
@@ -446,10 +464,10 @@ func peekTheme(ctx context.Context, wsRoot string) theme.Theme {
 		return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))
 	}
 	defer store.Close()
-	if name, ok, _ := store.GetSetting(ctx, wsRoot, prefs.KeyTheme); ok && name != "" {
+	if name, err := store.GetSetting(ctx, wsRoot, prefs.KeyTheme); err == nil && name != "" {
 		return selectThemeByName(name)
 	}
-	if name, ok, _ := store.GetSetting(ctx, "", prefs.KeyTheme); ok && name != "" {
+	if name, err := store.GetSetting(ctx, "", prefs.KeyTheme); err == nil && name != "" {
 		return selectThemeByName(name)
 	}
 	return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))

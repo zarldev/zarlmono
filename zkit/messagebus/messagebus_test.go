@@ -3,6 +3,7 @@ package messagebus_test
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/messagebus"
@@ -46,14 +47,20 @@ func TestBusImplementations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bus := tt.busFunc()
-			defer bus.Close()
+			synctest.Test(t, func(t *testing.T) {
+				bus := tt.busFunc()
+				t.Cleanup(func() {
+					if err := bus.Close(); err != nil {
+						t.Errorf("Close: %v", err)
+					}
+				})
 
-			testBasicPubSub(t, bus)
-			testHeaders(t, bus)
-			testMultipleSubscribers(t, bus)
-			testQueueSubscriptions(t, bus)
-			testRequestReply(t, bus)
+				testBasicPubSub(t, bus)
+				testHeaders(t, bus)
+				testMultipleSubscribers(t, bus)
+				testQueueSubscriptions(t, bus)
+				testRequestReply(t, bus)
+			})
 		})
 	}
 }
@@ -225,15 +232,15 @@ func testQueueSubscriptions(t *testing.T, bus messagebus.Bus[TestEvent]) {
 		}
 	}
 
-	// Wait and count messages received by each handler
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the asynchronous handlers have drained their buffers.
+	synctest.Wait()
 
 	count1 := len(received1)
 	count2 := len(received2)
 	total := count1 + count2
 
-	// For memory bus, all messages go to all subscribers in queue group
-	// For NATS, it would be round-robin
+	// For memory bus, all messages go to all subscribers in queue group.
+	// For NATS, it would be round-robin.
 	if total < 4 {
 		t.Errorf("Expected at least 4 messages total, got %d (handler1: %d, handler2: %d)",
 			total, count1, count2)
@@ -366,56 +373,53 @@ func TestSubscriptionLifecycle(t *testing.T) {
 	}
 }
 
-// TestSyncHandler_ReentrantSubscribeDoesNotDeadlock guards the
-// MemoryBus sync-mode reentrancy fix. A synchronous handler that
-// itself calls Subscribe / Unsubscribe / Close must not deadlock —
-// earlier shape held the bus RLock through handler invocation so
-// any reentrant writer-lock acquisition would hang forever.
 func TestSyncHandler_ReentrantSubscribeDoesNotDeadlock(t *testing.T) {
-	t.Parallel()
-	bus := messagebus.NewMemoryBus[TestEvent](
-		messagebus.WithSynchronous[TestEvent](),
-	)
-	defer bus.Close()
-	ctx := t.Context()
-
-	gotNested := make(chan struct{}, 1)
-	primary := func(ctx context.Context, _ messagebus.Message[TestEvent]) error {
-		// Reentrant Subscribe — needs the writer lock. Earlier shape
-		// would deadlock here because Publish was holding the reader
-		// lock until handler returned.
-		_, err := bus.Subscribe(ctx, "test.nested", func(context.Context, messagebus.Message[TestEvent]) error {
-			gotNested <- struct{}{}
-			return nil
+	synctest.Test(t, func(t *testing.T) {
+		bus := messagebus.NewMemoryBus[TestEvent](
+			messagebus.WithSynchronous[TestEvent](),
+		)
+		t.Cleanup(func() {
+			if err := bus.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
 		})
-		return err
-	}
-	if _, err := bus.Subscribe(ctx, "test.primary", primary); err != nil {
-		t.Fatalf("Subscribe primary: %v", err)
-	}
+		ctx := t.Context()
 
-	done := make(chan error, 1)
-	go func() {
-		done <- bus.Publish(ctx, "test.primary", TestEvent{ID: 1})
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Publish: %v", err)
+		gotNested := make(chan struct{}, 1)
+		primary := func(ctx context.Context, _ messagebus.Message[TestEvent]) error {
+			_, err := bus.Subscribe(ctx, "test.nested", func(context.Context, messagebus.Message[TestEvent]) error {
+				gotNested <- struct{}{}
+				return nil
+			})
+			return err
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Publish deadlocked — reentrant Subscribe was unable to acquire writer lock")
-	}
+		if _, err := bus.Subscribe(ctx, "test.primary", primary); err != nil {
+			t.Fatalf("Subscribe primary: %v", err)
+		}
 
-	// Verify the nested subscription is wired and reachable.
-	if err := bus.Publish(ctx, "test.nested", TestEvent{ID: 2}); err != nil {
-		t.Fatalf("Publish nested: %v", err)
-	}
-	select {
-	case <-gotNested:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("nested handler never fired")
-	}
+		done := make(chan error, 1)
+		go func() {
+			done <- bus.Publish(ctx, "test.primary", TestEvent{ID: 1})
+		}()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Publish: %v", err)
+			}
+		default:
+			t.Fatal("Publish deadlocked — reentrant Subscribe was unable to acquire writer lock")
+		}
+
+		if err := bus.Publish(ctx, "test.nested", TestEvent{ID: 2}); err != nil {
+			t.Fatalf("Publish nested: %v", err)
+		}
+		select {
+		case <-gotNested:
+		default:
+			t.Fatal("nested handler never fired")
+		}
+	})
 }
 
 func TestBusClose(t *testing.T) {

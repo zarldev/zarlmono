@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -146,7 +147,7 @@ func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
 		code.ToolNameRead,
 		code.ToolNameWrite,
 		code.ToolNameBash,
-		"spawn_agent",
+		spawn.ToolNameAgentSpawn,
 	}}
 	plan := true
 	visible := NewModeFilteredSource(inner, func() bool { return plan })
@@ -155,7 +156,7 @@ func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
 	// not the prompt text — the prompt no longer enumerates a roster. Assert the
 	// filter on the curated source, and that the prompt carries no tool list.
 	planNames := toolNameSet(ToolInfoFromSource(t.Context(), visible))
-	if !planNames["read"] || !planNames["spawn_agent"] {
+	if !planNames[code.ToolNameRead] || !planNames[spawn.ToolNameAgentSpawn] {
 		t.Fatalf("plan mode dropped a read-only tool: %v", planNames)
 	}
 	if planNames["write"] || planNames["bash"] {
@@ -172,7 +173,7 @@ func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
 
 	plan = false
 	buildNames := toolNameSet(ToolInfoFromSource(t.Context(), visible))
-	for _, want := range []tools.ToolName{"read", "write", "bash", "spawn_agent"} {
+	for _, want := range []tools.ToolName{code.ToolNameRead, code.ToolNameWrite, code.ToolNameBash, spawn.ToolNameAgentSpawn} {
 		if !buildNames[want] {
 			t.Fatalf("build mode missing tool %q: %v", want, buildNames)
 		}

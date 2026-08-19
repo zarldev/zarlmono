@@ -235,27 +235,27 @@ func TestStore_SettingsWorkspaceFallback(t *testing.T) {
 		t.Fatalf("set global: %v", err)
 	}
 	// Workspace inherits global.
-	v, ok, err := s.GetSetting(ctx, "ws1", "theme")
-	if err != nil || !ok || v != "dark" {
-		t.Errorf("global fallback: v=%q ok=%v err=%v", v, ok, err)
+	v, err := s.GetSetting(ctx, "ws1", "theme")
+	if err != nil || v != "dark" {
+		t.Errorf("global fallback: v=%q err=%v", v, err)
 	}
 	// Override at workspace scope.
 	if err := s.SetSetting(ctx, "ws1", "theme", "light"); err != nil {
 		t.Fatalf("set local: %v", err)
 	}
-	v, ok, err = s.GetSetting(ctx, "ws1", "theme")
-	if err != nil || !ok || v != "light" {
-		t.Errorf("override: v=%q ok=%v err=%v", v, ok, err)
+	v, err = s.GetSetting(ctx, "ws1", "theme")
+	if err != nil || v != "light" {
+		t.Errorf("override: v=%q err=%v", v, err)
 	}
 	// Other workspace still sees global.
-	v, ok, err = s.GetSetting(ctx, "ws2", "theme")
-	if err != nil || !ok || v != "dark" {
-		t.Errorf("other ws still global: v=%q ok=%v err=%v", v, ok, err)
+	v, err = s.GetSetting(ctx, "ws2", "theme")
+	if err != nil || v != "dark" {
+		t.Errorf("other ws still global: v=%q err=%v", v, err)
 	}
 	// Absent key — neither error nor found.
-	_, ok, err = s.GetSetting(ctx, "ws1", "missing")
-	if err != nil || ok {
-		t.Errorf("missing: ok=%v err=%v", ok, err)
+	_, err = s.GetSetting(ctx, "ws1", "missing")
+	if !errors.Is(err, db.ErrNotFound) {
+		t.Errorf("missing: err=%v, want ErrNotFound", err)
 	}
 }
 
@@ -286,9 +286,9 @@ func TestStore_APIKeyRoundtripAndFallback(t *testing.T) {
 	if err := s.SetAPIKey(ctx, "", "anthropic", gct); err != nil {
 		t.Fatalf("set global: %v", err)
 	}
-	out, ok, err := s.GetAPIKey(ctx, "ws", "anthropic")
-	if err != nil || !ok {
-		t.Fatalf("get with fallback: ok=%v err=%v", ok, err)
+	out, err := s.GetAPIKey(ctx, "ws", "anthropic")
+	if err != nil {
+		t.Fatalf("get with fallback: err=%v", err)
 	}
 	if string(out.Ciphertext) != "CT-global" {
 		t.Errorf("fallback returned wrong ciphertext: %q", out.Ciphertext)
@@ -298,12 +298,23 @@ func TestStore_APIKeyRoundtripAndFallback(t *testing.T) {
 	if err := s.SetAPIKey(ctx, "ws", "anthropic", wct); err != nil {
 		t.Fatalf("set ws: %v", err)
 	}
-	out, ok, err = s.GetAPIKey(ctx, "ws", "anthropic")
-	if err != nil || !ok {
-		t.Fatalf("get ws: ok=%v err=%v", ok, err)
+	out, err = s.GetAPIKey(ctx, "ws", "anthropic")
+	if err != nil {
+		t.Fatalf("get ws: err=%v", err)
 	}
 	if string(out.Ciphertext) != "CT-ws" {
 		t.Errorf("workspace override missed: %q", out.Ciphertext)
+	}
+
+	// Returned mutable bytes are independent snapshots.
+	out.Ciphertext[0] = 'X'
+	out.Nonce[0] = 'X'
+	again, err := s.GetAPIKey(ctx, "ws", "anthropic")
+	if err != nil {
+		t.Fatalf("get ws snapshot: %v", err)
+	}
+	if string(again.Ciphertext) != "CT-ws" || string(again.Nonce) != "nonce-w" {
+		t.Fatalf("GetAPIKey leaked mutable aliases: ciphertext=%q nonce=%q", again.Ciphertext, again.Nonce)
 	}
 
 	// List unions both scopes.

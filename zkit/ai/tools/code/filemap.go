@@ -44,7 +44,8 @@ func NewFileMapTool(ws Workspace, opts ...ReadOption) *FileMapTool {
 // Definition advertises file_map as a read-only AST outline tool.
 func (t *FileMapTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameFileMap,
+		Name:            ToolNameFileMap,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Build a deterministic syntax-aware map of source files so the model can understand code structure without reading full bodies. " +
 			"Go files use go/parser+go/ast and include package, imports, top-level const/var/type declarations, funcs, methods, line ranges, and signatures. " +
 			"This is a read-only alternative to LSP symbols; it does not require a language server.",

@@ -41,24 +41,35 @@ type BinaryTool struct {
 	timeout    time.Duration
 }
 
-// NewBinaryTool builds a BinaryTool from a catalog entry. Use the
-// Registrar to instantiate from catalog data; this constructor is
-// exported for tests and for callers that have a spec in hand.
-func NewBinaryTool(spec tools.ToolSpec, binaryPath string) *BinaryTool {
-	return &BinaryTool{
+// BinaryToolOption configures a [BinaryTool].
+type BinaryToolOption func(*BinaryTool)
+
+// WithBinaryTimeout overrides the default per-call timeout. Non-positive
+// values leave the default unchanged.
+func WithBinaryTimeout(d time.Duration) BinaryToolOption {
+	return func(t *BinaryTool) {
+		if d > 0 {
+			t.timeout = d
+		}
+	}
+}
+
+// NewBinaryTool builds a BinaryTool from a catalog entry. Use the Registrar to
+// instantiate catalog data; callers with a spec in hand may configure optional
+// policy through opts.
+func NewBinaryTool(spec tools.ToolSpec, binaryPath string, opts ...BinaryToolOption) *BinaryTool {
+	t := &BinaryTool{
 		spec:       spec,
 		binaryPath: binaryPath,
 		timeout:    DefaultCallTimeout,
 	}
-}
-
-// WithTimeout overrides the default per-call timeout.
-func (t *BinaryTool) WithTimeout(d time.Duration) *BinaryTool {
-	if d > 0 {
-		t.timeout = d
+	for _, opt := range opts {
+		opt(t)
 	}
 	return t
 }
+
+var _ tools.Tool = (*BinaryTool)(nil)
 
 // Definition returns the tool's LLM-facing spec. The description
 // is suffixed with "(dynamic — registered at runtime, removable

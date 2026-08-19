@@ -55,6 +55,15 @@ func (g *groupItem) togglerAt(width, ln int) toggler {
 	return renderChildBlock(g.children, g.childWidth(width)).togglerForLine(ln, g.childWidth(width), g.children, g.bump)
 }
 
+func (g *groupItem) toggleLocals(width int) []int {
+	if !g.expanded {
+		return []int{0}
+	}
+	childWidth := g.childWidth(width)
+	children := renderChildBlock(g.children, childWidth)
+	return append([]int{0}, children.toggleLocals(childWidth, g.children)...)
+}
+
 func (g *groupItem) render(width int) []string {
 	toggle := palette.Subtle.On("[") + palette.Primary.On("+") + palette.Subtle.On("]")
 	if g.expanded {

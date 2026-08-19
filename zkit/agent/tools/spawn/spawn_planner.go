@@ -44,27 +44,34 @@ type LLMSpawnPlanner struct {
 	maxTokens int
 }
 
-// NewLLMSpawnPlanner builds a planner backed by the supplied
-// provider. As with LLMVerdictJudge, the provider's configured model
-// is used as-is — for routing decisions you typically want a small
-// fast model, so construct a dedicated provider with the small
-// model rather than sharing the driving agent's provider.
-func NewLLMSpawnPlanner(provider llm.Provider) *LLMSpawnPlanner {
-	return &LLMSpawnPlanner{
-		provider:  provider,
-		maxTokens: defaultPlannerMaxTokens,
+// LLMSpawnPlannerOption configures an [LLMSpawnPlanner].
+type LLMSpawnPlannerOption func(*LLMSpawnPlanner)
+
+// WithPlannerMaxTokens overrides the per-plan token cap. Non-positive values
+// leave the default unchanged.
+func WithPlannerMaxTokens(n int) LLMSpawnPlannerOption {
+	return func(p *LLMSpawnPlanner) {
+		if n > 0 {
+			p.maxTokens = n
+		}
 	}
 }
 
-// WithMaxTokens overrides the per-plan token cap. The default
-// (defaultPlannerMaxTokens) is comfortable for one sentence of
-// rationale plus the JSON envelope.
-func (p *LLMSpawnPlanner) WithMaxTokens(n int) *LLMSpawnPlanner {
-	if n > 0 {
-		p.maxTokens = n
+// NewLLMSpawnPlanner builds a planner backed by the supplied provider.
+// The provider's configured model is used as-is; pass a dedicated provider
+// when routing should use a smaller model.
+func NewLLMSpawnPlanner(provider llm.Provider, opts ...LLMSpawnPlannerOption) *LLMSpawnPlanner {
+	p := &LLMSpawnPlanner{
+		provider:  provider,
+		maxTokens: defaultPlannerMaxTokens,
+	}
+	for _, opt := range opts {
+		opt(p)
 	}
 	return p
 }
+
+var _ SpawnPlanner = (*LLMSpawnPlanner)(nil)
 
 // defaultPlannerMaxTokens caps the JSON response. Same shape as the
 // verdict judge — rationale (≈1 short sentence) + agent (one enum

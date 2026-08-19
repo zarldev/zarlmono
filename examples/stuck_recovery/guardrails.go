@@ -11,17 +11,15 @@ import (
 // BuildGuardrails creates the guardrail chain with DecomposeGuardrail.
 // This demonstrates the graduated degradation pattern:
 //   - 1-2 failures: pass through (silent)
-//   - 3 failures: advisory (suggests spawn_agent)
+//   - 3 failures: advisory (suggests agent_spawn)
 //   - 4 failures: fatal (blocks execution)
 func BuildGuardrails(fs *FileSystem, client runner.Client) []guardrails.Guardrail {
 	_, _ = fs, client // reserved for future use
 	// Decompose guardrail with custom max decompositions
 	// maxDecompositions=3 means after 3 advisories, we stop advising and escalate
-	decompose := guardrails.NewDecomposeGuardrail(3)
-
-	// Wire up our custom verdict judge
-	decompose = decompose.WithJudge(
-		&searchVerdictJudge{},
+	decompose := guardrails.NewDecomposeGuardrail(
+		3,
+		guardrails.WithDecomposeJudge(&searchVerdictJudge{}),
 	)
 
 	// Also add fanout guardrail to limit total tool calls

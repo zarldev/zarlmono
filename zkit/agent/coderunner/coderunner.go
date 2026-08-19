@@ -158,34 +158,26 @@ func WithUnrestrictedReads() ToolsOption {
 	return func(c *toolsConfig) { c.unrestrictedReads = true }
 }
 
-// RegisterSpawnTool registers the spawn_agent tool on reg, wired to parent
-// (children recurse through the same loop) with a recursion ceiling and an
-// optional sub-agent iteration cap.
-//
-// Call it AFTER building the runner. This breaks the parent↔source cycle —
-// the tool needs the runner, but the runner is built from the source the
-// tool lives in — because a Registry enumerates its tools lazily
-// (Registry.Tools is evaluated per Run), so a spawn registered once the
-// runner exists is visible to the next turn's schema and dispatch.
-//
-// maxDepth: a positive value caps recursion at that depth; a negative value
-// keeps spawn's built-in default (depth 1); 0 disables spawning, in which
-// case the tool is NOT registered at all (no point surfacing a tool that
-// always refuses).
-//
-// spawnMaxIter: a positive value caps child iterations; 0 (or negative)
-// leaves the spawn tool's built-in default (inherit from the runner).
-// Named sub-agents and the grammar planner stay a caller concern — this is
-// the minimal shared wiring every consumer can share.
-func RegisterSpawnTool(reg *tools.Registry, parent *runner.Runner, maxDepth, spawnMaxIter int) {
-	if maxDepth == 0 {
-		return // spawning explicitly disabled — don't surface the tool
+// RegisterSpawnTools registers the asynchronous agent task family. The caller
+// owns group and must close it after the root run and before runner dependencies.
+func RegisterSpawnTools(reg *tools.Registry, parent *runner.Runner, group *spawn.Group, maxDepth, spawnMaxIter int) {
+	if maxDepth == 0 || group == nil {
+		return
 	}
-	_ = reg.Register(spawn.New(parent,
+	base := spawn.New(parent,
 		spawn.WithMaxDepth(maxDepth),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
 		spawn.WithModeToolPolicy(SpawnModePolicy()),
-	))
+	)
+	for _, tool := range []tools.Tool{
+		spawn.NewAsync(base, group),
+		spawn.NewAwait(group),
+		spawn.NewStatus(group),
+		spawn.NewStop(group),
+		spawn.NewList(group),
+	} {
+		_ = reg.Register(tool)
+	}
 }
 
 // SpawnModePolicy is the work-mode tool policy enforced by the spawn tool
@@ -491,12 +483,11 @@ func StandardFanoutLimits() map[tools.ToolName]int {
 		code.ToolNameLs:          20,
 		code.ToolNameGrep:        30,
 		code.ToolNameGlob:        20,
-		spawn.ToolNameSpawnAgent: StandardSpawnFanoutCap,
+		spawn.ToolNameAgentSpawn: StandardSpawnFanoutCap,
 	}
 }
 
-// StandardSpawnFanoutCap bounds how many spawn_agent calls a single task may
-// issue before the fanout guardrail starts refusing them. Without it a model
+// StandardSpawnFanoutCap bounds how many agent_spawn calls a single task may
 // can fan out sub-agents unbounded ("researcher + reviewer + coder" is the
 // intended handful, per the tool's own description). Zero in the fanout map
 // would mean unbounded, so this stays positive; consumers that want it off

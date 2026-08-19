@@ -146,8 +146,7 @@ type Runner struct {
 // WithTools is a valid tool-less agent rather than a deferred nil-panic
 // in the loop. Supply the live tool list with WithTools.
 //
-// A Runner defaults to [StderrSink] (tool-progress lines on stderr); pass
-// [WithSink](nil) to silence it or [WithSink](mySink) for a custom observer.
+// A Runner defaults to [NopSink]; install explicit observation with [WithSink].
 func New(
 	client Client,
 	opts ...options.Option[Runner],
@@ -156,7 +155,7 @@ func New(
 		client:        client,
 		tools:         tools.NewRegistry(), // empty by default; install via WithTools
 		template:      templates.Qwen3{},   // sane default — caller overrides via WithTemplate
-		sink:          StderrSink,          // tool-progress to stderr by default; nil-out via WithSink(nil)
+		sink:          NopSink{},
 		truncator:     DefaultTruncator{},
 		maxIterations: defaultMaxIterations,
 		keep:          keepPolicy{static: 4}, // conservative default; override via WithCompactKeepRecent

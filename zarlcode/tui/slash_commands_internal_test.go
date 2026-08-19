@@ -52,7 +52,7 @@ func TestSubmitSlashClearClearsTimelineAndContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := engine.NewLiveRunner(nil, ws, nil, "")
+	live := engine.NewLiveRunner(nil, ws, "")
 	live.RestoreHistory([]llm.Message{{Role: "user", Content: "remember this"}})
 	m.SetLiveRunner(live)
 	m.timeline.addUser("remember this")

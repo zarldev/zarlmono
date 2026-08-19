@@ -9,6 +9,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -59,6 +60,7 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	ins.SpawnDepth = l.target.SpawnDepth
 	ins.SpawnMaxIter = l.target.SpawnMaxIter
 	ins.Model = l.target.Model
+	profile := l.promptProfile
 	pm := l.pm
 	mcp := l.mcp
 	l.mu.Unlock()
@@ -76,29 +78,30 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 		ins.Errors = append(ins.Errors, "instructions: "+err.Error())
 	}
 
-	ins.Guardrails = l.guardrailDeps()
+	ins.Guardrails = l.guardrailDeps(ctx)
 	ins.MCPActive = mcp != nil
 	ins.Skills = l.catalogSnapshotSkills()
 	ins.Agents = l.catalogSnapshotAgents()
 	ins.Hooks = l.catalogSnapshotHooks()
 
-	src, reg, err := l.source(ins.SearxngURL)
+	src, reg, err := l.source(ctx, ins.SearxngURL)
 	if err != nil {
 		ins.Errors = append(ins.Errors, "source: "+err.Error())
 		return ins
 	}
 
-	// buildTurn late-registers spawn_agent after runner.New because the tool
+	// buildTurn late-registers agent_spawn after runner.New because the tool
 	// needs a parent runner. Mirror that with an inert client so the roster and
 	// prompt match the next real turn without starting one.
 	visible := NewModeFilteredSource(src, l.isPlan)
-	dummy := runner.New(inspectorClient{}, runner.WithTools(visible), runner.WithPrompt(runner.StaticPrompt("")), runner.WithSink(nil))
-	l.registerSpawnTool(reg, dummy, ins.SpawnDepth, ins.SpawnMaxIter)
+	dummy := runner.New(inspectorClient{}, runner.WithTools(visible), runner.WithPrompt(runner.StaticPrompt("")), runner.WithSink(runner.NopSink{}))
+	group := spawn.NewGroup()
+	l.registerSpawnTools(ctx, reg, dummy, group, nil, ins.SpawnDepth, ins.SpawnMaxIter)
 
 	for t := range visible.Tools(ctx) {
 		ins.Tools = append(ins.Tools, t.Definition())
 	}
-	selection := selectLivePrompt(ins.PlanMode)
+	selection := selectLivePrompt(ins.PlanMode, profile)
 	ins.PromptSource = selection.BodySource
 	ins.PromptPreferencesSource = selection.PreferencesSource
 	ins.PromptResolutionMode = selection.ResolutionMode

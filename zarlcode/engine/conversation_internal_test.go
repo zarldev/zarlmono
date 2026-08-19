@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -89,8 +89,8 @@ func TestConversation_CompactNowFailureLeavesHistoryUnchanged(t *testing.T) {
 		{Role: llm.RoleUser, Content: "third"},
 	}
 	c := conversation{history: append([]llm.Message(nil), history...)}
-	_, err := c.compactNow(t.Context(), compact.Func(func(context.Context, []llm.Message, int) (compact.Result, error) {
-		return compact.Result{}, errors.New("compact failed")
+	_, err := c.compactNow(t.Context(), agentcompact.Func(func(context.Context, []llm.Message, int) (agentcompact.Result, error) {
+		return agentcompact.Result{}, errors.New("compact failed")
 	}), nil)
 	if err == nil {
 		t.Fatal("expected compaction error")

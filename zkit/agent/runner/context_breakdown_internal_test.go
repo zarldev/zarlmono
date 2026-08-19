@@ -11,10 +11,10 @@ func TestComputeContextBreakdown(t *testing.T) {
 		{Role: "system", Content: "sys-prompt"},        // 10
 		{Role: "user", Content: "do the thing please"}, // 19
 		{Role: "assistant", Content: "ok", ToolCalls: []llm.ToolCall{
-			{ID: "c1", Function: llm.ToolCallFunction{Name: "load_skill"}},
-			{ID: "c2", Function: llm.ToolCallFunction{Name: "spawn_agent"}},
+			{ID: "c1", Function: llm.ToolCallFunction{Name: "skill_load"}},
+			{ID: "c2", Function: llm.ToolCallFunction{Name: "agent_await"}},
 			{ID: "c3", Function: llm.ToolCallFunction{Name: "bash"}},
-			{ID: "c4", Function: llm.ToolCallFunction{Name: "load_instruction"}},
+			{ID: "c4", Function: llm.ToolCallFunction{Name: "instruction_load"}},
 		}},
 		{Role: "tool", ToolCallID: "c1", Content: "skill body content"}, // skill
 		{Role: "tool", ToolCallID: "c2", Content: "agent summary"},      // agent
@@ -48,7 +48,7 @@ func TestComputeContextBreakdown(t *testing.T) {
 		t.Errorf("other tool bytes = %d, want %d", other, want)
 	}
 	// Assistant bytes include the tool-call function names + the content.
-	wantAsst := len("ok") + len("load_skill") + len("spawn_agent") + len("bash") + len("load_instruction")
+	wantAsst := len("ok") + len("skill_load") + len("agent_await") + len("bash") + len("instruction_load")
 	if b.AssistantBytes != wantAsst {
 		t.Errorf("assistant bytes = %d, want %d", b.AssistantBytes, wantAsst)
 	}

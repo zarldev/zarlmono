@@ -65,7 +65,7 @@ func TestRegisterSpawnToolHonorsDepth(t *testing.T) {
 	tests := []struct {
 		name     string
 		maxDepth int
-		want     bool // is spawn_agent registered?
+		want     bool // is agent_spawn registered?
 	}{
 		// 0 is the load-bearing case the settings pane relies on: a
 		// spawn-depth of zero must surface NO tool, not a tool that
@@ -79,16 +79,17 @@ func TestRegisterSpawnToolHonorsDepth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := tools.NewRegistry()
-			coderunner.RegisterSpawnTool(reg, parent, tt.maxDepth, 0)
+			group := spawn.NewGroup()
+			coderunner.RegisterSpawnTools(reg, parent, group, tt.maxDepth, 0)
 
 			got := false
 			for tool := range reg.Tools(t.Context()) {
-				if tool.Definition().Name == spawn.ToolNameSpawnAgent {
+				if tool.Definition().Name == spawn.ToolNameAgentSpawn {
 					got = true
 				}
 			}
 			if got != tt.want {
-				t.Errorf("spawn_agent registered = %v, want %v (maxDepth=%d)", got, tt.want, tt.maxDepth)
+				t.Errorf("agent_spawn registered = %v, want %v (maxDepth=%d)", got, tt.want, tt.maxDepth)
 			}
 		})
 	}

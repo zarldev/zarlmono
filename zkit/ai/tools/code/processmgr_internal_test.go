@@ -16,11 +16,13 @@ func (f fakeProcessWorkspace) Root() string { return f.root }
 func newTestProcessManager(t *testing.T) *ProcessManager {
 	t.Helper()
 	dir := t.TempDir()
-	return NewProcessManager(fakeProcessWorkspace{root: dir},
+	m := NewProcessManager(fakeProcessWorkspace{root: dir},
 		WithReapAfter(500*time.Millisecond),
 		WithMaxAliveProcesses(4),
 		WithProcessOutputBuffer(64),
 	)
+	t.Cleanup(func() { m.Close(t.Context()) })
+	return m
 }
 
 func TestProcessManager_StartShortLivedThenReadOutput(t *testing.T) {
@@ -57,21 +59,18 @@ func TestProcessManager_StartShortLivedThenReadOutput(t *testing.T) {
 func TestProcessManager_IncrementalRead(t *testing.T) {
 	t.Parallel()
 	m := newTestProcessManager(t)
-	id, err := m.StartProcess(`for i in 1 2 3 4; do echo line$i; sleep 0.05; done`)
+	id, err := m.StartProcess(`echo line1; echo line2; echo line3; echo line4`)
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
 	defer func() { _, _ = m.Kill(id, syscall.SIGTERM) }()
 
-	// Poll until we see at least 2 lines.
+	// Wait for complete output, then take a cursor for the incremental read.
 	var snap OutputSnapshot
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		snap, _ = m.Output(id, 0, 0, 0)
-		if len(snap.Stdout) >= 2 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	waitForExit(t, m, id)
+	snap, err = m.Output(id, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Output: %v", err)
 	}
 	if len(snap.Stdout) < 2 {
 		t.Fatalf("never saw 2+ lines, got %v", snap.Stdout)
@@ -79,7 +78,6 @@ func TestProcessManager_IncrementalRead(t *testing.T) {
 	cursor := snap.StdoutCursor
 
 	// Second poll from cursor should not re-deliver earlier lines.
-	waitForExit(t, m, id)
 	snap2, _ := m.Output(id, cursor, 0, 0)
 	for _, l := range snap2.Stdout {
 		if l == "line1" || l == "line2" {
@@ -95,7 +93,6 @@ func TestProcessManager_KillRunningProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond) // let it actually start
 
 	code, err := m.Kill(id, syscall.SIGTERM)
 	if err != nil {
@@ -178,7 +175,6 @@ func TestProcessManager_KillAllOnShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	m.KillAll(ctx)
@@ -190,14 +186,8 @@ func TestProcessManager_KillAllOnShutdown(t *testing.T) {
 
 func TestProcessManager_OutputDroppedCounter(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	// Generous reapAfter — the sweep runs every 10s, so any value
-	// short of that risks the reaper evicting the process before
-	// the test reads its output. 30s leaves headroom under load.
-	m := NewProcessManager(fakeProcessWorkspace{root: dir},
-		WithProcessOutputBuffer(3),
-		WithReapAfter(30*time.Second),
-	)
+	m := newTestProcessManager(t)
+	m.maxBuffer = 3
 	id, err := m.StartProcess(`for i in 1 2 3 4 5; do echo $i; done`)
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
@@ -228,22 +218,12 @@ func TestProcessManager_NotFound(t *testing.T) {
 	}
 }
 
-// waitForExit polls Info until the process exits or the deadline
-// fires. Test helper — fails the test on timeout.
+// waitForExit waits until the process exits and its output pipes drain.
 func waitForExit(t *testing.T, m *ProcessManager, id ProcessID) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		info, err := m.Info(id)
-		if err != nil {
-			t.Fatalf("Info: %v", err)
-		}
-		if !info.Running {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	if err := m.Wait(id); err != nil {
+		t.Fatalf("Wait: %v", err)
 	}
-	t.Fatalf("process %s did not exit within 3s", id)
 }
 
 func TestMain(m *testing.M) {

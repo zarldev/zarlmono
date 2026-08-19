@@ -52,39 +52,13 @@ func NewService(store *db.Store, v *vault.Vault, wsRoot string) *Service {
 	return &Service{store: store, vault: v, wsRoot: wsRoot}
 }
 
-// Scope identifies which row in the (workspace, key|provider) tuple a
-// caller wants to touch. Avoids the empty-string-as-sentinel
-// convention the underlying store still uses.
-type Scope int
-
-const (
-	// ScopeWorkspace targets the current workspace's row. Writes go
-	// here when the user types a value into the in-TUI settings pane
-	// — the per-project pin path.
-	ScopeWorkspace Scope = iota
-	// ScopeGlobal targets the workspace="" fallback row. Writes go
-	// here from the CLI `zarlcode keys set` subcommand and from the
-	// intro wizard's first-time setup, where "this workspace" doesn't
-	// yet exist or doesn't matter.
-	ScopeGlobal
-	// ScopeEffective is a read-only scope: workspace then global,
-	// returning whichever has a value. Writers may not use it.
-	ScopeEffective
+// Stable scope names retained for callers; generated values own validity,
+// parsing, serialization, and exhaustive iteration.
+var (
+	ScopeWorkspace = Scopes.WORKSPACE
+	ScopeGlobal    = Scopes.GLOBAL
+	ScopeEffective = Scopes.EFFECTIVE
 )
-
-// String renders the scope for source labels in the settings pane
-// and CLI output. Lowercase to match the user-visible language.
-func (s Scope) String() string {
-	switch s {
-	case ScopeWorkspace:
-		return "workspace"
-	case ScopeGlobal:
-		return "global"
-	case ScopeEffective:
-		return "effective"
-	}
-	return "unknown"
-}
 
 // ErrNoWorkspace is returned when a workspace-scope operation runs in
 // a context that has no workspace. Today only the CLI subcommand path
@@ -106,6 +80,9 @@ var ErrNoVault = errors.New("settings: vault not initialised")
 // but no vault is currently unlocked. Plaintext rows remain readable without a
 // vault; callers see this only for passphrase-protected material.
 var ErrCredentialsLocked = errors.New("settings: encrypted credentials are locked")
+
+// ErrNotFound is returned when no preference exists at the requested scope.
+var ErrNotFound = errors.New("settings: not found")
 
 const (
 	// CredentialProtectionOff stores credential rows as plaintext in state.db.
@@ -147,9 +124,11 @@ func (s *Service) CredentialProtection(ctx context.Context) (string, error) {
 	if s == nil || s.store == nil {
 		return CredentialProtectionOff, nil
 	}
-	if sv, ok, err := s.GetSetting(ctx, ScopeEffective, KeyCredentialProtection); err != nil {
+	sv, err := s.GetSetting(ctx, ScopeEffective, KeyCredentialProtection)
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return "", err
-	} else if ok {
+	}
+	if err == nil {
 		switch sv.Value {
 		case CredentialProtectionPassphrase:
 			return CredentialProtectionPassphrase, nil
@@ -194,42 +173,40 @@ func (s *Service) HasVaultBackedKeys(ctx context.Context) (bool, error) {
 // protection toggles after opening/creating the vault outside NewService.
 func (s *Service) SetVault(v *vault.Vault) { s.vault = v }
 
-// GetSetting reads (scope, key) and returns the value + the scope it
-// came from. For ScopeEffective the source is the actual scope the
-// resolved value lives in. ok=false means no row exists at the
-// requested scope.
-func (s *Service) GetSetting(ctx context.Context, sc Scope, key string) (SettingValue, bool, error) {
+// GetSetting reads a setting and reports its resolved scope.
+func (s *Service) GetSetting(ctx context.Context, sc Scope, key string) (SettingValue, error) {
+	read := func(workspace string, source Scope) (SettingValue, error) {
+		v, err := s.store.GetSettingExact(ctx, workspace, key)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return SettingValue{}, ErrNotFound
+			}
+			return SettingValue{}, err
+		}
+		return SettingValue{Value: v, Source: source}, nil
+	}
 	switch sc {
 	case ScopeWorkspace:
 		if s.wsRoot == "" {
-			return SettingValue{}, false, ErrNoWorkspace
+			return SettingValue{}, ErrNoWorkspace
 		}
-		v, ok, err := s.store.GetSettingExact(ctx, s.wsRoot, key)
-		if err != nil || !ok {
-			return SettingValue{}, ok, err
-		}
-		return SettingValue{Value: v, Source: ScopeWorkspace}, true, nil
+		return read(s.wsRoot, ScopeWorkspace)
 	case ScopeGlobal:
-		v, ok, err := s.store.GetSettingExact(ctx, "", key)
-		if err != nil || !ok {
-			return SettingValue{}, ok, err
-		}
-		return SettingValue{Value: v, Source: ScopeGlobal}, true, nil
+		return read("", ScopeGlobal)
 	case ScopeEffective:
 		if s.wsRoot != "" {
-			if v, ok, err := s.store.GetSettingExact(ctx, s.wsRoot, key); err != nil {
-				return SettingValue{}, false, err
-			} else if ok && v != "" {
-				return SettingValue{Value: v, Source: ScopeWorkspace}, true, nil
+			v, err := read(s.wsRoot, ScopeWorkspace)
+			if err == nil && v.Value != "" {
+				return v, nil
+			}
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return SettingValue{}, err
 			}
 		}
-		v, ok, err := s.store.GetSettingExact(ctx, "", key)
-		if err != nil || !ok {
-			return SettingValue{}, ok, err
-		}
-		return SettingValue{Value: v, Source: ScopeGlobal}, true, nil
+		return read("", ScopeGlobal)
+	default:
+		return SettingValue{}, fmt.Errorf("settings: unknown scope %d", sc)
 	}
-	return SettingValue{}, false, fmt.Errorf("settings: unknown scope %d", sc)
 }
 
 // SetSetting writes a setting at the explicit scope. Empty values are
@@ -285,12 +262,15 @@ func (s *Service) PromoteSetting(ctx context.Context, key string) error {
 	// One transaction so a crash between the global write and the workspace
 	// delete can't leave the value shadowed in BOTH scopes (it's a MOVE).
 	return s.store.WithTx(ctx, func(tx *db.Store) error {
-		v, ok, err := tx.GetSettingExact(ctx, s.wsRoot, key)
+		v, err := tx.GetSettingExact(ctx, s.wsRoot, key)
 		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return fmt.Errorf("promote setting %q: no workspace row to promote: %w", key, ErrNotFound)
+			}
 			return fmt.Errorf("promote setting %q: read workspace: %w", key, err)
 		}
-		if !ok || v == "" {
-			return fmt.Errorf("promote setting %q: no workspace row to promote", key)
+		if v == "" {
+			return fmt.Errorf("promote setting %q: no workspace row to promote: %w", key, ErrNotFound)
 		}
 		if err := tx.SetSetting(ctx, "", key, v); err != nil {
 			return fmt.Errorf("promote setting %q: write global: %w", key, err)
@@ -302,78 +282,69 @@ func (s *Service) PromoteSetting(ctx context.Context, key string) error {
 	})
 }
 
-// GetKey reads an api-key at the explicit scope. Plaintext is
-// decrypted through the vault before return. ok=false means no row
-// exists at the requested scope.
-//
-// Workspace/global lookups go through store.GetAPIKeyExact so a
-// global fallback can't masquerade as a workspace value — same
-// reason GetSetting uses GetSettingExact.
-func (s *Service) GetKey(ctx context.Context, sc Scope, provider string) (string, bool, error) {
+// GetKey reads an API key at the requested scope.
+func (s *Service) GetKey(ctx context.Context, sc Scope, provider string) (string, error) {
 	switch sc {
 	case ScopeWorkspace:
 		if s.wsRoot == "" {
-			return "", false, ErrNoWorkspace
+			return "", ErrNoWorkspace
 		}
 		return s.exactKey(ctx, s.wsRoot, provider)
 	case ScopeGlobal:
 		return s.exactKey(ctx, "", provider)
 	case ScopeEffective:
 		if s.wsRoot != "" {
-			if k, ok, err := s.exactKey(ctx, s.wsRoot, provider); err != nil {
-				return "", false, err
-			} else if ok && k != "" {
-				return k, true, nil
+			k, err := s.exactKey(ctx, s.wsRoot, provider)
+			if err == nil && k != "" {
+				return k, nil
+			}
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return "", err
 			}
 		}
 		return s.exactKey(ctx, "", provider)
+	default:
+		return "", fmt.Errorf("settings: unknown scope %d", sc)
 	}
-	return "", false, fmt.Errorf("settings: unknown scope %d", sc)
 }
 
-// GetKeyEffective is like [Service.GetKey] with
-// [ScopeEffective] but also returns the scope the value resolved
-// from. The OAuth token-refresh path uses the source scope to write
-// the refreshed credential back to the same row it loaded from —
-// preserving the invariant that refresh-from-global stays global
-// rather than silently creating a workspace pin.
-//
-// ok=false means neither workspace nor global has a row; in that
-// case Source is the zero value and must not be relied on.
-func (s *Service) GetKeyEffective(ctx context.Context, provider string) (KeyValue, bool, error) {
+// GetKeyEffective reads an API key and reports the scope it resolved from.
+func (s *Service) GetKeyEffective(ctx context.Context, provider string) (KeyValue, error) {
 	if s.wsRoot != "" {
-		if k, ok, err := s.exactKey(ctx, s.wsRoot, provider); err != nil {
-			return KeyValue{}, false, err
-		} else if ok && k != "" {
-			return KeyValue{Value: k, Source: ScopeWorkspace}, true, nil
+		k, err := s.exactKey(ctx, s.wsRoot, provider)
+		if err == nil && k != "" {
+			return KeyValue{Value: k, Source: ScopeWorkspace}, nil
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return KeyValue{}, err
 		}
 	}
-	k, ok, err := s.exactKey(ctx, "", provider)
-	if err != nil || !ok {
-		return KeyValue{}, ok, err
+	k, err := s.exactKey(ctx, "", provider)
+	if err != nil {
+		return KeyValue{}, err
 	}
-	return KeyValue{Value: k, Source: ScopeGlobal}, true, nil
+	return KeyValue{Value: k, Source: ScopeGlobal}, nil
 }
 
-// exactKey reads (workspace, provider) without the store's implicit
-// global fallback, then decrypts. Used by every GetKey branch so the
-// returned (value, ok) pair reflects the exact requested scope.
-func (s *Service) exactKey(ctx context.Context, workspace, provider string) (string, bool, error) {
-	ct, ok, err := s.store.GetAPIKeyExact(ctx, workspace, provider)
-	if err != nil || !ok {
-		return "", ok, err
+func (s *Service) exactKey(ctx context.Context, workspace, provider string) (string, error) {
+	ct, err := s.store.GetAPIKeyExact(ctx, workspace, provider)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return "", ErrNotFound
+		}
+		return "", err
 	}
 	if ct.Storage == db.APIKeyStoragePlaintext {
-		return string(ct.Ciphertext), true, nil
+		return string(ct.Ciphertext), nil
 	}
 	if s.vault == nil {
-		return "", false, ErrCredentialsLocked
+		return "", ErrCredentialsLocked
 	}
 	plain, err := s.vault.Decrypt(ct.Ciphertext, ct.Nonce)
 	if err != nil {
-		return "", false, fmt.Errorf("decrypt api key for %q: %w", provider, err)
+		return "", fmt.Errorf("decrypt api key for %q: %w", provider, err)
 	}
-	return plain, true, nil
+	return plain, nil
 }
 
 // SetKey writes a plaintext api-key at the explicit scope. The vault
@@ -653,12 +624,12 @@ func (s *Service) PromoteKey(ctx context.Context, provider string) error {
 	// MOVE, never a half-applied copy). The decrypt/re-encrypt runs inside it
 	// too — cheap, and keeps the whole promote on one consistent view.
 	return s.store.WithTx(ctx, func(tx *db.Store) error {
-		ct, ok, err := tx.GetAPIKeyExact(ctx, s.wsRoot, provider)
+		ct, err := tx.GetAPIKeyExact(ctx, s.wsRoot, provider)
 		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return fmt.Errorf("promote key %q: no workspace row to promote: %w", provider, ErrNotFound)
+			}
 			return fmt.Errorf("promote key %q: read workspace: %w", provider, err)
-		}
-		if !ok {
-			return fmt.Errorf("promote key %q: no workspace row to promote", provider)
 		}
 		if ct.Storage == db.APIKeyStorageVault && s.vault == nil {
 			return ErrCredentialsLocked

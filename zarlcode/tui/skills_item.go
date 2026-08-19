@@ -7,7 +7,7 @@ import (
 
 // skillsItem shows which skills were loaded during the assistant turn.
 // It is always created at turn start but renders as zero lines until at
-// least one skill is loaded via load_skill. When collapsed it shows a
+// least one skill is loaded via skill_load. When collapsed it shows a
 // one-line summary; expanded it lists each skill.
 //
 // Positioned between the assistant headline and thinking block, so the

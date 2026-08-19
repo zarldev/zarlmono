@@ -52,6 +52,7 @@ type UI struct {
 	// runFn launches a live run for a submitted prompt; nil means the
 	// composer just echoes prompts locally (no runner wired).
 	runFn              func(prompt string) tea.Cmd
+	ctx                context.Context
 	pendingAttachments []pendingAttachment
 
 	// settings is the persistence handle (prefs + provider registry) the
@@ -169,8 +170,8 @@ func (m *UI) SetStartupFailure(wsRoot, title, err string) {
 }
 
 func (m *UI) appContext() context.Context {
-	if m != nil && m.live != nil {
-		return m.live.ParentContext()
+	if m != nil && m.ctx != nil {
+		return m.ctx
 	}
 	return context.Background()
 }
@@ -180,7 +181,7 @@ func (m *UI) appContext() context.Context {
 // mid-session (see maybeRepoint).
 func (m *UI) SetLiveRunner(l *engine.LiveRunner) {
 	m.live = l
-	m.runFn = func(prompt string) tea.Cmd { return RunFn(l, prompt) }
+	m.runFn = func(prompt string) tea.Cmd { return RunFn(m.appContext(), l, prompt) }
 }
 
 // SetProviderContext records the env-derived fallback spec and the currently
@@ -311,6 +312,7 @@ func (m *UI) SetPressureConfig(window, reserve int) {
 func New() *UI {
 	s := NewSession("", "", "")
 	m := &UI{
+		ctx:        context.Background(),
 		timeline:   newTimeline(),
 		session:    s,
 		headerPane: newHeaderPane(s),

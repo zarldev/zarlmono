@@ -64,7 +64,8 @@ func NewReadFileHLTool(ws Workspace, opts ...ReadOption) *ReadFileHLTool {
 // Definition advertises read with path, offset, limit, and hash_len.
 func (t *ReadFileHLTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameRead,
+		Name:            ToolNameRead,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Read a text file with stable line anchors for anchored edits. " +
 			"Each row is LINE:HASH|text, where HASH is a 3/4-character base64 SHA-256 prefix of the displayed line content.",
 		Parameters: tools.SchemaFor[ReadFileHLArgs](),
@@ -128,17 +129,17 @@ type EditFileHLTool struct{ ws Workspace }
 type EditFileHLArgs struct {
 	Path string `json:"path" doc:"Path inside the workspace."`
 
-	Edits []HashlineEdit `json:"edits" doc:"One or more edits to apply atomically to this file. Use a one-item array for a single edit; all anchors are verified before writing."`
+	Edits []HashlineEdit `json:"edits" doc:"Atomic edits; pass an array even for one."`
 }
 
 // HashlineEdit describes one edit inside EditFileHLArgs.Edits.
 type HashlineEdit struct {
-	StartLine int    `json:"start_line" doc:"1-based line anchor from the read output."`
-	StartHash string `json:"start_hash" doc:"3- or 4-character base64 SHA-256 hash for start_line from the read output."`
-	EndLine   int    `json:"end_line,omitempty" doc:"Inclusive 1-based end line for replace/delete. Omit for a single-line edit."`
-	EndHash   string `json:"end_hash,omitempty" doc:"3- or 4-character base64 SHA-256 hash for end_line from the read output."`
-	NewString string `json:"new_string,omitempty" doc:"Replacement or insertion bytes. Include newline characters exactly as desired; edits are line-anchored, so text stays on lines of its own even if you omit the trailing newline. Use a single cohesive range edit when changing adjacent lines."`
-	Mode      string `json:"mode,omitempty" enum:"replace,delete,insert_before,insert_after" doc:"Edit mode: replace (default), delete, insert_before, or insert_after."`
+	StartLine int    `json:"start_line" doc:"1-based line from read."`
+	StartHash string `json:"start_hash" doc:"3/4-char hash from read."`
+	EndLine   int    `json:"end_line,omitempty" doc:"Inclusive range end; omit for one line."`
+	EndHash   string `json:"end_hash,omitempty" doc:"Hash for end_line."`
+	NewString string `json:"new_string,omitempty" doc:"Replacement/insertion bytes, including intended newlines."`
+	Mode      string `json:"mode,omitempty" enum:"replace,delete,insert_before,insert_after" doc:"replace (default), delete, insert_before, or insert_after."`
 }
 
 // NewEditFileHLTool returns the hashline edit tool bound to ws.
@@ -147,17 +148,10 @@ func NewEditFileHLTool(ws Workspace) *EditFileHLTool { return &EditFileHLTool{ws
 // Definition advertises edit as a mutating line-anchor edit tool.
 func (t *EditFileHLTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameEdit,
-		Description: "Edit a workspace file using line/hash anchors from the read output. " +
-			"Always pass edits as an array, even for a single edit. " +
-			"For several changes in one file, use one call so the edits apply atomically. " +
-			"Prefer one well-scoped range edit for a cohesive change instead of many tiny adjacent edits. " +
-			"Replaces or deletes anchored line ranges, or inserts before/after anchored lines. " +
-			"The hash identifies the line by content, so anchors survive line-number shifts from earlier edits. " +
-			"On success the result returns fresh line/hash anchors around the edited region — use those to make further edits to the same file without re-reading it. " +
-			"A stale error means the content changed; re-read that file and retry with fresh anchors.",
-		Parameters: tools.SchemaFor[EditFileHLArgs](),
-		Mutates:    true,
+		Name:        ToolNameEdit,
+		Description: "Atomically edit one workspace file with line/hash anchors from read. Supports replace/delete and insert before/after. Re-read after a stale-anchor error.",
+		Parameters:  tools.SchemaFor[EditFileHLArgs](),
+		Mutates:     true,
 	}
 }
 

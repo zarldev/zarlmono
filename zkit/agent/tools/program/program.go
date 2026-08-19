@@ -23,7 +23,7 @@ const op = "program"
 
 // Args are the program tool arguments.
 type Args struct {
-	Script string `json:"script" doc:"Starlark script to run. Use only call(name,args), call_many(calls), and emit(value). Must call emit with the final JSON-shaped answer."`
+	Script string `json:"script" doc:"Starlark using call/call_many and one final emit(value)."`
 }
 
 // Result is the structured successful output returned by the program tool.
@@ -156,32 +156,16 @@ func (s *Source) ForgetTask(id taskscope.ID) {
 
 type programTool struct{ source *Source }
 
-const programDescription = `Use this for bounded read/search/catalogue fan-out when programmatic_tools is enabled. The direct read/search/catalogue tools are hidden. Use this program tool for reading, listing, grepping, code retrieval, web search/fetch, and catalogue listing. Use bash only for real shell work such as git, builds, tests, package managers, or generated-code commands.
+const programDescription = `Run bounded read/search/catalogue calls in Starlark. Direct read/search/catalogue tools are hidden; shell and mutation remain direct.
 
-Write a short Starlark script (Python-like syntax). This is not shell, and there is no generic "list" command. The only built-ins are:
+Built-ins:
 - call(name, args={}) -> {"ok": bool, "data": value, "error": string}
-- call_many([{"name": name, "args": args}, ...]) -> results in input order
-- emit(value) -> final JSON-shaped result; every script must call emit
+- call_many([{"name": name, "args": args}, ...]) -> ordered results
+- emit(value) -> final result; required exactly once
 
-Allowed tool names and common args:
-- read: {"path": string, "offset": int, "limit": int}
-- grep: {"pattern": string, "path": string, "glob": string, "case_insensitive": bool, "max_results": int, "output": "labeled"|"json"}
-- glob: {"pattern": string, "root": string, "include_dirs": bool, "max_results": int, "output": "labeled"|"json"}
-- ls: {"path": string, "show_hidden": bool, "output": "labeled"|"json"}
-- file_map: {"root": string, "pattern": string, "include_tests": bool, "max_files": int, "output": "labeled"|"json"}
-- retrieve_code: {"query": string, "root": string, "pattern": string, "include_tests": bool, "limit": int, "max_files": int, "max_bytes_per_chunk": int, "output": "labeled"|"json"}
-- web_search: {"query": string, "max_results": int, "output": "labeled"|"json"}
-- web_fetch: {"url": string, "max_chars": int, "selector": string, "use_browser": bool}
-- list_skills/list_agents/list_instructions: {}
+Allowed names: read, grep, glob, ls, file_map, retrieve_code, web_search, web_fetch, list_skills, list_agents, list_instructions.
 
-Good pattern:
-results = call_many([
-  {"name": "grep", "args": {"pattern": "TODO", "path": "zkit", "glob": "*.go", "output": "json"}},
-  {"name": "glob", "args": {"pattern": "**/*_test.go", "root": "zkit", "output": "json"}},
-])
-emit([r for r in results if r["ok"]])
-
-Limits: read-only allowlist only; no imports, filesystem, network, shell, environment, process access, mutation, MCP, spawn_agent, or recursive program calls. Use direct edit/write tools for changes and bash for real shell commands.`
+No imports, filesystem, network, shell, environment, mutation, MCP, agent_spawn, or recursion.`
 
 func (t programTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{

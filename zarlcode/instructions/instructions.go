@@ -42,7 +42,7 @@ type Document struct {
 
 // NestedDoc is a lightweight index entry for a non-root instruction file
 // discovered below the workspace root. Callers enumerate these via list_instructions
-// and load full bodies on demand via load_instruction.
+// and load full bodies on demand via instruction_load.
 type NestedDoc struct {
 	RelPath string // workspace-relative, slash-separated path
 }

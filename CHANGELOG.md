@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `agent_spawn` now launches turn-owned sub-agents asynchronously and returns a task receipt immediately; `agent_status`, `agent_await`, `agent_stop`, and `list_agent_tasks` provide explicit inspection, joining, cancellation, and listing.
+- Generated agent task states and workspace access levels make lifecycle and concurrency policy explicit.
+
+### Changed
+
+- Public catalogue/action names follow one grammar: `list_agents` / `agent_spawn`, `list_skills` / `skill_load` / `skill_create`, and `list_instructions` / `instruction_load`.
+- Root, named, and recursive agents share one turn-owned task group and workspace coordinator. Read-only children may overlap; implement children and conflicting parent writes are exclusive.
+- Parent completion is held while child tasks are running or terminal summaries remain unread; turn shutdown cancels and joins all owned children.
+
 ## [zkit/v0.10.0] — 2026-08-18
 `zkit/v0.10.0`
 
@@ -57,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `grep` JSON output is now an object carrying query inputs, match count, truncation state, `max_results`, and `hits`, rather than a bare hit array.
 - Read and retrieval truncation messages now identify the exact continuation controls (`offset`, `limit`, `max_files`, or `max_bytes_per_chunk`).
-- Explicit invalid `spawn_agent.mode` values return a typed validation failure instead of silently falling back to the unrestricted implement mode.
+- Explicit invalid `agent_spawn.mode` values return a typed validation failure instead of silently falling back to the unrestricted implement mode.
 - Tool-source wrappers forward task lifecycle cleanup so memo and guardrail state is released through composed source chains.
 
 ## [zarlcode/v0.8.0] — 2026-08-18
@@ -113,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- zarlcode can create reusable Agent Skills through the new BUILD-mode `create_skill` tool. Skills use the portable `<name>/SKILL.md` package layout, become available in the live catalog immediately, and remain compatible with existing flat markdown skills.
+- zarlcode can create reusable Agent Skills through the new BUILD-mode `skill_create` tool. Skills use the portable `<name>/SKILL.md` package layout, become available in the live catalog immediately, and remain compatible with existing flat markdown skills.
 - zarlcode transcript browse mode now supports visual line selection with `v`, keyboard range extension, and `y` clipboard copy. Copied text strips ANSI styling and timeline rails.
 
 ### Changed
@@ -201,7 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inline model picker in the providers settings panel — asynchronous model fetch, selection, and persist/switch without leaving the panel.
 - Configurable response timeout: how long to wait with no output from the model before cancelling an iteration (default 90s; 0 falls back to the default).
 - Manual compaction mode: turn off automatic compaction and get a cockpit warning when the context nears the compaction trigger, compacting on demand instead.
-- Configurable per-task `spawn_agent` fan-out cap to bound a model that keeps firing sub-agents (default 8; 0 removes the cap).
+- Configurable per-task `agent_spawn` fan-out cap to bound a model that keeps firing sub-agents (default 8; 0 removes the cap).
 - Handover compaction engine: clears the whole conversation and reseeds the model from a self-contained handover document written to `.zarlcode/handovers/`.
 - Narrative VHS workflow demo and refreshed getting-started/docs.
 
@@ -218,7 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Anthropic provider caches the conversation prefix via a rolling ephemeral cache breakpoint on the last message, so large tool results are served from cache across turns rather than reprocessed each iteration.
 - Codex Responses provider honours a `prompt_cache_key` request option for prefix-cache routing.
 - Configurable stream-idle ("no response") timeout through `coderunner.Tuning.StreamIdle` (zero keeps the shared 90s default).
-- Per-task `spawn_agent` fan-out cap in `StandardFanoutLimits` (default 8) so a task cannot fan out sub-agents unbounded.
+- Per-task `agent_spawn` fan-out cap in `StandardFanoutLimits` (default 8) so a task cannot fan out sub-agents unbounded.
 - `compact` handover engine: collapses the whole conversation to a self-contained handover document and reseeds from it, with an injected writer for persistence.
 - Exported guardrail name constants (`NameImprovementLoop`, `NameSkillHint`) so consumers can drop those guardrails via `Deps.Disabled` without hardcoded strings.
 
@@ -250,7 +263,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Existing users with untouched generated prompt copies now receive shipped prompt fixes again.
 - Inspector output no longer diverges from the next provider request when prompt overrides/preferences exist.
-- Stale prompt prose was corrected, including the plan-mode keybinding claim, a malformed `spawn_agent` sentence, and a concatenated markdown heading.
+- Stale prompt prose was corrected, including the plan-mode keybinding claim, a malformed `agent_spawn` sentence, and a concatenated markdown heading.
 
 ## [zkit/v0.4.0] — 2026-07-15
 `zkit/v0.4.0`

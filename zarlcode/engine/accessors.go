@@ -17,10 +17,17 @@ type RunTarget struct {
 	Window       int    // context window in tokens; sizes the compactor
 	Reserve      int    // compactor reserve tokens; 0 = liveReserveTokens default
 	MaxIter      int    // agent-loop cap per turn; 0 = built-in default
-	SpawnMaxIter int    // sub-agent loop cap per spawn_agent; 0 = inherit MaxIter
+	SpawnMaxIter int    // sub-agent loop cap per agent_spawn; 0 = inherit MaxIter
 	SpawnDepth   int    // sub-agent recursion ceiling; 0 = spawning disabled
 	SearxngURL   string // web_search endpoint; empty leaves the tool unregistered
 	Plan         bool   // PLAN mode: read-only tool surface + planning prompt
+}
+
+// TargetUpdate is an atomic runtime transition for provider policy.
+type TargetUpdate struct {
+	Provider llm.Provider
+	Spec     ProviderSpec
+	Window   int
 }
 
 // RunTarget snapshots the current run target under the lock. It is the read
@@ -33,11 +40,6 @@ func (l *LiveRunner) RunTarget() RunTarget {
 	defer l.mu.Unlock()
 	return l.target
 }
-
-// ParentContext returns the application context bound via SetContext, or
-// context.Background when none is set. Exposed for callers that need the
-// run-lifetime context (e.g. re-pointing the provider mid-session).
-func (l *LiveRunner) ParentContext() context.Context { return l.parentContext() }
 
 // ProcessList returns a snapshot of background processes managed by the live
 // runner, or nil when no process manager is wired. This is the lightweight

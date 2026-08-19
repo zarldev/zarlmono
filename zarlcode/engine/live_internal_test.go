@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -31,6 +31,26 @@ func (p *blockingProvider) Complete(ctx context.Context, _ llm.CompletionRequest
 
 func (*blockingProvider) Name() string { return "blocking" }
 
+func TestWithLiveSinkRejectsNil(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("WithLiveSink(nil) did not panic")
+		}
+	}()
+	_ = WithLiveSink(nil)
+}
+
+func TestNewLiveRunnerDefaultsToNoopSink(t *testing.T) {
+	t.Parallel()
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	live := NewLiveRunner(nil, ws, "local")
+	live.planStore.SetPlan(code.Plan{})
+}
+
 // TestLiveRunner_BuildsGuardedSource verifies the guardrail chain
 // assembles with the interactive Deps shape (catches a bad Deps before a
 // live run would). prov/sink are unused by source(), so nil is fine.
@@ -39,7 +59,7 @@ func TestLiveRunner_BuildsGuardedSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	src, _, err := NewLiveRunner(nil, ws, nil, "local").source("")
+	src, _, err := NewLiveRunner(nil, ws, "local").source(t.Context(), "")
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}
@@ -57,7 +77,7 @@ func TestLiveRunner_EarlyStopWatcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	l := NewLiveRunner(nil, ws, nil, "local")
+	l := NewLiveRunner(nil, ws, "local")
 
 	if w := l.earlyStopWatcher(); w != nil {
 		t.Fatal("no command configured → watcher must be nil")
@@ -84,10 +104,9 @@ func TestLiveRunner_ProgrammaticToolsSetting(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	settings := NewSettings(ctx, store, nil, t.TempDir())
-	l := NewLiveRunner(nil, ws, nil, "local")
-	l.SetSettingsHandle(settings)
+	l := NewLiveRunner(nil, ws, "local", WithSettings(settings))
 
-	src, _, err := l.source("")
+	src, _, err := l.source(t.Context(), "")
 	if err != nil {
 		t.Fatalf("source default: %v", err)
 	}
@@ -97,7 +116,7 @@ func TestLiveRunner_ProgrammaticToolsSetting(t *testing.T) {
 	if err := settings.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyProgrammaticTools, "off"); err != nil {
 		t.Fatalf("disable programmatic tools: %v", err)
 	}
-	src, _, err = l.source("")
+	src, _, err = l.source(t.Context(), "")
 	if err != nil {
 		t.Fatalf("source disabled: %v", err)
 	}
@@ -123,16 +142,16 @@ func TestLiveRunner_WebSearchRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	l := NewLiveRunner(nil, ws, nil, "local")
+	l := NewLiveRunner(nil, ws, "local")
 
-	srcOff, _, err := l.source("")
+	srcOff, _, err := l.source(t.Context(), "")
 	if err != nil {
 		t.Fatalf("source off: %v", err)
 	}
 	if hasTool(srcOff, tools.ToolNameWebSearch) {
 		t.Error("web_search should be absent when no SearXNG URL is set")
 	}
-	srcOn, _, err := l.source("http://127.0.0.1:8080")
+	srcOn, _, err := l.source(t.Context(), "http://127.0.0.1:8080")
 	if err != nil {
 		t.Fatalf("source on: %v", err)
 	}
@@ -149,9 +168,9 @@ func TestLiveRunner_ComputerToolsRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	l := NewLiveRunner(nil, ws, nil, "local")
+	l := NewLiveRunner(nil, ws, "local")
 
-	src, _, err := l.source("")
+	src, _, err := l.source(t.Context(), "")
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}
@@ -169,13 +188,12 @@ func TestLiveRunner_CloseCancelsActiveTurn(t *testing.T) {
 		t.Fatalf("workspace: %v", err)
 	}
 	prov := &blockingProvider{started: make(chan struct{})}
-	l := NewLiveRunner(prov, ws, nil, "local")
-	l.SetContext(t.Context())
+	l := NewLiveRunner(prov, ws, "local")
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = l.RunTurn("wait")
+		_ = l.RunTurn(t.Context(), "wait")
 	}()
 
 	select {
@@ -204,21 +222,21 @@ func TestBuildLiveCompactor_EngineSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	l := NewLiveRunner(nil, ws, nil, "local") // satisfies compact.StateProvider
+	l := NewLiveRunner(nil, ws, "local") // satisfies agentcompact.StateProvider
 
-	if _, ok := buildLiveCompactor("structural", 32768, nil, "", l, "").(compact.Structural); !ok {
+	if _, ok := buildLiveCompactor("structural", 32768, nil, "", l, "").(agentcompact.Structural); !ok {
 		t.Error("structural should build a Structural compactor")
 	}
-	if _, ok := buildLiveCompactor("tiered", 32768, nil, "", l, "").(*compact.Tiered); !ok {
+	if _, ok := buildLiveCompactor("tiered", 32768, nil, "", l, "").(*agentcompact.Tiered); !ok {
 		t.Error("tiered should build a *Tiered compactor")
 	}
 	for _, eng := range []string{"summary", "executive", "handover", "bogus", ""} {
-		if _, ok := buildLiveCompactor(eng, 32768, nil, "", l, "").(*compact.Tiered); !ok {
+		if _, ok := buildLiveCompactor(eng, 32768, nil, "", l, "").(*agentcompact.Tiered); !ok {
 			t.Errorf("%q without a provider should fall back to tiered", eng)
 		}
 	}
 	// With a provider, handover builds the clear-and-reseed compactor.
-	if _, ok := buildLiveCompactor("handover", 32768, fakeJudgeProvider{}, "m", l, t.TempDir()).(*compact.Handover); !ok {
+	if _, ok := buildLiveCompactor("handover", 32768, fakeJudgeProvider{}, "m", l, t.TempDir()).(*agentcompact.Handover); !ok {
 		t.Error("handover with a provider should build a *Handover compactor")
 	}
 }

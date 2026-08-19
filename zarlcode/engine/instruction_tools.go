@@ -16,7 +16,7 @@ import (
 // Tool names for the lazy instruction-loading surface.
 const (
 	ToolNameListInstructions tools.ToolName = "list_instructions"
-	ToolNameLoadInstruction  tools.ToolName = "load_instruction"
+	ToolNameLoadInstruction  tools.ToolName = "instruction_load"
 	schemaPath                              = "path"
 )
 
@@ -32,7 +32,8 @@ func NewListInstructionsTool(nested func() []instructions.NestedDoc) *listInstru
 
 func (t *listInstructionsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameListInstructions,
+		Name:            ToolNameListInstructions,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Return the nested workspace instruction index as labelled plaintext — one entry " +
 			"per instruction file below the workspace root with its relative path. Call only when " +
 			"the user asks about workspace guidance or when a task clearly depends on a specific " +
@@ -75,7 +76,7 @@ func renderNestedInstructions(nested []instructions.NestedDoc) string {
 }
 
 // loadInstructionTool loads a nested instruction doc's full body into context,
-// mirroring load_skill for instruction files.
+// mirroring skill_load for instruction files.
 type loadInstructionTool struct {
 	wsRoot string
 	nested func() []instructions.NestedDoc
@@ -91,7 +92,8 @@ type loadInstructionArgs struct {
 
 func (t *loadInstructionTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameLoadInstruction,
+		Name:            ToolNameLoadInstruction,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Load a nested AGENTS.md / CLAUDE.md instruction file's full body by its " +
 			"workspace-relative path. Use this only when the user asks about a specific module's " +
 			"guidance or after listing instructions to choose one; do not guess paths and do not " +
@@ -116,7 +118,7 @@ func (t *loadInstructionTool) Execute(_ context.Context, call tools.ToolCall) (*
 	}
 	path := strings.TrimSpace(args.Path)
 	if path == "" {
-		return tools.Failure(call.ID, tools.Validation("load_instruction", "path is required")), nil
+		return tools.Failure(call.ID, tools.Validation("instruction_load", "path is required")), nil
 	}
 
 	doc, err := instructions.LoadOne(t.wsRoot, path)
@@ -126,7 +128,7 @@ func (t *loadInstructionTool) Execute(_ context.Context, call tools.ToolCall) (*
 		for _, n := range t.nested() {
 			known = append(known, n.RelPath)
 		}
-		return tools.Failure(call.ID, tools.NotFound("load_instruction", fmt.Sprintf(
+		return tools.Failure(call.ID, tools.NotFound("instruction_load", fmt.Sprintf(
 			"no instruction doc at %q: %v. Available: %s", path, err, strings.Join(known, ", ")))), nil
 	}
 

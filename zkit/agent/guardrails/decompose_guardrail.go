@@ -62,7 +62,7 @@ const (
 	ActionSwitchTool VerdictAction = "switch_tool"
 
 	// ActionSpawnSubagent means the work is large enough that
-	// delegating to spawn_agent with a narrower mandate beats more
+	// delegating to agent_spawn with a narrower mandate beats more
 	// in-context retries.
 	ActionSpawnSubagent VerdictAction = "spawn_subagent"
 )
@@ -153,44 +153,47 @@ type VerdictJudge interface {
 type DecomposeGuardrail struct {
 	maxDecompositions int
 
-	// judge is the optional advisory shaper. Read without a lock —
-	// callers wire it once at construction via WithJudge and then
-	// never touch it again. If a future caller actually does need to
-	// swap judges at runtime they'll need to add the protection then.
+	// judge is immutable after construction, so concurrent Inspect calls may
+	// read it without synchronization.
 	judge VerdictJudge
 
 	mu      sync.Mutex
 	buckets map[taskscope.ID]*decomposeBucket
 }
 
-// NewDecomposeGuardrail wires up the guardrail with a cap on how
-// many distinct call signatures may trigger the advisory within one
-// task. maxDecompositions ≤ 0 defaults to 5 — generous but finite.
-// A task that needs more is almost certainly out of zarlcode's
-// productive range and should escalate.
-func NewDecomposeGuardrail(maxDecompositions int) *DecomposeGuardrail {
-	if maxDecompositions <= 0 {
-		maxDecompositions = 5
-	}
-	return &DecomposeGuardrail{
-		maxDecompositions: maxDecompositions,
-		buckets:           make(map[taskscope.ID]*decomposeBucket),
+// DecomposeGuardrailOption configures a [DecomposeGuardrail].
+type DecomposeGuardrailOption func(*DecomposeGuardrail)
+
+// WithDecomposeJudge selects the optional advisory shaper. Nil keeps the
+// deterministic advisory path.
+func WithDecomposeJudge(j VerdictJudge) DecomposeGuardrailOption {
+	return func(g *DecomposeGuardrail) {
+		g.judge = j
 	}
 }
 
-// WithJudge wires an optional VerdictJudge that the guardrail
-// consults at the advisory threshold to derive a tailored next-step
-// hint instead of the default static advisory. Returns the receiver
-// for fluent chaining at construction:
-//
-//	g := guardrails.NewDecomposeGuardrail(0).WithJudge(myJudge)
-//
-// Pass nil to opt back out of the verdict path (useful for tests).
-// Not safe for concurrent reconfiguration — call once during setup.
-func (g *DecomposeGuardrail) WithJudge(j VerdictJudge) *DecomposeGuardrail {
-	g.judge = j
+// NewDecomposeGuardrail wires up the guardrail with a cap on how many
+// distinct call signatures may trigger the advisory within one task.
+// maxDecompositions ≤ 0 defaults to 5.
+func NewDecomposeGuardrail(maxDecompositions int, opts ...DecomposeGuardrailOption) *DecomposeGuardrail {
+	if maxDecompositions <= 0 {
+		maxDecompositions = 5
+	}
+	g := &DecomposeGuardrail{
+		maxDecompositions: maxDecompositions,
+		buckets:           make(map[taskscope.ID]*decomposeBucket),
+	}
+	for _, opt := range opts {
+		opt(g)
+	}
 	return g
 }
+
+var (
+	_ Guardrail = (*DecomposeGuardrail)(nil)
+	_ PreCall   = (*DecomposeGuardrail)(nil)
+	_ PostCall  = (*DecomposeGuardrail)(nil)
+)
 
 // Name returns the guardrail's identifier.
 func (g *DecomposeGuardrail) Name() string { return "decompose" }
@@ -221,14 +224,14 @@ func (g *DecomposeGuardrail) Before(ctx context.Context, call tools.ToolCall) er
 	if sigCount >= signatureFatalAt {
 		return tools.Fatal("decompose", fmt.Errorf(
 			"refusing to re-dispatch: this exact call has already failed %d times in this task. "+
-				"Change the arguments, switch to a different tool, or delegate to `spawn_agent`",
+				"Change the arguments, switch to a different tool, or delegate to `agent_spawn`",
 			sigCount))
 	}
 	if toolCount >= toolFatalAt {
 		return tools.Budget("decompose", fmt.Sprintf(
 			"refusing further %q calls: the tool has already failed %d times in this task across "+
 				"distinct inputs. Switch to a different tool that produces the same effect or "+
-				"delegate to `spawn_agent`",
+				"delegate to `agent_spawn`",
 			call.ToolName, toolCount))
 	}
 	return nil
@@ -315,7 +318,7 @@ func (g *DecomposeGuardrail) Inspect(
 		return tools.Budget("decompose", fmt.Sprintf(
 			"the %q tool has now failed %d times in this task across distinct inputs (cap %d) — "+
 				"retrying it won't help. Switch to a different tool that produces the same effect "+
-				"or delegate to `spawn_agent`. Original: %s",
+				"or delegate to `agent_spawn`. Original: %s",
 			call.ToolName, toolCount, toolFatalAt, original))
 
 	case atNudge:
@@ -342,7 +345,7 @@ func (g *DecomposeGuardrail) Inspect(
 
 // signatureAdvisory builds the advisory body at the signature nudge
 // threshold. When no judge is wired it returns the deterministic
-// "consider smaller scope / different tool / spawn_agent" framing
+// "consider smaller scope / different tool / agent_spawn" framing
 // the harness has always used. When a judge is wired and returns a
 // valid verdict, the advisory tailors to that single recommendation
 // instead of asking the model to pick three options off a list.
@@ -378,7 +381,7 @@ func (g *DecomposeGuardrail) signatureAdvisory(
 // judge is wired or the judge failed. A Validation failure means the
 // tool rejected the input as malformed — repeating it or switching
 // tools won't help, so the hint points at the input format. Any other
-// kind keeps the original "smaller scope / different tool / spawn_agent"
+// kind keeps the original "smaller scope / different tool / agent_spawn"
 // framing.
 func defaultSignatureAdvisory(original string, sigCount int, kind tools.Kind) string {
 	if kind == tools.Kinds.STALE {
@@ -402,7 +405,7 @@ func defaultSignatureAdvisory(original string, sigCount int, kind tools.Kind) st
 	return fmt.Sprintf(
 		"%s (advisory: this call has now failed %d times — consider a smaller scope "+
 			"(one line/function/file), a different tool that produces the same effect, "+
-			"or delegating to `spawn_agent` with a narrower question. Pick whichever "+
+			"or delegating to `agent_spawn` with a narrower question. Pick whichever "+
 			"fits — the original error above is the source of truth.)",
 		original, sigCount)
 }
@@ -435,7 +438,7 @@ func toolNudgeAdvisory(original string, tool tools.ToolName, toolCount int, allV
 		"%s (advisory: the %q tool has now failed %d times in this task across "+
 			"different inputs. The tool itself may be unreliable here — consider "+
 			"switching to a different tool that produces the same effect, or "+
-			"delegating the work to `spawn_agent`. The original error above is "+
+			"delegating the work to `agent_spawn`. The original error above is "+
 			"the source of truth.)",
 		original, tool, toolCount)
 }
@@ -469,9 +472,9 @@ func verdictRecommendation(a VerdictAction) string {
 	case ActionSwitchTool:
 		return "switch to a different tool that produces the same effect — this tool keeps failing on this target"
 	case ActionSpawnSubagent:
-		return "delegate to `spawn_agent` with a narrower mandate — this work is bigger than the current call can land"
+		return "delegate to `agent_spawn` with a narrower mandate — this work is bigger than the current call can land"
 	}
-	return "consider a smaller scope, a different tool, or delegating to `spawn_agent`"
+	return "consider a smaller scope, a different tool, or delegating to `agent_spawn`"
 }
 
 // ForgetTask drops the per-task bucket for id. Long-lived runners

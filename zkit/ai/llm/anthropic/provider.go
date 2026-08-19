@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -129,12 +128,6 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	applyResponseFormat(&params, req.ResponseFormat)
 	applyThinking(&params, req.Thinking)
 
-	slog.InfoContext(ctx, "sending streaming request to anthropic sdk",
-		"model", p.model,
-		"messages_count", len(messages),
-		"has_system", systemPrompt != "",
-		"tools_count", len(req.Tools))
-
 	// Create streaming request
 	stream := p.client.Messages.NewStreaming(ctx, params)
 
@@ -150,23 +143,8 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			yield(llm.CompletionChunk{Done: true}, fmt.Errorf("accumulate stream event: %w", err))
 			return
 		}
-
 		// Handle different event types using type switch
 		switch eventVariant := event.AsAny().(type) {
-		case anthropic.MessageStartEvent:
-			// Message started
-			slog.DebugContext(ctx, "message started")
-
-		case anthropic.ContentBlockStartEvent:
-			// Check if this is a tool use block by checking the Type field
-			if eventVariant.ContentBlock.Type == "tool_use" {
-				// Tool use starting - just log it, we'll send the complete tool call at ContentBlockStopEvent
-				slog.DebugContext(ctx, "tool use block started",
-					"id", eventVariant.ContentBlock.ID,
-					"name", eventVariant.ContentBlock.Name,
-					"index", eventVariant.Index)
-			}
-
 		case anthropic.ContentBlockDeltaEvent:
 			// Handle both text and tool input streaming
 			switch deltaVariant := eventVariant.Delta.AsAny().(type) {
@@ -189,37 +167,19 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 						return
 					}
 				}
-			case anthropic.InputJSONDelta:
-				// Tool input is being streamed - just log it, we'll send complete tool at ContentBlockStopEvent
-				if deltaVariant.PartialJSON != "" {
-					slog.DebugContext(ctx, "tool input delta", "partial", deltaVariant.PartialJSON)
-				}
 			}
-
-		case anthropic.MessageDeltaEvent:
-			// Handle stop sequences
-			if eventVariant.Delta.StopSequence != "" {
-				slog.DebugContext(ctx, "stop sequence reached", "sequence", eventVariant.Delta.StopSequence)
-			}
-			// Usage is accumulated in the message
 
 		case anthropic.ContentBlockStopEvent:
 			// Content block completed
-			slog.InfoContext(ctx, "content block completed", "index", eventVariant.Index, "total_blocks", len(message.Content))
 			// Check if this was a tool use block that just completed
 			if eventVariant.Index < int64(len(message.Content)) {
 				block := message.Content[eventVariant.Index]
-				slog.InfoContext(ctx, "checking block type", "type", block.Type)
 				if toolBlock, ok := block.AsAny().(anthropic.ToolUseBlock); ok {
 					// Send final complete tool call with full arguments
 					inputJSON := "{}"
 					if len(toolBlock.Input) > 0 {
 						inputJSON = string(toolBlock.Input)
 					}
-					slog.InfoContext(ctx, "tool use completed",
-						"id", toolBlock.ID,
-						"name", toolBlock.Name,
-						"args", inputJSON)
 					if !yield(llm.CompletionChunk{
 						ToolCalls: []llm.ToolCall{{
 							ID:   toolBlock.ID,
@@ -234,22 +194,9 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 					}
 				}
 			}
-
-		case anthropic.MessageStopEvent:
-			// Message complete
-			slog.DebugContext(ctx, "stream complete")
 		}
 	}
-
 	if err := stream.Err(); err != nil {
-		// Cancellation is expected, not an error — drop to Debug so an
-		// active TUI's stdout-tee'd slog handler doesn't paint
-		// "ERROR stream error" over the alt-screen on every Ctrl-C.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			slog.DebugContext(ctx, "anthropic stream cancelled", "error", err)
-		} else {
-			slog.ErrorContext(ctx, "stream error", "error", err)
-		}
 		// Terminal error path. Done:true so downstream readers see one
 		// canonical terminal chunk; the error rides the second yield value.
 		yield(llm.CompletionChunk{
@@ -323,20 +270,9 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 	applyResponseFormat(&params, req.ResponseFormat)
 	applyThinking(&params, req.Thinking)
 
-	slog.InfoContext(ctx, "sending non-streaming request to anthropic sdk",
-		"model", p.model,
-		"messages_count", len(messages),
-		"has_system", systemPrompt != "",
-		"tools_count", len(req.Tools))
-
 	// Make the request
 	response, err := p.client.Messages.New(ctx, params)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			slog.DebugContext(ctx, "anthropic non-stream cancelled", "error", err)
-		} else {
-			slog.ErrorContext(ctx, "anthropic sdk error", "error", err)
-		}
 		// Terminal error path. Done:true so downstream readers see one
 		// canonical terminal chunk; the error rides the second yield value.
 		yield(llm.CompletionChunk{

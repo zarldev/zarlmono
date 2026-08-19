@@ -60,6 +60,26 @@ func (cb childBlock) togglerForLine(ln int, childWidth int, children []item, bum
 	return nil
 }
 
+// toggleLocals returns every disclosure-header line in the block, including
+// disclosures nested inside expanded children. Each child owns the layout of its
+// descendants; this block only translates those local lines into its coordinates.
+func (cb childBlock) toggleLocals(childWidth int, children []item) []int {
+	locals := make([]int, 0, len(children))
+	for k, off := range cb.offsets {
+		locals = append(locals, off)
+		child, ok := children[k].(toggleLocator)
+		if !ok {
+			continue
+		}
+		for _, local := range child.toggleLocals(childWidth) {
+			if local > 0 {
+				locals = append(locals, off+local)
+			}
+		}
+	}
+	return locals
+}
+
 func toggleChildAndParent(child toggler, bump func()) toggler {
 	return togglerFunc(func() {
 		child.toggle()

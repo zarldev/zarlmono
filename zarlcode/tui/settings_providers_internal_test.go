@@ -38,8 +38,8 @@ func TestSettingsDialog_ProvidersInline(t *testing.T) {
 	}
 	gotoProvider(d.providers, "openai")
 	d.handleKey(tkey("a")) // set active — delegated to the panel
-	if sv, ok, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider); !ok || sv.Value != "openai" {
-		t.Errorf("inline 'set active' did not persist: ok=%v val=%q", ok, sv.Value)
+	if sv, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider); sv.Value != "openai" {
+		t.Errorf("inline 'set active' did not persist: val=%q", sv.Value)
 	}
 
 	// 'n' opens the inline add form (still no popup).
@@ -93,11 +93,11 @@ func TestSettingsDialog_ProviderModelsOpenPickerAndPersistSelection(t *testing.T
 	if d.providers.modelPicker != nil {
 		t.Fatal("selecting a model should close the picker")
 	}
-	if sv, ok, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider); !ok || sv.Value != "custom" {
-		t.Fatalf("provider setting = ok %v value %q, want custom", ok, sv.Value)
+	if sv, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider); sv.Value != "custom" {
+		t.Fatalf("provider setting = %q, want custom", sv.Value)
 	}
-	if sv, ok, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel); !ok || sv.Value != "custom-b" {
-		t.Fatalf("model setting = ok %v value %q, want custom-b", ok, sv.Value)
+	if sv, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel); sv.Value != "custom-b" {
+		t.Fatalf("model setting = %q, want custom-b", sv.Value)
 	}
 }
 

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -56,11 +57,15 @@ type Settings struct {
 // then global) — the same precedence the runtime uses everywhere else.
 type providerKeyResolver struct{ svc *prefs.Service }
 
-func (r providerKeyResolver) GetKey(ctx context.Context, provider string) (string, bool, error) {
+func (r providerKeyResolver) GetKey(ctx context.Context, provider string) (string, error) {
 	if r.svc == nil {
-		return "", false, nil
+		return "", backends.ErrKeyNotFound
 	}
-	return r.svc.GetKey(ctx, prefs.ScopeEffective, provider)
+	k, err := r.svc.GetKey(ctx, prefs.ScopeEffective, provider)
+	if errors.Is(err, prefs.ErrNotFound) {
+		return "", backends.ErrKeyNotFound
+	}
+	return k, err
 }
 
 // OpenSettings opens the shared state.db (applying migrations), loads the
@@ -84,7 +89,7 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 	}
 	probe := prefs.NewService(store, nil, wsRoot)
 	legacyOff := false
-	if sv, ok, err := probe.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyVaultPrompt); err == nil && ok && sv.Value == "off" {
+	if sv, err := probe.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyVaultPrompt); err == nil && sv.Value == "off" {
 		legacyOff = true
 	}
 	hasVaultRows, err := probe.HasVaultBackedKeys(ctx)
@@ -350,7 +355,7 @@ func (s *Settings) ToolResultMaxLines(ctx context.Context) int {
 	return s.intSetting(ctx, prefs.KeyToolResultMaxLines, 2000)
 }
 
-// SpawnFanoutCap resolves the per-task spawn_agent budget: how many sub-agents
+// SpawnFanoutCap resolves the per-task agent_spawn budget: how many sub-agents
 // a single task may spawn before the fanout guardrail refuses further ones.
 // Default 8; 0 removes the cap. The fanout guardrail treats a non-positive
 // limit as unbounded, so 0 flows through as "uncapped" without special-casing.
@@ -406,7 +411,7 @@ func (s *Settings) setting(ctx context.Context, key, def string) string {
 	if s == nil || s.Svc == nil {
 		return def
 	}
-	if v, ok, err := s.Svc.GetSetting(ctx, prefs.ScopeEffective, key); err == nil && ok && v.Value != "" {
+	if v, err := s.Svc.GetSetting(ctx, prefs.ScopeEffective, key); err == nil && v.Value != "" {
 		return v.Value
 	}
 	return def
@@ -488,8 +493,8 @@ func (s *Settings) resolveProvider(ctx context.Context, def string) string {
 	if s == nil || s.Svc == nil {
 		return def
 	}
-	sv, ok, err := s.Svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyProvider)
-	if err != nil || !ok || sv.Value == "" {
+	sv, err := s.Svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyProvider)
+	if err != nil || sv.Value == "" {
 		return def
 	}
 	if id, _ := llm.ParseLLMProvider(sv.Value); id == backends.NameClaudeCode && sv.Source != prefs.ScopeWorkspace {
@@ -609,7 +614,7 @@ func (s *Settings) VerifyLoop(ctx context.Context) (string, int) {
 type Limits struct {
 	ReserveTokens      int // compactor headroom held back from the window
 	MaxIterations      int // cap on the agent loop per turn
-	SpawnMaxIterations int // cap on sub-agent loop per spawn_agent call; 0 = inherit parent
+	SpawnMaxIterations int // cap on sub-agent loop per agent_spawn call; 0 = inherit parent
 	SpawnMaxDepth      int // sub-agent recursion ceiling; 0 = spawning disabled
 }
 

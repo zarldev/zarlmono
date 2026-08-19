@@ -224,9 +224,11 @@ func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (u
 }
 
 func resolveUpgradeRepo(ctx context.Context, svc *prefs.Service) (string, error) {
-	if v, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource); err != nil {
+	v, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource)
+	if err != nil && !errors.Is(err, prefs.ErrNotFound) {
 		return "", err
-	} else if ok && strings.TrimSpace(v.Value) != "" {
+	}
+	if err == nil && strings.TrimSpace(v.Value) != "" {
 		repo := strings.TrimSpace(v.Value)
 		if err := validateUpgradeSource(repo); err != nil {
 			if looksLikeLegacyUpgradeSourcePath(repo) {
@@ -241,9 +243,11 @@ func resolveUpgradeRepo(ctx context.Context, svc *prefs.Service) (string, error)
 }
 
 func resolveUpgradeBinPath(ctx context.Context, svc *prefs.Service) (string, error) {
-	if v, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath); err != nil {
+	v, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath)
+	if err != nil && !errors.Is(err, prefs.ErrNotFound) {
 		return "", err
-	} else if ok && strings.TrimSpace(v.Value) != "" {
+	}
+	if err == nil && strings.TrimSpace(v.Value) != "" {
 		path := strings.TrimSpace(v.Value)
 		if err := validateUpgradeBinPath(path); err != nil {
 			return "", fmt.Errorf("configured binary path %q: %w", path, err)
@@ -346,12 +350,12 @@ func validateUpgradeBinPath(path string) error {
 
 func upgradeValueSetting(ctx context.Context, svc *prefs.Service, args []string, key, label string, stdout, stderr io.Writer, normalize func(string) (string, error)) int {
 	if len(args) == 0 || args[0] == "show" {
-		v, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, key)
-		if err != nil {
+		v, err := svc.GetSetting(ctx, prefs.ScopeGlobal, key)
+		if err != nil && !errors.Is(err, prefs.ErrNotFound) {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if !ok || v.Value == "" {
+		if errors.Is(err, prefs.ErrNotFound) || v.Value == "" {
 			fmt.Fprintf(stdout, "%s: (unset)\n", label)
 			return 0
 		}
@@ -424,8 +428,8 @@ func upgradeBoolSetting(ctx context.Context, svc *prefs.Service, args []string, 
 }
 
 func boolSetting(ctx context.Context, svc *prefs.Service, key string, fallback bool) bool {
-	v, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, key)
-	if err != nil || !ok || strings.TrimSpace(v.Value) == "" {
+	v, err := svc.GetSetting(ctx, prefs.ScopeGlobal, key)
+	if err != nil || strings.TrimSpace(v.Value) == "" {
 		return fallback
 	}
 	b, err := strconv.ParseBool(v.Value)
@@ -445,12 +449,12 @@ func upgradeStatus(ctx context.Context, svc *prefs.Service, stdout, stderr io.Wr
 		{flagRestart, settingKeyUpgradeRestart},
 		{flagDryRun, settingKeyUpgradeDryRun},
 	} {
-		v, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, row.key)
-		if err != nil {
+		v, err := svc.GetSetting(ctx, prefs.ScopeGlobal, row.key)
+		if err != nil && !errors.Is(err, prefs.ErrNotFound) {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if !ok || v.Value == "" {
+		if errors.Is(err, prefs.ErrNotFound) || v.Value == "" {
 			// source defaults to the canonical release repo when unset.
 			if row.key == settingKeyUpgradeSource {
 				fmt.Fprintf(stdout, "%s: %s (default)\n", row.label, defaultUpgradeRepo)

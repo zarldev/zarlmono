@@ -80,6 +80,8 @@ type RunState struct {
 	ctxSysBytes, ctxUserBytes, ctxAsstBytes, ctxToolBytes int
 	ctxSkillBytes, ctxAgentBytes, ctxInstructionBytes     int
 	ctxSysMsgs, ctxUserMsgs, ctxAsstMsgs, ctxToolMsgs     int
+	// Latest exact model-visible tool-surface accounting from the runner.
+	toolSurface runner.ToolSurface
 
 	// --- identity / config (set once at wiring) ---
 	window       int     // context window in tokens (gauge denominator)

@@ -1,94 +1,80 @@
 ---
-title: Sub-agents
-description: The spawn_agent tool — single-hop delegation with depth and fan-out caps, because unbounded recursion is how context windows die.
+title: Sub-agent tasks
+description: Asynchronous agent_spawn delegation with explicit joins, turn-owned lifecycle, depth/fan-out caps, and workspace coordination.
 ---
 
-`zkit/agent/tools/spawn` provides `spawn_agent`: a registry-compatible
-tool that runs a focused sub-task in a fresh `runner.Run` and returns
-only the child's summary as the tool result. The parent's context
-stays clean; the child starts from nothing but the prompt it was
-given.
+`zkit/agent/tools/spawn` provides an asynchronous agent-task family. `agent_spawn`
+starts a focused child `runner.Run` and immediately returns a task receipt, allowing
+the parent to continue. The eventual summary is delivered by `agent_await`, terminal
+`agent_status`, or `agent_stop`; `list_agent_tasks` lists the turn's retained tasks.
 
 ## Wiring
 
 ```go
-import "github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
-
+group := spawn.NewGroup()
 r := runner.New(client, runner.WithTools(reg) /* … */)
-reg.Register(spawn.New(r))                          // default depth cap: 1
-reg.Register(spawn.New(r, spawn.WithMaxDepth(2)))   // if you really mean it
+coderunner.RegisterSpawnTools(reg, r, group, 1, 0)
+defer group.Close(shutdownCtx)
 ```
 
-Register spawn *after* constructing the runner — the tool captures
-the parent runner, and since the registry is re-snapshotted every
-iteration, post-construction registration is callable on the next
-turn. It's a separate package on purpose: consumers that don't want
-sub-agent recursion simply don't import it.
+Register the family after constructing the parent runner. One concrete `Group` owns
+every child goroutine, cancellation function, terminal result, and shutdown wait path.
+zarlcode creates one group per top-level turn and shares it with named and recursive
+child runners.
+
+## Tool protocol
+
+Every model tool call must receive exactly one paired result before the next model
+completion. `agent_spawn` therefore returns a receipt under its original call ID; it
+does not defer that result until the child finishes or emit a second result later.
+
+The root completion guard prevents a final answer while a child is running or a
+terminal summary remains unobserved. `agent_await` is the deliberate blocking join.
+
+## Lifecycle
+
+```text
+RUNNING -> COMPLETED
+        -> FAILED
+        -> CANCELLED
+```
+
+`Group.Close` rejects new starts, cancels running children, and waits for all owned
+goroutines within the caller's shutdown context. Agent tasks are turn-scoped and are
+not restored after a process restart.
 
 ## The two caps
 
-**Depth, default 1.** The runner plants the current depth on ctx;
-the spawn tool reads it back and refuses past the cap. Depth 1 means
-a parent can delegate, but the child cannot spawn grandchildren.
-Left uncapped, capable models treat spawn as a free fan-out
-primitive and build trees of children whose results never converge —
-burning the context window assembling an org chart instead of doing
-the work. `WithMaxDepth(0)` disables spawning entirely.
+**Depth, default 1.** A parent may delegate, but its child cannot spawn a grandchild.
+`WithMaxDepth(0)` disables registration.
 
-**Fan-out, via the [fan-out guardrail](/zarlmono/guardrails/#fan-out--exploration-budgets).**
-Even at depth 1, one iteration can emit many spawn calls. A per-task
-budget (zarlcode uses 3) turns spawn into what it should be: a small
-handful of parallel, single-hop delegations.
+**Fan-out.** A separate per-task guardrail limits sibling `agent_spawn` calls. Depth
+prevents recursive trees; fan-out prevents one parent from launching an unbounded
+number of children.
 
-The combination is the design: depth stops recursion, fan-out stops
-explosion.
+## Named agents
 
-## Named sub-agents
+`spawn.WithAgentResolver` routes an `agent="reviewer"` argument to another runner
+with its own provider, model, prompt, and tool gates. Names come from `list_agents`.
+Unknown names soft-fall back to the parent runner with a visible notice. The optional
+`SpawnPlanner` chooses only from the registered candidate set.
 
-`spawn.WithAgentResolver(fn)` routes an `agent="reviewer"` argument
-to a different runner — different prompt, different model, different
-tool gates. A parent on a cheap local model can delegate review to a
-stronger hosted one. Resolution failure falls back to the parent
-runner with a notice in the result, rather than failing the call.
+## Work modes and workspace coordination
 
-## Work modes
+- **`explore`** — read-only investigation;
+- **`verify`** — review and bounded verification without file-edit tools;
+- **`implement`** — full tool surface.
 
-The `mode` argument gates the child's tool surface:
+Explore and verify children hold a shared workspace READ lease for their lifetime.
+Implement children hold an exclusive WRITE lease. Parent and child tool calls acquire
+short-lived leases under their task IDs. Conflicts fail recoverably instead of
+blocking or racing; a child may re-enter its own lease.
 
-- **`explore`** — read-only investigation. The host blocks file
-  edits and shell execution. Safe for mapping codebases and
-  answering "what does X do" questions.
-- **`verify`** — build and test only. No file edits, but shell
-  (for `go test`, `go build`) is allowed.
-- **`implement`** — full tool surface. The default.
-
-Mode enforcement happens at the tool level — an explore sub-agent
-literally cannot call `write` or `edit`, regardless of what the
-model attempts.
-
-## Parallel dispatch
-
-When the parent emits multiple `spawn_agent` calls in a single
-response, the runner dispatches them concurrently. A small handful
-(researcher + reviewer + coder) is the intended shape; the fan-out
-guardrail caps the spawn budget per task to prevent explosion.
-
-## Spawn planner
-
-The `agent` argument names a target sub-agent profile. When the
-model gets the name wrong (typo, hallucinated name), the
-`SpawnPlanner` — a grammar-constrained recovery step — maps it
-to the nearest registered agent name rather than failing the call.
-Resolution failure ultimately falls back to the parent runner with
-a notice in the result.
 ## What the child sees
 
-- the prompt the parent wrote — no inherited history
-- the same tool registry (minus what your gates exclude)
-- its own iteration budget
+- the prompt supplied by the parent, without inherited conversation history;
+- the same live tool source, filtered by work mode;
+- its own iteration budget and task identity.
 
-What comes back is the child's final summary as a single tool
-result. Sub-agents are context isolation: the parent pays a sentence
-for work that cost the child fifty tool calls — that's the deal, and
-it's a good one as long as someone (the runner's depth tracking, the
-guardrail's budget) is watching the bill.
+The parent can continue independent work, inspect with `agent_status`, and explicitly
+join with `agent_await` when it needs the summary.

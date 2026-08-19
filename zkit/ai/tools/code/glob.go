@@ -88,7 +88,8 @@ func NewGlobTool(ws Workspace, opts ...ReadOption) *GlobTool {
 // enum; enumeration never mutates.
 func (t *GlobTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameGlob,
+		Name:            ToolNameGlob,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Enumerate workspace paths matching a glob pattern. Returns labelled plaintext " +
 			"(one match per line with size); set output=\"json\" for {pattern, matches, truncated, " +
 			"entries:[{path,size,dir}]} instead. Distinct from `ls` (non-recursive directory listing) " +

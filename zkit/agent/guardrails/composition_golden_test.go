@@ -47,7 +47,7 @@ func TestLegacyGuardrailOrder_Golden(t *testing.T) {
 		"ls":          20,
 		"grep":        30,
 		"glob":        20,
-		"spawn_agent": 3,
+		"agent_spawn": 3,
 	})
 
 	testEdit := guardrails.NewTestEditAdvisory()

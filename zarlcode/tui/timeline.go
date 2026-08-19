@@ -311,6 +311,18 @@ func (t *toolItem) togglerAt(width, ln int) toggler {
 	}
 	return renderChildBlock(children, width).togglerForLine(ln, width, children, t.bump)
 }
+
+func (t *toolItem) toggleLocals(width int) []int {
+	if !t.expanded || len(t.children) == 0 {
+		return []int{0}
+	}
+	children := make([]item, 0, len(t.children))
+	for _, child := range t.children {
+		children = append(children, child)
+	}
+	block := renderChildBlock(children, width)
+	return append([]int{0}, block.toggleLocals(width, children)...)
+}
 func (t *toolItem) finished() bool { return t.state != toolRunning }
 
 // kindBadge renders a tool failure's typed classification as a small colored

@@ -16,12 +16,12 @@ import (
 // loop break (cache hits): the FAN OUT pattern where a model issues
 // many different-argument calls to the same discovery tool —
 // `grep foo pkg/a`, `grep foo pkg/b`, `grep foo pkg/c`, … — instead of
-// delegating to `spawn_agent`.
+// delegating to `agent_spawn`.
 //
 // The classic trigger is "scan a large tree" against a workspace with 200
 // entries. The model dutifully calls `ls`, `grep`, or `glob` over and over,
 // consuming the context window with raw discovery output the agent doesn't need
-// to plan. spawn_agent's job is exactly this; the guardrail nudges the model
+// to plan. agent_spawn's job is exactly this; the guardrail nudges the model
 // back toward it. Read is usually the evidence-gathering step after discovery
 // narrows the target set, so the standard zarlcode wiring leaves it uncapped.
 //
@@ -29,7 +29,7 @@ import (
 //
 //	count < limit      → pass-through (model sees the real result)
 //	count == limit     → call executed, but its result is replaced with a
-//	                     Validation nudge naming spawn_agent
+//	                     Validation nudge naming agent_spawn
 //	count > limit      → continued Validation rejection (with
 //	                     escalating count) so the model can't
 //	                     brute-force past the cap
@@ -38,7 +38,7 @@ import (
 // failed. A failing repeat-loop (the same exploration tool rejected
 // over and over) burns the budget too: it spends iterations and tokens
 // just like a successful fan-out, and a model stuck on it needs the
-// same nudge toward spawn_agent. (Same-signature and same-tool failure
+// same nudge toward agent_spawn. (Same-signature and same-tool failure
 // loops are also caught earlier and harder by [DecomposeGuardrail];
 // this cap is the outer attempt ceiling that bounds the mixed
 // success/failure case neither guardrail sees alone.)
@@ -73,7 +73,7 @@ func (g *FanoutGuardrail) Name() string { return "fanout" }
 // Inspect runs after each tool dispatch. Every call — successful or
 // failed — bumps the per-task counter for the tool and, once the budget
 // is exhausted, the result is rewritten into a Validation rejection with
-// a spawn_agent nudge.
+// a agent_spawn nudge.
 func (g *FanoutGuardrail) Inspect(
 	ctx context.Context,
 	call tools.ToolCall,
@@ -92,7 +92,7 @@ func (g *FanoutGuardrail) Inspect(
 		"%q has now been invoked %d times this task (cap %d). The fan-out pattern — "+
 			"many small discovery calls driven directly from the orchestrator — burns context "+
 			"the agent doesn't need for planning. Delegate further exploration to "+
-			"`spawn_agent` with a specific question (e.g. \"map the public API of pkg/foo — "+
+			"`agent_spawn` with a specific question (e.g. \"map the public API of pkg/foo — "+
 			"list each type and its purpose\") and act on the digest, not the raw bodies.",
 		call.ToolName, count, limit))
 }

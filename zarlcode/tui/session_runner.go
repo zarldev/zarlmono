@@ -84,7 +84,7 @@ func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
 	if e.Depth > s.Run.maxDepth {
 		s.Run.maxDepth = e.Depth
 	}
-	if e.ToolName == "load_skill" {
+	if e.ToolName == "skill_load" {
 		if name, ok := e.Parameters["name"].(string); ok {
 			if s.PendingSkillNames == nil {
 				s.PendingSkillNames = make(map[string]string)
@@ -105,7 +105,7 @@ func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEf
 	s.logEvent("tool completed", e.ToolName)
 	s.Run.foldTool(e.ToolName, e.Duration, false)
 
-	if e.ToolName != "load_skill" {
+	if e.ToolName != "skill_load" {
 		return toolCompletedEffect{}
 	}
 	name, ok := s.PendingSkillNames[e.ToolID]
@@ -124,7 +124,7 @@ func (s *Session) applyToolFailed(e teasink.ToolFailedMsg) {
 	s.LastToolEffects = e.Effects
 	s.logEvent("tool failed", e.ToolName+" ✗")
 	s.Run.foldTool(e.ToolName, e.Duration, true)
-	if e.ToolName == "load_skill" {
+	if e.ToolName == "skill_load" {
 		delete(s.PendingSkillNames, e.ToolID)
 	}
 }
@@ -155,6 +155,7 @@ func (s *Session) applyIterationCompleted(e teasink.IterationCompletedMsg) {
 	if e.Depth == 0 {
 		s.Run.foldIteration(e.Usage, e.Delta)
 		s.Run.setContextBreakdown(e.Context)
+		s.Run.toolSurface = e.ToolSurface
 		s.maybeWarnCompaction()
 	}
 }

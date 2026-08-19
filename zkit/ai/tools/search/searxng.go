@@ -79,7 +79,8 @@ func New(baseURL string) *SearxngTool {
 // current docs, etc.) rather than guessing.
 func (t *SearxngTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolName,
+		Name:            ToolName,
+		WorkspaceAccess: tools.WorkspaceAccesses.NONE,
 		Description: "Search the web via a local SearXNG instance. Returns labelled plaintext — numbered " +
 			"results with title, URL, and snippet rows; set output=\"json\" for {query, results:[{title,url,content}]} " +
 			"instead. Use this for current information, post-cutoff facts, or to verify uncertain claims.",

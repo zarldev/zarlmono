@@ -81,7 +81,7 @@ type ToolFailedMsg struct {
 // ParentToolCallID identifies the tool call that spawned this Run
 // (set by spawn-agent on sub-agent dispatch). Empty for top-level
 // Runs. Lets the model attribute Depth>0 events back to the exact
-// parent tool call — necessary when multiple spawn_agent calls run
+// parent tool call — necessary when multiple agent_spawn calls run
 // in parallel and ToolID-based correlation is the only unambiguous
 // link from child events to a parent slot.
 type ConversationStartedMsg struct {
@@ -105,6 +105,7 @@ type ConversationEndedMsg struct {
 	TaskID string
 	Depth  int
 	Reason runner.TerminalReason
+	Cause  runner.TerminalCause
 	Error  string
 	// RateLimit carries structured rate-limit timing when the terminal
 	// error was a rate limit; nil otherwise. The consumer renders from
@@ -132,7 +133,8 @@ type IterationCompletedMsg struct {
 	Delta  *llm.Usage
 	// Context is the per-role composition of the working history at this
 	// iteration — drives the cockpit's context graph. Nil when unreported.
-	Context *runner.ContextBreakdown
+	Context     *runner.ContextBreakdown
+	ToolSurface runner.ToolSurface
 }
 
 // PlanUpdatedMsg carries the structured plan the agent maintains via the

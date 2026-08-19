@@ -47,7 +47,8 @@ func NewGrepTool(ws Workspace, opts ...ReadOption) *GrepTool {
 // output enum; searching never mutates.
 func (t *GrepTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameGrep,
+		Name:            ToolNameGrep,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Search workspace contents with ripgrep. Hits are grouped by file as `LINE: text` rows " +
 			"under each path (set output=\"json\" for {pattern, path?, glob?, matches, truncated, max_results, hits:[{file,line,text}]}). " +
 			"Honors .gitignore by default. Use `glob` for path-only enumeration and `read` to fetch full file contents.",

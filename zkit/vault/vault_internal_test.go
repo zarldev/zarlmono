@@ -2,6 +2,7 @@ package vault
 
 import (
 	"encoding/base64"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -78,9 +79,9 @@ func TestVaultAPIKey_RoundTripThroughStore(t *testing.T) {
 	}
 
 	// Initially absent.
-	_, ok, err := store.GetAPIKeyExact(t.Context(), "", "anthropic")
-	if err != nil || ok {
-		t.Errorf("expected absent, got ok=%v err=%v", ok, err)
+	_, err = store.GetAPIKeyExact(t.Context(), "", "anthropic")
+	if !errors.Is(err, db.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 
 	// Set + get round-trips through encrypt/decrypt.
@@ -96,9 +97,9 @@ func TestVaultAPIKey_RoundTripThroughStore(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	row, ok, err := store.GetAPIKeyExact(t.Context(), "", "anthropic")
-	if err != nil || !ok {
-		t.Fatalf("get: ok=%v err=%v", ok, err)
+	row, err := store.GetAPIKeyExact(t.Context(), "", "anthropic")
+	if err != nil {
+		t.Fatalf("get: err=%v", err)
 	}
 	got, err := v.Decrypt(row.Ciphertext, row.Nonce)
 	if err != nil || got != want {
@@ -106,9 +107,9 @@ func TestVaultAPIKey_RoundTripThroughStore(t *testing.T) {
 	}
 
 	// Workspace lookup falls back to global ('').
-	row, ok, err = store.GetAPIKey(t.Context(), "/tmp/somewhere", "anthropic")
-	if err != nil || !ok {
-		t.Fatalf("workspace fallback: ok=%v err=%v", ok, err)
+	row, err = store.GetAPIKey(t.Context(), "/tmp/somewhere", "anthropic")
+	if err != nil {
+		t.Fatalf("workspace fallback: err=%v", err)
 	}
 	got, err = v.Decrypt(row.Ciphertext, row.Nonce)
 	if err != nil || got != want {

@@ -142,7 +142,8 @@ func (t *LsTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolR
 
 func lsSpec() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameLs,
+		Name:            ToolNameLs,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "List a workspace directory (one level, non-recursive). Returns labelled plaintext " +
 			"(one entry per line, with size and type); set output=\"json\" for a [{name, type, size}] array " +
 			"instead. Dotfiles are excluded unless `show_hidden: true`. Use `glob` for recursive path " +

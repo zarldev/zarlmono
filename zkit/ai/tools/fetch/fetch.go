@@ -54,9 +54,9 @@ const maxBodyBytes = 16 << 20 // 16 MiB
 // chromedp fallback for JS-heavy pages. Construct with [New]; the
 // returned tool is safe for concurrent Execute calls.
 //
-// Use [WebFetchTool.WithChromeBinPath] to set an explicit Chrome/Chromium
-// binary path for the browser fallback. When unset, chromedp searches the
-// standard platform paths.
+// Use [WebFetchTool.ConfigureChromeBinary] to change the Chrome/Chromium
+// binary used by the browser fallback. When unset, chromedp searches standard
+// platform paths.
 type WebFetchTool struct {
 	client *zhttp.Client
 
@@ -90,28 +90,27 @@ func New() *WebFetchTool {
 	}
 }
 
-// WithChromeBinPath sets the absolute path to a Chrome or Chromium binary
-// for the chromedp browser fallback. When empty (the default), chromedp
-// searches standard platform paths via exec.LookPath. Changing the path closes
-// an existing renderer so the next browser fetch starts the configured binary.
-func (t *WebFetchTool) WithChromeBinPath(path string) *WebFetchTool {
+// ConfigureChromeBinary changes the Chrome or Chromium binary used by the
+// browser fallback. Changing it closes the owned renderer so the next browser
+// fetch starts the configured binary.
+func (t *WebFetchTool) ConfigureChromeBinary(path string) {
 	t.browserMu.Lock()
 	defer t.browserMu.Unlock()
 	if path == t.chromeBinPath {
-		return t
+		return
 	}
 	t.chromeBinPath = path
 	if t.renderer != nil {
 		_ = t.renderer.Close()
 		t.renderer = nil
 	}
-	return t
 }
 
 // Definition is the LLM-facing spec.
 func (t *WebFetchTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolName,
+		Name:            ToolName,
+		WorkspaceAccess: tools.WorkspaceAccesses.NONE,
 		Description: "Fetch a web page and return its text content. Tries fast HTTP GET first; " +
 			"falls back to headless Chrome for JavaScript-heavy pages. " +
 			"Use this for reading documentation, articles, or any page content.",

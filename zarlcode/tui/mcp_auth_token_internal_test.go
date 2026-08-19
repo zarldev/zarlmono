@@ -49,8 +49,8 @@ func TestResolveMCPAuthToken_MigratesLegacyPlaintext(t *testing.T) {
 		t.Errorf("plaintext token still in mcp_servers after migration: %q", rows[0].AuthToken)
 	}
 	// And now resolvable from the vault.
-	if k, ok, err := s.Svc.GetKey(t.Context(), prefs.ScopeGlobal, mcpAuthKeyProvider(name)); err != nil || !ok || k != secret {
-		t.Errorf("vault lookup = %q ok=%v err=%v; want %q", k, ok, err, secret)
+	if k, err := s.Svc.GetKey(t.Context(), prefs.ScopeGlobal, mcpAuthKeyProvider(name)); err != nil || k != secret {
+		t.Errorf("vault lookup = %q err=%v; want %q", k, err, secret)
 	}
 	if got := resolveMCPAuthToken(t.Context(), s, rows[0]); got != secret {
 		t.Errorf("second resolve (from vault) = %q; want %q", got, secret)

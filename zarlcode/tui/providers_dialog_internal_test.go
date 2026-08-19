@@ -231,7 +231,7 @@ func TestProvidersDialog_AddCustomPersistsCost(t *testing.T) {
 	// Registry.Cost reports per-1k and metered (ok) from the explicit price.
 	in, out, ok := s.Registry.Cost("kimi", "kimi-k2.6")
 	if !ok || in <= 0 || out <= 0 {
-		t.Fatalf("Cost = %v/%v ok=%v, want metered", in, out, ok)
+		t.Fatalf("Cost = %v/%v, metered=%v; want metered", in, out, ok)
 	}
 }
 
@@ -268,8 +268,8 @@ func TestProvidersDialog_SetActiveAndEditKey(t *testing.T) {
 	}
 
 	d.handleKey(tkey("a")) // set active
-	if sv, ok, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider); !ok || sv.Value != "openai" {
-		t.Errorf("active provider not persisted: ok=%v val=%q", ok, sv.Value)
+	if sv, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider); sv.Value != "openai" {
+		t.Errorf("active provider not persisted: val=%q", sv.Value)
 	}
 
 	d.handleKey(skey(tea.KeyEnter)) // start key edit (openai uses a key)
@@ -279,8 +279,8 @@ func TestProvidersDialog_SetActiveAndEditKey(t *testing.T) {
 	typeKeys(d, "sk-test-123")
 	d.handleKey(skey(tea.KeyEnter)) // commit
 
-	if k, ok, _ := s.Svc.GetKey(t.Context(), prefs.ScopeGlobal, "openai"); !ok || k != "sk-test-123" {
-		t.Errorf("api key not stored in vault: ok=%v key=%q", ok, k)
+	if k, _ := s.Svc.GetKey(t.Context(), prefs.ScopeGlobal, "openai"); k != "sk-test-123" {
+		t.Errorf("api key not stored in vault: key=%q", k)
 	}
 	if !d.hasKey["openai"] {
 		t.Error("key status not refreshed after save")

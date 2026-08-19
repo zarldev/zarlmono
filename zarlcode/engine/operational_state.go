@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -25,12 +25,12 @@ const (
 
 type operationalState struct {
 	filesMu sync.Mutex
-	files   []compact.FileTouch
+	files   []agentcompact.FileTouch
 	tools   zsync.Map[tools.ToolName, *atomic.Int64]
 
 	statusMu         sync.Mutex
-	verification     *compact.VerificationState
-	failures         []compact.FailureState
+	verification     *agentcompact.VerificationState
+	failures         []agentcompact.FailureState
 	sequence         uint64
 	lastMutation     uint64
 	lastVerification uint64
@@ -62,17 +62,17 @@ func (s *operationalState) record(call tools.ToolCall, result *tools.ToolResult,
 		s.statusMu.Lock()
 		s.lastMutation = sequence
 		s.statusMu.Unlock()
-		s.recordFile(compact.FileTouch{Path: effect.Path, Action: action})
+		s.recordFile(agentcompact.FileTouch{Path: effect.Path, Action: action})
 	}
 	switch call.ToolName {
 	case code.ToolNameRead:
 		if path := call.Arguments.String("path", ""); path != "" {
-			s.recordFile(compact.FileTouch{Path: path, Action: fileActionRead})
+			s.recordFile(agentcompact.FileTouch{Path: path, Action: fileActionRead})
 		}
 	case code.ToolNameRetrieveCode:
 		if retrieved, ok := result.Data.(code.RetrieveCodeResult); ok {
 			for _, path := range retrieved.Paths() {
-				s.recordFile(compact.FileTouch{Path: path, Action: fileActionRead})
+				s.recordFile(agentcompact.FileTouch{Path: path, Action: fileActionRead})
 			}
 		}
 	}
@@ -86,10 +86,10 @@ func (s *operationalSource) ForgetTask(id taskscope.ID) {
 	}
 }
 
-func (s *operationalState) recordFile(touch compact.FileTouch) {
+func (s *operationalState) recordFile(touch agentcompact.FileTouch) {
 	s.filesMu.Lock()
 	defer s.filesMu.Unlock()
-	if index := slices.IndexFunc(s.files, func(existing compact.FileTouch) bool {
+	if index := slices.IndexFunc(s.files, func(existing agentcompact.FileTouch) bool {
 		return existing.Path == touch.Path
 	}); index >= 0 {
 		s.files = slices.Delete(s.files, index, index+1)
@@ -100,7 +100,7 @@ func (s *operationalState) recordFile(touch compact.FileTouch) {
 	}
 }
 
-func (s *operationalState) workingFiles() []compact.FileTouch {
+func (s *operationalState) workingFiles() []agentcompact.FileTouch {
 	if s == nil {
 		return nil
 	}
@@ -109,20 +109,20 @@ func (s *operationalState) workingFiles() []compact.FileTouch {
 	return slices.Clone(s.files)
 }
 
-func (s *operationalState) topTools() []compact.ToolUsage {
+func (s *operationalState) topTools() []agentcompact.ToolUsage {
 	if s == nil {
 		return nil
 	}
 	names := s.tools.Keys()
-	usage := make([]compact.ToolUsage, 0, len(names))
+	usage := make([]agentcompact.ToolUsage, 0, len(names))
 	for _, name := range names {
 		counter, err := s.tools.Get(name)
 		if err != nil {
 			continue
 		}
-		usage = append(usage, compact.ToolUsage{Name: name.String(), Count: int(counter.Load())})
+		usage = append(usage, agentcompact.ToolUsage{Name: name.String(), Count: int(counter.Load())})
 	}
-	slices.SortFunc(usage, func(a, b compact.ToolUsage) int {
+	slices.SortFunc(usage, func(a, b agentcompact.ToolUsage) int {
 		if a.Count != b.Count {
 			return b.Count - a.Count
 		}
@@ -142,9 +142,9 @@ func (s *operationalState) recordStatus(sequence uint64, call tools.ToolCall, re
 					continue
 				}
 				s.lastVerification = sequence
-				s.verification = &compact.VerificationState{Command: command, Passed: result.Success && effect.ExitCode == 0 && !effect.TimedOut}
+				s.verification = &agentcompact.VerificationState{Command: command, Passed: result.Success && effect.ExitCode == 0 && !effect.TimedOut}
 				if s.verification.Passed {
-					s.failures = slices.DeleteFunc(s.failures, func(failure compact.FailureState) bool { return failure.Tool == code.ToolNameBash.String() })
+					s.failures = slices.DeleteFunc(s.failures, func(failure agentcompact.FailureState) bool { return failure.Tool == code.ToolNameBash.String() })
 				}
 				break
 			}
@@ -165,15 +165,15 @@ func (s *operationalState) recordStatus(sequence uint64, call tools.ToolCall, re
 	if summary == "" {
 		summary = "tool reported failure"
 	}
-	failure := compact.FailureState{Tool: call.ToolName.String(), Kind: kind, Summary: clipFailureSummary(summary)}
-	s.failures = slices.DeleteFunc(s.failures, func(existing compact.FailureState) bool { return existing.Tool == failure.Tool })
+	failure := agentcompact.FailureState{Tool: call.ToolName.String(), Kind: kind, Summary: clipFailureSummary(summary)}
+	s.failures = slices.DeleteFunc(s.failures, func(existing agentcompact.FailureState) bool { return existing.Tool == failure.Tool })
 	s.failures = append(s.failures, failure)
 	if len(s.failures) > maxOperationalFailures {
 		s.failures = slices.Delete(s.failures, 0, len(s.failures)-maxOperationalFailures)
 	}
 }
 
-func (s *operationalState) verificationState() *compact.VerificationState {
+func (s *operationalState) verificationState() *agentcompact.VerificationState {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 	if s.verification == nil {
@@ -184,7 +184,7 @@ func (s *operationalState) verificationState() *compact.VerificationState {
 	return &state
 }
 
-func (s *operationalState) unresolvedFailures() []compact.FailureState {
+func (s *operationalState) unresolvedFailures() []agentcompact.FailureState {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 	return slices.Clone(s.failures)

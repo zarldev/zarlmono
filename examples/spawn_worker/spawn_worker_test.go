@@ -148,7 +148,7 @@ func TestFileSystem_RefactorComplete(t *testing.T) {
 // parent spawns a coder worker, the child (implement mode) writes the
 // files on the shared filesystem and reports done, then the parent
 // completes. The single scripted client is consumed in execution order —
-// parent's spawn turn, the child's turns while spawn_agent runs
+// parent's spawn turn, the child's turns while agent_spawn runs
 // synchronously, then the parent's final turn — proving real
 // parent-child coordination, not just the unit-level mechanisms above.
 func TestSpawnWorker_Integration(t *testing.T) {
@@ -157,7 +157,7 @@ func TestSpawnWorker_Integration(t *testing.T) {
 	client := runnertest.NewClient([][]llm.CompletionChunk{
 		// Parent: delegate the whole refactor to the coder worker.
 		{
-			runnertest.ChunkToolCall("p1", "spawn_agent",
+			runnertest.ChunkToolCall("p1", "agent_spawn",
 				`{"prompt": "Create jwt.go and switch auth.go to JWT.", "agent": "coder", "mode": "implement"}`),
 			runnertest.ChunkDone(),
 		},

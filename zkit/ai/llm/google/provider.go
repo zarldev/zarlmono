@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"log/slog"
 	"math"
 	"time"
 
@@ -144,11 +143,6 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (ite
 // low enough that a single turn doing many tool iterations can trip
 // it mid-flight.
 func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
-	slog.DebugContext(ctx, "google streaming completion",
-		"model", p.model,
-		"messages", len(req.Messages),
-		"tools", len(req.Tools))
-
 	config := p.buildConfig(req)
 	sys, contents := convertMessages(req.Messages)
 	if sys != nil {
@@ -192,20 +186,10 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		// visible was emitted this attempt — a re-stream would replay it, so
 		// once st.emitted is set the 429 is terminal, not retryable.
 		if !isRateLimit(streamErr) || attempt >= maxRetries || st.emitted {
-			// User-cancel comes back as ctx.Canceled / DeadlineExceeded.
-			// That's an expected outcome, not an error — log at Debug
-			// so an active TUI's stdout-tee'd slog handler doesn't paint
-			// "ERROR google stream" over the alt-screen on every cancel.
-			if errors.Is(streamErr, context.Canceled) || errors.Is(streamErr, context.DeadlineExceeded) {
-				slog.DebugContext(ctx, "google stream cancelled", "error", streamErr, "attempt", attempt)
-			} else {
-				slog.ErrorContext(ctx, "google stream", "error", streamErr, "attempt", attempt)
-			}
 			yield(llm.CompletionChunk{Done: true}, rateLimitError(streamErr, fmt.Errorf("gemini stream: %w", streamErr)))
 			return
 		}
 		wait := backoffWithRetryAfter(streamErr, backoff)
-		slog.WarnContext(ctx, "google rate limit, backing off", "wait", wait, "attempt", attempt)
 		select {
 		case <-ctx.Done():
 			yield(llm.CompletionChunk{Done: true}, ctx.Err())

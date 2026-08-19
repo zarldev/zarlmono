@@ -12,6 +12,11 @@ import _ "embed"
 //go:embed system.md
 var System string
 
+// SystemCompact is the compact BUILD prompt (prompts/system_compact.md).
+//
+//go:embed system_compact.md
+var SystemCompact string
+
 // Plan is the default plan-mode system prompt (prompts/plan.md).
 //
 //go:embed plan.md

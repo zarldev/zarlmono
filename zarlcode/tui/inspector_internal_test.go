@@ -12,7 +12,9 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -35,6 +37,26 @@ func TestInspector_OpensWithCtrlI(t *testing.T) {
 	for _, want := range []string{"inspector", "tools", "prompt", "guardrails", "processes", "mcp", "events", "skills", "agents"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("inspector missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestInspector_ToolSurfaceAccounting(t *testing.T) {
+	t.Parallel()
+
+	ins := newInspector(InspectorSnapshot{
+		Tools: []tools.ToolSpec{{Name: "read", Description: "Read a file."}},
+		ToolSurface: runner.ToolSurface{
+			Count:       3,
+			JSONBytes:   2048,
+			Fingerprint: "0123456789abcdef",
+			Changed:     true,
+		},
+	})
+	lines := strings.Join(ins.toolLines(100), "\n")
+	for _, want := range []string{"3 tools", "2048 bytes", "changed", "0123456789ab"} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("tool surface lines missing %q:\n%s", want, lines)
 		}
 	}
 }
@@ -66,8 +88,7 @@ func TestInspector_ShowsBackgroundProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
-	live := engine.NewLiveRunner(nil, ws, nil, "inspect-model")
-	live.SetProcessManager(pm)
+	live := engine.NewLiveRunner(nil, ws, "inspect-model", engine.WithProcessManager(pm))
 	snap := BuildInspectorSnapshot(NewSession("~", root, ""), live, nil)
 	if len(snap.Processes) != 1 {
 		t.Fatalf("process snapshot len = %d, want 1", len(snap.Processes))
@@ -98,8 +119,7 @@ func TestInspector_KillSelectedProcessAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
-	live := engine.NewLiveRunner(nil, ws, nil, "inspect-model")
-	live.SetProcessManager(pm)
+	live := engine.NewLiveRunner(nil, ws, "inspect-model", engine.WithProcessManager(pm))
 	ins := newInspector(BuildInspectorSnapshot(NewSession("~", root, ""), live, nil))
 	ins.cursor = int(inspectorTabProcesses)
 
@@ -125,8 +145,7 @@ func TestUI_KillProcessFeedsAgentQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
-	live := engine.NewLiveRunner(nil, ws, nil, "inspect-model")
-	live.SetProcessManager(pm)
+	live := engine.NewLiveRunner(nil, ws, "inspect-model", engine.WithProcessManager(pm))
 	m := New()
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	m = mm.(*UI)
@@ -218,8 +237,8 @@ You review code.
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := engine.NewLiveRunner(nil, ws, nil, "inspect-model")
-	live.SetLimits(0, 0, 0, 1) // enable spawn_agent, so agent roster is inlined
+	live := engine.NewLiveRunner(nil, ws, "inspect-model")
+	live.SetLimits(0, 0, 0, 1) // enable agent_spawn, so agent roster is inlined
 	snap := BuildInspectorSnapshot(NewSession("~", root, ""), live, nil)
 
 	// The prompt itself no longer enumerates a tool roster or skill/agent lists
@@ -239,7 +258,7 @@ You review code.
 	for _, spec := range snap.Tools {
 		toolset[spec.Name.String()] = true
 	}
-	for _, want := range []string{"program", "spawn_agent", "update_plan"} {
+	for _, want := range []string{"program", "agent_spawn", "update_plan"} {
 		if !toolset[want] {
 			t.Fatalf("inspector tool list missing %q: %v", want, snap.Tools)
 		}
@@ -255,7 +274,7 @@ func TestInspectorToolsUsePlanFilteredLiveSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := engine.NewLiveRunner(nil, ws, nil, "inspect-model")
+	live := engine.NewLiveRunner(nil, ws, "inspect-model")
 	live.SetLimits(0, 0, 0, 1)
 	live.SetPlanMode(true)
 	snap := BuildInspectorSnapshot(NewSession("~", root, ""), live, nil)

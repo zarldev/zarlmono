@@ -101,15 +101,15 @@ func NewTokenSource(svc *prefs.Service) *tokenSource {
 func (s *tokenSource) Token(ctx context.Context) (openaicodex.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cred, src, ok, err := s.readCred(ctx)
+	cred, src, err := s.readCred(ctx)
 	if err != nil {
+		if errors.Is(err, prefs.ErrNotFound) {
+			return openaicodex.Token{}, fmt.Errorf(
+				"openaicodex: no stored credential — run `zarlcode keys oauth %s`",
+				CredProvider,
+			)
+		}
 		return openaicodex.Token{}, err
-	}
-	if !ok {
-		return openaicodex.Token{}, fmt.Errorf(
-			"openaicodex: no stored credential — run `zarlcode keys oauth %s`",
-			CredProvider,
-		)
 	}
 	tok := cred.toToken()
 	if !needsRefresh(tok) {
@@ -146,19 +146,17 @@ func needsRefresh(t openaicodex.Token) bool {
 // the scope it resolved from (so writeCred can persist back to the
 // same row).
 //
-// Returns (cred, src, true, nil) on success, (zero, zero, false, nil)
-// when neither workspace nor global has an entry, or (zero, zero,
-// false, err) on any other failure.
-func (s *tokenSource) readCred(ctx context.Context) (Cred, prefs.Scope, bool, error) {
-	kv, ok, err := s.svc.GetKeyEffective(ctx, CredProvider)
-	if err != nil || !ok {
-		return Cred{}, 0, ok, err
+// ErrNotFound reports that neither workspace nor global has an entry.
+func (s *tokenSource) readCred(ctx context.Context) (Cred, prefs.Scope, error) {
+	kv, err := s.svc.GetKeyEffective(ctx, CredProvider)
+	if err != nil {
+		return Cred{}, prefs.Scopes.INVALID, err
 	}
 	var c Cred
 	if err := json.Unmarshal([]byte(kv.Value), &c); err != nil {
-		return Cred{}, 0, false, fmt.Errorf("decode codex credential: %w", err)
+		return Cred{}, prefs.Scopes.INVALID, fmt.Errorf("decode codex credential: %w", err)
 	}
-	return c, kv.Source, true, nil
+	return c, kv.Source, nil
 }
 
 // writeCred persists a credential at the explicit scope the read

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -68,7 +67,8 @@ type loopState struct {
 	// something fresh to trim), the runner skips re-running a forced compact
 	// it knows will no-op. Zero = no active latch; reset whenever a compaction
 	// actually trims.
-	forceCompactNoopAt int
+	forceCompactNoopAt     int
+	toolSurfaceFingerprint string
 }
 
 // Run executes a task to completion or terminal condition. The loop is:
@@ -144,7 +144,6 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		if err := ctx.Err(); err != nil {
 			return t.cancelled(ctx, err)
 		}
-		slog.InfoContext(ctx, "runner: iter start", "task", string(spec.ID), "iter", iter, "messages", len(t.messages))
 		// Yield to real-time conversation if applicable. The lock
 		// uses sync.Cond + context.AfterFunc; no polling, immediate
 		// resume on Release.
@@ -208,10 +207,15 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			// backing array shaped might share with messages.
 			shaped = append(shaped[:len(shaped):len(shaped)], llm.Message{Role: llm.RoleUser, Content: finalizeNudge})
 		}
-		llmTools := r.buildLLMTools(ctx)
+		requestTools, err := r.buildRequestTools(ctx, t.st.toolSurfaceFingerprint)
+		if err != nil {
+			return t.errored(ctx, err)
+		}
+		t.st.toolSurfaceFingerprint = requestTools.surface.Fingerprint
+		t.toolSurface = requestTools.surface
 		req := llm.CompletionRequest{
 			Messages:           shaped,
-			Tools:              llmTools,
+			Tools:              requestTools.tools,
 			Stream:             true,
 			MaxTokens:          r.maxTokens,
 			Temperature:        r.temperature,
@@ -230,30 +234,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// next iteration). When both timeouts are 0, this is just
 		// ctx — no-op wrapper.
 		iterCtx, cancelIter := iterationContext(ctx, r.timeouts.iteration)
-		slog.InfoContext(
-			ctx,
-			"runner: calling complete",
-			"task",
-			string(spec.ID),
-			"iter",
-			iter,
-			"messages",
-			len(shaped),
-		)
-		callStart := time.Now()
 		stream, err := r.client.Complete(iterCtx, req)
-		slog.InfoContext(
-			ctx,
-			"runner: complete returned",
-			"task",
-			string(spec.ID),
-			"iter",
-			iter,
-			"elapsed_ms",
-			time.Since(callStart).Milliseconds(),
-			"err",
-			err,
-		)
 		if err != nil {
 			cancelIter()
 			return t.errored(ctx, fmt.Errorf("complete: %w", err))
@@ -262,7 +243,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// Drain the completion stream: accumulate content / thinking /
 		// tool calls, run the idle watchdog + producer goroutine,
 		// classify the terminal condition, and cancelIter. See drain.go.
-		sr := r.drainStream(ctx, iterCtx, cancelIter, spec, iter, stream)
+		sr := r.drainStream(ctx, iterCtx, cancelIter, spec, stream)
 		toolCalls := sr.toolCalls
 		toolCallOrder := sr.toolCallOrder
 		streamErr := sr.err
@@ -372,17 +353,13 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 				if decision.Correction != "" &&
 					(decision.MaxCorrections == 0 || t.st.completionCorrections < decision.MaxCorrections) {
 					t.st.completionCorrections++
-					slog.InfoContext(ctx, "runner: completion gate held",
-						"task", string(spec.ID), "iter", iter,
-						"mutating_calls", t.st.mutatingCalls,
-						"corrections", t.st.completionCorrections)
 					t.messages = append(t.messages, llm.Message{Role: llm.RoleUser, Content: decision.Correction})
 					continue
 				}
 			}
 			// Usage=occupancy, Delta=this iteration's own usage — see
 			// IterationCompleted. Identical to the post-dispatch site below.
-			r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages)
+			r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages, requestTools.surface)
 			if uo, ok := r.compactor.(compact.UsageObserver); ok {
 				uo.ObserveUsage(t.lastUsage)
 			}
@@ -393,20 +370,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// r.toolConcurrency, but their results are reassembled in the
 		// original toolCallOrder so the LLM sees tool messages in the
 		// order it emitted them.
-		dispatchStart := time.Now()
-		slog.InfoContext(
-			ctx,
-			"runner: dispatch start",
-			"task",
-			string(spec.ID),
-			"iter",
-			iter,
-			"n_calls",
-			len(toolCallOrder),
-		)
 		dispatched := r.dispatchBatch(ctx, spec, toolCalls, toolCallOrder)
-		slog.InfoContext(ctx, "runner: dispatch done", "task", string(spec.ID), "iter", iter,
-			"elapsed_ms", time.Since(dispatchStart).Milliseconds(), "n_calls", len(toolCallOrder))
 		for _, id := range toolCallOrder {
 			tc := toolCalls[id]
 			d := dispatched[id]
@@ -417,24 +381,6 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			if r.completionGate != nil && d.err == nil && d.result != nil && d.result.Success &&
 				r.toolMutates(ctx, tc.Function.Name) {
 				t.st.mutatingCalls++
-			}
-			if d.err != nil {
-				// Cancel / timeout aren't faults — they're the user's
-				// own ctx unwinding through every in-flight tool.
-				// Drop to Debug so consumers with stdout-tee'd slog
-				// (e.g. an zarlcode TUI) don't get the runtime
-				// noise painted over the alt-screen.
-				if errors.Is(d.err, context.Canceled) || errors.Is(d.err, context.DeadlineExceeded) {
-					slog.DebugContext(ctx, "runner: tool cancelled",
-						"task_id", spec.ID,
-						llm.RoleTool, tc.Function.Name,
-						"err", d.err)
-				} else {
-					slog.WarnContext(ctx, "runner: tool dispatch failed",
-						"task_id", spec.ID,
-						llm.RoleTool, tc.Function.Name,
-						"err", d.err)
-				}
 			}
 			t.messages = append(t.messages, llm.Message{
 				Role:       llm.RoleTool,
@@ -455,7 +401,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// IterationCompleted. The compaction gate (compact.PressureGated)
 		// reads occupancy, which never goes nil mid-Run even when this
 		// turn's provider dropped usage.
-		r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages)
+		r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages, requestTools.surface)
 		if uo, ok := r.compactor.(compact.UsageObserver); ok {
 			uo.ObserveUsage(t.lastUsage)
 		}
@@ -650,7 +596,7 @@ func toolErrorHint(err *tools.Error) string {
 	case tools.Kinds.TRANSIENT:
 		return " | retry once or verify state"
 	case tools.Kinds.BUDGET:
-		return " | reduce scope, avoid deep reads, or delegate via spawn_agent"
+		return " | reduce scope, avoid deep reads, or delegate via agent_spawn"
 	case tools.Kinds.FATAL:
 		return " | cannot recover — stop retrying and explain the issue"
 	case tools.Kinds.STALE:

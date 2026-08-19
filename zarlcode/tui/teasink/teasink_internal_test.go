@@ -3,6 +3,7 @@ package teasink
 import (
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -172,18 +173,22 @@ func TestSink_Drain(t *testing.T) {
 	})
 
 	t.Run("returns immediately when pump not started", func(t *testing.T) {
-		s := New(nil)
-		done := make(chan struct{})
-		go func() {
-			s.Drain()
-			close(done)
-		}()
-		select {
-		case <-done:
-			// OK — did not block.
-		case <-time.After(time.Second):
-			t.Fatal("Drain blocked despite pump not started")
-		}
+		synctest.Test(t, func(t *testing.T) {
+			s := New(nil)
+			done := make(chan struct{})
+			go func() {
+				s.Drain()
+				close(done)
+			}()
+
+			synctest.Wait()
+			select {
+			case <-done:
+				// OK — did not block.
+			default:
+				t.Fatal("Drain blocked despite pump not started")
+			}
+		})
 	})
 }
 
@@ -248,39 +253,40 @@ func TestSink_Close(t *testing.T) {
 
 func TestSink_Overflows(t *testing.T) {
 	t.Run("increments when pump buffer is full", func(t *testing.T) {
-		s := New(nil)
+		synctest.Test(t, func(t *testing.T) {
+			s := New(nil)
 
-		// Fill the pump channel directly (white-box — package teasink).
-		for range pumpBuffer {
-			s.msgs <- ContentMsg{TaskID: "fill"}
-		}
-
-		// Make dispatch believe the pump is started so it proceeds past
-		// the started check. The pump goroutine is not actually running,
-		// so the channel has no reader and is full.
-		s.started.Store(true)
-
-		// dispatch will find the channel full → non-blocking send fails →
-		// overflow counter incremented → blocking send waits on stop.
-		done := make(chan struct{})
-		go func() {
-			s.dispatch(ContentMsg{TaskID: "overflow"})
-			close(done)
-		}()
-
-		// Poll for the overflow to be recorded.
-		deadline := time.After(time.Second)
-		for s.Overflows() == 0 {
-			select {
-			case <-deadline:
-				t.Fatal("timed out waiting for overflow")
-			default:
-				time.Sleep(time.Millisecond)
+			// Fill the pump channel directly (white-box — package teasink).
+			for range pumpBuffer {
+				s.msgs <- ContentMsg{TaskID: "fill"}
 			}
-		}
 
-		s.Close() // unblocks the dispatch goroutine via stop channel
-		<-done
+			// Make dispatch believe the pump is started so it proceeds past
+			// the started check. The pump goroutine is not actually running,
+			// so the channel has no reader and is full.
+			s.started.Store(true)
+
+			// dispatch will find the channel full → non-blocking send fails →
+			// overflow counter incremented → blocking send waits on stop.
+			done := make(chan struct{})
+			go func() {
+				s.dispatch(ContentMsg{TaskID: "overflow"})
+				close(done)
+			}()
+
+			synctest.Wait()
+			if got := s.Overflows(); got != 1 {
+				t.Fatalf("Overflows() = %d, want 1", got)
+			}
+
+			s.Close() // unblocks the dispatch goroutine via stop channel
+			synctest.Wait()
+			select {
+			case <-done:
+			default:
+				t.Fatal("dispatch did not exit after Close")
+			}
+		})
 	})
 
 	t.Run("starts at zero", func(t *testing.T) {
@@ -479,57 +485,60 @@ func TestSink_PlanUpdated(t *testing.T) {
 }
 
 func TestSink_TimerCoalesceWindow(t *testing.T) {
-	// Verify that the timer-based coalesce window actually fires and
-	// dispatches content without an explicit Flush/Drain call.
+	// Verify that the timer-based coalesce window dispatches content without an
+	// explicit Flush or Drain. synctest advances time only after every goroutine
+	// in this bubble is quiescent, so these assertions cannot race the timer or
+	// pump.
 	t.Run("timer fires and dispatches coalesced content", func(t *testing.T) {
-		send, snap := recordingSend()
-		s := New(send)
-		defer s.Close()
+		synctest.Test(t, func(t *testing.T) {
+			send, snap := recordingSend()
+			s := New(send)
+			defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "timer"})
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: " test"})
+			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "timer"})
+			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: " test"})
 
-		// Wait for the coalesce timer to fire naturally.
-		time.Sleep(coalesceWindow + 10*time.Millisecond)
+			time.Sleep(coalesceWindow)
+			synctest.Wait()
 
-		// Drain to ensure pump delivery has completed.
-		s.Drain()
-
-		msgs := snap()
-		if len(msgs) != 1 {
-			t.Fatalf("expected 1 message after timer fire, got %d", len(msgs))
-		}
-		cm := msgs[0].(ContentMsg)
-		if cm.Delta != "timer test" {
-			t.Errorf("delta = %q, want %q", cm.Delta, "timer test")
-		}
+			msgs := snap()
+			if len(msgs) != 1 {
+				t.Fatalf("expected 1 message after timer fire, got %d", len(msgs))
+			}
+			cm := msgs[0].(ContentMsg)
+			if cm.Delta != "timer test" {
+				t.Errorf("delta = %q, want %q", cm.Delta, "timer test")
+			}
+		})
 	})
 
 	t.Run("second burst arms a fresh timer", func(t *testing.T) {
-		send, snap := recordingSend()
-		s := New(send)
-		defer s.Close()
+		synctest.Test(t, func(t *testing.T) {
+			send, snap := recordingSend()
+			s := New(send)
+			defer s.Close()
 
-		// First burst.
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst1"})
-		time.Sleep(coalesceWindow + 10*time.Millisecond)
-		s.Drain()
+			// First burst.
+			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst1"})
+			time.Sleep(coalesceWindow)
+			synctest.Wait()
 
-		// Second burst.
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst2"})
-		time.Sleep(coalesceWindow + 10*time.Millisecond)
-		s.Drain()
+			// Second burst.
+			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst2"})
+			time.Sleep(coalesceWindow)
+			synctest.Wait()
 
-		msgs := snap()
-		if len(msgs) != 2 {
-			t.Fatalf("expected 2 messages (one per burst), got %d", len(msgs))
-		}
-		if msgs[0].(ContentMsg).Delta != "burst1" {
-			t.Errorf("first delta = %q, want %q", msgs[0].(ContentMsg).Delta, "burst1")
-		}
-		if msgs[1].(ContentMsg).Delta != "burst2" {
-			t.Errorf("second delta = %q, want %q", msgs[1].(ContentMsg).Delta, "burst2")
-		}
+			msgs := snap()
+			if len(msgs) != 2 {
+				t.Fatalf("expected 2 messages (one per burst), got %d", len(msgs))
+			}
+			if msgs[0].(ContentMsg).Delta != "burst1" {
+				t.Errorf("first delta = %q, want %q", msgs[0].(ContentMsg).Delta, "burst1")
+			}
+			if msgs[1].(ContentMsg).Delta != "burst2" {
+				t.Errorf("second delta = %q, want %q", msgs[1].(ContentMsg).Delta, "burst2")
+			}
+		})
 	})
 }
 

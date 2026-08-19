@@ -142,7 +142,7 @@ func (d *providersDialog) refresh() {
 				d.hasKey[n] = true
 			}
 		}
-		if sv, ok, _ := d.s.Svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyProvider); ok {
+		if sv, err := d.s.Svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyProvider); err == nil {
 			d.active = sv.Value
 		}
 	}
@@ -515,7 +515,7 @@ func (d *providersDialog) onModelsLoaded(provider string, models []string, err e
 	}
 	current := ""
 	if d.s != nil && d.s.Svc != nil {
-		if sv, ok, getErr := d.s.Svc.GetSetting(d.ctx, prefs.ScopeEffective, prefs.KeyModel); getErr == nil && ok {
+		if sv, getErr := d.s.Svc.GetSetting(d.ctx, prefs.ScopeEffective, prefs.KeyModel); getErr == nil {
 			current = sv.Value
 		}
 	}

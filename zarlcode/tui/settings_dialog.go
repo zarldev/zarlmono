@@ -165,9 +165,9 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 				{label: "response timeout", key: prefs.KeyResponseTimeout, kind: rowText, numeric: true, def: "90",
 					desc: "seconds to wait with no output from the model before cancelling the iteration. raise it for slow local models/connections; non-positive falls back to 90."},
 				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, def: "20",
-					desc: "cap on sub-agent iterations per spawn_agent call. unset inherits the parent max."},
+					desc: "cap on sub-agent iterations per agent_spawn call. unset inherits the parent max."},
 				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, def: "(unset)",
-					desc: "how deep spawn_agent may recurse. unset uses the built-in default."},
+					desc: "how deep agent_spawn may recurse. unset uses the built-in default."},
 				{label: "verify command", key: prefs.KeyVerifyTests, kind: rowText, def: "(off)",
 					desc: "headless oracle: shell command (sh -c) whose zero exit means verified done; failures re-drive the agent."},
 				{label: "verify attempts", key: prefs.KeyVerifyAttempts, kind: rowText, numeric: true, def: "1",
@@ -179,7 +179,7 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, def: "0",
 					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly."},
 				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, def: "8",
-					desc: "max spawn_agent calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap."},
+					desc: "max agent_spawn calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap."},
 			}},
 			{name: "integrations", rows: []settingsRow{
 				{label: "web search", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,
@@ -299,8 +299,8 @@ func (d *settingsDialog) refresh(ctx context.Context) {
 			if r.key == "" || d.s == nil || d.s.Svc == nil {
 				continue // action rows have no backing setting
 			}
-			sv, ok, err := d.s.Svc.GetSetting(ctx, prefs.ScopeEffective, r.key)
-			if err == nil && ok {
+			sv, err := d.s.Svc.GetSetting(ctx, prefs.ScopeEffective, r.key)
+			if err == nil {
 				r.value, r.scope, r.isSet = sv.Value, sv.Source, true
 			} else {
 				r.value, r.isSet = "", false

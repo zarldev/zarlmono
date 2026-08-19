@@ -83,3 +83,8 @@ func (s *Sink) OnSteerInjected(e runner.SteerInjected) {
 func (s *Sink) OnCompactionApplied(e runner.CompactionApplied) {
 	s.emit(KindCompactionApplied, e.TaskID, e.Depth, e.Engine, e)
 }
+
+// OnDiagnostic exports a runner recovery diagnostic.
+func (s *Sink) OnDiagnostic(e runner.Diagnostic) {
+	s.emit(KindDiagnostic, e.TaskID, e.Depth, e.Kind, e)
+}

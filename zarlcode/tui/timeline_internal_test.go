@@ -79,11 +79,11 @@ func TestTimeline_ContentResumesAfterToolAsNewItem(t *testing.T) {
 func TestTimeline_LoadedSkillAndAgentStayInNestedToolGroup(t *testing.T) {
 	out := drive(t,
 		teasink.ConversationStartedMsg{TaskID: "t1", Prompt: "use helpers"},
-		teasink.ToolStartedMsg{TaskID: "t1", ToolID: "s1", ToolName: "load_skill", Parameters: map[string]any{"name": "go-testing"}},
-		teasink.ToolCompletedMsg{TaskID: "t1", ToolID: "s1", ToolName: "load_skill", Duration: time.Millisecond},
-		teasink.ToolStartedMsg{TaskID: "t1", ToolID: "a1", ToolName: "spawn_agent", Parameters: map[string]any{"agent": "go-code-reviewer", "prompt": "review"}},
+		teasink.ToolStartedMsg{TaskID: "t1", ToolID: "s1", ToolName: "skill_load", Parameters: map[string]any{"name": "go-testing"}},
+		teasink.ToolCompletedMsg{TaskID: "t1", ToolID: "s1", ToolName: "skill_load", Duration: time.Millisecond},
+		teasink.ToolStartedMsg{TaskID: "t1", ToolID: "a1", ToolName: "agent_spawn", Parameters: map[string]any{"agent": "go-code-reviewer", "prompt": "review"}},
 		teasink.ConversationStartedMsg{TaskID: "child1", Depth: 1, AgentName: "go-code-reviewer", Prompt: "review"},
-		teasink.ToolCompletedMsg{TaskID: "t1", ToolID: "a1", ToolName: "spawn_agent", Duration: time.Millisecond},
+		teasink.ToolCompletedMsg{TaskID: "t1", ToolID: "a1", ToolName: "agent_spawn", Duration: time.Millisecond},
 	)
 	if strings.Contains(out, "loaded skill") || strings.Contains(out, "loaded agent") {
 		t.Errorf("loaded skill/agent should not appear as inline transcript notices:\n%s", out)

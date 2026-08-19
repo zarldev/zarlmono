@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -44,7 +45,7 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 	provider, model := l.headlessProviderModel()
 	rec.start(ctx, prompt, provider, model)
 
-	r, err := l.buildHeadlessTurn(runner.WithProgressUpdater(rec.progress))
+	r, group, err := l.buildHeadlessTurn(ctx, runner.WithProgressUpdater(rec.progress))
 	if err != nil {
 		res := runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
 		rec.complete(ctx, res)
@@ -88,7 +89,12 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 			rec.attempt(ctx, report)
 		}))
 	}
-	return driveHeadless(ctx, r, spec, rec, reqOpts, driveOpts...)
+	result := driveHeadless(ctx, r, spec, rec, reqOpts, driveOpts...)
+	if closeErr := group.Close(ctx); closeErr != nil && result.Err == nil {
+		result.Reason = runner.TerminalError
+		result.Err = closeErr
+	}
+	return result
 }
 
 // earlyStopWatcher builds a Watcher from the configured EarlyStopCommand, or
@@ -170,17 +176,51 @@ func (l *LiveRunner) headlessProviderModel() (string, string) {
 	return l.target.Spec.Name, l.target.Model
 }
 
-// RunHeadlessProcess drives one --headless task and maps the terminal reason to a
-// process exit code:
-//
-//	0  TerminalCompleted (agent settled on a final answer)
-//	1  TerminalMaxIterations or TerminalCancelled (ran out of room)
-//	2  TerminalError (provider blew up / tool dispatch panicked)
-//	4  Bad invocation (missing prompt)
-//
-// The run summary goes to stderr so the eval harness can read it without
-// parsing stdout, which carries only the agent's final answer.
-func RunHeadlessProcess(ctx context.Context, live *LiveRunner, prompt string, maxIter int) int {
+// HeadlessReport is the stable cold-start measurement emitted for one headless
+// run. It combines the exact request surface with the rendered system prompt and
+// provider usage, so local and cloud runs share one JSON shape.
+type HeadlessReport struct {
+	PromptBytes      int                   `json:"prompt_bytes"`
+	PromptWords      int                   `json:"prompt_words"`
+	ToolCount        int                   `json:"tool_count"`
+	ToolJSONBytes    int                   `json:"tool_json_bytes"`
+	ToolFingerprint  string                `json:"tool_fingerprint"`
+	PromptTokens     int                   `json:"prompt_tokens,omitempty"`
+	CachedTokens     int                   `json:"cached_tokens,omitempty"`
+	CompletionTokens int                   `json:"completion_tokens,omitempty"`
+	TerminalReason   runner.TerminalReason `json:"terminal_reason"`
+	TerminalCause    runner.TerminalCause  `json:"terminal_cause,omitempty"`
+	Iterations       int                   `json:"iterations"`
+	Duration         time.Duration         `json:"duration"`
+}
+
+// Report returns cold-start accounting for res.
+func Report(res runner.TaskResult) HeadlessReport {
+	report := HeadlessReport{
+		PromptBytes:     len(res.SystemPrompt),
+		PromptWords:     len(strings.Fields(res.SystemPrompt)),
+		ToolCount:       res.ToolSurface.Count,
+		ToolJSONBytes:   res.ToolSurface.JSONBytes,
+		ToolFingerprint: res.ToolSurface.Fingerprint,
+		TerminalReason:  res.Reason,
+		TerminalCause:   res.Cause,
+		Iterations:      res.Iterations,
+		Duration:        res.Duration,
+	}
+	if res.LastUsage != nil {
+		report.PromptTokens = res.LastUsage.PromptTokens
+		report.CachedTokens = res.LastUsage.CachedTokens
+		report.CompletionTokens = res.LastUsage.CompletionTokens
+	}
+	return report
+}
+
+// RunHeadlessProcess drives one headless task and maps the terminal reason to a
+// process exit code: 0 completed, 1 bounded/cancelled, 2 error, 4 bad input.
+// The run summary goes to stderr so stdout remains the final answer. reportOut,
+// when non-nil, receives one JSON cold-start report.
+
+func RunHeadlessProcess(ctx context.Context, live *LiveRunner, prompt string, maxIter int, reportOut *os.File) int {
 	if prompt == "" {
 		fmt.Fprintln(os.Stderr, "headless: --prompt-file or --prompt-text required")
 		return 4
@@ -191,6 +231,12 @@ func RunHeadlessProcess(ctx context.Context, live *LiveRunner, prompt string, ma
 	fmt.Fprintf(os.Stderr,
 		"headless: terminated reason=%s iterations=%d duration=%s tool_calls=%d\n",
 		res.Reason, res.Iterations, res.Duration, coderunner.ToolCallCount(res.Messages))
+	if reportOut != nil {
+		if err := json.NewEncoder(reportOut).Encode(Report(res)); err != nil {
+			fmt.Fprintln(os.Stderr, "headless: report:", err)
+			return 2
+		}
+	}
 
 	switch res.Reason {
 	case runner.TerminalCompleted:

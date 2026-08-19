@@ -21,15 +21,12 @@ import (
 // bare toast for a turn that never appeared to start.
 func (r *Runner) publishSetupFailed(ctx context.Context, spec TaskSpec, start time.Time, err error) {
 	r.publishConversationStarted(ctx, spec)
-	r.publishConversationEnded(ctx, spec, TerminalError, err, time.Since(start), 0, nil)
+	r.publishConversationEnded(ctx, spec, TerminalError, err, time.Since(start), 0, nil, terminalCause(err))
 }
 
 // --- event publishing helpers ---
 
 func (r *Runner) publishConversationStarted(_ context.Context, spec TaskSpec) {
-	if r.sink == nil {
-		return
-	}
 	r.sink.OnConversationStarted(ConversationStarted{
 		TaskID:           spec.ID,
 		Depth:            spec.Depth,
@@ -47,10 +44,8 @@ func (r *Runner) publishConversationEnded(
 	dur time.Duration,
 	iterations int,
 	total *llm.Usage,
+	cause TerminalCause,
 ) {
-	if r.sink == nil {
-		return
-	}
 	// Flatten to a string for the generic Error field and, in the same
 	// place, pull out a structured rate-limit error so subscribers don't
 	// have to re-parse the message text.
@@ -67,6 +62,7 @@ func (r *Runner) publishConversationEnded(
 		Depth:            spec.Depth,
 		Reason:           reason,
 		Error:            errStr,
+		Cause:            cause,
 		RateLimit:        rateLimit,
 		Duration:         dur,
 		Iterations:       iterations,
@@ -75,10 +71,27 @@ func (r *Runner) publishConversationEnded(
 	})
 }
 
-func (r *Runner) publishIterationCompleted(_ context.Context, spec TaskSpec, iter int, delta, occupancy *llm.Usage, messages []llm.Message) {
-	if r.sink == nil {
-		return
+func terminalCause(err error) TerminalCause {
+	switch {
+	case errors.Is(err, ErrStreamIdle):
+		return TerminalCauseStreamIdle
+	case errors.Is(err, ErrIterationTimeout):
+		return TerminalCauseIterationTimeout
+	case errors.Is(err, ErrCancelled):
+		return TerminalCauseCaller
+	default:
+		return ""
 	}
+}
+
+func (r *Runner) publishIterationCompleted(
+	_ context.Context,
+	spec TaskSpec,
+	iter int,
+	delta, occupancy *llm.Usage,
+	messages []llm.Message,
+	toolSurface ToolSurface,
+) {
 	// The per-role breakdown is an O(history) walk + alloc; only compute it
 	// when a consumer opted in via WithContextBreakdown. Otherwise Context
 	// is nil and the event still carries iter + usage (what the compaction
@@ -89,33 +102,25 @@ func (r *Runner) publishIterationCompleted(_ context.Context, spec TaskSpec, ite
 		bd = &b
 	}
 	r.sink.OnIterationCompleted(IterationCompleted{
-		TaskID:  spec.ID,
-		Depth:   spec.Depth,
-		Iter:    iter,
-		Usage:   occupancy,
-		Delta:   delta,
-		Context: bd,
+		TaskID:      spec.ID,
+		Depth:       spec.Depth,
+		Iter:        iter,
+		Usage:       occupancy,
+		Delta:       delta,
+		Context:     bd,
+		ToolSurface: toolSurface,
 	})
 }
 
 func (r *Runner) publishContentChunk(_ context.Context, spec TaskSpec, content string) {
-	if r.sink == nil {
-		return
-	}
 	r.sink.OnContent(Content{TaskID: spec.ID, Depth: spec.Depth, Delta: content})
 }
 
 func (r *Runner) publishThinkingChunk(_ context.Context, spec TaskSpec, thinking string) {
-	if r.sink == nil {
-		return
-	}
 	r.sink.OnThinking(Thinking{TaskID: spec.ID, Depth: spec.Depth, Delta: thinking})
 }
 
 func (r *Runner) publishToolStarted(_ context.Context, spec TaskSpec, call tools.ToolCall) {
-	if r.sink == nil {
-		return
-	}
 	r.sink.OnToolStarted(ToolStarted{
 		TaskID:     spec.ID,
 		Depth:      spec.Depth,
@@ -139,9 +144,6 @@ func (p nestedToolPublisher) OnNestedToolFinished(ctx context.Context, e tools.N
 }
 
 func (r *Runner) publishNestedToolStarted(_ context.Context, spec TaskSpec, e tools.NestedToolCall) {
-	if r.sink == nil {
-		return
-	}
 	r.sink.OnToolStarted(ToolStarted{
 		TaskID:       spec.ID,
 		Depth:        spec.Depth,
@@ -154,9 +156,6 @@ func (r *Runner) publishNestedToolStarted(_ context.Context, spec TaskSpec, e to
 }
 
 func (r *Runner) publishNestedToolFinished(_ context.Context, spec TaskSpec, e tools.NestedToolResult) {
-	if r.sink == nil {
-		return
-	}
 	effects := resultEffects(e.Result)
 	failed := e.Err != nil || e.Result == nil || !e.Result.Success || e.Error != ""
 	if failed {
@@ -191,9 +190,6 @@ func (r *Runner) publishToolFinished(
 	execErr error,
 	abandoned bool,
 ) {
-	if r.sink == nil {
-		return
-	}
 	effects := resultEffects(result)
 	if execErr != nil || (result != nil && !result.Success) {
 		errMsg := ""
@@ -264,9 +260,6 @@ func resultEffects(result *tools.ToolResult) []tools.Effect {
 }
 
 func (r *Runner) publishSteerInjected(_ context.Context, spec TaskSpec, drained []llm.Message) {
-	if r.sink == nil {
-		return
-	}
 	r.sink.OnSteerInjected(SteerInjected{
 		TaskID:   spec.ID,
 		Depth:    spec.Depth,
@@ -280,9 +273,6 @@ func (r *Runner) publishCompactionApplied(
 	before, after, bytesTrimmed int,
 	engine string,
 ) {
-	if r.sink == nil {
-		return
-	}
 	r.sink.OnCompactionApplied(CompactionApplied{
 		TaskID:         spec.ID,
 		Depth:          spec.Depth,
@@ -290,5 +280,12 @@ func (r *Runner) publishCompactionApplied(
 		MessagesAfter:  after,
 		BytesTrimmed:   bytesTrimmed,
 		Engine:         engine,
+	})
+}
+
+func (r *Runner) publishDiagnostic(spec TaskSpec, kind, message string, attempt, limit int, backoff time.Duration, err error) {
+	r.sink.OnDiagnostic(Diagnostic{
+		TaskID: spec.ID, Depth: spec.Depth, Kind: kind, Message: message,
+		Attempt: attempt, Limit: limit, Backoff: backoff, Err: err,
 	})
 }

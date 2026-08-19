@@ -770,7 +770,7 @@ func prettyJSON(text string) (string, bool) {
 
 func toolResultRenderKind(name string) contentKind {
 	switch strings.ToLower(name) {
-	case "load_skill":
+	case "skill_load":
 		return contentMarkdown
 	case "read", "read_file", "view", "cat":
 		return contentCode

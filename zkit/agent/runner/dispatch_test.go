@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/google/uuid"
 
@@ -56,14 +56,14 @@ type concurrencyTrackingTool struct {
 	mu      sync.Mutex
 	active  int32
 	peak    int32
-	delay   time.Duration
-	results map[string]struct{} // tracks observed call IDs
+	results map[string]struct{}
+	started chan<- struct{}
+	release <-chan struct{}
 }
 
-func newConcurrencyTrackingTool(_ string, delay time.Duration) *concurrencyTrackingTool {
+func newConcurrencyTrackingTool(_ string) *concurrencyTrackingTool {
 	return &concurrencyTrackingTool{
 		name:    "track",
-		delay:   delay,
 		results: make(map[string]struct{}),
 	}
 }
@@ -85,7 +85,10 @@ func (t *concurrencyTrackingTool) Execute(_ context.Context, call tools.ToolCall
 			break
 		}
 	}
-	time.Sleep(t.delay)
+	if t.started != nil {
+		t.started <- struct{}{}
+		<-t.release
+	}
 	t.mu.Lock()
 	t.results[call.ID.String()] = struct{}{}
 	t.mu.Unlock()
@@ -97,46 +100,43 @@ func (t *concurrencyTrackingTool) Peak() int32 {
 }
 
 func TestRunnerDispatchesParallelRegistryTools(t *testing.T) {
-	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{}, 3)
+		release := make(chan struct{})
+		tt := newConcurrencyTrackingTool("track")
+		tt.started = started
+		tt.release = release
+		reg := tools.NewRegistry()
+		reg.Register(tt)
 
-	tt := newConcurrencyTrackingTool("track", 60*time.Millisecond)
-	reg := tools.NewRegistry()
-	reg.Register(tt)
-
-	const limit = 3
-	const batch = 6
-
-	r := runner.New(
-		runner.ClientFromProvider(&batchProvider{toolName: "track", batchSize: batch, finalReply: "ok"}),
-		runner.WithTools(reg),
-		runner.WithMaxIterations(4),
-		runner.WithToolConcurrency(limit),
-	)
-
-	res := r.Run(t.Context(), runner.TaskSpec{
-		ID:     taskscope.ID(uuid.NewString()),
-		Prompt: "go",
+		const limit = 3
+		r := runner.New(
+			runner.ClientFromProvider(&batchProvider{toolName: "track", batchSize: 6, finalReply: "ok"}),
+			runner.WithTools(reg),
+			runner.WithMaxIterations(4),
+			runner.WithToolConcurrency(limit),
+		)
+		done := make(chan runner.TaskResult, 1)
+		go func() { done <- r.Run(t.Context(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"}) }()
+		for range limit {
+			<-started
+		}
+		close(release)
+		res := <-done
+		if res.Err != nil {
+			t.Fatalf("Run: %v", res.Err)
+		}
+		if res.Reason != runner.TerminalCompleted {
+			t.Fatalf("got Reason=%q, want completed", res.Reason)
+		}
+		if peak := tt.Peak(); peak != limit {
+			t.Errorf("peak concurrency=%d, want %d", peak, limit)
+		}
 	})
-	if res.Err != nil {
-		t.Fatalf("Run: %v", res.Err)
-	}
-	if res.Reason != runner.TerminalCompleted {
-		t.Fatalf("got Reason=%q, want completed", res.Reason)
-	}
-
-	peak := tt.Peak()
-	if peak < 2 {
-		t.Errorf("peak concurrency=%d, want >= 2 (parallelism not happening)", peak)
-	}
-	if peak > limit {
-		t.Errorf("peak concurrency=%d exceeded limit=%d", peak, limit)
-	}
 }
 
 func TestRunnerDispatchesSequentiallyByDefault(t *testing.T) {
-	t.Parallel()
-
-	tt := newConcurrencyTrackingTool("track", 30*time.Millisecond)
+	tt := newConcurrencyTrackingTool("track")
 	reg := tools.NewRegistry()
 	reg.Register(tt)
 
@@ -164,9 +164,7 @@ func TestRunnerDispatchesSequentiallyByDefault(t *testing.T) {
 }
 
 func TestRunnerPreservesToolCallOrderUnderParallelDispatch(t *testing.T) {
-	t.Parallel()
-
-	tt := newConcurrencyTrackingTool("track", 20*time.Millisecond)
+	tt := newConcurrencyTrackingTool("track")
 	reg := tools.NewRegistry()
 	reg.Register(tt)
 
@@ -226,9 +224,7 @@ func (f failingTool) Execute(_ context.Context, call tools.ToolCall) (*tools.Too
 }
 
 func TestRunnerParallelBatchDoesNotCancelSiblingsOnFailure(t *testing.T) {
-	t.Parallel()
-
-	tt := newConcurrencyTrackingTool("track", 30*time.Millisecond)
+	tt := newConcurrencyTrackingTool("track")
 	reg := tools.NewRegistry()
 	reg.Register(tt)
 	reg.Register(failingTool{name: "fail"})

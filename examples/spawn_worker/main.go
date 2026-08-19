@@ -1,5 +1,5 @@
 // Binary spawn_worker demonstrates hierarchical decomposition: a parent
-// agent delegates to named sub-agents via spawn_agent, with work-mode
+// agent delegates to named sub-agents via agent_spawn, with work-mode
 // tool gating enforced rather than advisory.
 package main
 

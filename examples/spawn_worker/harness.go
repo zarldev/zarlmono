@@ -18,7 +18,7 @@ You have access to three specialist workers:
 - "reviewer" (verify mode): evaluates plans, checks for risks, validates approaches
 - "coder" (implement mode): writes and modifies code
 
-Use spawn_agent to delegate work:
+Use agent_spawn to delegate work:
 - Call researcher first to understand the codebase
 - Call reviewer to validate your plan
 - Call coder to implement changes
@@ -31,7 +31,7 @@ const goalPrompt = "Refactor the authentication system from session-based to JWT
 // RunSpawnWorker demonstrates hierarchical agent decomposition.
 // The parent coordinates the refactor by spawning specialized child agents.
 func RunSpawnWorker(ctx context.Context, client runner.Client, fs *FileSystem, maxAttempts int) pursue.Outcome {
-	// Build the parent registry with file tools + spawn_agent
+	// Build the parent registry with file tools + agent_spawn
 	parentReg := tools.NewRegistry()
 	_ = parentReg.Register(&readFileTool{fs: fs})
 	_ = parentReg.Register(&listFilesTool{fs: fs})
@@ -42,7 +42,7 @@ func RunSpawnWorker(ctx context.Context, client runner.Client, fs *FileSystem, m
 		runner.WithPromptText(parentSystemPrompt),
 	)
 
-	// Add spawn_agent tool with agent resolver and mode policy
+	// Add agent_spawn tool with agent resolver and mode policy
 	// The spawn tool uses the parent's runner for children
 	spawnTool := spawn.New(parentRunner,
 		spawn.WithMaxDepth(1), // Prevent grandchildren

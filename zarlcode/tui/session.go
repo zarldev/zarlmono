@@ -104,7 +104,7 @@ type Session struct {
 
 	// Transactional event state (cleared per-turn).
 
-	// PendingSkillNames tracks load_skill ToolStartedMsg parameters by ToolID
+	// PendingSkillNames tracks skill_load ToolStartedMsg parameters by ToolID
 	// so skill names can be surfaced when the tool completes.
 	PendingSkillNames map[string]string
 

@@ -41,8 +41,8 @@ type UpdatePlanTool struct {
 // UpdatePlanStepArg is one step in the typed update_plan payload.
 // Mirrors the JSON Schema's per-item object {step, status}.
 type UpdatePlanStepArg struct {
-	Step   string     `json:"step" doc:"The step description."`
-	Status StepStatus `json:"status" enum:"pending,in_progress,completed" doc:"One of pending, in_progress, or completed."`
+	Step   string     `json:"step" doc:"Step description."`
+	Status StepStatus `json:"status" enum:"pending,in_progress,completed" doc:"Step status."`
 }
 
 // UpdatePlanArgs is the typed argument struct UpdatePlanTool.Execute
@@ -50,8 +50,8 @@ type UpdatePlanStepArg struct {
 // directly into a typed slice — no .([]any) / .(map[string]any)
 // dance, no per-field type assertions.
 type UpdatePlanArgs struct {
-	Plan        []UpdatePlanStepArg `json:"plan" doc:"Ordered list of steps. Each step has step (the description) and status (pending | in_progress | completed)."`
-	Explanation string              `json:"explanation,omitempty" doc:"Optional one-liner explaining the change (e.g. \"split step 2 into 2a/2b after reading the test file\"). Shown in the plan pane next to the steps."`
+	Plan        []UpdatePlanStepArg `json:"plan" doc:"Complete ordered plan; replaces the prior plan."`
+	Explanation string              `json:"explanation,omitempty" doc:"Optional short reason for the update."`
 }
 
 // NewUpdatePlanTool returns a tool bound to store. Caller is
@@ -68,9 +68,10 @@ func NewUpdatePlanTool(store PlanStore) *UpdatePlanTool {
 // in the store, not in workspace files.
 func (t *UpdatePlanTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameUpdatePlan,
-		Description: "Update the live, structured plan rendered in the zarlcode plan pane. Send the FULL plan each call — this tool replaces the prior plan wholesale, not incrementally. Use after producing a markdown plan in PLAN mode to seed the structured list, then again in BUILD mode each time a step's status changes. Step statuses are 'pending', 'in_progress', or 'completed'.",
-		Parameters:  tools.SchemaFor[UpdatePlanArgs](),
+		Name:            ToolNameUpdatePlan,
+		WorkspaceAccess: tools.WorkspaceAccesses.NONE,
+		Description:     "Replace the live plan with the complete ordered step list. Keep statuses pending, in_progress, or completed truthful as work changes.",
+		Parameters:      tools.SchemaFor[UpdatePlanArgs](),
 	}
 }
 

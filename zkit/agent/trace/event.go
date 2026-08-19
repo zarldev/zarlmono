@@ -20,6 +20,7 @@ const (
 	KindIterationCompleted  Kind = "iteration_completed"
 	KindSteerInjected       Kind = "steer_injected"
 	KindCompactionApplied   Kind = "compaction_applied"
+	KindDiagnostic          Kind = "diagnostic"
 	KindWorkflowStarted     Kind = "workflow_started"
 	KindWorkflowNodeStarted Kind = "workflow_node_started"
 	KindWorkflowNodeDone    Kind = "workflow_node_done"

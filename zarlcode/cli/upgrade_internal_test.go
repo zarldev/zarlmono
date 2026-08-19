@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -143,9 +144,9 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 	if code := runUpgradeWithService(ctx, svc, []string{"source", "set", "acme/tool"}, &out, &errOut, false); code != 0 {
 		t.Fatalf("source set exit %d stderr=%q", code, errOut.String())
 	}
-	got, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource)
-	if err != nil || !ok || got.Value != "acme/tool" {
-		t.Fatalf("upgrade_source = %+v ok=%v err=%v, want %q", got, ok, err, "acme/tool")
+	got, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource)
+	if err != nil || got.Value != "acme/tool" {
+		t.Fatalf("upgrade_source = %+v err=%v, want %q", got, err, "acme/tool")
 	}
 
 	out.Reset()
@@ -153,9 +154,9 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 	if code := runUpgradeWithService(ctx, svc, []string{"bin-path", "set", bin}, &out, &errOut, false); code != 0 {
 		t.Fatalf("bin-path set exit %d stderr=%q", code, errOut.String())
 	}
-	got, ok, err = svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath)
-	if err != nil || !ok || got.Value != bin {
-		t.Fatalf("upgrade_bin_path = %+v ok=%v err=%v, want %q", got, ok, err, bin)
+	got, err = svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeBinPath)
+	if err != nil || got.Value != bin {
+		t.Fatalf("upgrade_bin_path = %+v err=%v, want %q", got, err, bin)
 	}
 
 	for _, tc := range []struct {
@@ -171,9 +172,9 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 		if code := runUpgradeWithService(ctx, svc, tc.args, &out, &errOut, false); code != 0 {
 			t.Fatalf("%v exit %d stderr=%q", tc.args, code, errOut.String())
 		}
-		got, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, tc.key)
-		if err != nil || !ok || got.Value != tc.want {
-			t.Fatalf("%s = %+v ok=%v err=%v, want %q", tc.key, got, ok, err, tc.want)
+		got, err := svc.GetSetting(ctx, prefs.ScopeGlobal, tc.key)
+		if err != nil || got.Value != tc.want {
+			t.Fatalf("%s = %+v err=%v, want %q", tc.key, got, err, tc.want)
 		}
 	}
 
@@ -182,8 +183,8 @@ func TestUpgradeSettingsCommandsPersistGlobally(t *testing.T) {
 	if code := runUpgradeWithService(ctx, svc, []string{"source", "clear"}, &out, &errOut, false); code != 0 {
 		t.Fatalf("source clear exit %d stderr=%q", code, errOut.String())
 	}
-	if _, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource); err != nil || ok {
-		t.Fatalf("source clear left row ok=%v err=%v", ok, err)
+	if _, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource); !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("source clear left row err=%v", err)
 	}
 }
 
@@ -203,8 +204,8 @@ func TestResolveUpgradeRepoMigratesLegacySourcePath(t *testing.T) {
 	if repo != defaultUpgradeRepo {
 		t.Fatalf("repo = %q, want default %q", repo, defaultUpgradeRepo)
 	}
-	if _, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource); err != nil || ok {
-		t.Fatalf("legacy source not cleared: ok=%v err=%v", ok, err)
+	if _, err := svc.GetSetting(ctx, prefs.ScopeGlobal, settingKeyUpgradeSource); !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("legacy source not cleared: err=%v", err)
 	}
 }
 

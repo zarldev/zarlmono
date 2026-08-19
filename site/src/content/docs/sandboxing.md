@@ -34,7 +34,7 @@ rejection so the model can route around it:
 
 ### Verify mode is stricter
 
-A `verify` sub-agent ([work modes](/zarlmono/spawn/#work-modes)) may
+A `verify` sub-agent ([work modes](/zarlmono/spawn/#work-modes-and-workspace-coordination)) may
 build and test but must not mutate the workspace. When ctx carries
 `WorkMode == verify`, the guardrail switches to `DecideVerify`, which
 adds a deny-list of mutating commands (`rm`, `mv`, `cp`, `tee`,

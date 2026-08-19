@@ -15,7 +15,7 @@ But the agent loop is real: provider → runner → tools → guardrails → har
 | World state | `world.go` | Endpoints start "unknown"; `Check` auto-promotes on first call. Transient auto-resolves after one check. |
 | Tool | `tools.go` | `check_endpoint` with typed args via `tools.SchemaFor` + `tools.DecodeArgs`. Returns `KindTransient` for transient failures so the model can retry. |
 | Schema guardrail | `harness.go` | `guardrails.NewSchemaGuardrail(reg)` validates endpoint names before dispatch — the model can't call with a typo'd name. |
-| Fanout guardrail | `harness.go` | `guardrails.NewFanoutGuardrail(...)` caps `check_endpoint` at 5 calls per task. Once exhausted, the model gets a spawn_agent nudge. |
+| Fanout guardrail | `harness.go` | `guardrails.NewFanoutGuardrail(...)` caps `check_endpoint` at 5 calls per task. Once exhausted, the generic recovery nudge recommends changing approach or delegating with `agent_spawn` when that tool is available. |
 | Harness oracle | `harness.go` | Goal checks `farm.AllHealthy()`, not the model's text. `pursue.UntilFunc` provides goal-backed early stop the instant all endpoints are healthy. |
 | Deterministic test | `healthcheck_test.go` | Four scenarios: all-healthy, transient-resolves, down-requires-rerive, fanout-caps-excessive. No LLM, no network. |
 
@@ -61,4 +61,4 @@ go test ./examples/healthcheck/
 
 - **Fanout guardrail prevents runaway fan-out.** If the model tries to
   check endpoints one-by-one past the cap, the guardrail blocks with a
-  spawn_agent nudge. The model learns to batch or delegate.
+  agent_spawn nudge. The model learns to batch or delegate.

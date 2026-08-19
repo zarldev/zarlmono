@@ -62,7 +62,7 @@ call" means semantically identical arguments, not byte equality.
 
 Per-tool call budgets per task. At the limit, a validation nudge
 names the better move ("you've read 30 files — if you're mapping a
-directory, delegate to spawn_agent"); past it, continued rejection
+directory, delegate to agent_spawn"); past it, continued rejection
 so the cap can't be brute-forced. The spawn budget exists because
 large models discover fan-out and immediately rate-limit themselves
 into the ground.

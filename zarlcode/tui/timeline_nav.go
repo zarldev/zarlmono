@@ -32,6 +32,12 @@ type hitToggler interface {
 	togglerAt(width, ln int) toggler
 }
 
+// toggleLocator reports the local lines that carry disclosure headers. Containers
+// compose these locations so keyboard browse can reach nested tool calls.
+type toggleLocator interface {
+	toggleLocals(width int) []int
+}
+
 // browseLineStep is how many lines a wheel notch / line-scroll moves.
 const browseLineStep = 3
 
@@ -57,16 +63,10 @@ func (tl *timeline) selectableLocals(i, width int) []int {
 	if i < 0 || i >= len(tl.items) {
 		return nil
 	}
-	g, ok := tl.items[i].(*groupItem)
-	if !ok {
-		return []int{0}
+	if loc, ok := tl.items[i].(toggleLocator); ok {
+		return loc.toggleLocals(width)
 	}
-	if !g.expanded {
-		return []int{0} // just the group header
-	}
-	// Same child offsets render and togglerAt use, so selection lands exactly
-	// on the toggle targets.
-	return append([]int{0}, renderChildBlock(g.children, g.childWidth(width)).offsets...)
+	return []int{0}
 }
 
 func nextLocal(locs []int, cur int) (int, bool) {

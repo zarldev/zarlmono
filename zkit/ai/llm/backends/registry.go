@@ -16,8 +16,11 @@ import (
 // resolution: the encrypted vault + provider-keyed lookup. Each
 // consumer implements it (zarlcode wraps its settingsService).
 type SettingsService interface {
-	GetKey(ctx context.Context, provider string) (string, bool, error)
+	GetKey(ctx context.Context, provider string) (string, error)
 }
+
+// ErrKeyNotFound reports that the settings service has no stored key.
+var ErrKeyNotFound = errors.New("provider key not found")
 
 // ProviderRegistry is the single source of truth for which LLM providers
 // exist (built-in + Store-backed custom), how to build them, and how to
@@ -215,7 +218,11 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 
 	// Resolve API key.
 	if cfg.APIKey == "" {
-		cfg.APIKey = r.resolveAPIKey(ctx, def)
+		var err error
+		cfg.APIKey, err = r.resolveAPIKey(ctx, def)
+		if err != nil {
+			return nil, fmt.Errorf("resolve API key for %q: %w", def.Name, err)
+		}
 	}
 
 	// Local OpenAI-compatible providers do not need auth, but the OpenAI SDK
@@ -306,29 +313,25 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 //  1. Vault (workspace then global)
 //  2. Provider-specific env vars
 //  3. Generic LLM_API_KEY env fallback
-func (r *ProviderRegistry) resolveAPIKey(ctx context.Context, def ProviderDefinition) string {
-	// Vault rows are keyed by provider name and apply to every provider —
-	// built-in or DB-backed custom. Gating this read on RequiresKey() (as
-	// we used to) meant a key saved for a custom provider was silently
-	// never used, because customs declare no env-var sources and so always
-	// report RequiresKey() == false.
+func (r *ProviderRegistry) resolveAPIKey(ctx context.Context, def ProviderDefinition) (string, error) {
 	if r.svc != nil {
-		if k, ok, _ := r.svc.GetKey(ctx, def.Name); ok && k != "" {
-			return k
+		k, err := r.svc.GetKey(ctx, def.Name)
+		if err == nil && k != "" {
+			return k, nil
+		}
+		if err != nil && !errors.Is(err, ErrKeyNotFound) {
+			return "", err
 		}
 	}
-	// Env-var fallbacks only apply to providers that declare them (the
-	// hosted built-ins). Providers with no declared env vars — local
-	// backends and customs — must not inherit an unrelated LLM_API_KEY.
 	if len(def.EnvAPIKeyVars) == 0 {
-		return ""
+		return "", nil
 	}
 	for _, v := range def.EnvAPIKeyVars {
 		if k := os.Getenv(v); k != "" {
-			return k
+			return k, nil
 		}
 	}
-	return os.Getenv("LLM_API_KEY")
+	return os.Getenv("LLM_API_KEY"), nil
 }
 
 // SetActiveName records the currently active provider so Delete can
@@ -416,7 +419,10 @@ func (r *ProviderRegistry) FetchModels(ctx context.Context, name string) ([]stri
 // resolving the API key internally. Google and OAuth providers have no
 // usable live probe, so they return their seed list directly.
 func (r *ProviderRegistry) fetchLive(ctx context.Context, def ProviderDefinition) ([]string, error) {
-	key := r.resolveAPIKey(ctx, def)
+	key, err := r.resolveAPIKey(ctx, def)
+	if err != nil {
+		return nil, fmt.Errorf("resolve API key for %q: %w", def.Name, err)
+	}
 	switch adapterDiscriminator(def.AdapterType) {
 	case openAICompatible, deepSeekCompatible:
 		// Send a bearer whenever a key resolved — hosted built-ins and any

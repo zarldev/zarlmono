@@ -495,7 +495,7 @@ func (s *RunState) compactionPressureLine() string {
 
 // contextRoleBar paints the v1-style composition graph: the context window
 // partitioned by role (system / user / assistant) with tool content further
-// split into load_skill (skills) / spawn_agent (agents) / load_instruction
+// split into skill_load (skills) / agent_spawn (agents) / instruction_load
 // (instructions) / other tool output,
 // then free headroom. Per-role token estimates (bytes/4) are scaled to sum
 // to the provider-authoritative used count so the bar's free share matches

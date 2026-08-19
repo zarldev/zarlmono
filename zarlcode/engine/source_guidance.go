@@ -14,7 +14,7 @@ import (
 
 // guidanceSource annotates successful workspace reads with nested instruction
 // paths governing the target file. It keeps instruction bodies lazy: the model
-// must still call load_instruction before changing files in that subtree.
+// must still call instruction_load before changing files in that subtree.
 type guidanceSource struct {
 	inner tools.Source
 	index instructions.Index
