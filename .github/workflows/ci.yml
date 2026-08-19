@@ -77,6 +77,11 @@ jobs:
 
   lint:
     name: golangci-lint (${{ matrix.module }})
+    # TODO(go1.27): restore this as a hard gate once golangci-lint ships a
+    # Go 1.27-compatible release. v2.12.2 (latest) crashes in its
+    # goanalysis fact machinery on stdlib `internal/poll` under Go 1.27
+    # (`interface {} is nil, not *buildir.IR`), independent of linter selection.
+    continue-on-error: true
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

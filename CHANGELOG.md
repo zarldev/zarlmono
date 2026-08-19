@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zkit/v0.11.0] — 2026-08-19
+`zkit/v0.11.0`
+
 ### Added
 
 - `agent_spawn` now launches turn-owned sub-agents asynchronously and returns a task receipt immediately; `agent_status`, `agent_await`, `agent_stop`, and `list_agent_tasks` provide explicit inspection, joining, cancellation, and listing.
@@ -14,13 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Public catalogue/action names follow one grammar: `list_agents` / `agent_spawn`, `list_skills` / `skill_load` / `skill_create`, and `list_instructions` / `instruction_load`.
+- Raised the minimum Go toolchain to 1.27.
 - Root, named, and recursive agents share one turn-owned task group and workspace coordinator. Read-only children may overlap; implement children and conflicting parent writes are exclusive.
 - Parent completion is held while child tasks are running or terminal summaries remain unread; turn shutdown cancels and joins all owned children.
 - `zkit/docstore` redesigned around explicit `Record[Value]` identities: concrete `MemoryStore`/`MongoStore`, snapshot cloning at every boundary, and `ErrNotFound`/`ErrConflict`/`ErrInvalidRecord` replace the generic `Store[T]`, fluent `Query`, metadata side channel, and `ID()`/`SetID()` mutation ceremony.
 - `zkit/ai/tools/dynamic.Catalog` is now one serialized owner: a single mutex covers store I/O and the in-memory snapshot, `RemoveContext(ctx, name) error` is idempotent, and the detached `Load`/`Add`/`Remove` background-context APIs are removed.
-- `zarlcode/engine.NewSettings` is a pure composition seam (no context, I/O, logging, or goroutines); `OpenSettings` owns acquisition, migrations, registry reload, warm startup, and cleanup, with `Close` cancelling and joining the warm worker.
-- Conversation execution uses one serialized transition, replacing the duplicated `runSpec`/`runSpecWithSetup` paths with coherent repaired-history and partial-terminal-history commits.
 - `zkit/cache` returns `ctx.Err()` directly and no longer exposes `ErrCanceled`.
 - `zkit/agent/checkpoint` exposes `checkpoint.ErrNotFound` with contextual wrapping across backends.
 
@@ -29,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `zkit/filesystem` producer-wide interfaces and the SeaweedFS adapter; `OpenFile` returns `io.ReadWriteCloser` and capability interfaces live in consuming packages (`zlog.FileSystem`).
 - `zkit/agent/trace` removed entirely (no production consumers; its exporter sink used detached `context.Background()`).
 - `zkit/agent/sandbox.Policy.WithExecPath` and `zkit/agent/diffrecorder.Classifier.WithOverride` removed; callers use local launch-policy helpers.
+
+## [zarlcode/v0.10.0] — 2026-08-19
+`zarlcode/v0.10.0`
+
+### Changed
+
+- Raised the minimum Go toolchain to 1.27.
+- Public catalogue/action names follow one grammar: `list_agents` / `agent_spawn`, `list_skills` / `skill_load` / `skill_create`, and `list_instructions` / `instruction_load`.
+- `zarlcode/engine.NewSettings` is a pure composition seam (no context, I/O, logging, or goroutines); `OpenSettings` owns acquisition, migrations, registry reload, warm startup, and cleanup, with `Close` cancelling and joining the warm worker.
+- Conversation execution uses one serialized transition, replacing the duplicated `runSpec`/`runSpecWithSetup` paths with coherent repaired-history and partial-terminal-history commits.
 - Examples no-op cleanup returns removed; live provider assembly centralized in `examples/internal/exampleclient`.
 
 ## [zkit/v0.10.0] — 2026-08-18
