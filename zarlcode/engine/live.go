@@ -88,6 +88,12 @@ type LiveRunner struct {
 	// Nil when no turn is in flight — safe for the TUI to call unconditionally.
 	turnCancel context.CancelFunc
 	turnDone   chan struct{}
+	// closing is a one-way lifecycle transition. shutdownDone is created by the
+	// first Close call; one owned goroutine waits for the active turn, then closes
+	// dependencies and publishes shutdownErr to every Close caller.
+	closing      bool
+	shutdownDone chan struct{}
+	shutdownErr  error
 
 	// settings is the prefs handle used to resolve the compaction engine (and
 	// its optional LLM provider/model) live at turn start. nil keeps the
@@ -283,51 +289,86 @@ func (l *LiveRunner) AttachMCP(reg *dynamic.MCPRegistry, host *tools.Registry) {
 	l.mu.Unlock()
 }
 
-// Close cancels the current turn and waits for any RunFn command to return.
-// It is intended to run before sink/process/settings closers so active tools
-// observe cancellation while their dependencies still exist.
+// Close begins the one-way shutdown transition, cancels the active turn, and
+// waits for the single owned shutdown operation. A caller deadline only bounds
+// that caller's wait: dependencies remain open until the turn actually drains.
+// Concurrent and repeated calls observe the same terminal cleanup result.
 func (l *LiveRunner) Close(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
-	// Once the in-flight turn has drained: remove this session's tool-result
-	// spill dir and tear down any live MCP/browser connections. Both are
-	// best-effort — a non-nil return is informational.
-	defer func() {
-		if l.truncator != nil {
-			_ = l.truncator.Cleanup()
-		}
-		l.mu.Lock()
-		mcp := l.mcp
-		computer := l.computer
-		fetchTool := l.fetchTool
-		l.mu.Unlock()
-		if mcp != nil {
-			_ = mcp.CloseAll()
-		}
-		if computer != nil {
-			_ = computer.Close()
-		}
-		if fetchTool != nil {
-			_ = fetchTool.Close()
-		}
-	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	l.CancelTurn()
+
 	l.mu.Lock()
-	done := l.turnDone
+	if !l.closing {
+		l.closing = true
+		l.shutdownDone = make(chan struct{})
+		turnCancel := l.turnCancel
+		turnDone := l.turnDone
+		shutdownDone := l.shutdownDone
+		go l.shutdown(turnDone, shutdownDone)
+		if turnCancel != nil {
+			turnCancel()
+		}
+	}
+	shutdownDone := l.shutdownDone
 	l.mu.Unlock()
-	if done == nil {
-		return nil
-	}
+
 	select {
-	case <-done:
-		return nil
+	case <-shutdownDone:
+		l.mu.Lock()
+		err := l.shutdownErr
+		l.mu.Unlock()
+		return err
 	case <-ctx.Done():
-		return fmt.Errorf("live runner close: %w", ctx.Err())
+		return fmt.Errorf("wait for live runner shutdown: %w", ctx.Err())
 	}
+}
+
+func (l *LiveRunner) shutdown(turnDone, shutdownDone chan struct{}) {
+	if turnDone != nil {
+		<-turnDone
+	}
+
+	l.mu.Lock()
+	mcp := l.mcp
+	computer := l.computer
+	fetchTool := l.fetchTool
+	truncator := l.truncator
+	l.mcp, l.mcpHost = nil, nil
+	l.computer = nil
+	l.fetchTool = nil
+	l.truncator = nil
+	l.mu.Unlock()
+
+	var errs []error
+	if mcp != nil {
+		if err := mcp.CloseAll(); err != nil {
+			errs = append(errs, fmt.Errorf("close MCP connections: %w", err))
+		}
+	}
+	if computer != nil {
+		if err := computer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close computer session: %w", err))
+		}
+	}
+	if fetchTool != nil {
+		if err := fetchTool.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close web fetch: %w", err))
+		}
+	}
+	if truncator != nil {
+		if err := truncator.Cleanup(); err != nil {
+			errs = append(errs, fmt.Errorf("clean tool spills: %w", err))
+		}
+	}
+
+	l.mu.Lock()
+	l.shutdownErr = errors.Join(errs...)
+	close(shutdownDone)
+	l.mu.Unlock()
 }
 
 // Plan satisfies agentcompact.StateProvider for the executive engine, surfacing the
@@ -1021,33 +1062,52 @@ func (l *LiveRunner) RunTurn(ctx context.Context, prompt string) error {
 	return l.RunTurnWithAttachments(ctx, prompt, nil)
 }
 
+func (l *LiveRunner) beginTurn(ctx context.Context) (context.Context, func(), error) {
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	l.mu.Lock()
+	if l.closing {
+		l.mu.Unlock()
+		cancel()
+		return nil, nil, errors.New("live runner is closing")
+	}
+	l.turnCancel = cancel
+	l.turnDone = done
+	l.mu.Unlock()
+
+	var once sync.Once
+	finish := func() {
+		once.Do(func() {
+			cancel()
+			close(done)
+			l.mu.Lock()
+			if l.turnDone == done {
+				l.turnCancel = nil
+				l.turnDone = nil
+			}
+			l.mu.Unlock()
+		})
+	}
+	return runCtx, finish, nil
+}
+
 func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, attachments []llm.ContentPart) error {
-	return l.conv.runSpecWithSetup(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
-		r, thinking, group, err := l.buildTurnWithSource(ctx, l.source, runner.WithContextBreakdown())
+	return l.conv.transition(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
+		runCtx, finish, err := l.beginTurn(ctx)
 		if err != nil {
 			return nil, err
 		}
-		runCtx, cancel := context.WithCancel(ctx)
-		done := make(chan struct{})
-		l.mu.Lock()
-		l.turnCancel = cancel
-		l.turnDone = done
-		l.mu.Unlock()
+		r, thinking, group, err := l.buildTurnWithSource(runCtx, l.source, runner.WithContextBreakdown())
+		if err != nil {
+			finish()
+			return nil, err
+		}
 		return func(spec runner.TaskSpec) runner.TaskResult {
-			defer func() {
-				cancel()
-				close(done)
-				l.mu.Lock()
-				if l.turnDone == done {
-					l.turnCancel = nil
-					l.turnDone = nil
-				}
-				l.mu.Unlock()
-			}()
+			defer finish()
 			spec.Thinking = thinking
 			result := r.Run(runCtx, spec)
-			cancel()
-			if closeErr := group.Close(ctx); closeErr != nil && result.Err == nil {
+			if closeErr := group.Close(runCtx); closeErr != nil && result.Err == nil {
 				result.Reason = runner.TerminalError
 				result.Err = closeErr
 			}

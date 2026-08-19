@@ -162,6 +162,67 @@ func TestStore_SessionRoundtrip(t *testing.T) {
 	}
 }
 
+func TestStore_SaveActiveSession(t *testing.T) {
+	t.Parallel()
+	s := openTempStore(t)
+	ctx := t.Context()
+
+	if err := s.SetSetting(ctx, "ws", "active_session", "previous"); err != nil {
+		t.Fatalf("seed active session: %v", err)
+	}
+	record := db.SessionRecord{ID: "current", Workspace: "ws", HistoryJSON: []byte(`[]`)}
+	if err := s.SaveActiveSession(ctx, record); err != nil {
+		t.Fatalf("save active session: %v", err)
+	}
+	if _, err := s.GetSession(ctx, record.ID); err != nil {
+		t.Fatalf("get saved session: %v", err)
+	}
+	active, err := s.GetSettingExact(ctx, record.Workspace, "active_session")
+	if err != nil {
+		t.Fatalf("get active session: %v", err)
+	}
+	if active != record.ID {
+		t.Fatalf("active session = %q, want %q", active, record.ID)
+	}
+}
+
+func TestStore_SaveActiveSessionRollsBack(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		trigger string
+	}{
+		{
+			name:    "session write",
+			trigger: `CREATE TRIGGER reject_session BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'reject session'); END`,
+		},
+		{
+			name:    "active pointer write",
+			trigger: `CREATE TRIGGER reject_active BEFORE INSERT ON settings WHEN NEW.key = 'active_session' BEGIN SELECT RAISE(ABORT, 'reject active'); END`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := openTempStore(t)
+			ctx := t.Context()
+			if _, err := s.DB().ExecContext(ctx, tt.trigger); err != nil {
+				t.Fatalf("create trigger: %v", err)
+			}
+			record := db.SessionRecord{ID: "rejected", Workspace: "ws"}
+			if err := s.SaveActiveSession(ctx, record); err == nil {
+				t.Fatal("save active session: got nil error")
+			}
+			if _, err := s.GetSession(ctx, record.ID); !errors.Is(err, db.ErrNotFound) {
+				t.Fatalf("session committed after failure: %v", err)
+			}
+			if _, err := s.GetSettingExact(ctx, record.Workspace, "active_session"); !errors.Is(err, db.ErrNotFound) {
+				t.Fatalf("active pointer committed after failure: %v", err)
+			}
+		})
+	}
+}
+
 func TestStore_GetSessionNotFound(t *testing.T) {
 	t.Parallel()
 	s := openTempStore(t)

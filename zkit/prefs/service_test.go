@@ -117,6 +117,35 @@ func TestService_SetSetting_ScopeWorkspace_ErrNoWorkspace(t *testing.T) {
 	}
 }
 
+func TestService_SetModelSelection_AtomicPair(t *testing.T) {
+	svc := openTestService(t)
+	ctx := t.Context()
+	if err := svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, "old-model"); err != nil {
+		t.Fatalf("seed model: %v", err)
+	}
+	selection := prefs.ModelSelection{Provider: "openai", Model: "gpt-4o"}
+	if err := svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
+		t.Fatalf("set model selection: %v", err)
+	}
+	provider, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider)
+	if err != nil {
+		t.Fatalf("get provider: %v", err)
+	}
+	model, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel)
+	if err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+	if provider.Value != selection.Provider || model.Value != selection.Model {
+		t.Fatalf("selection = %s/%s, want %s/%s", provider.Value, model.Value, selection.Provider, selection.Model)
+	}
+	if err := svc.SetModelSelection(ctx, prefs.ScopeWorkspace, prefs.ModelSelection{Provider: "llamacpp"}); err != nil {
+		t.Fatalf("clear model selection: %v", err)
+	}
+	if _, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel); !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("cleared model error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestService_SetSetting_ScopeGlobal_Roundtrip(t *testing.T) {
 	// Not parallel — openTestVault uses t.Setenv.
 	// Service with empty wsRoot — global scope must still work.

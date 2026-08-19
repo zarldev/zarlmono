@@ -7,12 +7,24 @@ type groupKind int
 const (
 	groupTools groupKind = iota
 	groupEdits
+	groupAgents
 )
 
 // groupItem folds an iteration's tool calls (or edits) into one
 // collapsible block: a summary line, plus the child rows when expanded.
 // Collapsed by default (just the summary line); browse + enter expands
 // it. closeGroups freezes it when the iteration ends.
+type versionNotifier func()
+
+func notifyParent(local func(), parent versionNotifier) versionNotifier {
+	return func() {
+		local()
+		if parent != nil {
+			parent()
+		}
+	}
+}
+
 type groupItem struct {
 	versioned
 	depth    int
@@ -20,10 +32,18 @@ type groupItem struct {
 	kind     groupKind
 	children []item
 	expanded bool
+	layout   childBlockCache
+	notify   func()
 	closed   bool
 }
 
 func (g *groupItem) finished() bool { return g.closed }
+func (g *groupItem) bump() {
+	g.versioned.bump()
+	if g.notify != nil {
+		g.notify()
+	}
+}
 
 func (g *groupItem) toggle() {
 	g.expanded = !g.expanded
@@ -52,7 +72,8 @@ func (g *groupItem) togglerAt(width, ln int) toggler {
 	if !g.expanded {
 		return nil
 	}
-	return renderChildBlock(g.children, g.childWidth(width)).togglerForLine(ln, g.childWidth(width), g.children, g.bump)
+	childWidth := g.childWidth(width)
+	return g.layout.render(g.children, childWidth, g.version()).togglerForLine(ln, childWidth, g.children, g.bump)
 }
 
 func (g *groupItem) toggleLocals(width int) []int {
@@ -60,7 +81,7 @@ func (g *groupItem) toggleLocals(width int) []int {
 		return []int{0}
 	}
 	childWidth := g.childWidth(width)
-	children := renderChildBlock(g.children, childWidth)
+	children := g.layout.render(g.children, childWidth, g.version())
 	return append([]int{0}, children.toggleLocals(childWidth, g.children)...)
 }
 
@@ -71,7 +92,7 @@ func (g *groupItem) render(width int) []string {
 	}
 	lines := []string{toggle + " " + palette.Subtle.On(g.summary())}
 	if g.expanded {
-		lines = append(lines, renderChildBlock(g.children, g.childWidth(width)).lines...)
+		lines = append(lines, g.layout.render(g.children, g.childWidth(width), g.version()).lines...)
 	}
 	if g.nested {
 		lines = prefixLines(lines, nestPad)
@@ -80,8 +101,11 @@ func (g *groupItem) render(width int) []string {
 }
 
 func (g *groupItem) summary() string {
-	if g.kind == groupEdits {
+	switch g.kind {
+	case groupEdits:
 		return fmt.Sprintf("edits (%d %s)", len(g.children), plural(len(g.children), "file", "files"))
+	case groupAgents:
+		return fmt.Sprintf("agents (%d)", len(g.children))
 	}
 	failed := 0
 	for _, c := range g.children {
@@ -112,8 +136,9 @@ type toolRef struct {
 
 func (tl *timeline) ensureToolGroup(depth int) *groupItem {
 	if tl.curTools == nil {
-		g := &groupItem{depth: depth, kind: groupTools, nested: true} // under the response, collapsed
-		tl.items = append(tl.items, g)
+		g := &groupItem{depth: depth, kind: groupTools, nested: true}
+		g.notify = func() { tl.invalidateItem(g) } // under the response, collapsed
+		tl.appendItem(g)
 		tl.curTools = g
 	}
 	return tl.curTools
@@ -121,8 +146,9 @@ func (tl *timeline) ensureToolGroup(depth int) *groupItem {
 
 func (tl *timeline) ensureEditGroup(depth int) *groupItem {
 	if tl.curEdits == nil {
-		g := &groupItem{depth: depth, kind: groupEdits, nested: true} // under the response, collapsed
-		tl.items = append(tl.items, g)
+		g := &groupItem{depth: depth, kind: groupEdits, nested: true}
+		g.notify = func() { tl.invalidateItem(g) } // under the response, collapsed
+		tl.appendItem(g)
 		tl.curEdits = g
 	}
 	return tl.curEdits

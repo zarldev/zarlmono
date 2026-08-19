@@ -439,14 +439,11 @@ func (d *providersDialog) setActive() {
 		return
 	}
 	name := d.cur().Name
-	ctx := d.ctx
-	if err := d.s.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider, name); err != nil {
+	selection := d.s.DefaultModelSelection(name)
+	if err := d.s.Svc.SetModelSelection(d.ctx, prefs.ScopeWorkspace, selection); err != nil {
 		d.status = "set active: " + err.Error()
 		return
 	}
-	// Repoint the model at the new provider's default so we don't strand a
-	// model from the previous backend (e.g. deepseek + opus).
-	d.s.ResetModelToProviderDefault(ctx, name)
 	d.s.Registry.SetActiveName(name)
 	d.status = name + " is the active provider (next run)"
 	d.refresh()
@@ -483,15 +480,12 @@ func (d *providersDialog) selectProviderModel(provider, model string) {
 		d.status = "settings service unavailable"
 		return
 	}
-	if err := d.s.Svc.SetSetting(d.ctx, prefs.ScopeWorkspace, prefs.KeyModel, model); err != nil {
-		d.status = "set model: " + err.Error()
+	selection := prefs.ModelSelection{Provider: provider, Model: model}
+	if err := d.s.Svc.SetModelSelection(d.ctx, prefs.ScopeWorkspace, selection); err != nil {
+		d.status = "set model selection: " + err.Error()
 		return
 	}
 	if d.active != provider {
-		if err := d.s.Svc.SetSetting(d.ctx, prefs.ScopeWorkspace, prefs.KeyProvider, provider); err != nil {
-			d.status = "set provider: " + err.Error()
-			return
-		}
 		d.s.Registry.SetActiveName(provider)
 		d.active = provider
 	}

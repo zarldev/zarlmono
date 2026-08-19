@@ -27,19 +27,19 @@ Default mode uses a real provider. Pick one and set the matching key:
 ```sh
 # OpenAI (default)
 export OPENAI_API_KEY=sk-...
-go run ./examples/releasegate -provider openai -model gpt-4o-mini
+go run -C examples ./releasegate -provider openai -model gpt-4o-mini
 
 # Anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
-go run ./examples/releasegate -provider anthropic -model claude-sonnet-4-6
+go run -C examples ./releasegate -provider anthropic -model claude-sonnet-4-6
 
 # DeepSeek
 export DEEPSEEK_API_KEY=...
-go run ./examples/releasegate -provider deepseek -model deepseek-chat
+go run -C examples ./releasegate -provider deepseek -model deepseek-chat
 
 # Local providers; no API key required
-go run ./examples/releasegate -provider ollama -model qwen3:8b
-go run ./examples/releasegate -provider llamacpp -base-url http://localhost:8081/v1 -model local-model
+go run -C examples ./releasegate -provider ollama -model qwen3:8b
+go run -C examples ./releasegate -provider llamacpp -base-url http://localhost:8081/v1 -model local-model
 ```
 
 Useful env vars:
@@ -55,7 +55,7 @@ Useful env vars:
 Deterministic no-LLM mode remains available for docs and tests:
 
 ```sh
-go run ./examples/releasegate -scripted
+go run -C examples ./releasegate -scripted
 ```
 
 Scripted-mode trace:
@@ -113,7 +113,7 @@ harness oracle — stays the same.
 ## Testing
 
 ```sh
-go test ./examples/releasegate/
+go test -C examples ./releasegate
 ```
 
 The tests cover:

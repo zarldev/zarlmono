@@ -93,8 +93,7 @@ func TestTimelineNestedProgramHidesChildRowsUntilProgramExpanded(t *testing.T) {
 		t.Fatalf("child call results should stay hidden until each child row expands:\n%s", open)
 	}
 
-	ref.tool.children[0].expanded = true
-	ref.group.bump()
+	ref.tool.children[0].toggle()
 	childOpen := ansi.Strip(strings.Join(tl.renderViewport(120, 40), "\n"))
 	if !strings.Contains(childOpen, "grep output") {
 		t.Fatalf("expanded child row should show its result:\n%s", childOpen)

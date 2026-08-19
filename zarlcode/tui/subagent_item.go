@@ -22,6 +22,8 @@ type subAgentItem struct {
 	children  []item
 	expanded  bool
 	closed    bool
+	layout    childBlockCache
+	notify    func()
 
 	// Internal routing state — mirrors the timeline's own fields so
 	// events can be routed into this sub-agent's item tree.
@@ -42,6 +44,12 @@ func newSubAgentItem(depth int, agentName, prompt, taskID string) *subAgentItem 
 	}
 }
 
+func (sa *subAgentItem) bump() {
+	sa.versioned.bump()
+	if sa.notify != nil {
+		sa.notify()
+	}
+}
 func (sa *subAgentItem) finished() bool { return sa.closed }
 
 func (sa *subAgentItem) toggle() {
@@ -65,7 +73,8 @@ func (sa *subAgentItem) togglerAt(width, ln int) toggler {
 	if !sa.expanded {
 		return nil
 	}
-	return renderChildBlock(sa.children, sa.childWidth(width)).togglerForLine(ln, sa.childWidth(width), sa.children, sa.bump)
+	childWidth := sa.childWidth(width)
+	return sa.layout.render(sa.children, childWidth, sa.version()).togglerForLine(ln, childWidth, sa.children, sa.bump)
 }
 
 func (sa *subAgentItem) render(width int) []string {
@@ -86,7 +95,7 @@ func (sa *subAgentItem) render(width int) []string {
 
 	lines := []string{toggle + " " + palette.Subtle.On(summary)}
 	if sa.expanded {
-		lines = append(lines, renderChildBlock(sa.children, sa.childWidth(width)).lines...)
+		lines = append(lines, sa.layout.render(sa.children, sa.childWidth(width), sa.version()).lines...)
 	}
 	if sa.nested {
 		lines = prefixLines(lines, nestPad)
@@ -152,7 +161,7 @@ func (sa *subAgentItem) startTool(toolID, name, arg string) {
 		ot.resp.bump()
 	}
 	g := sa.ensureToolGroup()
-	t := &toolItem{name: name, arg: arg, state: toolRunning}
+	t := &toolItem{name: name, arg: arg, state: toolRunning, notify: g.bump}
 	g.add(t)
 	sa.toolIdx[toolID] = toolRef{group: g, tool: t}
 	sa.bump()
@@ -193,7 +202,7 @@ func (sa *subAgentItem) closeGroups() {
 
 func (sa *subAgentItem) ensureToolGroup() *groupItem {
 	if sa.curTools == nil {
-		g := &groupItem{depth: sa.depth + 1, kind: groupTools, nested: true}
+		g := &groupItem{depth: sa.depth + 1, kind: groupTools, nested: true, notify: sa.bump}
 		sa.children = append(sa.children, g)
 		sa.curTools = g
 	}

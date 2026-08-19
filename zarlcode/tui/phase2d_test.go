@@ -32,8 +32,8 @@ func TestTimeline_SubAgentFrameNested(t *testing.T) {
 		teasink.ContentMsg{TaskID: "s1", Depth: 1, Delta: "working on it"},
 	)
 	// Sub-agent now renders as a collapsible block (collapsed by default).
-	if !strings.Contains(out, "[+]") || !strings.Contains(out, "sub task") {
-		t.Errorf("sub-agent collapsible block missing:\n%s", out)
+	if !strings.Contains(out, "[+] agents (1)") {
+		t.Errorf("agents group missing:\n%s", out)
 	}
 	// Content is hidden while collapsed.
 	if strings.Contains(out, "working on it") {
@@ -49,12 +49,14 @@ func TestTimeline_SubAgentExpandedShowsContent(t *testing.T) {
 	m, _ = m.Update(teasink.ContentMsg{TaskID: "s1", Depth: 1, Delta: "working on it"})
 
 	out := ansi.Strip(m.View().Content)
-	if !strings.Contains(out, "[+] helper: sub task") {
-		t.Fatalf("collapsed sub-agent missing:\n%s", out)
+	if !strings.Contains(out, "[+] agents (1)") {
+		t.Fatalf("collapsed agents group missing:\n%s", out)
 	}
 
 	// Enter browse mode and expand the sub-agent block.
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	out = ansi.Strip(m.View().Content)
 	if !strings.Contains(out, "[-] helper: sub task") {

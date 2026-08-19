@@ -2,12 +2,14 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"path/filepath"
 	"testing"
 	"time"
 
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
+	computermodel "github.com/zarldev/zarlmono/zkit/agent/computer"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -103,7 +105,7 @@ func TestLiveRunner_ProgrammaticToolsSetting(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	settings := NewSettings(ctx, store, nil, t.TempDir())
+	settings := NewSettings(store, nil, nil, t.TempDir())
 	l := NewLiveRunner(nil, ws, "local", WithSettings(settings))
 
 	src, _, err := l.source(t.Context(), "")
@@ -213,6 +215,65 @@ func TestLiveRunner_CloseCancelsActiveTurn(t *testing.T) {
 		t.Fatal("RunFn command did not return after Close")
 	}
 }
+
+func TestLiveRunner_CloseJoinsCleanupErrors(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	want := errors.New("browser close")
+	l := NewLiveRunner(nil, ws, "local")
+	l.computer.session = failingComputerSession{err: want}
+
+	err = l.Close(t.Context())
+	if !errors.Is(err, want) {
+		t.Fatalf("Close error = %v, want wrapped browser error", err)
+	}
+}
+
+func TestLiveRunner_CloseDeadlineDoesNotCloseActiveDependencies(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	want := errors.New("browser close")
+	l := NewLiveRunner(nil, ws, "local")
+	l.computer.session = failingComputerSession{err: want}
+	turnDone := make(chan struct{})
+	l.mu.Lock()
+	l.turnDone = turnDone
+	l.turnCancel = func() {}
+	l.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := l.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Close error = %v, want caller cancellation", err)
+	}
+	if l.computer == nil || l.computer.session == nil {
+		t.Fatal("dependency closed before active turn drained")
+	}
+
+	close(turnDone)
+	if err := l.Close(t.Context()); !errors.Is(err, want) {
+		t.Fatalf("terminal Close error = %v, want shared cleanup error", err)
+	}
+	if err := l.Close(t.Context()); !errors.Is(err, want) {
+		t.Fatalf("repeated Close error = %v, want same cleanup result", err)
+	}
+}
+
+type failingComputerSession struct{ err error }
+
+func (failingComputerSession) Observe(context.Context, computermodel.ObserveRequest) (computermodel.Observation, error) {
+	return computermodel.Observation{}, nil
+}
+
+func (failingComputerSession) Act(context.Context, computermodel.ActionRequest) (computermodel.Observation, error) {
+	return computermodel.Observation{}, nil
+}
+
+func (s failingComputerSession) Close() error { return s.err }
 
 // buildLiveCompactor maps the engine name to a compactor; the no-LLM engines
 // build directly and the LLM engines fall back to tiered without a provider,

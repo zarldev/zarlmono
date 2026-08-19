@@ -6,7 +6,9 @@ set -euo pipefail
 export LLM_PROVIDER="${LLM_PROVIDER:-openai}"
 export LLM_MODEL="${LLM_MODEL:-gpt-4o-mini}"
 
-exec go run ./examples/computer_use \
+cd "$(dirname "$0")/.."
+
+exec go run ./computer_use \
   -chrome "${CHROME_BIN:-/usr/bin/chromium-browser}" \
   -provider "$LLM_PROVIDER" \
   -model "$LLM_MODEL" \

@@ -49,7 +49,7 @@ func (s *MemoryStore) Load(ctx context.Context, id ID) (Checkpoint, error) {
 	defer s.mu.RUnlock()
 	cp, ok := s.data[id]
 	if !ok {
-		return Checkpoint{}, fmt.Errorf("load checkpoint %q: not found", id)
+		return Checkpoint{}, fmt.Errorf("load checkpoint %q: %w", id, ErrNotFound)
 	}
 	return clone(cp), nil
 }

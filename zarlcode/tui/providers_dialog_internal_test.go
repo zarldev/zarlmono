@@ -31,7 +31,7 @@ func newTestSettingsWithVault(t *testing.T) *engine.Settings {
 	if err != nil {
 		t.Fatalf("open vault: %v", err)
 	}
-	return engine.NewSettings(t.Context(), store, v, dir)
+	return engine.NewSettings(store, v, nil, dir)
 }
 
 type keyHandler interface {

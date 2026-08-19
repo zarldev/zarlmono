@@ -50,7 +50,7 @@ CHROME_BIN=/snap/bin/chromium PAUSE=2m ./examples/computer_use/run.sh
 Or run the Go program directly:
 
 ```sh
-go run ./examples/computer_use \
+go run -C examples ./computer_use \
   -chrome /usr/bin/chromium-browser \
   -provider openai \
   -model gpt-4o-mini \

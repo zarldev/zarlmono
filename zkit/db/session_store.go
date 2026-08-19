@@ -74,6 +74,25 @@ func (s *Store) ListSessions(ctx context.Context, workspace string) ([]SessionRe
 	return out, nil
 }
 
+const activeSessionSettingKey = "active_session"
+
+// SaveActiveSession atomically upserts a session and marks it active for its
+// workspace. Neither write is committed unless both succeed.
+func (s *Store) SaveActiveSession(ctx context.Context, r SessionRecord) error {
+	if err := s.WithTx(ctx, func(tx *Store) error {
+		if err := tx.SaveSession(ctx, r); err != nil {
+			return err
+		}
+		if err := tx.SetSetting(ctx, r.Workspace, activeSessionSettingKey, r.ID); err != nil {
+			return fmt.Errorf("mark session %q active: %w", r.ID, err)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("save active session %q: %w", r.ID, err)
+	}
+	return nil
+}
+
 // SaveSession upserts the record. CreatedAt is preserved (treated as
 // metadata the caller owns); UpdatedAt is replaced with time.Now().
 func (s *Store) SaveSession(ctx context.Context, r SessionRecord) error {

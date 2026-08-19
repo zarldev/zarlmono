@@ -13,7 +13,7 @@ import (
 
 func TestRuntimeCatalogToolsDoNotInlineIntoPrompt(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "edit.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "edit", "SKILL.md"), `---
 name: edit
 description: recover from edit failures
 ---
@@ -36,7 +36,7 @@ You review code changes.
 	l := NewLiveRunner(nil, ws, "local")
 	l.catalog.Reload(root)
 
-	if path, ok := l.catalog.Lookup("edit"); !ok || !strings.HasSuffix(path, filepath.Join("skills", "edit.md")) {
+	if path, ok := l.catalog.Lookup("edit"); !ok || !strings.HasSuffix(path, filepath.Join("skills", "edit", "SKILL.md")) {
 		t.Fatalf("skill lookup = (%q,%v), want edit skill path", path, ok)
 	}
 	if _, ok := l.catalog.Agent("reviewer"); !ok {
@@ -70,7 +70,7 @@ You review code changes.
 }
 func TestLoadSkillTool(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "go.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "go", "SKILL.md"), `---
 name: go
 description: go workflow
 ---
@@ -110,7 +110,7 @@ Review fresh changes.
 		t.Fatalf("list_agents did not refresh catalogue: %#v", res)
 	}
 
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "fresh-skill.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "fresh-skill", "SKILL.md"), `---
 name: fresh-skill
 description: newly added skill
 ---
@@ -129,7 +129,7 @@ Use fresh skill.
 func TestLoadSkillToolRefreshesOnceOnMiss(t *testing.T) {
 	root := t.TempDir()
 	cat := newRuntimeCatalog(root)
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "late.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "late", "SKILL.md"), `---
 name: late
 description: late skill
 ---

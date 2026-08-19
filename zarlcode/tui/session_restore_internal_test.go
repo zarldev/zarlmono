@@ -111,3 +111,50 @@ func TestResumeTargetDialog_CurrentTargetKeepsCurrentProvider(t *testing.T) {
 		t.Fatalf("active provider changed: %+v", got)
 	}
 }
+
+func TestResumeSession_CorruptAuxiliaryBlobsWarnsOnce(t *testing.T) {
+	m := New()
+	m.settings = newTestSettings(t)
+	m.intro = newIntroPane("/tmp/ws", nil, "", "")
+	saved := &savedSession{
+		sessionSummary: sessionSummary{ID: "s1", Label: "saved", CreatedAt: time.Now()},
+		History:        []llm.Message{{Role: llm.RoleUser, Content: "hi"}},
+		restoreDiagnostics: []sessionRestoreDiagnostic{
+			sessionRestorePlanCorrupt,
+			sessionRestoreDiffBodiesCorrupt,
+			sessionRestoreUsageCorrupt,
+		},
+		ToolTraceRaw: []byte(`{`),
+	}
+
+	if cmd := m.completeResumeSession(saved, false); cmd == nil {
+		t.Fatal("resume should return toast command")
+	}
+	if got := m.session.ToastTone; got != toastWarn {
+		t.Fatalf("toast tone = %v, want warning", got)
+	}
+	if !strings.Contains(m.session.Toast, "some saved details were unavailable") {
+		t.Fatalf("toast = %q, want incomplete-details notice", m.session.Toast)
+	}
+	if len(saved.restoreDiagnostics) != 0 {
+		t.Fatalf("diagnostics were not consumed: %v", saved.restoreDiagnostics)
+	}
+
+	m.completeResumeSession(saved, false)
+	if got := m.session.ToastTone; got != toastSuccess {
+		t.Fatalf("second resume toast tone = %v, want success", got)
+	}
+	if strings.Contains(m.session.Toast, "some saved details were unavailable") {
+		t.Fatalf("second resume repeated incomplete-details notice: %q", m.session.Toast)
+	}
+	if len(saved.restoreDiagnostics) != 0 {
+		t.Fatalf("second resume left diagnostics: %v", saved.restoreDiagnostics)
+	}
+}
+
+func TestDecodeSavedSession_CorruptHistoryFails(t *testing.T) {
+	_, err := decodeSavedSession(db.SessionRecord{HistoryJSON: []byte(`{`)})
+	if err == nil {
+		t.Fatal("decode corrupt history: got nil error")
+	}
+}

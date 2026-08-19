@@ -13,7 +13,7 @@ import (
 // that need a real `go vet`-able project on disk.
 func initGoModule(t *testing.T, dir, modPath string) {
 	t.Helper()
-	gomod := "module " + modPath + "\n\ngo 1.26\n"
+	gomod := "module " + modPath + "\n\ngo 1.27\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}

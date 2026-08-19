@@ -103,6 +103,8 @@ type contentBlock struct {
 	// version. The rendered text hash is still part of the key, so stale file
 	// contents don't collide when a preview reloads.
 	cacheKey string
+	// revision is owner-controlled content identity. Zero retains text hashing for unowned content.
+	revision uint64
 
 	// lineNumbers adds a source-aligned line-number gutter to contentCode blocks.
 	// Each source line maps to one rendered line so counts stay accurate.
@@ -193,6 +195,7 @@ type contentRenderCacheKey struct {
 	kind            contentKind
 	width           int
 	textHash        uint64
+	revision        uint64
 	textLen         int
 	toolName        string
 	hint            string
@@ -302,11 +305,16 @@ func contentCacheKeyFor(width int, b contentBlock) (contentRenderCacheKey, bool)
 	if b.cacheKey == "" || b.markdown != nil || b.style != nil || b.kind == contentPlan {
 		return contentRenderCacheKey{}, false
 	}
+	textHash := uint64(0)
+	if b.revision == 0 {
+		textHash = hashContentText(b.text)
+	}
 	return contentRenderCacheKey{
 		cacheKey:        b.cacheKey,
 		kind:            b.kind,
 		width:           width,
-		textHash:        hashContentText(b.text),
+		textHash:        textHash,
+		revision:        b.revision,
 		textLen:         len(b.text),
 		toolName:        b.toolName,
 		hint:            b.hint,

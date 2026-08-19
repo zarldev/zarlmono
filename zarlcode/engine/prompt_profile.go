@@ -16,8 +16,8 @@ const (
 	lean                          // compact
 )
 
-// WithPromptProfile selects the embedded BUILD prompt. Explicit and legacy
-// user overrides still take precedence during resolution.
+// WithPromptProfile selects the embedded BUILD prompt. An explicit user
+// override still takes precedence during resolution.
 func WithPromptProfile(profile PromptProfile) options.Option[LiveRunner] {
 	return func(r *LiveRunner) {
 		if profile.IsValid() {

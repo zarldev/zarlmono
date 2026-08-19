@@ -23,7 +23,7 @@ func newVaultSettings(t *testing.T) *engine.Settings {
 	if err != nil {
 		t.Fatalf("open vault: %v", err)
 	}
-	return engine.NewSettings(t.Context(), store, v, "")
+	return engine.NewSettings(store, v, nil, "")
 }
 
 // A legacy plaintext token in the mcp_servers row must be migrated into
@@ -65,7 +65,7 @@ func TestResolveMCPAuthToken_NoVaultFallsBackToPlaintext(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s := engine.NewSettings(t.Context(), store, nil, "")
+	s := engine.NewSettings(store, nil, nil, "")
 	row := db.MCPServerRow{Name: "x", Transport: "http", BaseURL: "https://h", AuthToken: "plain", Enabled: true}
 	if got := resolveMCPAuthToken(t.Context(), s, row); got != "plain" {
 		t.Errorf("no-vault resolve = %q; want plaintext passthrough", got)

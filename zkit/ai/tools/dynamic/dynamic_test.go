@@ -149,7 +149,7 @@ func TestCatalog_AddRemovePersist(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "catalog.json")
 	m := dynamic.NewCatalog(dynamic.NewFileStore(path))
-	if err := m.Load(); err != nil {
+	if err := m.LoadContext(t.Context()); err != nil {
 		t.Fatalf("Load on missing: %v", err)
 	}
 	if len(m.Entries()) != 0 {
@@ -160,13 +160,13 @@ func TestCatalog_AddRemovePersist(t *testing.T) {
 		Spec:       tools.ToolSpec{Name: "foo", Description: "demo", Parameters: llm.Schema{Type: "object"}},
 		BinaryPath: "/tmp/foo",
 	}
-	if err := m.Add(entry); err != nil {
+	if err := m.AddContext(t.Context(), entry); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
 	// Re-read from disk.
 	m2 := dynamic.NewCatalog(dynamic.NewFileStore(path))
-	if err := m2.Load(); err != nil {
+	if err := m2.LoadContext(t.Context()); err != nil {
 		t.Fatalf("Load after Add: %v", err)
 	}
 	got, ok := m2.Get("foo")
@@ -177,18 +177,13 @@ func TestCatalog_AddRemovePersist(t *testing.T) {
 		t.Errorf("BinaryPath = %q, want /tmp/foo", got.BinaryPath)
 	}
 
-	removed, err := m2.Remove("foo")
-	if err != nil || !removed {
-		t.Fatalf("Remove = %v, %v", removed, err)
+	if err := m2.RemoveContext(t.Context(), "foo"); err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 
 	// Removing again is a no-op.
-	removed, err = m2.Remove("foo")
-	if err != nil {
+	if err := m2.RemoveContext(t.Context(), "foo"); err != nil {
 		t.Fatalf("Remove idempotent: %v", err)
-	}
-	if removed {
-		t.Error("second Remove should report false")
 	}
 }
 
@@ -198,7 +193,7 @@ func TestRegistrar_RegisterUnregisterFlow(t *testing.T) {
 	catalogPath := filepath.Join(t.TempDir(), "catalog.json")
 
 	catalog := dynamic.NewCatalog(dynamic.NewFileStore(catalogPath))
-	if err := catalog.Load(); err != nil {
+	if err := catalog.LoadContext(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	registry := tools.NewRegistry()
@@ -273,7 +268,7 @@ func TestRegistrar_SyncSkipsShadowingEntries(t *testing.T) {
 	catalogPath := filepath.Join(t.TempDir(), "catalog.json")
 	{
 		m := dynamic.NewCatalog(dynamic.NewFileStore(catalogPath))
-		if err := m.Load(); err != nil {
+		if err := m.LoadContext(t.Context()); err != nil {
 			t.Fatalf("load: %v", err)
 		}
 		r := dynamic.NewRegistrar(m, tools.NewRegistry())
@@ -293,7 +288,7 @@ func TestRegistrar_SyncSkipsShadowingEntries(t *testing.T) {
 	registry.Register(builtin)
 
 	catalog := dynamic.NewCatalog(dynamic.NewFileStore(catalogPath))
-	if err := catalog.Load(); err != nil {
+	if err := catalog.LoadContext(t.Context()); err != nil {
 		t.Fatalf("reload catalog: %v", err)
 	}
 	reg := dynamic.NewRegistrar(catalog, registry)
@@ -320,7 +315,7 @@ func TestRegistrar_SyncFromManifest(t *testing.T) {
 	binPath := buildEcho(t)
 	catalogPath := filepath.Join(t.TempDir(), "catalog.json")
 	catalog := dynamic.NewCatalog(dynamic.NewFileStore(catalogPath))
-	if err := catalog.Add(dynamic.Entry{
+	if err := catalog.AddContext(t.Context(), dynamic.Entry{
 		Spec:       tools.ToolSpec{Name: "echo_back", Description: "x", Parameters: llm.Schema{Type: "object"}},
 		BinaryPath: binPath,
 	}); err != nil {
@@ -425,7 +420,7 @@ func TestRegistrar_RestartDurability(t *testing.T) {
 	// everything away.
 	{
 		catalog := dynamic.NewCatalog(dynamic.NewFileStore(catalogPath))
-		if err := catalog.Load(); err != nil {
+		if err := catalog.LoadContext(t.Context()); err != nil {
 			t.Fatalf("Load run1: %v", err)
 		}
 		registry := tools.NewRegistry()
@@ -444,7 +439,7 @@ func TestRegistrar_RestartDurability(t *testing.T) {
 	// catalog path. Sync should restore the registration and the tool
 	// should be callable.
 	catalog2 := dynamic.NewCatalog(dynamic.NewFileStore(catalogPath))
-	if err := catalog2.Load(); err != nil {
+	if err := catalog2.LoadContext(t.Context()); err != nil {
 		t.Fatalf("Load run2: %v", err)
 	}
 	registry2 := tools.NewRegistry()

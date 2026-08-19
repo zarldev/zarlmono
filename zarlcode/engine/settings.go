@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
@@ -47,9 +48,13 @@ type Settings struct {
 	// warm goroutine (started by OpenSettings, cancelled in Close)
 	// populates its cache off the hot path so the first cost lookup is
 	// a cache hit rather than a blocking HTTP fetch.
-	modelsDev  *modelsdev.Source
+	modelsDev *modelsdev.Source
+
 	warmCancel context.CancelFunc
 	warmDone   chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
+	ownsStore  bool
 }
 
 // providerKeyResolver adapts prefs.Service to the registry's tiny
@@ -115,8 +120,13 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 			v = nil
 		}
 	}
-	s := NewSettings(ctx, store, v, wsRoot)
-	s.startModelsDevWarm()
+	src := newModelsDevSource()
+	s := NewSettings(store, v, src, wsRoot)
+	if err := s.Registry.Reload(ctx); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("reload provider registry: %w", err)
+	}
+	s.ownsStore = true
 	if legacyOff {
 		if n, derr := s.Svc.DisableCredentialProtection(ctx, passphrase); derr != nil {
 			_ = store.Close()
@@ -132,24 +142,28 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 			slog.InfoContext(ctx, "migrated credentials to passphrase-derived key", "count", n)
 		}
 	}
+	s.startModelsDevWarm(ctx)
 	return s, nil
 }
 
-// NewSettings assembles a Settings from an already-open store, optional vault,
-// and workspace root — the same prefs + provider-registry wiring OpenSettings
-// performs after opening the db. Exposed so callers and tests can inject their
-// own store/vault without going through the db.Open path.
-func NewSettings(ctx context.Context, store *db.Store, v *vault.Vault, wsRoot string) *Settings {
+// NewSettings assembles Settings from already-open dependencies. It performs
+// no I/O, reload, logging, or background work. OpenSettings owns those
+// application-lifecycle operations; callers using this composition seam retain
+// ownership of store and must close it themselves.
+func NewSettings(store *db.Store, v *vault.Vault, src *modelsdev.Source, wsRoot string) *Settings {
 	svc := prefs.NewService(store, v, wsRoot)
-	src := newModelsDevSource()
 	reg := backends.NewRegistry(
 		backends.WithStore(store),
 		backends.WithSettingsService(providerKeyResolver{svc: svc}),
 		backends.WithModelsDevSource(src),
 	)
-	if err := reg.Reload(ctx); err != nil {
-		slog.WarnContext(ctx, "provider registry reload (custom providers)", "err", err)
-	}
+	return newSettings(store, svc, reg, src, wsRoot)
+}
+
+// newSettings joins ready dependencies into a Settings value. It lets engine
+// tests provide every dependency without opening resources, reloading rows, or
+// starting workers.
+func newSettings(store *db.Store, svc *prefs.Service, reg *backends.ProviderRegistry, src *modelsdev.Source, wsRoot string) *Settings {
 	return &Settings{Store: store, Svc: svc, Registry: reg, wsRoot: wsRoot, modelsDev: src}
 }
 
@@ -175,15 +189,15 @@ func newModelsDevSource() *modelsdev.Source {
 // Settings handle and cancelled in Close — not fire-and-forget. Called
 // only from OpenSettings (real startup), never from the NewSettings
 // injection seam, so tests don't reach for the network.
-func (s *Settings) startModelsDevWarm() {
+func (s *Settings) startModelsDevWarm(ctx context.Context) {
 	if s == nil || s.modelsDev == nil {
 		return
 	}
-	warmCtx, cancel := context.WithCancel(context.Background())
+	warmCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := s.modelsDev.Warm(warmCtx); err != nil {
+		if err := s.modelsDev.Warm(warmCtx); err != nil && warmCtx.Err() == nil {
 			slog.WarnContext(warmCtx, "models.dev warm", "err", err)
 		}
 	}()
@@ -191,20 +205,23 @@ func (s *Settings) startModelsDevWarm() {
 	s.warmDone = done
 }
 
-// Close cancels the models.dev warm goroutine (if running) and releases
-// the underlying store.
+// Close cancels and joins the opener-owned models.dev warm worker, then closes
+// the opener-owned store. Settings built with NewSettings borrow their store,
+// so Close only joins any worker an opener has started.
 func (s *Settings) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.warmCancel != nil {
-		s.warmCancel()
-		<-s.warmDone
-	}
-	if s.Store == nil {
-		return nil
-	}
-	return s.Store.Close()
+	s.closeOnce.Do(func() {
+		if s.warmCancel != nil {
+			s.warmCancel()
+			<-s.warmDone
+		}
+		if s.ownsStore && s.Store != nil {
+			s.closeErr = s.Store.Close()
+		}
+	})
+	return s.closeErr
 }
 
 // ConfirmQuit resolves the confirm_quit setting (effective scope). When unset or
@@ -661,18 +678,12 @@ func (s *Settings) intSetting(ctx context.Context, key string, def int) int {
 	return def
 }
 
-// ResetModelToProviderDefault repoints the model setting at the given
-// provider's default (its DefaultModel, else its first seed model), so
-// switching provider can't strand a model from the previous backend (e.g.
-// deepseek + opus). Clears the model when the provider has no default (local
-// servers, where the model is whatever the server has loaded). Writes at
-// workspace scope, matching where provider/model edits land.
-func (s *Settings) ResetModelToProviderDefault(ctx context.Context, provider string) {
-	if s == nil || s.Svc == nil {
-		return
-	}
+// DefaultModelSelection returns the provider paired with its configured
+// default model. An empty model means the provider supplies its own runtime
+// model and the workspace model override must be absent.
+func (s *Settings) DefaultModelSelection(provider string) prefs.ModelSelection {
 	model := ""
-	if s.Registry != nil {
+	if s != nil && s.Registry != nil {
 		if def, err := s.Registry.Parse(provider); err == nil {
 			model = def.DefaultModel
 			if model == "" && len(def.SeedModels) > 0 {
@@ -680,13 +691,5 @@ func (s *Settings) ResetModelToProviderDefault(ctx context.Context, provider str
 			}
 		}
 	}
-	if model == "" {
-		if err := s.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel); err != nil {
-			slog.WarnContext(ctx, "reset model to provider default: clear workspace model", "err", err, "provider", provider)
-		}
-		return
-	}
-	if err := s.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, model); err != nil {
-		slog.WarnContext(ctx, "reset model to provider default: write workspace model", "err", err, "provider", provider, "model", model)
-	}
+	return prefs.ModelSelection{Provider: provider, Model: model}
 }

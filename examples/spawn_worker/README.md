@@ -38,10 +38,10 @@ Parent Runner (coordinator)
 
 ```sh
 # Deterministic scripted mode (no LLM)
-go run ./examples/spawn_worker -scripted
+go run -C examples ./spawn_worker -scripted
 
 # Real provider (OpenAI; OPENAI_MODEL defaults to gpt-4o-mini)
-OPENAI_API_KEY=sk-... go run ./examples/spawn_worker
+OPENAI_API_KEY=sk-... go run -C examples ./spawn_worker
 ```
 
 ## Output
@@ -70,7 +70,7 @@ status=succeeded attempts=1 children=3 files_modified=2 files_created=1
 ## Testing
 
 ```sh
-go test ./examples/spawn_worker/
+go test -C examples ./spawn_worker
 ```
 
 Tests verify:

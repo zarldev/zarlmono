@@ -4,11 +4,10 @@
 // package only) so both the runtime and the v2 TUI can read the same
 // inventory without dragging in a UI toolkit.
 //
-// Discovery mirrors the historical lookup order: per-user config first, then
-// the canonical home, then the source tree, then the workspace-local dir
-// (later directories win on a name collision, but first-seen order is kept so
-// listings stay stable). Skills support both the Agent Skills standard
-// `<name>/SKILL.md` layout and legacy flat `*.md` files.
+// Discovery order is per-user config, canonical home, source tree, then the
+// workspace-local directory. Later directories win name collisions while
+// first-seen order keeps listings stable. Skills use the portable Agent Skills
+// `<name>/SKILL.md` package layout.
 package catalog
 
 import (
@@ -214,9 +213,8 @@ func walkMarkdown(dirs []string, errs *[]error, load func(path string) error) {
 	}
 }
 
-// walkSkills accepts the portable Agent Skills `<name>/SKILL.md` package
-// layout while retaining flat markdown compatibility for existing zarlcode
-// installations. Other files inside a skill package are resources, not skills.
+// walkSkills loads portable Agent Skills from the <name>/SKILL.md package
+// layout. Other files inside a skill package are resources, not skills.
 func walkSkills(dirs []string, errs *[]error, load func(path string) error) {
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
@@ -228,19 +226,14 @@ func walkSkills(dirs []string, errs *[]error, load func(path string) error) {
 			continue
 		}
 		for _, ent := range entries {
-			var path string
-			switch {
-			case ent.IsDir():
-				path = filepath.Join(dir, ent.Name(), "SKILL.md")
-				if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-					continue
-				} else if err != nil {
-					*errs = append(*errs, fmt.Errorf("stat %q: %w", path, err))
-					continue
-				}
-			case strings.HasSuffix(ent.Name(), ".md"):
-				path = filepath.Join(dir, ent.Name())
-			default:
+			if !ent.IsDir() {
+				continue
+			}
+			path := filepath.Join(dir, ent.Name(), "SKILL.md")
+			if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+				continue
+			} else if err != nil {
+				*errs = append(*errs, fmt.Errorf("stat %q: %w", path, err))
 				continue
 			}
 			if err := load(path); err != nil {

@@ -31,7 +31,7 @@ func NewMemoryCache[K comparable, V any]() *MemoryCache[K, V] {
 func (c *MemoryCache[K, V]) Set(ctx context.Context, key K, value V) error {
 	select {
 	case <-ctx.Done():
-		return ErrCanceled
+		return ctx.Err()
 	default:
 	}
 
@@ -47,7 +47,7 @@ func (c *MemoryCache[K, V]) Get(ctx context.Context, key K) (V, error) {
 	select {
 	case <-ctx.Done():
 		var zero V
-		return zero, ErrCanceled
+		return zero, ctx.Err()
 	default:
 	}
 
@@ -67,7 +67,7 @@ func (c *MemoryCache[K, V]) Get(ctx context.Context, key K) (V, error) {
 func (c *MemoryCache[K, V]) Delete(ctx context.Context, key K) (bool, error) {
 	select {
 	case <-ctx.Done():
-		return false, ErrCanceled
+		return false, ctx.Err()
 	default:
 	}
 
@@ -85,7 +85,7 @@ func (c *MemoryCache[K, V]) Delete(ctx context.Context, key K) (bool, error) {
 func (c *MemoryCache[K, V]) Len(ctx context.Context) (int, error) {
 	select {
 	case <-ctx.Done():
-		return 0, ErrCanceled
+		return 0, ctx.Err()
 	default:
 	}
 
@@ -98,7 +98,7 @@ func (c *MemoryCache[K, V]) Len(ctx context.Context) (int, error) {
 func (c *MemoryCache[K, V]) Clear(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
-		return ErrCanceled
+		return ctx.Err()
 	default:
 	}
 

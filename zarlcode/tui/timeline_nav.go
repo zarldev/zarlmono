@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"sort"
+
 	lg "charm.land/lipgloss/v2"
 )
 
@@ -110,26 +112,10 @@ func absInt(n int) int {
 	return n
 }
 
-// layoutIndex returns each item's [start,end) line range in the flat
-// browse layout and the total line count, with blank separators between
-// turn-boundary items counted exactly as renderBrowse/renderTail emit
-// them. Heights come from the per-item render cache (memoised per
-// width/version), so this is an O(n) walk of int lengths — no line
-// copying, no full-history slice. Navigation and the scrollbar use it to
-// clamp and window without flattening the whole transcript every frame.
+// layoutIndex returns the owned geometry snapshot shared by navigation,
+// selection, scrollbar, and browse rendering.
 func (tl *timeline) layoutIndex(width int) ([]int, []int, int) {
-	starts := make([]int, len(tl.items))
-	ends := make([]int, len(tl.items))
-	n := 0
-	for i, it := range tl.items {
-		if i > 0 && !itemNested(it) {
-			n++ // blank separator
-		}
-		starts[i] = n
-		n += len(tl.renderItem(it, width))
-		ends[i] = n
-	}
-	return starts, ends, n
+	return tl.geometryIndex(width)
 }
 
 func (tl *timeline) pageStep() int {
@@ -341,6 +327,7 @@ func (tl *timeline) toggleSelected() {
 	if ht, ok := tl.items[tl.sel].(hitToggler); ok {
 		if tg := ht.togglerAt(tl.lwidth(), tl.selLocal); tg != nil {
 			tg.toggle()
+			tl.geometry.invalidateFrom(tl.sel)
 			tl.clampSelLocal(tl.lwidth())
 			return
 		}
@@ -348,6 +335,7 @@ func (tl *timeline) toggleSelected() {
 	if tl.selLocal == 0 {
 		if c, ok := tl.items[tl.sel].(collapsible); ok {
 			c.toggle()
+			tl.geometry.invalidateFrom(tl.sel)
 			tl.clampSelLocal(tl.lwidth())
 		}
 	}
@@ -375,6 +363,7 @@ func (tl *timeline) toggleAtViewportLine(vi int) bool {
 		return false
 	}
 	tg.toggle()
+	tl.geometry.invalidateFrom(i)
 	return true
 }
 
@@ -407,14 +396,16 @@ func (tl *timeline) renderBrowse(width, height int) []string {
 
 	n := end - top
 	view := make([]string, 0, n)
-	vItem := make([]int, 0, n)
-	vLocal := make([]int, 0, n)
+	vItem := tl.visItem[:0]
+	vLocal := tl.visLocal[:0]
 	emit := func(line string, itemIdx, local int) {
 		view = append(view, line)
 		vItem = append(vItem, itemIdx)
 		vLocal = append(vLocal, local)
 	}
-	for i, it := range tl.items {
+	first := sort.Search(len(ends), func(i int) bool { return ends[i] > top })
+	for i := first; i < len(tl.items); i++ {
+		it := tl.items[i]
 		sep := i > 0 && !itemNested(it)
 		blockStart := starts[i]
 		if sep {

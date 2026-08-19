@@ -32,6 +32,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zlog"
 )
 
+const startupMCPConnectTimeout = 15 * time.Second
+
 // Zarlcode is the running application: workspace, settings, the live runner,
 // and the bubbletea model. It's the typed instance carried by the zapp
 // lifecycle harness — [Launch.Create] wires it (registering closers with the
@@ -145,11 +147,11 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		} else {
 			_ = app.AddCloser("askpass", askpassSrv)
 			toolEnv = askpassSrv.Env()
-			sbPolicy = sbPolicy.WithExecPath(askpassSrv.script)
+			sbPolicy = grantSandboxExecPath(sbPolicy, askpassSrv.script)
 		}
 	}
 	if cp := settings.ChromeBinPath(ctx); cp != "" {
-		sbPolicy = sbPolicy.WithExecPath(cp)
+		sbPolicy = grantSandboxExecPath(sbPolicy, cp)
 	}
 	sandboxEnabled := settings.ShellSandbox(ctx)
 	if enabled, ok := sandbox.EnvOverride(); ok {
@@ -322,6 +324,30 @@ func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) in
 	return zapp.ExitOK
 }
 
+func grantSandboxExecPath(policy sandbox.Policy, path string) sandbox.Policy {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || !filepath.IsAbs(path) {
+		return policy
+	}
+	grant := func(path string) {
+		policy.ReadFiles = append(policy.ReadFiles, path)
+		for dir := filepath.Dir(path); dir != "." && dir != string(filepath.Separator) && dir != ""; dir = filepath.Dir(dir) {
+			policy.ReadDirs = append(policy.ReadDirs, dir)
+		}
+	}
+	grant(path)
+	if strings.HasSuffix(strings.ToLower(path), ".exe") {
+		if b, err := os.ReadFile("/proc/sys/fs/binfmt_misc/WSLInterop"); err == nil {
+			for line := range strings.SplitSeq(string(b), "\n") {
+				if interpreter, ok := strings.CutPrefix(strings.TrimSpace(line), "interpreter "); ok && filepath.IsAbs(interpreter) {
+					grant(filepath.Clean(interpreter))
+				}
+			}
+		}
+	}
+	return policy
+}
+
 // closerFunc adapts a func() error to io.Closer for app.AddCloser.
 type closerFunc func() error
 
@@ -375,7 +401,9 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 		wg.Add(1)
 		go func(srv startupMCPServer) {
 			defer wg.Done()
-			res, err := connect.Execute(ctx, tools.ToolCall{
+			connectCtx, cancel := context.WithTimeout(ctx, startupMCPConnectTimeout)
+			defer cancel()
+			res, err := connect.Execute(connectCtx, tools.ToolCall{
 				ID: tools.ToolCallID("startup-mcp-" + srv.row.Name),
 				Arguments: tools.ToolParameters{
 					"name":       srv.row.Name,
@@ -391,9 +419,9 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 			defer errMu.Unlock()
 			switch {
 			case err != nil:
-				fmt.Fprintf(os.Stderr, "mcp: connect %q: %v\n", srv.row.Name, err)
+				slog.WarnContext(ctx, "mcp: startup connect", "server", srv.row.Name, "err", err)
 			case res != nil && !res.Success:
-				fmt.Fprintf(os.Stderr, "mcp: connect %q: %s\n", srv.row.Name, res.Error)
+				slog.WarnContext(ctx, "mcp: startup connect", "server", srv.row.Name, "err", res.Error)
 			}
 		}(srv)
 	}

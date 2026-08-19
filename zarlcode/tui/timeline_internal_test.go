@@ -90,7 +90,7 @@ func TestTimeline_LoadedSkillAndAgentStayInNestedToolGroup(t *testing.T) {
 	}
 	// Sub-agent now renders as a collapsible block instead of a "⤷ review" notice.
 	// Skills appear as a collapsible section under the assistant turn.
-	for _, want := range []string{"use helpers", "tools (2)", "[+] go-code-reviewer: review", "[+] skills (1): go-testing"} {
+	for _, want := range []string{"use helpers", "tools (2)", "[+] agents (1)", "[+] skills (1): go-testing"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("timeline missing %q in:\n%s", want, out)
 		}

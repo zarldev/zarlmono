@@ -56,6 +56,20 @@ func (r *ProviderRegistry) ResolveContextWindow(ctx context.Context, name, baseU
 	if err == nil && def.ContextWindow > 0 {
 		return def.ContextWindow
 	}
+	// A local server's configured runtime limit is stronger than the model's
+	// theoretical catalogue limit. Probe it before metadata/static fallbacks.
+	if id, parseErr := llm.ParseLLMProvider(name); parseErr == nil {
+		switch id {
+		case DefaultBuiltinName:
+			if cw := llamacpp.ProbeContextWindow(ctx, baseURL); cw > 0 {
+				return cw
+			}
+		case NameOllama:
+			if cw := ollama.ContextWindowFor(ctx, baseURL, model); cw > 0 {
+				return cw
+			}
+		}
+	}
 	if r.modelsDevSource != nil {
 		if e, ok := r.modelsDevSource.Lookup(ctx, name, model); ok && e.ContextWindow > 0 {
 			return e.ContextWindow
@@ -64,19 +78,13 @@ func (r *ProviderRegistry) ResolveContextWindow(ctx context.Context, name, baseU
 	if cw := r.ContextWindow(name, model); cw > 0 {
 		return cw
 	}
-	// Local backends report their window at runtime. Dispatch on the
-	// provider identity (both are OPENAICOMPATIBLE adapters, so the adapter
-	// type can't distinguish them) and only for the two that expose a probe
-	// endpoint. A custom name that isn't a builtin can't be probed here.
-	id, err := llm.ParseLLMProvider(name)
-	if err != nil {
-		return 0
-	}
-	switch id {
-	case DefaultBuiltinName:
-		return llamacpp.ProbeContextWindow(ctx, baseURL)
-	case NameOllama:
-		return ollama.ContextWindowFor(ctx, baseURL, model)
+	// Custom/local/OpenAI-compatible endpoints often expose model IDs owned by
+	// another provider. Use provider-independent intrinsic metadata only when
+	// all normalized catalogue matches agree.
+	if r.modelsDevSource != nil {
+		if e, ok := r.modelsDevSource.LookupIntrinsic(ctx, model); ok && e.ContextWindow > 0 {
+			return e.ContextWindow
+		}
 	}
 	return 0
 }

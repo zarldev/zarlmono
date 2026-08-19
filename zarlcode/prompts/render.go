@@ -7,19 +7,8 @@ import (
 	"text/template"
 )
 
-// Data is the render context shared by every prompt template — the embedded
-// [System] / [Plan] defaults, explicit or legacy prompt overrides, named
-// sub-agent bodies, and literal user preferences. Every consumer (the TUI and
-// the eval harness) builds the same struct and renders through [Render], so the
-// two cannot silently drift.
-//
-// Data is intentionally a STABLE SUPERSET: fields are not removed when the
-// default embedded prompt stops using them, because a user's
-// ~/.zarlcode/prompt.override.md or legacy ~/.zarlcode/prompt.md may still
-// reference them. text/template treats a missing struct field as a hard execute
-// error (unlike a missing map key), so dropping a field crashes every override
-// that names it — failing the whole turn before any provider call. Keep unused
-// fields here (nil/zero renders empty) rather than deleting them.
+// Data is the render contract for embedded prompts, explicit prompt overrides,
+// named sub-agent bodies, and literal user preferences.
 type Data struct {
 	WorkspaceRoot   string
 	Tools           []ToolInfo
@@ -63,9 +52,7 @@ type ToolInfo struct {
 	Description string
 }
 
-// AgentInfo is a named sub-agent as a prompt template renders it. Retained for
-// override-prompt compatibility even though the default prompt no longer
-// enumerates agents (they are discovered via list_agents at runtime).
+// AgentInfo is a named sub-agent as a prompt template renders it.
 type AgentInfo struct {
 	Name        string
 	Description string

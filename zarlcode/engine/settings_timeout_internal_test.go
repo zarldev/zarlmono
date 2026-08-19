@@ -1,10 +1,14 @@
 package engine
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
+	"github.com/zarldev/zarlmono/zkit/cache"
+	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
@@ -31,6 +35,53 @@ func TestResponseTimeout(t *testing.T) {
 	}
 	if got := s.ResponseTimeout(ctx); got != 90*time.Second {
 		t.Fatalf("zero should floor to default, got %s", got)
+	}
+}
+
+func TestNewSettings_PureConstructionBorrowsStore(t *testing.T) {
+	store, err := db.Open(t.Context(), t.TempDir()+"/state.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	src := modelsdev.New(cache.NewMemoryCache[string, modelsdev.Snapshot]())
+	settings := NewSettings(store, nil, src, t.TempDir())
+	if settings.modelsDev != src {
+		t.Fatal("NewSettings replaced the supplied models.dev source")
+	}
+	if settings.warmDone != nil {
+		t.Fatal("NewSettings started a warm worker")
+	}
+	if err := settings.Close(); err != nil {
+		t.Fatalf("close borrowed settings: %v", err)
+	}
+	if err := store.SetSetting(t.Context(), t.TempDir(), "still-open", "yes"); err != nil {
+		t.Fatalf("NewSettings closed borrowed store: %v", err)
+	}
+}
+
+func TestSettingsClose_CancelsAndWaitsForWarmWorker(t *testing.T) {
+	started := make(chan struct{})
+	released := make(chan struct{})
+	s := &Settings{modelsDev: modelsdev.New(cache.NewMemoryCache[string, modelsdev.Snapshot]())}
+	ctx, cancel := context.WithCancel(t.Context())
+	s.warmCancel = cancel
+	s.warmDone = make(chan struct{})
+	go func() {
+		close(started)
+		<-ctx.Done()
+		close(released)
+		close(s.warmDone)
+	}()
+	<-started
+	if err := s.Close(); err != nil {
+		t.Fatalf("close settings: %v", err)
+	}
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not wait for warm worker")
 	}
 }
 

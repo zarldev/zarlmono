@@ -31,7 +31,7 @@ func TestRunHeadlessVerifiedLoop_Live(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	write("go.mod", "module verifyloop\n\ngo 1.26\n")
+	write("go.mod", "module verifyloop\n\ngo 1.27\n")
 	write("adder.go", "package verifyloop\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int {\n\treturn a - b // BUG: subtracts\n}\n")
 	write("adder_test.go", "package verifyloop\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(2, 3); got != 5 {\n\t\tt.Fatalf(\"Add(2,3) = %d, want 5\", got)\n\t}\n}\n")
 	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}} {

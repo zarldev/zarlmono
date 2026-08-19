@@ -143,6 +143,8 @@ type RunState struct {
 	// --- per-turn history (ring; newest last) ---
 	history        []turnSample
 	pendingCompact bool // flag the next recorded sample as a compaction dip
+	revision       uint64
+	derived        cockpitDerived
 }
 
 // SessionUsageSnapshot is the persistable rollup of a session's token
@@ -150,6 +152,15 @@ type RunState struct {
 // session totals and cost survive -continue. The live-run counters,
 // per-turn history ring, and pricing are not persisted — they reset or
 // re-derive on the next turn.
+type cockpitDerived struct {
+	valid            bool
+	revision         uint64
+	tps, cache, cost []float64
+	tools            []toolRow
+}
+
+func (s *RunState) bumpRevision() { s.revision++ }
+
 type SessionUsageSnapshot struct {
 	Turns           int            `json:"turns"`
 	ToolCalls       int            `json:"tool_calls"`
@@ -193,6 +204,7 @@ func (s *RunState) UsageSnapshot() SessionUsageSnapshot {
 // resumed session's cockpit reflects the tokens it already spent. Live
 // counters are untouched; the next turn accumulates on top.
 func (s *RunState) RestoreUsage(snap SessionUsageSnapshot) {
+	defer s.bumpRevision()
 	s.sessionTurns = snap.Turns
 	s.sessionToolCalls = snap.ToolCalls
 	s.sessionIn = snap.In
@@ -214,6 +226,7 @@ func (s *RunState) RestoreUsage(snap SessionUsageSnapshot) {
 // while preserving session rollup, history, pricing, and window — those
 // accumulate across turns until the program restarts (or a future /clear).
 func (s *RunState) reset() {
+	defer s.bumpRevision()
 	s.Running = false
 	s.iterations = 0
 	s.tools = 0
@@ -253,6 +266,7 @@ func (s *RunState) liveTokPerSec() float64 {
 // which receives the cumulative totalUsage — without being overwritten
 // by the multi-iteration sum.
 func (s *RunState) foldIteration(u, delta *llm.Usage) {
+	defer s.bumpRevision()
 	s.iterations++
 	if u != nil {
 		if u.PromptTokens > 0 {
@@ -279,6 +293,7 @@ func (s *RunState) setContextBreakdown(b *runner.ContextBreakdown) {
 	if b == nil {
 		return
 	}
+	defer s.bumpRevision()
 	s.ctxSysBytes, s.ctxUserBytes = b.SystemBytes, b.UserBytes
 	s.ctxAsstBytes, s.ctxToolBytes = b.AssistantBytes, b.ToolBytes
 	s.ctxSkillBytes, s.ctxAgentBytes = b.SkillBytes, b.AgentBytes
@@ -297,6 +312,7 @@ func (s *RunState) hasBreakdown() bool {
 // the in-flight counter, bumps the per-turn and session counts, and
 // accumulates the tool's cumulative footprint.
 func (s *RunState) foldTool(name string, dur time.Duration, failed bool) {
+	defer s.bumpRevision()
 	if s.toolsRunning > 0 {
 		s.toolsRunning--
 	}
@@ -328,10 +344,12 @@ func (s *RunState) startNestedTool(id string) {
 		return
 	}
 	s.nestedActive[id] = true
+	s.bumpRevision()
 	s.nestedRunning++
 }
 
 func (s *RunState) finishNestedTool(id, name string, dur time.Duration, failed bool) {
+	defer s.bumpRevision()
 	if id != "" {
 		if !s.nestedActive[id] {
 			return
@@ -377,6 +395,7 @@ func cloneStringIntMap(in map[string]int) map[string]int {
 // foldIteration from the per-iteration IterationCompleted event. We only
 // accumulate session totals here; we never overwrite the per-iteration fields.
 func (s *RunState) foldTurnComplete(u *llm.Usage, dur time.Duration, iters int) {
+	defer s.bumpRevision()
 	s.Running = false
 	s.lastDuration = dur
 	s.lastTurnAt = time.Now()
@@ -416,6 +435,7 @@ func (s *RunState) foldSubAgentUsage(u *llm.Usage) {
 	if u == nil {
 		return
 	}
+	defer s.bumpRevision()
 	// Delegated usage currently arrives without provider/model identity, so it is
 	// estimated with the active parent cost basis. Future work should carry the
 	// sub-agent provider/model through the event for exact attribution.
@@ -432,6 +452,7 @@ func (s *RunState) foldSubAgentUsage(u *llm.Usage) {
 // sample reads as a sawtooth dip. bytes is the engine's raw BytesTrimmed; the
 // context gauge falls by its token-equivalent (bytes/4).
 func (s *RunState) foldCompaction(before, after, bytes int, engine string) {
+	defer s.bumpRevision()
 	reclaimedTok := bytes / 4
 	s.compactBefore = before
 	s.compactAfter = after
@@ -609,40 +630,22 @@ func (s *RunState) burnRate() float64 {
 // tpsSeries / cacheSeries / costSeries project the history ring onto the
 // float slices the dashboard sparklines consume. (Fill has no series: it's
 // shown by the composition bar, not a sparkline, so it isn't duplicated.)
-func (s *RunState) tpsSeries() []float64 {
-	out := make([]float64, len(s.history))
-	for i, h := range s.history {
-		out[i] = h.tokPerSec
+func (s *RunState) derivedSnapshot() cockpitDerived {
+	if s.derived.valid && s.derived.revision == s.revision {
+		return s.derived
 	}
-	return out
-}
-
-func (s *RunState) cacheSeries() []float64 {
-	out := make([]float64, len(s.history))
+	d := cockpitDerived{valid: true, revision: s.revision, tps: make([]float64, len(s.history)), cache: make([]float64, len(s.history)), cost: make([]float64, len(s.history)), tools: make([]toolRow, 0, len(s.toolStats))}
 	for i, h := range s.history {
+		d.tps[i] = h.tokPerSec
 		if h.tokIn > 0 {
-			out[i] = float64(h.cached) / float64(h.tokIn)
+			d.cache[i] = float64(h.cached) / float64(h.tokIn)
 		}
+		d.cost[i] = h.costUSD
 	}
-	return out
-}
-
-func (s *RunState) costSeries() []float64 {
-	out := make([]float64, len(s.history))
-	for i, h := range s.history {
-		out[i] = h.costUSD
-	}
-	return out
-}
-
-// topTools returns the session's tools sorted by call count (then total
-// duration, then name) — the order both the sidebar and dashboard render.
-func (s *RunState) topTools() []toolRow {
-	out := make([]toolRow, 0, len(s.toolStats))
 	for name, st := range s.toolStats {
-		out = append(out, toolRow{name: name, calls: st.calls, fails: st.fails, dur: st.dur})
+		d.tools = append(d.tools, toolRow{name: name, calls: st.calls, fails: st.fails, dur: st.dur})
 	}
-	slices.SortStableFunc(out, func(a, b toolRow) int {
+	slices.SortStableFunc(d.tools, func(a, b toolRow) int {
 		if a.calls != b.calls {
 			if a.calls > b.calls {
 				return -1
@@ -657,8 +660,14 @@ func (s *RunState) topTools() []toolRow {
 		}
 		return cmp.Compare(a.name, b.name)
 	})
-	return out
+	s.derived = d
+	return d
 }
+
+func (s *RunState) tpsSeries() []float64   { return s.derivedSnapshot().tps }
+func (s *RunState) cacheSeries() []float64 { return s.derivedSnapshot().cache }
+func (s *RunState) costSeries() []float64  { return s.derivedSnapshot().cost }
+func (s *RunState) topTools() []toolRow    { return s.derivedSnapshot().tools }
 
 // toolRow is one row of the TOOLS section.
 type toolRow struct {

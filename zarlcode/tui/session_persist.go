@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -33,14 +34,35 @@ type sessionSummary struct {
 	Messages  int
 }
 
+var errSessionSnapshotEmpty = errors.New("session snapshot empty")
+
+type sessionRestoreDiagnostic string
+
+const (
+	sessionRestorePlanCorrupt       sessionRestoreDiagnostic = "plan"
+	sessionRestoreDiffBodiesCorrupt sessionRestoreDiagnostic = "diff bodies"
+	sessionRestoreUsageCorrupt      sessionRestoreDiagnostic = "usage"
+	sessionRestoreToolTraceCorrupt  sessionRestoreDiagnostic = "tool trace"
+)
+
 type savedSession struct {
 	sessionSummary
-	Plan         code.Plan
-	DiffBodies   map[string]string
-	Usage        SessionUsageSnapshot
-	ToolTrace    savedToolTrace
-	ToolTraceRaw []byte
-	History      []llm.Message
+	Plan               code.Plan
+	DiffBodies         map[string]string
+	Usage              SessionUsageSnapshot
+	ToolTraceRaw       []byte
+	History            []llm.Message
+	restoreDiagnostics []sessionRestoreDiagnostic
+}
+
+func (s *savedSession) addRestoreDiagnostic(diagnostic sessionRestoreDiagnostic) {
+	s.restoreDiagnostics = append(s.restoreDiagnostics, diagnostic)
+}
+
+func (s *savedSession) consumeRestoreDiagnostics() []sessionRestoreDiagnostic {
+	diagnostics := s.restoreDiagnostics
+	s.restoreDiagnostics = nil
+	return diagnostics
 }
 
 func listSavedSessions(ctx context.Context, store *db.Store, wsRoot string) ([]sessionSummary, error) {
@@ -97,15 +119,25 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	summary.Messages = sessionMessageCount(rec, len(history))
 	// The auxiliary blobs are best-effort: a corrupt plan/diff/usage
 	// field must not block resuming the conversation itself, which lives
-	// in HistoryJSON. Decode failures leave the zero value and are logged.
+	// in HistoryJSON. Decode failures leave the zero value for the resume
+	// boundary to report once.
 	s := &savedSession{
 		sessionSummary: summary,
 		History:        history,
 		ToolTraceRaw:   rec.ToolTraceJSON,
 	}
-	decodeSessionBlob(rec.PlanJSON, &s.Plan, rec.ID, "plan")
-	decodeSessionBlob(rec.DiffBodiesJSON, &s.DiffBodies, rec.ID, "diff bodies")
-	decodeSessionBlob(rec.LastUsageJSON, &s.Usage, rec.ID, "usage")
+	if !decodeSessionBlob(rec.PlanJSON, &s.Plan) {
+		s.addRestoreDiagnostic(sessionRestorePlanCorrupt)
+	}
+	if !decodeSessionBlob(rec.DiffBodiesJSON, &s.DiffBodies) {
+		s.addRestoreDiagnostic(sessionRestoreDiffBodiesCorrupt)
+	}
+	if !decodeSessionBlob(rec.LastUsageJSON, &s.Usage) {
+		s.addRestoreDiagnostic(sessionRestoreUsageCorrupt)
+	}
+	if toolTraceMalformed(rec.ToolTraceJSON) {
+		s.addRestoreDiagnostic(sessionRestoreToolTraceCorrupt)
+	}
 	return s, nil
 }
 
@@ -116,35 +148,42 @@ func sessionMessageCount(rec db.SessionRecord, fallback int) int {
 	return fallback
 }
 
-// decodeSessionBlob unmarshals an optional session blob into dst,
-// treating empty / "null" as "absent" and logging a decode error
-// without failing the load.
-func decodeSessionBlob(blob []byte, dst any, id, what string) {
+// decodeSessionBlob unmarshals an optional session blob into dst. Empty and
+// "null" blobs are absent; malformed blobs are reported to the resume boundary.
+func decodeSessionBlob(blob []byte, dst any) bool {
 	if len(blob) == 0 || string(blob) == "null" {
-		return
+		return true
 	}
-	if err := json.Unmarshal(blob, dst); err != nil {
-		slog.Warn("session restore: decode "+what, "session", id, "err", err)
-	}
+	return json.Unmarshal(blob, dst) == nil
 }
 
-// encodeSessionJSON marshals v for a session blob column, falling back to
-// the column's empty sentinel when v is empty or marshalling fails — a
-// best-effort persist must never abort the whole save over an optional
-// field.
-func encodeSessionJSON(v any, fallback string) []byte {
-	b, err := json.Marshal(v)
-	if err != nil || len(b) == 0 || string(b) == "null" {
-		return []byte(fallback)
+func toolTraceMalformed(raw []byte) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
 	}
-	return b
+	var trace savedToolTrace
+	return json.Unmarshal(raw, &trace) != nil
+}
+
+// encodeSessionJSON marshals one independently snapshotted session value.
+// A serialization error is not equivalent to an empty value and aborts the
+// save rather than overwriting a previously valid blob with an empty sentinel.
+func encodeSessionJSON(v any, fallback string) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == 0 || string(b) == "null" {
+		return []byte(fallback), nil
+	}
+	return b, nil
 }
 
 // encodePlanJSON serialises the session plan, storing "null" when there
 // are no steps so an empty plan restores as no overlay.
-func encodePlanJSON(p code.Plan) []byte {
+func encodePlanJSON(p code.Plan) ([]byte, error) {
 	if len(p.Steps) == 0 {
-		return []byte("null")
+		return []byte("null"), nil
 	}
 	return encodeSessionJSON(p, "null")
 }
@@ -225,7 +264,14 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 		notice += "; switching to saved target " + providerModelLabel(s.Provider, s.Model)
 		m.persistResumeTarget(s.Provider, s.Model)
 	}
-	m.session.SetSuccessToast(notice)
+	diagnostics := s.consumeRestoreDiagnostics()
+	if len(diagnostics) > 0 {
+		slog.WarnContext(m.appContext(), "resume session with incomplete saved details", "session", s.ID, "details", diagnostics)
+		notice += "; some saved details were unavailable"
+		m.session.SetToastTone(notice, toastWarn)
+	} else {
+		m.session.SetSuccessToast(notice)
+	}
 	if m.settings.Svc != nil {
 		if err := m.settings.Svc.SetSetting(m.appContext(), prefs.ScopeWorkspace, activeSessionKey, s.ID); err != nil {
 			slog.WarnContext(m.appContext(), "persist active session", "err", err, "session", s.ID)
@@ -243,28 +289,48 @@ func (m *UI) persistResumeTarget(provider, model string) {
 		return
 	}
 	ctx := m.appContext()
-	if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider, provider); err != nil {
-		slog.WarnContext(ctx, "persist resumed session provider", "err", err, "provider", provider)
-	}
-	if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, model); err != nil {
-		slog.WarnContext(ctx, "persist resumed session model", "err", err, "model", model)
+	selection := prefs.ModelSelection{Provider: provider, Model: model}
+	if err := m.settings.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
+		slog.WarnContext(ctx, "persist resumed session target", "err", err, "provider", provider, "model", model)
 	}
 }
 
-func (m *UI) SaveSession(ctx context.Context) error {
+type sessionSnapshot struct {
+	record db.SessionRecord
+}
+
+func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 	if m.settings == nil || m.settings.Store == nil || m.live == nil {
-		return nil
+		return nil, errSessionSnapshotEmpty
 	}
 	history := m.live.History()
 	if len(history) == 0 {
-		return nil
+		return nil, errSessionSnapshotEmpty
 	}
 	m.session.EnsureIdentity(uuid.NewString(), time.Now())
+
 	historyJSON, err := json.Marshal(history)
 	if err != nil {
-		return fmt.Errorf("encode history: %w", err)
+		return nil, fmt.Errorf("encode history: %w", err)
 	}
-	rec := db.SessionRecord{
+	usageJSON, err := encodeSessionJSON(m.session.Run.UsageSnapshot(), "null")
+	if err != nil {
+		return nil, fmt.Errorf("encode usage: %w", err)
+	}
+	diffBodiesJSON, err := encodeSessionJSON(m.session.WorkingSet.DiffBodies(), "{}")
+	if err != nil {
+		return nil, fmt.Errorf("encode diff bodies: %w", err)
+	}
+	planJSON, err := encodePlanJSON(m.session.Plan)
+	if err != nil {
+		return nil, fmt.Errorf("encode plan: %w", err)
+	}
+	toolTraceJSON, err := encodeToolTraceJSON(m.timeline)
+	if err != nil {
+		return nil, err
+	}
+
+	return &sessionSnapshot{record: db.SessionRecord{
 		ID:             m.session.ID,
 		Workspace:      m.settings.WorkspaceRoot(),
 		Label:          m.session.Label,
@@ -272,27 +338,48 @@ func (m *UI) SaveSession(ctx context.Context) error {
 		Model:          m.session.Model,
 		HistoryJSON:    historyJSON,
 		PendingJSON:    []byte("[]"),
-		LastUsageJSON:  encodeSessionJSON(m.session.Run.UsageSnapshot(), "null"),
-		DiffBodiesJSON: encodeSessionJSON(m.session.WorkingSet.DiffBodies(), "{}"),
-		PlanJSON:       encodePlanJSON(m.session.Plan),
-		ToolTraceJSON:  encodeToolTraceJSON(m.timeline),
+		LastUsageJSON:  usageJSON,
+		DiffBodiesJSON: diffBodiesJSON,
+		PlanJSON:       planJSON,
+		ToolTraceJSON:  toolTraceJSON,
 		MessageCount:   len(history),
 		CreatedAt:      m.session.CreatedAt,
+	}}, nil
+}
+
+func saveSessionSnapshot(ctx context.Context, settings *engine.Settings, snapshot *sessionSnapshot) error {
+	if settings == nil || settings.Store == nil || snapshot == nil {
+		return nil
 	}
-	if err := m.settings.Store.SaveSession(ctx, rec); err != nil {
-		return err
-	}
-	if m.settings.Svc != nil {
-		if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, activeSessionKey, m.session.ID); err != nil {
-			return err
-		}
+	if err := settings.Store.SaveActiveSession(ctx, snapshot.record); err != nil {
+		return fmt.Errorf("save session snapshot: %w", err)
 	}
 	return nil
 }
 
+func (m *UI) SaveSession(ctx context.Context) error {
+	snapshot, err := m.sessionSnapshot()
+	if errors.Is(err, errSessionSnapshotEmpty) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return saveSessionSnapshot(ctx, m.settings, snapshot)
+}
+
 func (m *UI) saveSessionCmd() tea.Cmd {
+	snapshot, err := m.sessionSnapshot()
+	settings := m.settings
+	ctx := context.WithoutCancel(m.appContext())
 	return func() tea.Msg {
-		if err := m.SaveSession(context.WithoutCancel(m.appContext())); err != nil {
+		if errors.Is(err, errSessionSnapshotEmpty) {
+			return nil
+		}
+		if err != nil {
+			return sessionSaveFailedMsg{Error: err.Error()}
+		}
+		if err := saveSessionSnapshot(ctx, settings, snapshot); err != nil {
 			return sessionSaveFailedMsg{Error: err.Error()}
 		}
 		return nil
@@ -345,7 +432,7 @@ func (m *UI) clearPersistedSessionCmd(oldID string) tea.Cmd {
 }
 
 func (tl *timeline) restoreMessages(history []llm.Message) {
-	tl.items = nil
+	tl.clearItems()
 	tl.toolIdx = make(map[string]toolRef)
 	tl.turns = make(map[string]*openTurn)
 	tl.cache = make(map[item]cacheEntry)
@@ -366,10 +453,10 @@ func (tl *timeline) restoreMessages(history []llm.Message) {
 				if strings.TrimSpace(h.Content) == "" && len(h.ToolCalls) > 0 {
 					asst.status = "called " + strings.Join(toolCallNames(h.ToolCalls), ", ")
 				}
-				tl.items = append(tl.items, asst)
+				tl.appendItem(asst)
 			}
 			if strings.TrimSpace(h.ReasoningContent) != "" {
-				tl.items = append(tl.items, &thinkingItem{nested: true, text: h.ReasoningContent, done: true})
+				tl.appendItem(&thinkingItem{nested: true, text: h.ReasoningContent, done: true})
 			}
 			if len(h.ToolCalls) > 0 {
 				g := &groupItem{kind: groupTools, nested: true, closed: true}
@@ -378,14 +465,14 @@ func (tl *timeline) restoreMessages(history []llm.Message) {
 					if name == "" {
 						name = "tool"
 					}
-					t := &toolItem{name: name, arg: toolCallArgHint(tc), state: toolOK}
+					t := &toolItem{name: name, arg: toolCallArgHint(tc), state: toolOK, notify: g.bump}
 					g.add(t)
 					if tc.ID != "" {
 						tl.toolIdx[tc.ID] = toolRef{group: g, tool: t}
 					}
 				}
 				if len(g.children) > 0 {
-					tl.items = append(tl.items, g)
+					tl.appendItem(g)
 				}
 			}
 		case "tool":

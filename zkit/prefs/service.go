@@ -52,6 +52,13 @@ func NewService(store *db.Store, v *vault.Vault, wsRoot string) *Service {
 	return &Service{store: store, vault: v, wsRoot: wsRoot}
 }
 
+// ModelSelection is the provider/model pair persisted as one preference
+// transition. Model may be empty to inherit the provider's runtime default.
+type ModelSelection struct {
+	Provider string
+	Model    string
+}
+
 // Stable scope names retained for callers; generated values own validity,
 // parsing, serialization, and exhaustive iteration.
 var (
@@ -228,6 +235,50 @@ func (s *Service) SetSetting(ctx context.Context, sc Scope, key, value string) e
 		return ErrInvalidScope
 	}
 	return fmt.Errorf("settings: unknown scope %d", sc)
+}
+
+// SetModelSelection atomically persists a provider and its selected model at
+// the explicit scope. An empty model removes the scoped model row so provider
+// fallback applies; the provider itself must always be explicit.
+func (s *Service) SetModelSelection(ctx context.Context, sc Scope, selection ModelSelection) error {
+	if selection.Provider == "" {
+		return errors.New("settings: model selection requires provider")
+	}
+	workspace, err := s.writeWorkspace(sc)
+	if err != nil {
+		return err
+	}
+	return s.store.WithTx(ctx, func(tx *db.Store) error {
+		if err := tx.SetSetting(ctx, workspace, KeyProvider, selection.Provider); err != nil {
+			return fmt.Errorf("set model selection provider: %w", err)
+		}
+		if selection.Model == "" {
+			if err := tx.DeleteSetting(ctx, workspace, KeyModel); err != nil {
+				return fmt.Errorf("clear model selection model: %w", err)
+			}
+			return nil
+		}
+		if err := tx.SetSetting(ctx, workspace, KeyModel, selection.Model); err != nil {
+			return fmt.Errorf("set model selection model: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Service) writeWorkspace(sc Scope) (string, error) {
+	switch sc {
+	case ScopeWorkspace:
+		if s.wsRoot == "" {
+			return "", ErrNoWorkspace
+		}
+		return s.wsRoot, nil
+	case ScopeGlobal:
+		return "", nil
+	case ScopeEffective:
+		return "", ErrInvalidScope
+	default:
+		return "", fmt.Errorf("settings: unknown scope %d", sc)
+	}
 }
 
 // DeleteSetting removes a setting at the explicit scope. Returns nil

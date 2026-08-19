@@ -17,7 +17,7 @@ import (
 // build/plan-mode prompt bodies (zarlcode/prompts). They are the SAME assets
 // the eval harness renders, so the interactive agent and the eval agent can't
 // drift on operating instructions. The TUI additionally resolves per-user
-// preferences and explicit/legacy build-prompt overrides at turn time.
+// preferences and explicit build-prompt overrides at turn time.
 var (
 	LiveSystemPromptTemplate  = prompts.System
 	LiveCompactPromptTemplate = prompts.SystemCompact
@@ -77,8 +77,8 @@ func selectLivePrompt(plan bool, profile PromptProfile) livePromptSelection {
 }
 
 // promptFunc renders the build/plan-mode system prompt for a top-level turn.
-// Build mode may use an explicit/legacy full override; plan mode always uses
-// the embedded plan prompt. Literal preferences are reloaded each turn.
+// Build mode may use an explicit full override; plan mode always uses the
+// embedded plan prompt. Literal preferences are reloaded each turn.
 func (l *LiveRunner) promptFunc(src func() tools.Source) runner.PromptFunc {
 	return func(ctx context.Context, _ runner.PromptVars) (string, error) {
 		l.mu.Lock()

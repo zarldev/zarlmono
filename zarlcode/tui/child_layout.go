@@ -15,9 +15,31 @@ const childIndent = "  "
 // drift would make a click toggle the wrong row; routing both through this
 // makes that class of bug unrepresentable.
 type childBlock struct {
-	lines   []string
-	offsets []int
-	sizes   []int
+	lines    []string
+	rawLines []string
+	offsets  []int
+	sizes    []int
+}
+
+// childBlockCache memoizes one container's complete child layout. The owner
+// version is the invalidation boundary: child toggles and runner events bump the
+// inline-rendering owner, while width/theme changes invalidate presentation.
+type childBlockCache struct {
+	width int
+	ver   uint64
+	gen   uint64
+	block childBlock
+	valid bool
+}
+
+func (c *childBlockCache) render(children []item, width int, ver uint64) childBlock {
+	if c.valid && c.width == width && c.ver == ver && c.gen == themeGen {
+		return c.block
+	}
+	c.width, c.ver, c.gen = width, ver, themeGen
+	c.block = renderChildBlock(children, width)
+	c.valid = true
+	return c.block
 }
 
 // renderChildBlock renders children at childWidth, prefixes each line with the
@@ -30,6 +52,7 @@ func renderChildBlock(children []item, childWidth int) childBlock {
 		cb.offsets = append(cb.offsets, off)
 		rendered := c.render(childWidth)
 		cb.sizes = append(cb.sizes, len(rendered))
+		cb.rawLines = append(cb.rawLines, rendered...)
 		for _, l := range rendered {
 			cb.lines = append(cb.lines, childIndent+l)
 		}
@@ -53,7 +76,9 @@ func (cb childBlock) togglerForLine(ln int, childWidth int, children []item, bum
 		}
 		if ln > off && ln < off+cb.sizes[k] {
 			if ht, ok := children[k].(hitToggler); ok {
-				return ht.togglerAt(childWidth, ln-off)
+				if nested := ht.togglerAt(childWidth, ln-off); nested != nil {
+					return toggleChildAndParent(nested, bump)
+				}
 			}
 		}
 	}

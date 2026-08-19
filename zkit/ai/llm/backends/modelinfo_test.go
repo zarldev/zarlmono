@@ -106,6 +106,15 @@ func stubModelsDevServer(t *testing.T) *httptest.Server {
 			},
 		},
 	}
+	for _, provider := range payload {
+		block := provider.(map[string]any)
+		list := block["models"].([]map[string]any)
+		models := make(map[string]any, len(list))
+		for _, model := range list {
+			models[model["id"].(string)] = model
+		}
+		block["models"] = models
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(payload)

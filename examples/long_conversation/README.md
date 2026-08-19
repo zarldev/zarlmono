@@ -42,10 +42,10 @@ Runner with PressureGated compactor
 
 ```sh
 # Scripted mode (deterministic)
-go run ./examples/long_conversation -scripted
+go run -C examples ./long_conversation -scripted
 
 # Real provider
-go run ./examples/long_conversation -provider openai -model gpt-4o-mini
+go run -C examples ./long_conversation -provider openai -model gpt-4o-mini
 ```
 
 ## Output
@@ -75,7 +75,7 @@ Compaction summary:
 ## Testing
 
 ```sh
-go test ./examples/long_conversation/
+go test -C examples ./long_conversation
 ```
 
 Tests verify:

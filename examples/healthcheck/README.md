@@ -36,17 +36,17 @@ pursue.Drive
 
 ```sh
 # Deterministic scripted mode (no LLM, no API key)
-go run ./examples/healthcheck -scripted
+go run -C examples ./healthcheck -scripted
 
 # Real provider
 export OPENAI_API_KEY=sk-...
-go run ./examples/healthcheck -provider openai -model gpt-4o-mini
+go run -C examples ./healthcheck -provider openai -model gpt-4o-mini
 ```
 
 ## Testing
 
 ```sh
-go test ./examples/healthcheck/
+go test -C examples ./healthcheck
 ```
 
 ## Key design points

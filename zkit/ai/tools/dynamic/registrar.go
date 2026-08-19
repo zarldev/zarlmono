@@ -167,11 +167,11 @@ func (r *Registrar) UnregisterContext(ctx context.Context, name tools.ToolName) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	removed, err := r.catalog.RemoveContext(ctx, name)
-	if err != nil {
+	_, exists := r.catalog.Get(name)
+	if err := r.catalog.RemoveContext(ctx, name); err != nil {
 		return err
 	}
-	if removed {
+	if exists {
 		r.registry.Unregister(name)
 		return nil
 	}

@@ -56,10 +56,10 @@ Failure count │ Action          │ Model sees
 
 ```sh
 # Deterministic scripted mode (no LLM)
-go run ./examples/stuck_recovery -scripted
+go run -C examples ./stuck_recovery -scripted
 
 # Real provider (shows actual LLM-based verdict)
-go run ./examples/stuck_recovery -provider openai -model gpt-4o-mini
+go run -C examples ./stuck_recovery -provider openai -model gpt-4o-mini
 ```
 
 ## Output
@@ -91,7 +91,7 @@ status=succeeded attempts=5 decompose_interventions=2
 ## Testing
 
 ```sh
-go test ./examples/stuck_recovery/
+go test -C examples ./stuck_recovery
 ```
 
 Tests verify:

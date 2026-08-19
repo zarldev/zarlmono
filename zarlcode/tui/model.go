@@ -243,22 +243,13 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 	maps.Copy(cache, m.session.ModelCache)
 
 	picker := newModelQuickPick(provNames, cache, current.Name, m.session.Model, func(prov, model string) {
-		active := m.session.ActiveProviderSpec()
 		// Persist provider + model to settings so the change survives
 		// restart and maybeRepoint can read it back as the new spec.
 		if m.settings != nil && m.settings.Svc != nil {
 			ctx := m.appContext()
-			if prov != active.Name {
-				if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider, prov); err != nil {
-					slog.WarnContext(ctx, "persist provider switch", "err", err, "provider", prov)
-				}
-				// Reset to the new provider's default so a cross-provider
-				// model (e.g. deepseek + claude-opus) can't be stranded.
-				// The user's explicit pick below overwrites it.
-				m.settings.ResetModelToProviderDefault(ctx, prov)
-			}
-			if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, model); err != nil {
-				slog.WarnContext(ctx, "persist model switch", "err", err, "model", model)
+			selection := prefs.ModelSelection{Provider: prov, Model: model}
+			if err := m.settings.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
+				slog.WarnContext(ctx, "persist model selection", "err", err, "provider", prov, "model", model)
 			}
 		}
 

@@ -28,7 +28,7 @@ func newJudgeTestSettings(t *testing.T) *Settings {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return NewSettings(t.Context(), store, nil, t.TempDir())
+	return NewSettings(store, nil, nil, t.TempDir())
 }
 
 func TestDecomposeJudgeProvider(t *testing.T) {

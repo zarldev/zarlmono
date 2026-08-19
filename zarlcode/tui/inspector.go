@@ -56,7 +56,7 @@ type InspectorSnapshot struct {
 	PromptSource string
 	// PromptPreferencesSource is the additive preferences source, when present.
 	PromptPreferencesSource string
-	// PromptResolutionMode identifies embedded, explicit override, or legacy override resolution.
+	// PromptResolutionMode identifies embedded or explicit override resolution.
 	PromptResolutionMode home.PromptResolutionMode
 	// Errors are non-fatal snapshot/render issues surfaced in the inspector.
 	Errors []string

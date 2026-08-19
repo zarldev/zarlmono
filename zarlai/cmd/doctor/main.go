@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	minGoVersion   = "1.26"
+	minGoVersion   = "1.27"
 	minNodeVersion = "20"
 	probeTimeout   = 3 * time.Second
 )

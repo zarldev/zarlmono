@@ -147,7 +147,7 @@ type PlanUpdatedMsg struct {
 }
 
 // PromptDiagnosticsMsg surfaces non-fatal prompt resolution diagnostics such as
-// legacy full overrides or unreadable optional files.
+// unreadable optional files.
 type PromptDiagnosticsMsg struct {
 	Diagnostics []string
 }

@@ -89,11 +89,12 @@ func (tl *timeline) addPlanUpdate(p code.Plan) {
 			it.plan = p
 			it.nested = len(tl.turns) > 0
 			it.bump()
+			tl.invalidateItem(it)
 			return
 		}
 		if !itemNested(tl.items[i]) {
 			break
 		}
 	}
-	tl.items = append(tl.items, &planItem{plan: p, nested: len(tl.turns) > 0})
+	tl.appendItem(&planItem{plan: p, nested: len(tl.turns) > 0})
 }

@@ -72,10 +72,9 @@ preset:
 | **denied** | everything else — explicitly `~/.ssh`, `~/.aws`, `~/.zarlcode`, the rest of `$HOME` |
 
 Operators widen it without touching code via `ZK_SANDBOX_RO` /
-`ZK_SANDBOX_RW` (colon-separated paths), and `policy.WithExecPath(bin)`
-grants a specific binary plus its parent directories — that's how a
-configured browser or an askpass helper becomes runnable inside the
-confinement.
+`ZK_SANDBOX_RW` (colon-separated paths). zarlcode adds any configured browser
+or askpass helper directly to its launch policy, including the parent-directory
+grants required to execute it inside confinement.
 
 ### The re-exec shim
 

@@ -44,22 +44,18 @@ type conversation struct {
 // TUI surfaces as an error toast + log + idle-clear (see
 // Session.applyConversationEnded). So there is nothing to return here — we
 // keep only the partial history.
-func (c *conversation) runSpecWithSetup(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
+func (c *conversation) transition(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	spec.ID = taskscope.ID(uuid.NewString())
-	repaired, changed := agentcompact.RepairToolPairing(c.history)
-	if changed > 0 {
-		slog.Warn("turn: repaired unbalanced tool-call pairing before provider request",
-			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
-	}
-	c.history = repaired
-	spec.Context = c.history
+	repaired, _ := agentcompact.RepairToolPairing(c.history)
+	spec.Context = repaired
 	exec, err := setup()
 	if err != nil {
 		return err
 	}
+	c.history = repaired
 	res := exec(spec)
 	if len(res.Messages) > 0 {
 		c.history = res.Messages
@@ -72,21 +68,7 @@ func (c *conversation) run(prompt string, exec func(runner.TaskSpec) runner.Task
 }
 
 func (c *conversation) runSpec(spec runner.TaskSpec, exec func(runner.TaskSpec) runner.TaskResult) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	spec.ID = taskscope.ID(uuid.NewString())
-	repaired, changed := agentcompact.RepairToolPairing(c.history)
-	if changed > 0 {
-		slog.Warn("turn: repaired unbalanced tool-call pairing before provider request",
-			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
-	}
-	c.history = repaired
-	spec.Context = c.history
-	res := exec(spec)
-	if len(res.Messages) > 0 {
-		c.history = res.Messages
-	}
+	_ = c.transition(spec, func() (func(runner.TaskSpec) runner.TaskResult, error) { return exec, nil })
 }
 
 func (c *conversation) snapshot() []llm.Message {

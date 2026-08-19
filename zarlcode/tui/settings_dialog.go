@@ -539,9 +539,7 @@ func (d *settingsDialog) activateEnum(dir int) action {
 			sel = r.def
 		}
 		return actionPush{d: newListPicker("provider", items, sel, func(choice string) {
-			d.commit(prefs.KeyProvider, choice)
-			d.s.ResetModelToProviderDefault(d.ctx, choice)
-			d.refresh(d.ctx)
+			d.commitModelSelection(d.s.DefaultModelSelection(choice))
 			d.modelsLoading[choice] = true
 			d.pendingFetch = choice
 		})}
@@ -613,12 +611,11 @@ func (d *settingsDialog) activateEnum(dir int) action {
 	return actionNone{}
 }
 
-// onProviderCycled runs after the provider enum changes: reset the model to
-// the new provider's default (so we never strand a cross-provider model like
-// deepseek + opus), refresh the rows, and request the new model list.
+// onProviderCycled runs after the provider enum changes: persist the provider
+// and its model default as one transition, then request the new model list.
 func (d *settingsDialog) onProviderCycled() action {
-	d.s.ResetModelToProviderDefault(d.ctx, d.currentProvider())
-	d.refresh(d.ctx)
+	provider := d.currentProvider()
+	d.commitModelSelection(d.s.DefaultModelSelection(provider))
 	return d.fetchForCurrentProvider()
 }
 
@@ -933,6 +930,18 @@ func (d *settingsDialog) commit(key, val string) {
 		}
 	}
 	d.refresh(ctx)
+}
+
+func (d *settingsDialog) commitModelSelection(selection prefs.ModelSelection) {
+	if d.s == nil || d.s.Svc == nil {
+		return
+	}
+	if err := d.s.Svc.SetModelSelection(d.ctx, prefs.ScopeWorkspace, selection); err != nil {
+		d.setStatus("error: " + err.Error())
+		return
+	}
+	d.setStatus(prefs.KeyProvider + " → " + selection.Provider + " (workspace)")
+	d.refresh(d.ctx)
 }
 
 func (d *settingsDialog) promote() {

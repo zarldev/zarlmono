@@ -20,7 +20,7 @@ func newTestSettings(t *testing.T) *engine.Settings {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return engine.NewSettings(t.Context(), store, nil, dir)
+	return engine.NewSettings(store, nil, nil, dir)
 }
 
 func TestActiveProvider_Precedence(t *testing.T) {

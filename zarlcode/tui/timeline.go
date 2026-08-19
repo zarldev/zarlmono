@@ -34,6 +34,7 @@ type timeline struct {
 	// events route into the matching subAgentItem instead of the flat
 	// items slice, so each spawned agent gets its own collapsible block.
 	subAgents map[string]*subAgentItem
+	agents    *groupItem
 
 	// curTools/curEdits are the open per-iteration groups (nil = none);
 	// reset by closeGroups so each iteration starts fresh groups.
@@ -60,10 +61,53 @@ type timeline struct {
 	// local line within that item. Recorded every render so a mouse click can
 	// resolve the row under the cursor to a [+]/[-] toggle — see
 	// toggleAtViewportLine.
-	visItem  []int
-	visLocal []int
+	visItem    []int
+	visLocal   []int
+	tailBlocks []timelineRenderBlock
 
 	selection transcriptSelection
+
+	geometry timelineGeometry
+}
+
+// timelineGeometry is the timeline-owned measured layout for one ordered item
+// slice at a width and theme generation. dirty is the earliest item whose
+// height or following prefix offsets must be rebuilt.
+type timelineGeometry struct {
+	width     int
+	gen       uint64
+	items     []item
+	vers      []uint64
+	heights   []int
+	starts    []int
+	ends      []int
+	total     int
+	dirty     int
+	positions map[item]int
+}
+
+func (g *timelineGeometry) invalidateFrom(index int) {
+	if index < 0 {
+		index = 0
+	}
+	if g.dirty > index {
+		g.dirty = index
+	}
+}
+
+func (g *timelineGeometry) clear() { *g = timelineGeometry{dirty: 0} }
+
+func (g *timelineGeometry) rebuildPositions(items []item) {
+	g.positions = make(map[item]int, len(items))
+	for i, it := range items {
+		g.positions[it] = i
+	}
+}
+
+type timelineRenderBlock struct {
+	idx   int
+	it    item
+	lines []string
 }
 
 type pendingToolChild struct {
@@ -75,13 +119,14 @@ type pendingToolChild struct {
 // Clear resets the timeline to empty, discarding all items, turns, caches,
 // and queued inputs. Does not affect the current run — only the transcript.
 func (tl *timeline) Clear() {
-	tl.items = nil
+	tl.clearItems()
 	tl.toolIdx = make(map[string]toolRef)
 	tl.pendingChildren = make(map[string][]pendingToolChild)
 	tl.turns = make(map[string]*openTurn)
 	tl.cache = make(map[item]cacheEntry)
 	tl.queued = nil
 	tl.subAgents = make(map[string]*subAgentItem)
+	tl.agents = nil
 	tl.curTools = nil
 	tl.curEdits = nil
 	tl.browsing = false
@@ -99,13 +144,12 @@ func newTimeline() *timeline {
 		turns:           make(map[string]*openTurn),
 		cache:           make(map[item]cacheEntry),
 		subAgents:       make(map[string]*subAgentItem),
+		geometry:        timelineGeometry{dirty: 0},
 	}
 }
 
-// item is one render unit. render returns the item's wrapped lines for
-// the given width. version bumps whenever a mutation changes that
-// output; finished reports a terminal item whose version never changes
-// again, so the cache can freeze it.
+// item is one render unit. render returns wrapped lines for width; version is
+// the owner's complete inline-render revision; finished reports terminal state.
 type item interface {
 	render(width int) []string
 	version() uint64
@@ -205,18 +249,38 @@ const (
 
 type toolItem struct {
 	versioned
-	depth    int
-	name     string
-	arg      string // compact tool-specific argument hint
-	effect   string // compact post-action effect summary
-	state    toolState
-	failKind tools.Kind // failure classification; only meaningful when state == toolFailed
-	result   string     // full formatted output (or error); shown when expanded
-	data     any        // typed structured result (code.GrepResult, …); nil = render from result string
-	dur      time.Duration
-	sequence int
-	expanded bool // result shown ([-]) vs hidden ([+]); only meaningful once result != ""
-	children []*toolItem
+	depth          int
+	name           string
+	arg            string // compact tool-specific argument hint
+	effect         string // compact post-action effect summary
+	state          toolState
+	failKind       tools.Kind // failure classification; only meaningful when state == toolFailed
+	result         string     // full formatted output (or error); shown when expanded
+	data           any        // typed structured result (code.GrepResult, …); nil = render from result string
+	dur            time.Duration
+	sequence       int
+	expanded       bool // result shown ([-]) vs hidden ([+]); only meaningful once result != ""
+	children       []*toolItem
+	layout         childBlockCache
+	layoutChildren []item
+	notify         func()
+}
+
+func (t *toolItem) bump() {
+	t.versioned.bump()
+	if t.notify != nil {
+		t.notify()
+	}
+}
+
+func (t *toolItem) childItems() []item {
+	if len(t.layoutChildren) != len(t.children) {
+		t.layoutChildren = make([]item, len(t.children))
+	}
+	for i, child := range t.children {
+		t.layoutChildren[i] = child
+	}
+	return t.layoutChildren
 }
 
 func (t *toolItem) childSummary() string {
@@ -287,9 +351,7 @@ func (t *toolItem) render(width int) []string {
 		}
 	}
 	if t.expanded {
-		for _, child := range t.children {
-			lines = append(lines, child.render(width)...)
-		}
+		lines = append(lines, t.layout.render(t.childItems(), width, t.version()).rawLines...)
 	}
 	return indentLines(lines, t.depth)
 }
@@ -305,22 +367,16 @@ func (t *toolItem) togglerAt(width, ln int) toggler {
 	if !t.expanded || len(t.children) == 0 {
 		return nil
 	}
-	children := make([]item, 0, len(t.children))
-	for _, child := range t.children {
-		children = append(children, child)
-	}
-	return renderChildBlock(children, width).togglerForLine(ln, width, children, t.bump)
+	children := t.childItems()
+	return t.layout.render(children, width, t.version()).togglerForLine(ln, width, children, t.bump)
 }
 
 func (t *toolItem) toggleLocals(width int) []int {
 	if !t.expanded || len(t.children) == 0 {
 		return []int{0}
 	}
-	children := make([]item, 0, len(t.children))
-	for _, child := range t.children {
-		children = append(children, child)
-	}
-	block := renderChildBlock(children, width)
+	children := t.childItems()
+	block := t.layout.render(children, width, t.version())
 	return append([]int{0}, block.toggleLocals(width, children)...)
 }
 func (t *toolItem) finished() bool { return t.state != toolRunning }
@@ -358,9 +414,84 @@ func (n *noticeItem) finished() bool { return true }
 // --- mutation (driven by runner events) ---
 
 // pushItem appends an item and keeps any queued user items pinned to the tail
+// clearItems drops the transcript structure and its owned geometry.
+func (tl *timeline) clearItems() {
+	tl.items = nil
+	tl.geometry.clear()
+}
+
+// appendItem is the only top-level append path.
+func (tl *timeline) appendItem(it item) {
+	tl.items = append(tl.items, it)
+	if tl.geometry.positions == nil {
+		tl.geometry.positions = make(map[item]int)
+	}
+	tl.geometry.positions[it] = len(tl.items) - 1
+	tl.geometry.invalidateFrom(len(tl.items) - 1)
+}
+
+// reorderItems records that ordering changed before replacing the top-level slice.
+func (tl *timeline) reorderItems(items []item, firstChanged int) {
+	tl.items = items
+	tl.geometry.rebuildPositions(items)
+	tl.geometry.invalidateFrom(firstChanged)
+}
+
+// invalidateItem records a known top-level mutation. Nested owners notify their
+// containing top-level item through this callback.
+func (tl *timeline) invalidateItem(changed item) {
+	if i, ok := tl.geometry.positions[changed]; ok {
+		tl.geometry.invalidateFrom(i)
+	}
+}
+
+func (tl *timeline) geometryIndex(width int) ([]int, []int, int) {
+	g := &tl.geometry
+	if g.width != width || g.gen != themeGen {
+		g.width, g.gen, g.dirty = width, themeGen, 0
+	}
+	if g.dirty > len(tl.items) {
+		g.dirty = len(tl.items)
+	}
+	// Top-level transitions invalidate their owner directly, so stable reads
+	// never scan history merely to prove that it has not changed.
+	if g.dirty < len(tl.items) {
+		if cap(g.items) < len(tl.items) {
+			g.items = make([]item, len(tl.items))
+			g.vers = make([]uint64, len(tl.items))
+			g.heights = make([]int, len(tl.items))
+			g.starts = make([]int, len(tl.items))
+			g.ends = make([]int, len(tl.items))
+		} else {
+			g.items = g.items[:len(tl.items)]
+			g.vers = g.vers[:len(tl.items)]
+			g.heights = g.heights[:len(tl.items)]
+			g.starts = g.starts[:len(tl.items)]
+			g.ends = g.ends[:len(tl.items)]
+		}
+		start := 0
+		if g.dirty > 0 {
+			start = g.ends[g.dirty-1]
+		}
+		for i := g.dirty; i < len(tl.items); i++ {
+			if i > 0 && !itemNested(tl.items[i]) {
+				start++
+			}
+			g.items[i] = tl.items[i]
+			g.vers[i] = tl.items[i].version()
+			g.starts[i] = start
+			g.heights[i] = len(tl.renderItem(tl.items[i], width))
+			start += g.heights[i]
+			g.ends[i] = start
+		}
+		g.total, g.dirty = start, len(tl.items)
+	}
+	return g.starts, g.ends, g.total
+}
+
 // so they always render below streaming content that arrived while waiting.
 func (tl *timeline) pushItem(it item) {
-	tl.items = append(tl.items, it)
+	tl.appendItem(it)
 	if len(tl.queued) == 0 {
 		return
 	}
@@ -380,7 +511,7 @@ func (tl *timeline) pushItem(it item) {
 	for _, q := range tl.queued {
 		kept = append(kept, q)
 	}
-	tl.items = kept
+	tl.reorderItems(kept, 0)
 }
 
 func (tl *timeline) addUser(text string) {
@@ -389,7 +520,7 @@ func (tl *timeline) addUser(text string) {
 
 func (tl *timeline) addQueuedUser(text string) {
 	q := &queuedUserItem{text: text}
-	tl.items = append(tl.items, q)
+	tl.appendItem(q)
 	tl.queued = append(tl.queued, q)
 }
 
@@ -407,7 +538,10 @@ func (tl *timeline) addInjectedUser(text string) {
 	// any tool calls or streaming content that arrived while it was queued.
 	for i, it := range tl.items {
 		if it == q {
-			tl.items = append(append(tl.items[:i], tl.items[i+1:]...), q)
+			top := append([]item(nil), tl.items[:i]...)
+			top = append(top, tl.items[i+1:]...)
+			top = append(top, q)
+			tl.reorderItems(top, i)
 			break
 		}
 	}
@@ -425,6 +559,7 @@ func (tl *timeline) attachCompaction(taskID, text string) {
 	if turn := tl.turns[taskID]; turn != nil && turn.resp != nil {
 		turn.resp.compactionNotice = text
 		turn.resp.bump()
+		tl.invalidateItem(turn.resp)
 	}
 }
 
@@ -432,8 +567,15 @@ func (tl *timeline) attachCompaction(taskID, text string) {
 // active sub-agent for taskID. All subsequent Depth>0 events for this task
 // route into this item instead of the flat timeline.
 func (tl *timeline) startSubAgent(taskID string, depth int, agentName, prompt string) *subAgentItem {
+	if tl.agents == nil {
+		tl.agents = &groupItem{kind: groupAgents}
+		tl.agents.notify = func() { tl.invalidateItem(tl.agents) }
+		tl.pushItem(tl.agents)
+	}
 	sa := newSubAgentItem(depth, agentName, prompt, taskID)
-	tl.pushItem(sa)
+	sa.depth = 0
+	sa.notify = tl.agents.bump
+	tl.agents.add(sa)
 	tl.subAgents[taskID] = sa
 	return sa
 }
@@ -464,6 +606,7 @@ func (tl *timeline) addLoadedSkill(taskID, name string) {
 		return
 	}
 	ot.skills.add(name)
+	tl.invalidateItem(ot.skills)
 }
 
 // appendContent grows the open assistant item for taskID, creating one
@@ -500,6 +643,7 @@ func (tl *timeline) appendContent(taskID string, depth int, delta string) {
 	ot := tl.ensureTurn(taskID, depth)
 	ot.resp.content += delta
 	ot.resp.bump()
+	tl.invalidateItem(ot.resp)
 }
 
 // appendThinking routes a reasoning delta from the runner's out-of-band
@@ -521,9 +665,11 @@ func (tl *timeline) appendThinking(taskID string, depth int, delta string) {
 	}
 	ot.think.text += delta
 	ot.think.bump()
+	tl.invalidateItem(ot.think)
 	if ot.resp.content == "" {
 		ot.resp.status = "thinking…"
 		ot.resp.bump()
+		tl.invalidateItem(ot.resp)
 	}
 }
 
@@ -539,12 +685,15 @@ func (tl *timeline) endTurn(taskID string) {
 	if ot.think != nil {
 		ot.think.done = true
 		ot.think.bump()
+		tl.invalidateItem(ot.think)
 	}
 	ot.resp.done = true
 	ot.resp.bump()
+	tl.invalidateItem(ot.resp)
 	if ot.skills != nil {
 		ot.skills.closed = true
 		ot.skills.bump()
+		tl.invalidateItem(ot.skills)
 	}
 	delete(tl.turns, taskID)
 }
@@ -570,17 +719,19 @@ func (tl *timeline) startToolWithParent(taskID string, depth int, toolID, name, 
 	if ot := tl.turns[taskID]; ot != nil && ot.resp.content == "" {
 		ot.resp.status = "running " + name
 		ot.resp.bump()
+		tl.invalidateItem(ot.resp)
 	}
 	g := tl.ensureToolGroup(depth)
 	// Collapsed by default — the transcript stays a scannable list of one-line
 	// tool rows; the per-row [+] expands a result on demand. group handles indent.
-	t := &toolItem{name: name, arg: arg, state: toolRunning}
+	t := &toolItem{name: name, arg: arg, state: toolRunning, notify: g.bump}
 	g.add(t)
 	tl.toolIdx[toolID] = toolRef{group: g, tool: t}
 	tl.attachPendingChildren(toolID, toolRef{group: g, tool: t})
 }
 
 func (tl *timeline) attachChildTool(parentRef toolRef, toolID string, child *toolItem, sequence int) {
+	child.notify = notifyParent(parentRef.tool.bump, parentRef.tool.notify)
 	insertChildBySequence(parentRef.tool, child, sequence)
 	tl.toolIdx[toolID] = toolRef{group: parentRef.group, tool: child}
 	tl.bumpToolOwner(parentRef)
@@ -598,12 +749,12 @@ func (tl *timeline) attachPendingChildren(parentToolID string, parentRef toolRef
 }
 
 func (tl *timeline) bumpToolOwner(ref toolRef) {
-	if ref.group != nil {
-		ref.group.bump()
-		return
-	}
 	if ref.tool != nil {
 		ref.tool.bump()
+		return
+	}
+	if ref.group != nil {
+		ref.group.bump()
 	}
 }
 
@@ -673,11 +824,12 @@ func firstEffectSummary(effects []string) string {
 // once per width and are then frozen — until a theme switch bumps themeGen,
 // which invalidates the baked-in colours and forces a recolour.
 func (tl *timeline) renderItem(it item, width int) []string {
-	if e, ok := tl.cache[it]; ok && e.width == width && e.ver == it.version() && e.gen == themeGen {
+	revision := it.version()
+	if e, ok := tl.cache[it]; ok && e.width == width && e.ver == revision && e.gen == themeGen {
 		return e.lines
 	}
 	lines := it.render(width)
-	tl.cache[it] = cacheEntry{width: width, ver: it.version(), gen: themeGen, lines: lines}
+	tl.cache[it] = cacheEntry{width: width, ver: revision, gen: themeGen, lines: lines}
 	return lines
 }
 
@@ -701,20 +853,15 @@ func (tl *timeline) renderViewport(width, height int) []string {
 // renderTail renders the bottom of the timeline (auto-follow), bounded to
 // the viewport — the streaming-fast path.
 func (tl *timeline) renderTail(width, height int) []string {
-	type block struct {
-		idx   int
-		it    item
-		lines []string
-	}
-	var vis []block // newest-first
+	vis := tl.tailBlocks[:0] // newest-first
 	total := 0
 	for i := len(tl.items) - 1; i >= 0 && total < height; i-- {
 		ls := tl.renderItem(tl.items[i], width)
-		vis = append(vis, block{i, tl.items[i], ls})
+		vis = append(vis, timelineRenderBlock{i, tl.items[i], ls})
 		total += len(ls) + 1
 	}
 	var out []string
-	var vItem, vLocal []int
+	vItem, vLocal := tl.visItem[:0], tl.visLocal[:0]
 	for j := len(vis) - 1; j >= 0; j-- {
 		if len(out) > 0 && !itemNested(vis[j].it) {
 			out = append(out, "") // blank only before turn-boundary items
@@ -731,6 +878,7 @@ func (tl *timeline) renderTail(width, height int) []string {
 		cut := len(out) - height
 		out, vItem, vLocal = out[cut:], vItem[cut:], vLocal[cut:]
 	}
+	tl.tailBlocks = vis
 	tl.visItem, tl.visLocal = vItem, vLocal
 	return out
 }
