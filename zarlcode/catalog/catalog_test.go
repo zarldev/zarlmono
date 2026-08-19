@@ -122,7 +122,7 @@ Workspace.
 	}
 }
 
-func TestLoadSkillsSupportsStandardPackageAndLegacyFlatFile(t *testing.T) {
+func TestLoadSkillsSupportsStandardPackage(t *testing.T) {
 	root := t.TempDir()
 	writeAgent(t, filepath.Join(root, ".zarlcode", "skills", "portable", "SKILL.md"), `---
 name: portable
@@ -131,30 +131,16 @@ description: portable package
 
 Use package resources.
 `)
-	writeAgent(t, filepath.Join(root, ".zarlcode", "skills", "legacy.md"), `---
-name: legacy
-description: legacy flat skill
----
-
-Use the legacy workflow.
-`)
 
 	skills, errs := LoadSkills(root)
 	if len(errs) != 0 {
 		t.Fatalf("LoadSkills errors: %v", errs)
 	}
-	if len(skills) != 2 {
-		t.Fatalf("LoadSkills returned %d skills, want 2", len(skills))
+	if len(skills) != 1 {
+		t.Fatalf("LoadSkills returned %d skills, want 1", len(skills))
 	}
-	byName := map[string]Skill{}
-	for _, skill := range skills {
-		byName[skill.Name] = skill
-	}
-	if !strings.HasSuffix(byName["portable"].Source, filepath.Join("portable", "SKILL.md")) {
-		t.Errorf("portable source = %q", byName["portable"].Source)
-	}
-	if !strings.HasSuffix(byName["legacy"].Source, "legacy.md") {
-		t.Errorf("legacy source = %q", byName["legacy"].Source)
+	if !strings.HasSuffix(skills[0].Source, filepath.Join("portable", "SKILL.md")) {
+		t.Errorf("portable source = %q", skills[0].Source)
 	}
 }
 

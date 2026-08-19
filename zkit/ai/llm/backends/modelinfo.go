@@ -8,6 +8,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/claudecode"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/deepseek"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/google"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 )
@@ -144,23 +145,14 @@ func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model 
 	if err != nil {
 		return llm.ModelCapabilities{}
 	}
-	// 1. Start with static capabilities as the authoritative base.
 	caps := capabilitiesForAdapter(def.AdapterType, model)
-	// 2. Overlay models.dev non-zero fields on top of the static base.
 	if r.modelsDevSource != nil {
-		if e, ok := r.modelsDevSource.Lookup(ctx, name, model); ok {
-			if e.SupportsTools {
-				caps.SupportsTools = true
-			}
-			if e.SupportsThinking {
-				caps.SupportsThinking = true
-			}
-			if e.SupportsVision {
-				caps.SupportsVision = true
-			}
-			if e.SupportsVideo {
-				caps.SupportsVideo = true
-			}
+		entry, ok := r.modelsDevSource.Lookup(ctx, name, model)
+		if !ok {
+			entry.Intrinsic, ok = r.modelsDevSource.LookupIntrinsic(ctx, model)
+		}
+		if ok {
+			mergeCapabilities(&caps, entry.Intrinsic)
 		}
 	}
 	// Streaming and system support are near-universal for hosted providers
@@ -168,6 +160,21 @@ func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model 
 	caps.SupportsStreaming = true
 	caps.SupportsSystem = true
 	return caps
+}
+
+func mergeCapabilities(caps *llm.ModelCapabilities, intrinsic modelsdev.Intrinsic) {
+	if intrinsic.SupportsTools {
+		caps.SupportsTools = true
+	}
+	if intrinsic.SupportsThinking {
+		caps.SupportsThinking = true
+	}
+	if intrinsic.SupportsVision {
+		caps.SupportsVision = true
+	}
+	if intrinsic.SupportsVideo {
+		caps.SupportsVideo = true
+	}
 }
 
 // CostEstimate is an estimated token cost at listed provider/model rates. It is

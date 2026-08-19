@@ -20,12 +20,12 @@ func TestHeadlessGuardrailDepsUseStrictTestEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	live := NewLiveRunner(nil, ws, nil, "local")
+	live := NewLiveRunner(nil, ws, "local")
 
-	if name := live.headlessGuardrailDeps().TestEdit.Name(); name != "test_edit_strict" {
+	if name := live.headlessGuardrailDeps(t.Context()).TestEdit.Name(); name != "test_edit_strict" {
 		t.Fatalf("headless test-edit policy = %q, want test_edit_strict", name)
 	}
-	if g := live.guardrailDeps().TestEdit; g != nil {
+	if g := live.guardrailDeps(t.Context()).TestEdit; g != nil {
 		t.Fatalf("interactive test-edit policy = %q, want nil (no test-edit guardrail)", g.Name())
 	}
 }
@@ -39,8 +39,7 @@ func TestInteractiveTestEditModeFollowsSetting(t *testing.T) {
 		t.Fatalf("workspace: %v", err)
 	}
 	s := newJudgeTestSettings(t)
-	live := NewLiveRunner(nil, ws, nil, "local")
-	live.SetSettingsHandle(s)
+	live := NewLiveRunner(nil, ws, "local", WithSettings(s))
 
 	set := func(val string) {
 		t.Helper()
@@ -50,19 +49,19 @@ func TestInteractiveTestEditModeFollowsSetting(t *testing.T) {
 	}
 
 	set("advisory")
-	if g := live.guardrailDeps().TestEdit; g == nil || g.Name() != "test_edit_advisory" {
+	if g := live.guardrailDeps(t.Context()).TestEdit; g == nil || g.Name() != "test_edit_advisory" {
 		t.Fatalf("advisory setting → %v, want test_edit_advisory", g)
 	}
 	set("strict")
-	if g := live.guardrailDeps().TestEdit; g == nil || g.Name() != "test_edit_strict" {
+	if g := live.guardrailDeps(t.Context()).TestEdit; g == nil || g.Name() != "test_edit_strict" {
 		t.Fatalf("strict setting → %v, want test_edit_strict", g)
 	}
 	set("off")
-	if g := live.guardrailDeps().TestEdit; g != nil {
+	if g := live.guardrailDeps(t.Context()).TestEdit; g != nil {
 		t.Fatalf("off setting → %q, want no guardrail", g.Name())
 	}
 	// Headless ignores the setting and stays strict.
-	if name := live.headlessGuardrailDeps().TestEdit.Name(); name != "test_edit_strict" {
+	if name := live.headlessGuardrailDeps(t.Context()).TestEdit.Name(); name != "test_edit_strict" {
 		t.Fatalf("headless test-edit = %q, want test_edit_strict", name)
 	}
 }
@@ -74,11 +73,10 @@ func TestImprovementAndSkillHintsDisableViaSettings(t *testing.T) {
 		t.Fatalf("workspace: %v", err)
 	}
 	s := newJudgeTestSettings(t)
-	live := NewLiveRunner(nil, ws, nil, "local")
-	live.SetSettingsHandle(s)
+	live := NewLiveRunner(nil, ws, "local", WithSettings(s))
 
 	// On by default: nothing disabled.
-	if d := live.guardrailDeps().Disabled; len(d) != 0 {
+	if d := live.guardrailDeps(t.Context()).Disabled; len(d) != 0 {
 		t.Fatalf("default Disabled = %v, want empty", d)
 	}
 
@@ -90,7 +88,7 @@ func TestImprovementAndSkillHintsDisableViaSettings(t *testing.T) {
 			t.Fatalf("set %s: %v", kv.key, err)
 		}
 	}
-	got := live.guardrailDeps().Disabled
+	got := live.guardrailDeps(t.Context()).Disabled
 	for _, want := range []string{guardrails.NameImprovementLoop, guardrails.NameSkillHint} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("Disabled = %v, want to contain %q", got, want)
@@ -105,8 +103,7 @@ func TestShellGuardLenientModes(t *testing.T) {
 		t.Fatalf("workspace: %v", err)
 	}
 	s := newJudgeTestSettings(t)
-	live := NewLiveRunner(nil, ws, nil, "local")
-	live.SetSettingsHandle(s)
+	live := NewLiveRunner(nil, ws, "local", WithSettings(s))
 
 	setSandbox := func(v string) {
 		t.Helper()
@@ -123,34 +120,34 @@ func TestShellGuardLenientModes(t *testing.T) {
 
 	// auto: lenient only when the sandbox is off.
 	setSandbox("on")
-	if live.guardrailDeps().ShellLenient {
+	if live.guardrailDeps(t.Context()).ShellLenient {
 		t.Fatal("auto + sandbox on → want strict (ShellLenient false)")
 	}
 	setSandbox("off")
-	if !live.guardrailDeps().ShellLenient {
+	if !live.guardrailDeps(t.Context()).ShellLenient {
 		t.Fatal("auto + sandbox off → want lenient (ShellLenient true)")
 	}
 	// Pinned modes ignore the sandbox.
 	setGuard("strict")
 	setSandbox("off")
-	if live.guardrailDeps().ShellLenient {
+	if live.guardrailDeps(t.Context()).ShellLenient {
 		t.Fatal("strict pin → want ShellLenient false regardless of sandbox")
 	}
 	setGuard("lenient")
 	setSandbox("on")
-	if !live.guardrailDeps().ShellLenient {
+	if !live.guardrailDeps(t.Context()).ShellLenient {
 		t.Fatal("lenient pin → want ShellLenient true regardless of sandbox")
 	}
 	// off: the guardrail is dropped from the chain entirely, not merely
 	// relaxed — Disabled carries its name regardless of the sandbox state.
 	setGuard("off")
 	setSandbox("on")
-	if d := live.guardrailDeps().Disabled; !slices.Contains(d, guardrails.NameShellPolicy) {
+	if d := live.guardrailDeps(t.Context()).Disabled; !slices.Contains(d, guardrails.NameShellPolicy) {
 		t.Fatalf("off → Disabled = %v, want to contain %q", d, guardrails.NameShellPolicy)
 	}
 	// Any non-off mode leaves the guardrail in the chain.
 	setGuard("lenient")
-	if d := live.guardrailDeps().Disabled; slices.Contains(d, guardrails.NameShellPolicy) {
+	if d := live.guardrailDeps(t.Context()).Disabled; slices.Contains(d, guardrails.NameShellPolicy) {
 		t.Fatalf("lenient → Disabled = %v, want not to contain %q", d, guardrails.NameShellPolicy)
 	}
 }
@@ -160,17 +157,17 @@ func TestZarlcodeGuardrailDepsDoNotDefaultLoadGoVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	live := NewLiveRunner(nil, ws, nil, "local")
+	live := NewLiveRunner(nil, ws, "local")
 
-	if got := live.guardrailDeps().Verifiers; len(got) != 0 {
+	if got := live.guardrailDeps(t.Context()).Verifiers; len(got) != 0 {
 		t.Fatalf("interactive verifiers = %d, want none by default", len(got))
 	}
-	if got := live.headlessGuardrailDeps().Verifiers; len(got) != 0 {
+	if got := live.headlessGuardrailDeps(t.Context()).Verifiers; len(got) != 0 {
 		t.Fatalf("headless verifiers = %d, want none by default", len(got))
 	}
 }
 
-// spawn_agent carries a per-task fanout cap (default 8) so a task can't fan out
+// agent_spawn carries a per-task fanout cap (default 8) so a task can't fan out
 // sub-agents unbounded; a 0 setting removes it.
 func TestSpawnFanoutCapApplied(t *testing.T) {
 	ws, err := code.NewWorkspace(t.TempDir())
@@ -178,11 +175,10 @@ func TestSpawnFanoutCapApplied(t *testing.T) {
 		t.Fatalf("workspace: %v", err)
 	}
 	s := newJudgeTestSettings(t)
-	live := NewLiveRunner(nil, ws, nil, "local")
-	live.SetSettingsHandle(s)
+	live := NewLiveRunner(nil, ws, "local", WithSettings(s))
 
 	// Default: capped at the standard 8.
-	if got := live.guardrailDeps().FanoutLimits[spawn.ToolNameSpawnAgent]; got != coderunner.StandardSpawnFanoutCap {
+	if got := live.guardrailDeps(t.Context()).FanoutLimits[spawn.ToolNameAgentSpawn]; got != coderunner.StandardSpawnFanoutCap {
 		t.Fatalf("default spawn cap = %d, want %d", got, coderunner.StandardSpawnFanoutCap)
 	}
 
@@ -190,7 +186,7 @@ func TestSpawnFanoutCapApplied(t *testing.T) {
 	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "3"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if got := live.guardrailDeps().FanoutLimits[spawn.ToolNameSpawnAgent]; got != 3 {
+	if got := live.guardrailDeps(t.Context()).FanoutLimits[spawn.ToolNameAgentSpawn]; got != 3 {
 		t.Fatalf("override spawn cap = %d, want 3", got)
 	}
 
@@ -198,7 +194,7 @@ func TestSpawnFanoutCapApplied(t *testing.T) {
 	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "0"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if got := live.guardrailDeps().FanoutLimits[spawn.ToolNameSpawnAgent]; got != 0 {
+	if got := live.guardrailDeps(t.Context()).FanoutLimits[spawn.ToolNameAgentSpawn]; got != 0 {
 		t.Fatalf("zero spawn cap = %d, want 0 (uncapped)", got)
 	}
 }
@@ -208,9 +204,9 @@ func TestStandardFanoutDepsLeaveReadUncapped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	live := NewLiveRunner(nil, ws, nil, "local")
+	live := NewLiveRunner(nil, ws, "local")
 
-	limits := live.guardrailDeps().FanoutLimits
+	limits := live.guardrailDeps(t.Context()).FanoutLimits
 	if _, ok := limits[code.ToolNameRead]; ok {
 		t.Fatalf("read fanout cap = %d, want uncapped", limits[code.ToolNameRead])
 	}

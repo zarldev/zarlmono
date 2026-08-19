@@ -8,16 +8,15 @@ around the runner:
 - `zkit/agent/workflow`: compose deterministic steps into a graph.
 - `zkit/agent/checkpoint`: snapshot workflow state before a risky action.
 - `zkit/agent/hitl`: defer medium-risk actions to a human reviewer.
-- `zkit/agent/trace`: export workflow events as JSONL.
 
 Run it:
 
 ```sh
-go run ./shared_infra
+go run -C examples ./shared_infra
 ```
 
 Run the test:
 
 ```sh
-go test ./shared_infra
+go test -C examples ./shared_infra
 ```

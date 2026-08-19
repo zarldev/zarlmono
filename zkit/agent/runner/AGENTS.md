@@ -46,6 +46,12 @@ The opt-out is explicit. Don't add `// no-op` overrides for events you should be
 
 To add a new event type: add a flat payload struct (with `TaskID` and `Depth`) to `events.go`; add the method to one sub-sink (or define a new sub-sink and add it to `EventSink`); add a `NopSink` no-op override; add a publish helper; wire it into the loop in `run.go`. Existing implementers fail to compile until they handle it — the whole point.
 
+## Sink and diagnostic invariants
+
+`New` always installs `NopSink`; `Runner.sink` is non-nil after construction. `WithSink(nil)` is invalid configuration and panics. Do not add downstream sink nil checks or silently normalize a nil option.
+
+Recoverable operational decisions—retries, corrective injections, compaction outcomes, invalid-tool skips, and recovered panics—belong in typed events such as `Diagnostic`, not `slog`. Internal runner/provider code returns errors or publishes events; the CLI, TUI, HTTP handler, or worker boundary decides whether to render or log them.
+
 ## Why `ClientFromProvider` exists
 
 The wider `llm.Provider` interface has many consumers across the monorepo. The runner's `Client` is a *narrower* view — single method, streaming-only — so `Provider` implementations don't need to change. `ClientFromProvider` adapts an `llm.Provider` to satisfy `Client`. The runner depends on `Client`, not `llm.Provider`. Don't grow `Client`; new LLM methods go elsewhere.

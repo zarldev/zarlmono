@@ -14,9 +14,9 @@ func TestToolArgHint(t *testing.T) {
 		{"bash", map[string]any{"command": "go test ./..."}, "$ go test ./..."},
 		{"read_file", map[string]any{"path": "main.go"}, "main.go"},
 		{"grep", map[string]any{"pattern": "func main"}, "func main"},
-		{"load_skill", map[string]any{"name": "go-testing"}, "go-testing"},
-		{"spawn_agent", map[string]any{"prompt": "fix the bug\nmore detail"}, "fix the bug"},
-		{"spawn_agent", map[string]any{"agent": "reviewer", "prompt": "review the patch"}, "reviewer: review the patch"},
+		{"skill_load", map[string]any{"name": "go-testing"}, "go-testing"},
+		{"agent_spawn", map[string]any{"prompt": "fix the bug\nmore detail"}, "fix the bug"},
+		{"agent_spawn", map[string]any{"agent": "reviewer", "prompt": "review the patch"}, "reviewer: review the patch"},
 		{"program", map[string]any{"script": `emit(call("read", {"path": "main.go"}))`}, "read  main.go"},
 		{"program", map[string]any{"script": `results = call_many([
   {"name": "grep", "args": {"pattern": "TODO"}},

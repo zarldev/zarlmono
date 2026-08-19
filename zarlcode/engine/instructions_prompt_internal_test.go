@@ -61,12 +61,12 @@ func TestBuildTurnReloadsWorkspaceInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := NewLiveRunner(nil, ws, nil, "local")
-	l.buildTurn()
+	l := NewLiveRunner(nil, ws, "local")
+	l.buildTurn(t.Context())
 	assertInstructionSnapshotContains(t, l.instructionSnapshotDocs(), "First version.")
 
 	mustWrite(t, filepath.Join(root, "AGENTS.md"), "Second version.")
-	l.buildTurn()
+	l.buildTurn(t.Context())
 	assertInstructionSnapshotContains(t, l.instructionSnapshotDocs(), "Second version.")
 }
 

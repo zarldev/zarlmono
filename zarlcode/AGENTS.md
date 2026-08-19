@@ -2,6 +2,17 @@
 
 How zarlcode persists user preferences. The README documents *what's* here; this file documents *why* it's shaped this way.
 
+## Build and verification
+
+```bash
+go test -C zarlcode -count=1 ./tui
+go test -C zarlcode -count=1 ./...
+go tool task zarlcode   # build + install ~/.local/bin/zarlcode with version ldflags
+go run ./zarlcode/cmd
+go run ./zarlcode/cmd -continue
+```
+
+The CI build excludes the CLI package in its package matrix (`go list ./... | grep -v '/cmd$' | xargs go build`); use `go tool task zarlcode` when asked to rebuild/install the application.
 ## One service, two tables, three scope words
 
 Every persisted preference flows through `prefs.Service` (`zkit/prefs/service.go`). The service fronts two underlying tables:
@@ -66,6 +77,12 @@ Bubbletea's `tea.WithAltScreen()` captures stdout but NOT stderr. slog's default
 `tui/launch.go` calls `setupLaunchLogging` to redirect slog to a file-backed handler before the TUI starts. If setup fails, a discard handler stays in place and the failure is surfaced through the session — slog never falls back to stderr (which would corrupt the layout).
 
 If you add startup logging that must be visible without a working file logger, post it through the session's toast/notice mechanisms — never directly through slog (hidden) or `fmt.Fprintln(os.Stderr, …)` (corrupts the frame).
+
+## Live runner ownership
+
+`engine.NewLiveRunner` installs a truthful no-op `LiveSink`; `WithLiveSink(nil)` panics. Construction-only dependencies use typed options. Do not compensate for invalid construction with nil checks in event or plan publishing paths.
+
+Contexts are operation-scoped: turns, source construction, provider rebuilds, tool setup, and inspection receive context explicitly. `LiveRunner` does not store an application context. Runtime provider/spec/window changes use one atomic target transition so a turn cannot snapshot partially updated policy.
 
 ## Things to never do
 

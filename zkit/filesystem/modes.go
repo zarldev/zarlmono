@@ -2,6 +2,21 @@ package filesystem
 
 import "io/fs"
 
+const (
+	// ModePrivateDir is for directories that may contain credentials or process state.
+	ModePrivateDir fs.FileMode = 0o700
+	// ModePrivateFile is for files that may contain credentials, tokens, or logs.
+	ModePrivateFile fs.FileMode = 0o600
+	// ModeSharedDir is for directories traversable by the owning user and group.
+	ModeSharedDir fs.FileMode = 0o750
+	// ModePublicDir is for intentionally user-readable directory trees.
+	ModePublicDir fs.FileMode = 0o755
+	// ModePublicFile is for intentionally user-readable config, source, or documentation.
+	ModePublicFile fs.FileMode = 0o644
+	// ModeExecutableFile is for generated executable helper binaries or scripts.
+	ModeExecutableFile fs.FileMode = 0o755
+)
+
 var filePermissionBits = [...]struct {
 	mask int
 	mode fs.FileMode

@@ -91,3 +91,10 @@ func (s *SyncSink) OnCompactionApplied(e CompactionApplied) {
 	defer s.mu.Unlock()
 	s.sink.OnCompactionApplied(e)
 }
+
+// OnDiagnostic forwards to the wrapped sink under the mutex.
+func (s *SyncSink) OnDiagnostic(e Diagnostic) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sink.OnDiagnostic(e)
+}

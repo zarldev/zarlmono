@@ -31,18 +31,18 @@ import (
 
 const agentField = "agent"
 
-// ToolNameSpawnAgent is the registered name of the spawn-agent tool.
-const ToolNameSpawnAgent tools.ToolName = "spawn_agent"
+// ToolNameAgentSpawn is the registered asynchronous agent launch name.
+const ToolNameAgentSpawn tools.ToolName = "agent_spawn"
 
 // defaultMaxDepth is the recursion ceiling applied when WithMaxDepth
 // isn't supplied. One level — the parent task can delegate to a
 // sub-agent, but that sub-agent cannot recursively spawn another.
 //
 // Larger cloud models (gpt-5.5/high observed in SWE-bench traces)
-// interpret spawn_agent as a free-form fan-out primitive and burn
+// interpret agent_spawn as a free-form fan-out primitive and burn
 // out their context plus the provider's rate limit building deep
 // trees of children whose results never converge back to a
-// coherent plan. Capping the depth at 1 keeps spawn_agent a single
+// coherent plan. Capping the depth at 1 keeps agent_spawn a single
 // delegation hop — the "researcher" / "code-reviewer" pattern —
 // and forces the parent to flatten any deeper work into its own
 // iteration loop, where the runner's guardrails and improvement
@@ -342,14 +342,14 @@ type Args struct {
 	MaxIterations int    `json:"max_iterations,omitempty" doc:"Optional iteration cap. Prefer omitting (0) — the host applies the configured sub-agent limit automatically."`
 }
 
-// Definition advertises spawn_agent: prompt is required; agent, mode, and
+// Definition advertises agent_spawn: prompt is required; agent, mode, and
 // max_iterations are optional. The long description carries the usage
 // contract the schema can't — parallel fan-out, the recursion cap, and
 // named-agent dispatch via the agent arg.
 func (*Tool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameSpawnAgent,
-		Description: "Run a focused sub-task in a fresh agent. The sub-agent has the same tools but no memory of your conversation — describe the task fully. Returns its final summary plus iteration count and termination reason. Use to keep your context clean during multi-step detours (research, refactors, builds). **Emit multiple spawn_agent calls in the same response to run sub-tasks in parallel** — the runner dispatches them concurrently. A small handful (researcher + reviewer + coder shape) is the intended use; if the host enforces a per-task fan-out cap you'll see a clear guardrail error before further calls run. Sub-agents cannot themselves spawn further sub-agents under the default recursion cap — flatten deeper work into your own iteration loop. Pass an `agent` name to delegate to a sub-agent backed by a different provider/model/prompt; call list_agents to discover available names. Omit the arg to run on the parent's provider/model.",
+		Name:        ToolNameAgentSpawn,
+		Description: "Run a focused sub-task in a fresh agent. The sub-agent has the same tools but no memory of your conversation — describe the task fully. This compatibility implementation waits for the summary; production registration uses the asynchronous agent_spawn protocol. Pass an `agent` name returned by list_agents or omit it to use the parent runner.",
 		Parameters:  tools.SchemaFor[Args](),
 	}
 }
@@ -366,15 +366,15 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	}
 	depth := taskscope.DepthFrom(ctx)
 	if depth >= t.maxDepth {
-		return tools.Failure(call.ID, tools.Budget("spawn_agent",
+		return tools.Failure(call.ID, tools.Budget("agent_spawn",
 			fmt.Sprintf("max recursion depth %d reached — flatten the work or stop calling tools", t.maxDepth))), nil
 	}
 	if args.Prompt == "" {
-		return tools.Failure(call.ID, tools.Validation("spawn_agent", "prompt is required")), nil
+		return tools.Failure(call.ID, tools.Validation("agent_spawn", "prompt is required")), nil
 	}
 	explicitMode := argsModeExplicit(call.Arguments)
 	if explicitMode && strings.TrimSpace(args.Mode) != "" && !normalizeMode(args.Mode).Valid() {
-		return tools.Failure(call.ID, tools.Validation("spawn_agent",
+		return tools.Failure(call.ID, tools.Validation("agent_spawn",
 			fmt.Sprintf("mode %q is invalid; use explore, verify, or implement", args.Mode))), nil
 	}
 
@@ -396,7 +396,7 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	}
 	target, agentLoaded, fallbackNotice := t.resolveTarget(args)
 	if target == nil {
-		return tools.Failure(call.ID, tools.Fatal("spawn_agent", errors.New("parent runner is nil"))), nil
+		return tools.Failure(call.ID, tools.Fatal("agent_spawn", errors.New("parent runner is nil"))), nil
 	}
 
 	mode := t.effectiveMode(args, profileMode, explicitMode)
@@ -496,7 +496,7 @@ func shapeResult(call tools.ToolCall, res runner.TaskResult, agentName string, a
 		ExecutedAt: time.Now(),
 	}
 	if !success {
-		result.Err = tools.Budget("spawn_agent", fmt.Sprintf("sub-agent ended with reason=%s after %d iteration%s. Summary:\n%s",
+		result.Err = tools.Budget("agent_spawn", fmt.Sprintf("sub-agent ended with reason=%s after %d iteration%s. Summary:\n%s",
 			res.Reason, res.Iterations, pluralS(res.Iterations), summary))
 		result.Error = result.Err.Error()
 	}

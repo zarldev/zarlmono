@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -97,24 +96,10 @@ func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm
 		messages = result.History
 		st.forceCompactNoopAt = 0 // real work happened — clear the no-op latch
 	} else if forceCompact {
-		// Forced compaction freed nothing: arm the latch so we don't re-run
-		// it until keepRecent new messages have aged something out of the
-		// keep window. Log once (on the transition into the latched state).
-		if st.forceCompactNoopAt == 0 {
-			slog.InfoContext(ctx, "runner: forced compaction freed nothing; suppressing re-runs until history grows",
-				"task", spec.ID, "iter", iterNum, "messages", before, "keep", keep)
-		}
+		// Forced compaction freed nothing: arm the latch until history grows.
 		st.forceCompactNoopAt = before
 	}
 	if changed {
-		slog.InfoContext(ctx, "runner: compacted",
-			"task", spec.ID,
-			"iter", iterNum,
-			"engine", result.Engine,
-			"messages_before", before,
-			"messages_after", len(messages),
-			"bytes_trimmed", result.BytesTrimmed,
-		)
 		r.publishCompactionApplied(ctx, spec, before, len(messages), result.BytesTrimmed, result.Engine)
 	}
 	return messages, nil

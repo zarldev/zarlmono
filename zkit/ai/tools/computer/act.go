@@ -10,48 +10,48 @@ import (
 
 // Point describes a two-dimensional point or delta in surface coordinates.
 type Point struct {
-	X int `json:"x,omitempty" doc:"Horizontal coordinate or delta."`
-	Y int `json:"y,omitempty" doc:"Vertical coordinate or delta."`
+	X int `json:"x,omitempty" doc:"Horizontal coordinate/delta."`
+	Y int `json:"y,omitempty" doc:"Vertical coordinate/delta."`
 }
 
 // TargetRef identifies an action or trigger target. Resolution is backend
 // specific, but browser backends prefer id, then locator, semantic fields, then
 // position.
 type TargetRef struct {
-	ID       string `json:"id,omitempty" doc:"Short-lived target id from a previous observation, preferred when available."`
-	Role     string `json:"role,omitempty" doc:"Semantic role such as button, link, textbox, or checkbox."`
-	Name     string `json:"name,omitempty" doc:"Accessible or visible target name."`
-	Text     string `json:"text,omitempty" doc:"Visible target text."`
-	Locator  string `json:"locator,omitempty" doc:"Backend-specific locator, such as a CSS selector for browser surfaces."`
-	Position *Point `json:"position,omitempty" doc:"Fallback surface position used when semantic resolution is unavailable."`
+	ID       string `json:"id,omitempty" doc:"Target id from observe; preferred."`
+	Role     string `json:"role,omitempty" doc:"Semantic role."`
+	Name     string `json:"name,omitempty" doc:"Accessible name."`
+	Text     string `json:"text,omitempty" doc:"Visible text."`
+	Locator  string `json:"locator,omitempty" doc:"Backend locator (for example CSS)."`
+	Position *Point `json:"position,omitempty" doc:"Fallback coordinates."`
 }
 
 // Action describes an operation to perform on the current computer surface.
 type Action struct {
-	Kind   model.ActionKind `json:"kind" enum:"navigate,click,fill,press,scroll" doc:"Action kind. One of navigate, click, fill, press, or scroll."`
-	Target *TargetRef       `json:"target,omitempty" doc:"Optional target for click, fill, press, or targeted trigger semantics."`
-	Value  string           `json:"value,omitempty" doc:"Text/value to enter for fill actions."`
-	Key    string           `json:"key,omitempty" doc:"Key to send for press actions, such as Enter, Tab, Escape, or printable text."`
-	URL    string           `json:"url,omitempty" doc:"URL to load for navigate actions."`
-	Delta  *Point           `json:"delta,omitempty" doc:"Nested point used as movement/scroll delta, for example {\"x\":0,\"y\":600}."`
+	Kind   model.ActionKind `json:"kind" enum:"navigate,click,fill,press,scroll" doc:"Action kind."`
+	Target *TargetRef       `json:"target,omitempty" doc:"Target for click/fill/press."`
+	Value  string           `json:"value,omitempty" doc:"Fill value."`
+	Key    string           `json:"key,omitempty" doc:"Key name or text to press."`
+	URL    string           `json:"url,omitempty" doc:"Navigation URL."`
+	Delta  *Point           `json:"delta,omitempty" doc:"Movement/scroll delta."`
 }
 
 // Trigger describes a condition used by When and Until. When is an action
 // precondition; Until is a completion/settlement condition after the action.
 type Trigger struct {
-	Kind   model.TriggerKind `json:"kind" enum:"visible,hidden,focused,text_present,value_equals,url_matches,navigation_complete,surface_stable" doc:"Trigger kind for When or Until semantics."`
-	Target *TargetRef        `json:"target,omitempty" doc:"Optional target the trigger applies to."`
-	Text   string            `json:"text,omitempty" doc:"Expected text for text_present or fallback URL matching."`
-	Value  string            `json:"value,omitempty" doc:"Expected value for value_equals or fallback URL matching."`
-	URL    string            `json:"url,omitempty" doc:"Expected URL substring for url_matches."`
+	Kind   model.TriggerKind `json:"kind" enum:"visible,hidden,focused,text_present,value_equals,url_matches,navigation_complete,surface_stable" doc:"Condition kind."`
+	Target *TargetRef        `json:"target,omitempty" doc:"Condition target."`
+	Text   string            `json:"text,omitempty" doc:"Expected text."`
+	Value  string            `json:"value,omitempty" doc:"Expected value."`
+	URL    string            `json:"url,omitempty" doc:"Expected URL substring."`
 }
 
 // ActArgs describes a computer_act request. When is checked before the action;
 // Until is checked after the action before the resulting observation is returned.
 type ActArgs struct {
-	Action Action   `json:"action" doc:"Action to perform on the current computer surface."`
-	When   *Trigger `json:"when,omitempty" doc:"Optional precondition to wait for before performing the action, e.g. visible or focused."`
-	Until  *Trigger `json:"until,omitempty" doc:"Optional completion condition to wait for after the action, e.g. navigation_complete or value_equals."`
+	Action Action   `json:"action" doc:"Action to perform."`
+	When   *Trigger `json:"when,omitempty" doc:"Precondition before the action."`
+	Until  *Trigger `json:"until,omitempty" doc:"Completion condition after it."`
 }
 
 // ActTool applies computer actions through a model.Actor backend.
@@ -79,7 +79,7 @@ func (t *ActTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Tool
 func actSpec() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:             ToolNameComputerAct,
-		Description:      "Act on the current computer surface and return the resulting observation. The optional when trigger is a precondition checked before the action; the optional until trigger is a completion condition checked after the action.",
+		Description:      "Act on the current surface; optionally wait for a precondition and post-action completion condition.",
 		Parameters:       tools.SchemaFor[ActArgs](),
 		AffectsWorkspace: true,
 	}

@@ -123,9 +123,9 @@ func TestRunOAuthLoginManual_EndToEnd(t *testing.T) {
 	}
 
 	// Vault should now carry the credential.
-	stored, ok, err := svc.GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
-	if err != nil || !ok {
-		t.Fatalf("getStoredAPIKey: ok=%v err=%v", ok, err)
+	stored, err := svc.GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
+	if err != nil {
+		t.Fatalf("getStoredAPIKey: err=%v", err)
 	}
 	var c Cred
 	if err := json.Unmarshal([]byte(stored), &c); err != nil {

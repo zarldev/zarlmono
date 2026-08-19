@@ -17,7 +17,7 @@ func TestMaterialiseDoesNotCreatePromptFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{home.LegacyPromptFile, home.PreferencesFile, home.PromptOverrideFile} {
+	for _, name := range []string{home.PreferencesFile, home.PromptOverrideFile} {
 		if _, err := os.Stat(filepath.Join(res.Dir, name)); !os.IsNotExist(err) {
 			t.Fatalf("%s stat err = %v, want not exist", name, err)
 		}
@@ -35,16 +35,15 @@ func TestMaterialiseDoesNotCreatePromptFiles(t *testing.T) {
 func TestMaterialiseLeavesExistingPromptFilesByteIdentical(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	dir, err := home.RootPromptPath()
+	path, err := home.PreferencesPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Dir(dir)
+	root := filepath.Dir(path)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		home.LegacyPromptFile:   "legacy custom",
 		home.PreferencesFile:    "prefer terse",
 		home.PromptOverrideFile: "full override",
 	}
@@ -58,10 +57,10 @@ func TestMaterialiseLeavesExistingPromptFilesByteIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(res.Created, home.LegacyPromptFile) || slices.Contains(res.Existed, home.LegacyPromptFile) {
-		t.Fatalf("Result should not account prompt files: %#v", res)
-	}
 	for name, want := range files {
+		if slices.Contains(res.Created, name) || slices.Contains(res.Existed, name) {
+			t.Fatalf("Result should not account prompt files: %#v", res)
+		}
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)

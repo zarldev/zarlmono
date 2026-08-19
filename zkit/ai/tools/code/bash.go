@@ -105,10 +105,10 @@ type BashTool struct {
 // into via tools.DecodeArgs. Field tags drive both JSON decoding
 // and SchemaFor schema generation.
 type BashArgs struct {
-	Command        string `json:"command" doc:"Shell command (interpreted by /bin/bash -c when available, else /bin/sh -c)."`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty" doc:"Override timeout (max 600). Ignored when background=true."`
-	Background     bool   `json:"background,omitempty" doc:"Start the process detached; return immediately with pid + log path. Use for servers, file watchers, or anything that should outlive this tool call."`
-	Description    string `json:"description,omitempty" doc:"Short human-readable label for the call."`
+	Command        string `json:"command" doc:"Shell command for bash -c (or sh -c)."`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" doc:"Timeout seconds; max 600. Ignored in background."`
+	Background     bool   `json:"background,omitempty" doc:"Start managed background process."`
+	Description    string `json:"description,omitempty" doc:"Short process label."`
 }
 
 // BashOption tunes BashTool construction. The variadic options
@@ -159,12 +159,10 @@ func NewBashTool(ws Workspace, opts ...BashOption) *BashTool {
 func (t *BashTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:             ToolNameBash,
+		WorkspaceAccess:  tools.WorkspaceAccesses.WRITE,
 		AffectsWorkspace: true,
-		Description: "Execute a shell command in the workspace. " +
-			"Synchronous (default): blocks until exit, returns stdout+stderr+code; output capped at 1MB by the tool, then trimmed to the tail by the runner's 50KB / 2000-line tool-result cap (full output is spilled to disk and the path is included in the footer); timeout 300s default, 600s max. " +
-			"Background (`background: true`): returns immediately with a process_id; manage with bash_output / stop_process / list_processes. Use for servers, watchers, dev-mode toolchains. " +
-			"**Never `pkill -f <pattern>`** — pkill matches against /proc/N/cmdline including the bash shell you're running it in, so it kills its own shell and you get `[exit -1]`. Use `pgrep -x <name>` then `kill <pid>`.",
-		Parameters: tools.SchemaFor[BashArgs](),
+		Description:      "Run a workspace shell command. Foreground returns output and exit code; background returns a process_id managed by bash_output/stop_process/list_processes. Never use pkill -f; use pgrep -x then kill.",
+		Parameters:       tools.SchemaFor[BashArgs](),
 	}
 }
 

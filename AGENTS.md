@@ -1,78 +1,56 @@
 # AGENTS.md
 
-Compact, repo-specific context for future agents. Keep additions high-signal: if an agent would not likely miss it, omit it.
+Compact, repo-wide context only. Module/package detail belongs in nested `AGENTS.md` files and must be loaded when working in those subtrees.
 
 ## Monorepo boundaries
 
 `go.work` joins six Go modules: `.` (tooling only), `examples/`, `swebench-eval/`, `zarlai/`, `zarlcode/`, and `zkit/`.
 
-| Path | Module | Notes |
-|---|---|---|
-| `zkit/` | `github.com/zarldev/zarlmono/zkit` | Canonical shared library: runner, tools, LLM providers, guardrails, compaction, MCP, options, foundation packages. |
-| `zarlcode/` | `github.com/zarldev/zarlmono/zarlcode` | Terminal coding-agent TUI/CLI, built on `zkit`. |
-| `zarlai/` | `github.com/zarldev/zarlmono/zarlai` | Local multimodal/smart-home assistant. CGO/system deps; standard pure-Go checks intentionally skip it. |
-| `swebench-eval/` | `github.com/zarldev/zarlmono/swebench-eval` | SWE-bench eval driver; separate module to keep parquet deps out of root. |
-| `examples/` | `github.com/zarldev/zarlmono/examples` | Runnable harness examples; many support `-scripted` and do not need live LLMs. |
+| Path | Purpose |
+|---|---|
+| `zkit/` | Shared runner, tools, providers, guardrails, compaction, MCP, options, and foundation packages. |
+| `zarlcode/` | Terminal coding-agent TUI/CLI built on `zkit`. |
+| `zarlai/` | Local multimodal/smart-home assistant; separate CGO/system-dependency workflow. |
+| `swebench-eval/` | SWE-bench evaluation driver. |
+| `examples/` | Runnable harness examples. |
 
-- `./...` does **not** cross module boundaries. From any module it only expands inside that module; use the task targets or `go test -C <module> ...` for multi-module work.
-- Package-local guidance lives in nested `AGENTS.md`; read it before changing those subtrees.
-- Local `replace` directives belong in `go.work`, not tagged per-module `go.mod` files. Release/module proxy flows expect internal deps pinned to published versions.
+- `./...` does not cross module boundaries. Use task targets or `go test -C <module> ...`.
+- Read the owning nested `AGENTS.md` before changing a subtree.
+- Local internal-module replacements belong in `go.work`, not committed module `go.mod` files.
 
-## Commands agents usually need
+## Repository commands
 
 ```bash
-go tool task check        # CI-covered modules: build -> vet -> test for examples, zkit, zarlcode, swebench-eval
-go tool task lint         # golangci-lint per CI-covered module, using root .golangci.yaml
-go tool task race         # zkit race suite
-
-# Focused checks
-go test -C zarlcode -count=1 ./tui
-go test -C zkit -count=1 ./agent/runner/...
-go test -C examples -count=1 ./...
-go test -C swebench-eval -count=1 ./...
-
-# zarlcode TUI
-go tool task zarlcode     # build + install ~/.local/bin/zarlcode with version ldflags; prefer for "rebuild zarlcode"
-go run ./zarlcode/cmd     # run from source
-go run ./zarlcode/cmd -continue
+go tool task check   # build, vet, test CI-covered modules
+go tool task lint    # strict root golangci-lint configuration
+go tool task race    # zkit race suite
 ```
 
-CI details worth not guessing:
-- CI matrix modules are `examples`, `zkit`, `zarlcode`, `swebench-eval`; `zarlai` has a separate CGO job.
-- CI builds `zarlcode` with `go list ./... | grep -v '/cmd$' | xargs go build` to avoid building the CLI package in that matrix step.
-- `zarlai` CI installs dlib/BLAS/LAPACK/JPEG packages and only runs infra-free tests: `./service/... ./tools/... ./taskrunner/... ./sensor/... ./subscribers/...`.
+Root check/lint cover `examples`, `zkit`, `zarlcode`, and `swebench-eval`; `zarlai` has its own delegated workflow documented in `zarlai/AGENTS.md`.
 
-## Style and codegen conventions
+## Universal Go and repository invariants
 
-- Go version/tooling is from root `go.mod` / `go.work` (currently Go 1.26.x). Task is provided as a Go tool: `go tool task ...`.
-- Root `.golangci.yaml` is the reference lint config (v2, strict). Verify config changes with `golangci-lint config verify`.
-- `zkit/options` is the canonical functional options pattern: `Option[T] func(*T)`.
-- `zkit/` packages should not introduce circular dependencies; `zkit/options` is the universal exception.
-- Provider registration in `zkit/ai/llm/...` uses deliberate `init()` side effects. Do not remove side-effect imports/registrations as “unused”.
-- Exported symbols need docs. For concrete interface-implementation methods, document concrete behavior/caps/side effects, not generic “implements X”.
-- Constructors return concrete types (`NewX` returns `*X`); define small interfaces on the consumer side.
-- Errors should add context with `%w`; avoid unhelpful prefixes like “failed to”, “unable to”, “could not”.
-- Tests prefer fakes over mocks; use black-box `package x_test` by default and `*_internal_test.go` for white-box coverage.
-- No fire-and-forget goroutines: every goroutine needs an owner and shutdown path.
-- Enums are generated by `goenums`; edit the source `*_enum.go`/`enums.go` and run `go generate`, never edit `*_enums.go` output directly.
+- Go/tool versions come from root `go.mod` and `go.work`; Task is invoked as `go tool task ...`.
+- Root `.golangci.yaml` is authoritative. Verify changes with `golangci-lint config verify`.
+- Use `zkit/options.Option[T]` for functional options. Avoid circular `zkit` dependencies; `zkit/options` is the universal exception.
+- Constructors return concrete types; define small interfaces in consuming packages.
+- Exported symbols need behavior-specific documentation.
+- Wrap errors with concise context and `%w`; avoid “failed to”, “unable to”, and “could not”.
+- Prefer black-box tests and fakes. Use `*_internal_test.go` only for required white-box coverage.
+- Every goroutine needs an owner, stop condition, and wait path.
+- Enums are generated by `goenums`; edit the source `*_enum.go`/`enums.go`, run `go generate`, and never edit `*_enums.go` directly.
 
-## Dependency gotcha
+## Dependency invariant
 
-`github.com/invopop/jsonschema` must stay at `v0.13.0` in every module. v0.14 changes ordered-map types and breaks `anthropic-sdk-go` schemautil usage. After any broad `go get -u`, re-pin and tidy:
+`github.com/invopop/jsonschema` must remain at `v0.13.0` in every affected module; v0.14 breaks Anthropic schema utilities. After a broad dependency update, re-pin and tidy in each affected module:
 
 ```bash
 go get github.com/invopop/jsonschema@v0.13.0
 go mod tidy
 ```
 
-Run that in any affected module, not just the repo root.
+## Prohibitions
 
-## zarlai specifics
-
-- Standard root `check`/`lint` intentionally omit `zarlai`; use delegated tasks: `go tool task zarlai:doctor`, `zarlai:setup`, `zarlai:up`, `zarlai:test`, etc.
-- Some zarlai integration paths need live Dolt + Qdrant (`go tool task --dir zarlai up`); do not assume CI covers those runtime dependencies.
-
-## Things to never do
-
-- Never `git checkout --` / `git revert` files without explicit user confirmation. Unexpected changes may be user work in progress.
-- Do not blindly run `go get -u ./...` without re-pinning `jsonschema` as above.
+- Never discard workspace changes with `git checkout --`, `git restore`, or `git revert` without explicit user confirmation.
+- Never run `go get -u ./...` without re-pinning `jsonschema` as above.
+- Do not remove provider registration side-effect imports as “unused”; provider packages deliberately register through `init()`.

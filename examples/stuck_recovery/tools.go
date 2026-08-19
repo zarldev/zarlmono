@@ -13,7 +13,7 @@ const (
 	ToolGrep      tools.ToolName = "grep"
 	ToolListFiles tools.ToolName = "list_files"
 	ToolReadFile  tools.ToolName = "read_file"
-	ToolSpawn     tools.ToolName = "spawn_agent"
+	ToolSpawn     tools.ToolName = "agent_spawn"
 )
 
 type grepArgs struct {

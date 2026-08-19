@@ -10,37 +10,30 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db/gen"
 )
 
-// GetSetting resolves a (workspace, key) lookup with global
-// fallback. The workspace-specific value wins; otherwise the global
-// row (workspace="") is returned. Returns ("", false, nil) when
-// neither row exists — absence is not an error.
-func (s *Store) GetSetting(ctx context.Context, workspace, key string) (string, bool, error) {
-	if v, ok, err := s.getSettingRow(ctx, workspace, key); err != nil || ok {
-		return v, ok, err
-	}
-	if workspace == "" {
-		return "", false, nil
+// GetSetting resolves a (workspace, key) lookup with global fallback. The
+// workspace-specific value wins; otherwise the global row is returned.
+func (s *Store) GetSetting(ctx context.Context, workspace, key string) (string, error) {
+	v, err := s.getSettingRow(ctx, workspace, key)
+	if err == nil || !errors.Is(err, ErrNotFound) || workspace == "" {
+		return v, err
 	}
 	return s.getSettingRow(ctx, "", key)
 }
 
-// GetSettingExact is GetSetting without the global fallback — useful
-// when callers need to distinguish "this value came from the workspace
-// row" from "this value was inherited from the global row". Returns
-// ("", false, nil) when no row exists for the exact (workspace, key).
-func (s *Store) GetSettingExact(ctx context.Context, workspace, key string) (string, bool, error) {
+// GetSettingExact reads the exact workspace row without global fallback.
+func (s *Store) GetSettingExact(ctx context.Context, workspace, key string) (string, error) {
 	return s.getSettingRow(ctx, workspace, key)
 }
 
-func (s *Store) getSettingRow(ctx context.Context, workspace, key string) (string, bool, error) {
+func (s *Store) getSettingRow(ctx context.Context, workspace, key string) (string, error) {
 	v, err := s.q.GetSetting(ctx, gen.GetSettingParams{Workspace: workspace, Key: key})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", false, nil
+			return "", ErrNotFound
 		}
-		return "", false, fmt.Errorf("get setting %q/%q: %w", workspace, key, err)
+		return "", fmt.Errorf("get setting %q/%q: %w", workspace, key, err)
 	}
-	return v, true, nil
+	return v, nil
 }
 
 // SetSetting writes a (workspace, key) pair. Pass workspace="" for

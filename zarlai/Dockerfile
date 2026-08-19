@@ -12,7 +12,7 @@ RUN npm run build
 # Debian ships first-class libdlib-dev / libatlas-base-dev (cblas) /
 # libjpeg-dev — the same set CI uses for lint + test. Chainguard's
 # free wolfi index does not publish dlib, so we stay on Debian here.
-FROM golang:1.26-bookworm AS go-build
+FROM golang:1.27-bookworm AS go-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libdlib-dev \

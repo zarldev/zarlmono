@@ -44,9 +44,10 @@ func NewReadTool(ws Workspace, opts ...ReadOption) *ReadTool {
 // parameters; reads never mutate, so Mutates stays false.
 func (t *ReadTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameRead,
-		Description: "Read a text file from the workspace. Returns line-numbered content. Refuses binary files and files larger than 10 MB.",
-		Parameters:  tools.SchemaFor[ReadArgs](),
+		Name:            ToolNameRead,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
+		Description:     "Read a text file from the workspace. Returns line-numbered content. Refuses binary files and files larger than 10 MB.",
+		Parameters:      tools.SchemaFor[ReadArgs](),
 	}
 }
 

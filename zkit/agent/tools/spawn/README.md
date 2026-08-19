@@ -1,59 +1,58 @@
-# `zkit/agent/tools/spawn`
+# Sub-agent tasks
 
-The `spawn_agent` tool — a registry-compatible tool that lets the
-running agent kick off a focused sub-task in a fresh `runner.Run`,
-returning only the child's summary as a single tool result.
+`zkit/agent/tools/spawn` provides the asynchronous agent-task tool family:
 
-## Why it's a separate package
+- `agent_spawn` starts a focused child `runner.Run` and immediately returns a task receipt;
+- `agent_await` explicitly waits for and returns a terminal summary;
+- `agent_status` inspects one task without waiting;
+- `agent_stop` cancels and joins one task;
+- `list_agent_tasks` lists the stable tasks owned by the current turn.
 
-Nothing in the runner's loop requires spawn. It is a tool that a
-consumer can register when sub-agent recursion is desirable. The
-zarlcode binary registers it by default for interactive sessions;
-other consumers that don't want sub-agent recursion (zarlai's stateless
-one-shot endpoints, say) can simply avoid importing this package and the
-runner will have no `spawn_agent` tool.
+The parent can continue reasoning and using non-conflicting tools while children run. Every child belongs to a concrete `Group`; there is no detached `go runner.Run(...)` path.
 
-The recursion ceiling lives on the tool, not on the runner.
-Different consumers can choose different ceilings without growing
-the runner's option list.
+## Why it is separate
 
-## Quick start
+The runner stays synchronous and tool-agnostic. Consumers opt into delegation by constructing one turn-owned `Group`, registering the agent tools after the parent runner exists, and closing the group before releasing runner dependencies.
+
+## Wiring
 
 ```go
-import (
-    "github.com/zarldev/zarlmono/zkit/agent/runner"
-    "github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
-)
-
-r := runner.New(client, runner.WithTools(toolReg), /* opts */)
-toolReg.Register(spawn.New(r))               // default ceiling: 1
-toolReg.Register(spawn.New(r, spawn.WithMaxDepth(5))) // custom
+group := spawn.NewGroup()
+r := runner.New(client, runner.WithTools(reg), /* options */)
+coderunner.RegisterSpawnTools(reg, r, group, 1, 0)
+defer group.Close(shutdownCtx)
 ```
 
-`r` is the parent runner the spawn tool will dispatch children to.
-Default ceiling is 1 — the parent task can delegate to a sub-agent,
-but that sub-agent cannot recursively spawn another. `WithMaxDepth(0)`
-disables spawning entirely (useful for endpoints that want zero
-recursion).
+zarlcode uses one group per top-level turn. Named and recursive child runners share that group and the same workspace coordinator.
 
-## Ordering
+## Protocol and completion
 
-Register spawn *after* the runner is constructed — the tool's
-constructor needs the parent runner to capture in a closure. The
-runner's tool registry is re-snapshotted every iteration, so a tool
-registered post-construction is callable on the next turn.
+Every model tool call needs exactly one paired result before the next completion. `agent_spawn` therefore returns a receipt under the original call ID; it never emits the child summary later under that call.
 
-## Key types
+The summary is delivered through `agent_await`, terminal `agent_status`, or `agent_stop`. Parent completion is guarded while any child is running or any terminal summary remains unobserved.
 
-- [`Tool`] — the spawn-agent tool struct. Implements `tools.Tool`.
-- [`New`] — constructor. `New(parent, opts...)`.
-- [`WithMaxDepth`] — option to override the default ceiling.
-- [`ToolName`] — the registered tool name (`"spawn_agent"`).
+## Lifecycle
 
-See [`AGENTS.md`](AGENTS.md) for design notes on depth threading and
-why this package isn't in `zkit/agent/runner`.
+```text
+RUNNING -> COMPLETED
+        -> FAILED
+        -> CANCELLED
+```
 
-[`Tool`]: https://pkg.go.dev/github.com/zarldev/zarlmono/zkit/agent/tools/spawn#Tool
-[`New`]: https://pkg.go.dev/github.com/zarldev/zarlmono/zkit/agent/tools/spawn#New
-[`WithMaxDepth`]: https://pkg.go.dev/github.com/zarldev/zarlmono/zkit/agent/tools/spawn#WithMaxDepth
-[`ToolName`]: https://pkg.go.dev/github.com/zarldev/zarlmono/zkit/agent/tools/spawn#ToolName
+`Group.Close` stops admission, cancels live children, and waits for all owned goroutines within the caller's shutdown context. Tasks are turn-scoped and do not survive session restart.
+
+## Depth, fan-out, and work modes
+
+The default depth ceiling is one delegation hop. A separate per-task fan-out guardrail bounds sibling launches.
+
+- `explore` — read-only investigation;
+- `verify` — review and bounded verification without file-edit tools;
+- `implement` — full tool surface.
+
+Explore and verify children hold a shared workspace READ lease for their lifetime. Implement children hold an exclusive WRITE lease. Parent and child tool calls acquire short-lived leases under their task IDs; conflicts return recoverable failures rather than blocking or racing.
+
+## Named agents
+
+`WithAgentResolver` maps names returned by `list_agents` to alternate runners. Unknown names soft-fall back to the parent runner with a visible notice. The optional grammar-constrained planner chooses only from registered candidates.
+
+See [`AGENTS.md`](AGENTS.md) for package invariants and editor guidance.

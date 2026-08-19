@@ -29,7 +29,7 @@ func run() int {
 	flag.Parse()
 
 	ctx := context.Background()
-	client, cleanup, err := buildClient(ctx, clientConfig{
+	client, err := buildClient(ctx, clientConfig{
 		Provider: *providerName,
 		Model:    *model,
 		BaseURL:  *baseURL,
@@ -39,7 +39,6 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "llm:", err)
 		return 2
 	}
-	defer cleanup()
 
 	// Default farm: three endpoints, all healthy. Tests use SetHealth to
 	// introduce transient or down endpoints before the run.

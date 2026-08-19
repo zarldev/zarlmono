@@ -43,7 +43,7 @@ func newThemeGalleryWithContext(ctx context.Context, s *engine.Settings) *themeG
 func (g *themeGallery) refresh() {
 	cur := palette.Name
 	if g.s != nil && g.s.Svc != nil {
-		if v, ok, err := g.s.Svc.GetSetting(g.ctx, prefs.ScopeEffective, prefs.KeyTheme); err == nil && ok && v.Value != "" {
+		if v, err := g.s.Svc.GetSetting(g.ctx, prefs.ScopeEffective, prefs.KeyTheme); err == nil && v.Value != "" {
 			cur = v.Value
 		}
 	}

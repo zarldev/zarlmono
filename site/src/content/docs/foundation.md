@@ -17,7 +17,7 @@ want is the concurrent map, take the concurrent map.
 | `zenv` | Typed env access with defaults: `zenv.String`, `zenv.Int`, `zenv.Duration`, `zenv.Bool`, generic `zenv.Get`. Parse failure falls back to the default — deliberately forgiving, deliberately not a config system. |
 | `zsync` | Generic concurrency primitives: `Map[K,V]`, `Queue[T]` (blocking pop with ctx), `Set[T]`. The mutex boilerplate you stop writing. |
 | `zhttp` | HTTP client with a real retry policy — exponential backoff, jitter, `Retry-After` honoured — behind options. Used by the fetch tool and the Qdrant client. |
-| `zlog` / `zrpc` / `zapp` / `zexec` / `processenv` | Logging setup, RPC helpers, app lifecycle, minimal-env exec, process environment. Plumbing with opinions. |
+| `zlog` / `zrpc` / `zapp` / `zexec` | Logging setup, RPC helpers, app lifecycle, and minimal-environment process execution. Plumbing with opinions. |
 
 ```go
 port := zenv.Int("PORT", 8080)
@@ -34,7 +34,7 @@ client := zhttp.NewClient(zhttp.WithRetryPolicy(zhttp.NoRetry()))
 | `messagebus` | Typed pub/sub with in-memory and NATS implementations behind the same interface. |
 | `cache` | Generic cache contract with memory, file, and Redis backends. |
 | `docstore` | Typed document store — memory and MongoDB. |
-| `filesystem` | Filesystem abstraction — memory, OS, SeaweedFS. The in-memory one is why so many tests need no disk. |
+| `filesystem` | Filesystem abstraction — root-confined OS and in-memory implementations; consumers define narrow capabilities. |
 | `vectorstore/qdrant` | Qdrant client (built on `zhttp`). |
 
 | `db` / `vault` / `prefs` / `oauth` | SQLite state, an encrypted key vault, settings, and OAuth login flows — the persistence layer the applications share. |

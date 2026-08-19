@@ -28,7 +28,7 @@ func newJudgeTestSettings(t *testing.T) *Settings {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return NewSettings(t.Context(), store, nil, t.TempDir())
+	return NewSettings(store, nil, nil, t.TempDir())
 }
 
 func TestDecomposeJudgeProvider(t *testing.T) {
@@ -81,15 +81,15 @@ func TestGuardrailDepsDecomposeJudge(t *testing.T) {
 	}
 
 	// No settings handle → nil.
-	live := NewLiveRunner(fakeJudgeProvider{}, ws, nil, "local")
-	if live.guardrailDeps().DecomposeJudge != nil {
+	live := NewLiveRunner(fakeJudgeProvider{}, ws, "local")
+	if live.guardrailDeps(t.Context()).DecomposeJudge != nil {
 		t.Fatal("no settings handle: judge armed, want nil")
 	}
 
 	// Settings present but decompose_judge off (default) → still nil.
 	s := newJudgeTestSettings(t)
-	live.SetSettingsHandle(s)
-	if live.guardrailDeps().DecomposeJudge != nil {
+	live = NewLiveRunner(fakeJudgeProvider{}, ws, "local", WithSettings(s))
+	if live.guardrailDeps(t.Context()).DecomposeJudge != nil {
 		t.Fatal("judge off: judge armed, want nil")
 	}
 
@@ -97,18 +97,17 @@ func TestGuardrailDepsDecomposeJudge(t *testing.T) {
 	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyDecomposeJudge, "on"); err != nil {
 		t.Fatalf("set decompose_judge: %v", err)
 	}
-	if live.guardrailDeps().DecomposeJudge == nil {
+	if live.guardrailDeps(t.Context()).DecomposeJudge == nil {
 		t.Fatal("judge on: interactive deps missing judge")
 	}
-	if live.headlessGuardrailDeps().DecomposeJudge == nil {
+	if live.headlessGuardrailDeps(t.Context()).DecomposeJudge == nil {
 		t.Fatal("judge on: headless deps missing judge")
 	}
 
 	// On with no provider to run it on (nil active, no override) → nil, not
 	// a judge that would fail every verdict.
-	bare := NewLiveRunner(nil, ws, nil, "local")
-	bare.SetSettingsHandle(s)
-	if bare.guardrailDeps().DecomposeJudge != nil {
+	bare := NewLiveRunner(nil, ws, "local", WithSettings(s))
+	if bare.guardrailDeps(t.Context()).DecomposeJudge != nil {
 		t.Fatal("judge on without any provider: judge armed, want nil")
 	}
 }

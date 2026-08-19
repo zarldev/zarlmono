@@ -11,18 +11,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db/gen"
 )
 
-// APIKeyStorage identifies how an api_keys row's material should be decoded.
-type APIKeyStorage string
-
-const (
-	// APIKeyStorageVault means Ciphertext contains AES-GCM ciphertext and Nonce
-	// contains its nonce. This is the pre-existing storage shape.
-	APIKeyStorageVault APIKeyStorage = "vault"
-	// APIKeyStoragePlaintext means Ciphertext contains the plaintext credential
-	// bytes directly and Nonce is empty. The column keeps its historical name so
-	// old migrations and generated code remain small; the Storage field is the
-	// authority.
-	APIKeyStoragePlaintext APIKeyStorage = "plaintext"
+// Stable storage names retained for callers; generated values own validity,
+// parsing, serialization, and exhaustive iteration.
+var (
+	APIKeyStorageVault     = APIKeyStorages.VAULT
+	APIKeyStoragePlaintext = APIKeyStorages.PLAINTEXT
 )
 
 // APIKeyCiphertext is the raw stored material for one provider. For historical
@@ -37,65 +30,63 @@ type APIKeyCiphertext struct {
 }
 
 func normalizeAPIKeyStorage(storage APIKeyStorage) APIKeyStorage {
-	switch storage {
-	case APIKeyStoragePlaintext, APIKeyStorageVault:
+	if storage.IsValid() {
 		return storage
-	default:
-		return APIKeyStorageVault
 	}
+	return APIKeyStorageVault
 }
 
-// GetAPIKey returns the stored ciphertext for (workspace, provider),
-// with global fallback. Returns ([], false, nil) when no row exists.
-func (s *Store) GetAPIKey(ctx context.Context, workspace, provider string) (APIKeyCiphertext, bool, error) {
-	if v, ok, err := s.getAPIKeyRow(ctx, workspace, provider); err != nil || ok {
-		return v, ok, err
+func parseAPIKeyStorageOrLegacy(raw string) APIKeyStorage {
+	storage, err := ParseAPIKeyStorage(raw)
+	if err != nil {
+		return APIKeyStorageVault
 	}
-	if workspace == "" {
-		return APIKeyCiphertext{}, false, nil
+	return storage
+}
+
+// GetAPIKey reads stored key material with global fallback.
+func (s *Store) GetAPIKey(ctx context.Context, workspace, provider string) (APIKeyCiphertext, error) {
+	v, err := s.getAPIKeyRow(ctx, workspace, provider)
+	if err == nil || !errors.Is(err, ErrNotFound) || workspace == "" {
+		return v, err
 	}
 	return s.getAPIKeyRow(ctx, "", provider)
 }
 
-// GetAPIKeyExact is GetAPIKey without the global fallback — the
-// caller wants the row for this exact workspace, not the inherited
-// default. Returns ([], false, nil) when no row exists at this
-// workspace, regardless of whether a global row would shadow it.
-//
-// Mirrors GetSettingExact. Used by settingsService.GetKey when the
-// caller asked for [scopeWorkspace] specifically — without this, a
-// promote-then-read sequence would see the just-written global row
-// echo back as if it were still the workspace row.
-func (s *Store) GetAPIKeyExact(ctx context.Context, workspace, provider string) (APIKeyCiphertext, bool, error) {
+// GetAPIKeyExact reads the exact workspace row without global fallback.
+func (s *Store) GetAPIKeyExact(ctx context.Context, workspace, provider string) (APIKeyCiphertext, error) {
 	return s.getAPIKeyRow(ctx, workspace, provider)
 }
 
-func (s *Store) getAPIKeyRow(ctx context.Context, workspace, provider string) (APIKeyCiphertext, bool, error) {
+func (s *Store) getAPIKeyRow(ctx context.Context, workspace, provider string) (APIKeyCiphertext, error) {
 	row, err := s.q.GetAPIKey(ctx, gen.GetAPIKeyParams{Workspace: workspace, Provider: provider})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return APIKeyCiphertext{}, false, nil
+			return APIKeyCiphertext{}, ErrNotFound
 		}
-		return APIKeyCiphertext{}, false, fmt.Errorf("get api key %q/%q: %w", workspace, provider, err)
+		return APIKeyCiphertext{}, fmt.Errorf("get api key %q/%q: %w", workspace, provider, err)
 	}
+	storage := parseAPIKeyStorageOrLegacy(row.Storage)
 	return APIKeyCiphertext{
-		Ciphertext: row.Ciphertext,
-		Nonce:      row.Nonce,
+		Ciphertext: append([]byte(nil), row.Ciphertext...),
+		Nonce:      append([]byte(nil), row.Nonce...),
 		KeyVersion: int(row.KeyVersion),
-		Storage:    normalizeAPIKeyStorage(APIKeyStorage(row.Storage)),
-	}, true, nil
+		Storage:    storage,
+	}, nil
 }
 
 // SetAPIKey writes the ciphertext for (workspace, provider).
 func (s *Store) SetAPIKey(ctx context.Context, workspace, provider string, ct APIKeyCiphertext) error {
 	ct.Storage = normalizeAPIKeyStorage(ct.Storage)
+	ct.Ciphertext = append([]byte(nil), ct.Ciphertext...)
+	ct.Nonce = append([]byte(nil), ct.Nonce...)
 	err := s.q.UpsertAPIKey(ctx, gen.UpsertAPIKeyParams{
 		Workspace:  workspace,
 		Provider:   provider,
 		Ciphertext: ct.Ciphertext,
 		Nonce:      ct.Nonce,
 		KeyVersion: int64(ct.KeyVersion),
-		Storage:    string(ct.Storage),
+		Storage:    ct.Storage.String(),
 		UpdatedAt:  time.Now().Unix(),
 	})
 	if err != nil {
@@ -130,7 +121,7 @@ func (s *Store) AllAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 				Ciphertext: r.Ciphertext,
 				Nonce:      r.Nonce,
 				KeyVersion: int(r.KeyVersion),
-				Storage:    normalizeAPIKeyStorage(APIKeyStorage(r.Storage)),
+				Storage:    parseAPIKeyStorageOrLegacy(r.Storage),
 			},
 		})
 	}

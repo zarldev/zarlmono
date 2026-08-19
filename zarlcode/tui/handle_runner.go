@@ -40,7 +40,7 @@ func terminalNotice(reason runner.TerminalReason, iterations int) string {
 // event it consumed, so Update can early-return and keep its own switch focused
 // on input/resize.
 //
-// Depth>0 events (spawn_agent sub-agents) route into a collapsible
+// Depth>0 events (agent_spawn sub-agents) route into a collapsible
 // subAgentItem instead of rendering as flat indented notices.
 func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	var cmd tea.Cmd

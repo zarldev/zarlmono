@@ -7,7 +7,7 @@ import (
 )
 
 // NewScriptedClient creates a deterministic client that simulates the model
-// calling spawn_agent with different workers in sequence.
+// calling agent_spawn with different workers in sequence.
 func NewScriptedClient(fs *FileSystem) runner.Client {
 	_ = fs // reserved for future use — may validate script against filesystem state
 	// This script simulates a successful multi-agent workflow:
@@ -18,17 +18,17 @@ func NewScriptedClient(fs *FileSystem) runner.Client {
 	turns := [][]llm.CompletionChunk{
 		// Turn 1: Spawn researcher to understand auth system
 		{
-			runnertest.ChunkToolCall("c1", "spawn_agent", `{"prompt": "Explore the current auth system. List files and read auth.go and session.go to understand how sessions work.", "agent": "researcher", "mode": "explore"}`),
+			runnertest.ChunkToolCall("c1", "agent_spawn", `{"prompt": "Explore the current auth system. List files and read auth.go and session.go to understand how sessions work.", "agent": "researcher", "mode": "explore"}`),
 			runnertest.ChunkDone(),
 		},
 		// Turn 2: Spawn reviewer to validate plan
 		{
-			runnertest.ChunkToolCall("c2", "spawn_agent", `{"prompt": "Review the plan to refactor to JWT. The researcher found session-based auth in auth.go. We will create jwt.go with JWT logic and modify auth.go to use it.", "agent": "reviewer", "mode": "verify"}`),
+			runnertest.ChunkToolCall("c2", "agent_spawn", `{"prompt": "Review the plan to refactor to JWT. The researcher found session-based auth in auth.go. We will create jwt.go with JWT logic and modify auth.go to use it.", "agent": "reviewer", "mode": "verify"}`),
 			runnertest.ChunkDone(),
 		},
 		// Turn 3: Spawn coder to implement
 		{
-			runnertest.ChunkToolCall("c3", "spawn_agent", `{"prompt": "Implement JWT authentication. Create jwt.go with JWT generation and validation. Modify auth.go to use JWT instead of sessions.", "agent": "coder", "mode": "implement"}`),
+			runnertest.ChunkToolCall("c3", "agent_spawn", `{"prompt": "Implement JWT authentication. Create jwt.go with JWT generation and validation. Modify auth.go to use JWT instead of sessions.", "agent": "coder", "mode": "implement"}`),
 			runnertest.ChunkDone(),
 		},
 		// Turn 4: Verify and complete
@@ -49,7 +49,7 @@ func SpawnScriptedClient(testCase string) runner.Client {
 		// Tests that explore mode cannot write files
 		return runnertest.NewClient([][]llm.CompletionChunk{
 			{
-				runnertest.ChunkToolCall("c1", "spawn_agent", `{"prompt": "Try to write a file", "agent": "researcher", "mode": "explore"}`),
+				runnertest.ChunkToolCall("c1", "agent_spawn", `{"prompt": "Try to write a file", "agent": "researcher", "mode": "explore"}`),
 				runnertest.ChunkDone(),
 			},
 		})
@@ -58,7 +58,7 @@ func SpawnScriptedClient(testCase string) runner.Client {
 		// Tests that implement mode can write files
 		return runnertest.NewClient([][]llm.CompletionChunk{
 			{
-				runnertest.ChunkToolCall("c1", "spawn_agent", `{"prompt": "Create jwt.go", "agent": "coder", "mode": "implement"}`),
+				runnertest.ChunkToolCall("c1", "agent_spawn", `{"prompt": "Create jwt.go", "agent": "coder", "mode": "implement"}`),
 				runnertest.ChunkDone(),
 			},
 		})

@@ -39,10 +39,11 @@ Preferences when the matching tools are present:
 Default to local, direct progress: inspect the smallest useful set of files, make a
 cohesive safe change, then run the narrowest relevant check. When editing one file,
 prefer one well-scoped range edit over many tiny adjacent edits; keep changes small
-enough to review, not artificially single-line. Use `spawn_agent` only when the
+enough to review, not artificially single-line. Use `agent_spawn` only when the
 investigation would otherwise flood this context, such as mapping an unfamiliar
-subsystem. Treat sub-agent output as a summary to act on, not an invitation to
-repeat the same sweep yourself.
+subsystem. It returns immediately: continue independent work, use `agent_status` for
+a non-blocking check, and call `agent_await` when the child summary is required.
+Treat the summary as evidence to act on, not an invitation to repeat the sweep.
 # MCP servers
 
 A tool named `<server>__<tool>` came from an MCP connection. Server notifications (async

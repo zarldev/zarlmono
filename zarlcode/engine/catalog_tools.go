@@ -26,8 +26,8 @@ const (
 )
 
 const (
-	ToolNameCreateSkill tools.ToolName = "create_skill"
-	ToolNameLoadSkill   tools.ToolName = "load_skill"
+	ToolNameCreateSkill tools.ToolName = "skill_create"
+	ToolNameLoadSkill   tools.ToolName = "skill_load"
 	ToolNameListSkills  tools.ToolName = "list_skills"
 	ToolNameListAgents  tools.ToolName = "list_agents"
 )
@@ -51,8 +51,9 @@ func NewCreateSkillTool(c *RuntimeCatalog) *createSkillTool { return &createSkil
 
 func (t *createSkillTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:    ToolNameCreateSkill,
-		Mutates: true,
+		Name:            ToolNameCreateSkill,
+		WorkspaceAccess: tools.WorkspaceAccesses.WRITE,
+		Mutates:         true,
 		Description: "Create a new reusable Agent Skill in the canonical user skill directory. " +
 			"Use when the user asks to add, author, or save a skill. The tool chooses the path, " +
 			"writes standard <name>/SKILL.md frontmatter, and never overwrites an existing skill.",
@@ -75,7 +76,7 @@ func (t *createSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tool
 	}
 	path, err := catalog.CreateSkill(strings.TrimSpace(args.Name), args.Description, args.Instructions)
 	if err != nil {
-		return tools.Failure(call.ID, tools.Validation("create_skill", err.Error())), nil
+		return tools.Failure(call.ID, tools.Validation("skill_create", err.Error())), nil
 	}
 	if t.catalog != nil {
 		t.catalog.ReloadCurrent()
@@ -93,7 +94,8 @@ func (t *loadSkillTool) refresh() {
 
 func (t *loadSkillTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameLoadSkill,
+		Name:            ToolNameLoadSkill,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Load a skill's markdown body into context by exact name. Use this only " +
 			"when the user asks for a skill or after listing skills to choose one; do not guess " +
 			"skill names and do not use read(<path>) for skill bodies.",
@@ -117,7 +119,7 @@ func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.
 	}
 	name := strings.TrimSpace(args.Name)
 	if name == "" {
-		return tools.Failure(call.ID, tools.Validation("load_skill", "name is required")), nil
+		return tools.Failure(call.ID, tools.Validation("skill_load", "name is required")), nil
 	}
 	skill, ok := t.catalog.Skill(name)
 	if !ok {
@@ -125,7 +127,7 @@ func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.
 		skill, ok = t.catalog.Skill(name)
 	}
 	if !ok {
-		return tools.Failure(call.ID, tools.NotFound("load_skill", fmt.Sprintf(
+		return tools.Failure(call.ID, tools.NotFound("skill_load", fmt.Sprintf(
 			"no skill named %q. Available: %s", name, strings.Join(t.catalog.SkillNames(), ", ")))), nil
 	}
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: skill.Body, ExecutedAt: time.Now()}, nil
@@ -143,7 +145,8 @@ func (t *listSkillsTool) refresh() {
 
 func (t *listSkillsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameListSkills,
+		Name:            ToolNameListSkills,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Return the workspace skill catalogue as labelled plaintext — one entry per skill " +
 			"with name, description, and path. Call only when the user asks about skills or " +
 			"when a task clearly needs a skill lookup.",
@@ -188,7 +191,8 @@ func (t *listAgentsTool) refresh() {
 
 func (t *listAgentsTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameListAgents,
+		Name:            ToolNameListAgents,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Return the workspace named sub-agent catalogue as labelled plaintext — one entry " +
 			"per agent with name, description, provider/model/workspace when set, and path. Call " +
 			"only when the user asks about sub-agents or delegation is clearly needed.",

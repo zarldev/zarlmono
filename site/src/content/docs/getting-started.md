@@ -15,7 +15,7 @@ runner drives the loop.
 go get github.com/zarldev/zarlmono/zkit@latest
 ```
 
-Go 1.26 or later. Everything below imports from `zkit/...`.
+Go 1.27 or later. Everything below imports from `zkit/...`.
 
 ## A minimal agent
 

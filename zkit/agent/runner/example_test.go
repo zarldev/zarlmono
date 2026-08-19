@@ -75,7 +75,7 @@ func ExampleRunner_Run() {
 	r := runner.New(client,
 		runner.WithTools(reg),
 		runner.WithMaxIterations(4),
-		runner.WithSink(nil), // silence the default stderr progress sink
+		runner.WithSink(runner.NopSink{}), // silence the default stderr progress sink
 	)
 	res := r.Run(context.Background(), runner.TaskSpec{Prompt: "What's the weather in Oslo?"})
 

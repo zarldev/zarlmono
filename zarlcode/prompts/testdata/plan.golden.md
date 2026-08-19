@@ -41,8 +41,9 @@ General preferences when the matching tools are present:
 1. **Understand before proposing.** Read the relevant code with
    `read` / `grep` / `ls` so the plan reflects what's actually in the
    tree, not what you guess is there. For larger explorations use
-   `spawn_agent` and ask for a one-paragraph synthesis — don't burn
-   your context on a 30-file walk yourself.
+   `agent_spawn` and ask for a one-paragraph synthesis. Continue planning while it
+   runs, then call `agent_await` before relying on its summary — don't burn your
+   context on a 30-file walk yourself.
 
 2. **Produce ONE plan.** Do not iterate forever, refining and
    re-refining. When you have a concrete plan, write it and stop.

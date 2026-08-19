@@ -1,9 +1,6 @@
 package home
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,17 +12,10 @@ import (
 )
 
 const (
-	// LegacyPromptFile is the old full system-prompt override. New installs do
-	// not create it; existing customized files remain active for compatibility.
-	LegacyPromptFile = "prompt.md"
 	// PreferencesFile is the additive, literal global guidance file.
 	PreferencesFile = "preferences.md"
 	// PromptOverrideFile is the explicit advanced full system-prompt override.
 	PromptOverrideFile = "prompt.override.md"
-
-	// RootPromptFile is retained for callers and user docs that still refer to
-	// the legacy filename. Prefer LegacyPromptFile in new code.
-	RootPromptFile = LegacyPromptFile
 )
 
 // PromptResolutionMode names the source selected for the BUILD-mode prompt body.
@@ -36,8 +26,6 @@ const (
 	PromptEmbeddedCore PromptResolutionMode = "embedded_core"
 	// PromptExplicitOverride means prompt.override.md replaced the build prompt.
 	PromptExplicitOverride PromptResolutionMode = "explicit_override"
-	// PromptLegacyOverride means a customized legacy prompt.md replaced the build prompt.
-	PromptLegacyOverride PromptResolutionMode = "legacy_override"
 )
 
 // PromptResolution describes the per-user prompt files that affect live prompt
@@ -52,11 +40,6 @@ type PromptResolution struct {
 	UsePreferences    bool
 	Diagnostics       []string
 }
-
-// RootPromptPath returns the absolute path of the legacy full prompt override
-// (~/.zarlcode/prompt.md). New installs no longer create this file; existing
-// customized files remain active through ResolveBuildPrompt for compatibility.
-func RootPromptPath() (string, error) { return promptFilePath(LegacyPromptFile) }
 
 // PreferencesPath returns the absolute path of the additive global preferences
 // file (~/.zarlcode/preferences.md).
@@ -123,24 +106,6 @@ func ResolveBuildPromptDir(dir, defaultBody string) PromptResolution {
 		return res
 	}
 
-	legacyPath := filepath.Join(dir, LegacyPromptFile)
-	if data, ok, diag := readPromptFile(legacyPath); diag != "" {
-		res.Diagnostics = append(res.Diagnostics, diag)
-	} else if ok {
-		switch {
-		case strings.TrimSpace(string(data)) == "":
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("prompt: ignoring empty legacy %s", LegacyPromptFile))
-		case IsKnownLegacyPromptSeed(data, defaultBody):
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("prompt: ignoring legacy %s because it matches a shipped seed; move durable custom guidance to %s", LegacyPromptFile, PreferencesFile))
-		default:
-			res.Mode = PromptLegacyOverride
-			res.Body = string(data)
-			res.BodySource = legacyPath
-			res.UsePreferences = false
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("prompt: using customized legacy %s as a full BUILD-mode override; migrate additive guidance to %s or rename the full override to %s", LegacyPromptFile, PreferencesFile, PromptOverrideFile))
-		}
-	}
-
 	return res
 }
 
@@ -154,17 +119,4 @@ func readPromptFile(path string) ([]byte, bool, string) {
 	default:
 		return nil, false, fmt.Sprintf("prompt: read %s: %v", path, err)
 	}
-}
-
-// IsKnownLegacyPromptSeed reports whether data is an untouched prompt.md seeded
-// from a shipped embedded prompt. The current default body is accepted directly
-// so development builds and future releases do not need to add their own hash to
-// the static migration list just to ignore an exact generated copy.
-func IsKnownLegacyPromptSeed(data []byte, defaultBody string) bool {
-	if bytes.Equal(data, []byte(defaultBody)) {
-		return true
-	}
-	sum := sha256.Sum256(data)
-	_, ok := knownLegacyPromptSeedHashes[hex.EncodeToString(sum[:])]
-	return ok
 }

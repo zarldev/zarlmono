@@ -148,7 +148,6 @@ Small, foundational packages that should remain boring and dependency-light:
 
 ```text
 options
-processenv
 zapp
 zenv
 zexec
@@ -190,7 +189,6 @@ agent/retrieval
 agent/sandbox
 agent/scheduler
 agent/sensor
-agent/trace
 agent/tools/spawn
 agent/workflow
 ai/tools/code
@@ -211,7 +209,6 @@ ai/tools/dynamic
 ai/llm/claudecode
 ai/llm/openaicodex
 docstore/mongodb
-filesystem/seaweedfs
 ```
 
 `ai/llm/openaicodex` and `ai/llm/claudecode` are marked volatile because their
@@ -234,7 +231,6 @@ because the local implementation is considered low quality.
 | `agent/checkpoint` | Transport-neutral run checkpoints plus in-memory storage. |
 | `agent/hitl` | Human-in-the-loop review requests, decisions, risk levels, and approval policies. |
 | `agent/retrieval` | Agent-facing retrieval adapters: prompt-context rendering and retriever-as-tool. |
-| `agent/trace` | Normalized trace events plus runner/workflow exporters such as JSONL. |
 | `agent/workflow` | Typed graph/workflow composition with static edges, conditional routing, events, and graph-as-tool. |
 | `agent/profile` | Code-defined agent execution profiles: persona prompt prefix, model, iteration budget. |
 | `agent/pursue` | Deterministic re-drive harness for oracle-backed agent attempts. |
@@ -279,7 +275,7 @@ because the local implementation is considered low quality.
 | `mcp` | Model Context Protocol client/server and transports. |
 | `cache` | Generic cache interfaces plus memory/file/Redis implementations. |
 | `docstore` | Typed document-store abstraction with memory/MongoDB implementations. |
-| `filesystem` | File-system abstraction with memory, OS, and SeaweedFS backends. |
+| `filesystem` | Root-confined OS and in-memory file storage. |
 | `messagebus` | Typed pub/sub bus with memory and NATS implementations. |
 | `vectorstore/qdrant` | Qdrant vector-store client. |
 | `skills` | Versioned, hot-reloadable skill store for prompt assembly. |
@@ -289,7 +285,6 @@ because the local implementation is considered low quality.
 | Package | Purpose |
 |---|---|
 | `options` | Canonical functional options type: `Option[T] func(*T)`. |
-| `processenv` | Minimal environment construction for child processes. |
 | `tui/theme` | Charm-free theme palette and JSON theme loader. |
 | `zapp` | CLI/app lifecycle wrapper with cancellation, cleanup, and panic handling. |
 | `zenv` | Typed environment-variable readers with defaults. |
@@ -297,7 +292,7 @@ because the local implementation is considered low quality.
 | `zhttp` | HTTP client/server helpers, retrying client, JSON responses, and middleware/auth subpackages. |
 | `zlog` | Shared `slog` setup helpers. |
 | `znotify` | Session-keyed notifications with offline queueing. |
-| `zrpc` | ConnectRPC middleware and h2c helpers. |
+| `zrpc` | ConnectRPC middleware helpers. |
 | `zsync` | Thread-safe generic maps, sets, queues, and synchronization primitives. |
 
 ---
@@ -324,7 +319,6 @@ ai/llm/openai
 ai/tools/fetch
 cache/redis
 docstore/mongodb
-filesystem/seaweedfs
 messagebus/nats
 vectorstore/qdrant
 ```
@@ -337,7 +331,6 @@ Likely future adapter-split candidates, if dependency pressure justifies it:
 ```text
 cache/redis
 docstore/mongodb
-filesystem/seaweedfs
 messagebus/nats
 ```
 

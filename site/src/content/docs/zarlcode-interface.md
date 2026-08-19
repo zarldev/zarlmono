@@ -96,7 +96,7 @@ four tabs (`Tab` to cycle):
 
 - **Files** — a directory tree on the left, file preview on the right.
 - **Skills** — the workspace's discovered [skills](/zarlmono/foundation/#shared-infrastructure).
-- **Agents** — the named sub-agent profiles available to `spawn_agent`.
+- **Agents** — the named sub-agent profiles available to `agent_spawn`.
 - **Hooks** — configured command hooks.
 
 Arrow keys move, `Enter` descends into a directory (or jumps to a
@@ -132,12 +132,14 @@ plans (the latter persist under `.zarlcode/plans/`).
 
 ## Sub-agents
 
-When a turn delegates with [`spawn_agent`](/zarlmono/spawn/), each child
-run appears as a **collapsible sub-agent item** in the timeline, nested
-under the turn that spawned it — its own prompt, tool calls, and final
-summary, foldable in browse mode. A coordinator fanning out to
-`explore` workers reads as a tidy tree rather than a wall of
-interleaved output.
+When a turn delegates with [`agent_spawn`](/zarlmono/spawn/), launch returns a
+receipt immediately and the parent can continue independent work. Each child run
+appears as a **collapsible sub-agent item** in the timeline, nested under the turn
+that spawned it — its own prompt, tool calls, and final summary remain independently
+foldable in browse mode. Use `agent_status` for a non-blocking snapshot and
+`agent_await` to join when the parent needs the result. A coordinator fanning out to
+read-only `explore` workers reads as a tidy tree rather than a wall of interleaved
+output; conflicting workspace writes are refused instead of racing.
 
 ![Sub-agents in the timeline](/zarlmono/zarlcode-subagents.gif)
 

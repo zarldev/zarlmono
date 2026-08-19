@@ -63,7 +63,8 @@ var safePlanName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // file — the write is confined to the plans directory.
 func (t *SavePlanTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameSavePlan,
+		Name:            ToolNameSavePlan,
+		WorkspaceAccess: tools.WorkspaceAccesses.WRITE,
 		Description: "Save a plan-mode artifact to .zarlcode/plans/<name>.md. " +
 			"Use at the end of plan-mode work to persist the proposal as a " +
 			"markdown document the user can revisit, edit, or share. Writes " +

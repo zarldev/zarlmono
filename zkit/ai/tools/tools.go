@@ -3,6 +3,7 @@ package tools
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -400,6 +401,12 @@ type ToolSpec struct {
 	// mode gate on it. A shell tool like bash leaves this false — running a
 	// build or test is not a file edit — and declares AffectsWorkspace instead.
 	Mutates bool `json:"mutates,omitempty"`
+	// WorkspaceAccess is the workspace capability required while the tool runs.
+	// NONE means the tool does not access workspace state, READ permits concurrent
+	// readers, and WRITE requires exclusive access. Legacy specs derive this
+	// conservatively from ChangesWorkspace: changing tools require WRITE; others
+	// default to NONE.
+	WorkspaceAccess WorkspaceAccess `json:"workspace_access,omitempty"`
 	// AffectsWorkspace declares that executing the tool can change durable
 	// state by some means OTHER than a tracked file edit — the canonical case
 	// is bash, whose command may write files, mutate git state, or touch the
@@ -410,13 +417,62 @@ type ToolSpec struct {
 	AffectsWorkspace bool `json:"affects_workspace,omitempty"`
 }
 
+// MarshalJSON omits an unspecified WorkspaceAccess while preserving explicit
+// NONE. WorkspaceAccess is a generated struct enum, so omitempty cannot detect
+// its invalid zero value without this transport boundary.
+func (s ToolSpec) MarshalJSON() ([]byte, error) {
+	type toolSpecJSON struct {
+		Name             ToolName         `json:"name"`
+		Description      string           `json:"description"`
+		Parameters       llm.Schema       `json:"parameters"`
+		Mutates          bool             `json:"mutates,omitempty"`
+		WorkspaceAccess  *WorkspaceAccess `json:"workspace_access,omitempty"`
+		AffectsWorkspace bool             `json:"affects_workspace,omitempty"`
+	}
+	var access *WorkspaceAccess
+	if s.WorkspaceAccess.IsValid() {
+		value := s.WorkspaceAccess
+		access = &value
+	}
+	return json.Marshal(toolSpecJSON{
+		Name:             s.Name,
+		Description:      s.Description,
+		Parameters:       s.Parameters,
+		Mutates:          s.Mutates,
+		WorkspaceAccess:  access,
+		AffectsWorkspace: s.AffectsWorkspace,
+	})
+}
+
 // ChangesWorkspace reports whether a successful call could alter durable
 // state by any means — a tracked file edit (Mutates) or a side effect like a
-// shell command (AffectsWorkspace). It is the conservative superset every
-// "did this touch the workspace?" consumer should use, so a new mutating tool
-// that declares only Mutates is gated without a hardcoded name list.
+// shell command (AffectsWorkspace).
 func (s ToolSpec) ChangesWorkspace() bool {
 	return s.Mutates || s.AffectsWorkspace
+}
+
+// Access reports the workspace capability required by s. An explicit valid
+// WorkspaceAccess takes precedence. Legacy specs retain conservative behavior:
+// workspace-changing tools require WRITE, and tools without a workspace effect
+// require NONE.
+func (s ToolSpec) Access() WorkspaceAccess {
+	if s.WorkspaceAccess.IsValid() {
+		return s.WorkspaceAccess
+	}
+	if s.ChangesWorkspace() {
+		return WorkspaceAccesses.WRITE
+	}
+	return WorkspaceAccesses.NONE
+}
+
+// ReadsWorkspace reports whether s requires workspace read or write access.
+func (s ToolSpec) ReadsWorkspace() bool {
+	return s.Access() != WorkspaceAccesses.NONE
+}
+
+// WritesWorkspace reports whether s requires exclusive workspace write access.
+func (s ToolSpec) WritesWorkspace() bool {
+	return s.Access() == WorkspaceAccesses.WRITE
 }
 
 // ErrInvalidToolName is returned by ValidateToolSpec and registry registration

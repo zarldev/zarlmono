@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/zsync"
@@ -326,56 +327,51 @@ func TestQueue_Concurrent(t *testing.T) {
 }
 
 func TestQueue_BlockingPop(t *testing.T) {
-	q := zsync.NewQueue[string]()
+	synctest.Test(t, func(t *testing.T) {
+		q := zsync.NewQueue[string]()
 
-	var wg sync.WaitGroup
-	var result string
-	var err error
+		var wg sync.WaitGroup
+		var result string
+		var err error
 
-	// blocking consumer
-	wg.Go(func() {
-		result, err = q.Pop()
+		wg.Go(func() {
+			result, err = q.Pop()
+		})
+
+		synctest.Wait()
+		if err := q.Push("unblock"); err != nil {
+			t.Fatalf("Push() error = %v", err)
+		}
+		wg.Wait()
+
+		if err != nil {
+			t.Errorf("Pop() error = %v, want nil", err)
+		}
+		if result != "unblock" {
+			t.Errorf("Pop() = %v, want unblock", result)
+		}
 	})
-
-	// let consumer block first
-	time.Sleep(10 * time.Millisecond)
-
-	// unblock via push
-	q.Push("unblock")
-
-	// await unblock
-	wg.Wait()
-
-	if err != nil {
-		t.Errorf("Pop() error = %v, want nil", err)
-	}
-
-	if result != "unblock" {
-		t.Errorf("Pop() = %v, want unblock", result)
-	}
 }
 
 func TestQueue_CloseUnblocksConsumers(t *testing.T) {
-	q := zsync.NewQueue[string]()
+	synctest.Test(t, func(t *testing.T) {
+		q := zsync.NewQueue[string]()
 
-	var wg sync.WaitGroup
-	var err error
+		var wg sync.WaitGroup
+		var err error
 
-	// blocking consumer
-	wg.Go(func() {
-		_, err = q.Pop()
+		wg.Go(func() {
+			_, err = q.Pop()
+		})
+
+		synctest.Wait()
+		if err := q.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		wg.Wait()
+
+		if !errors.Is(err, zsync.ErrQueueClosed) {
+			t.Errorf("Pop() after close error = %v, want %v", err, zsync.ErrQueueClosed)
+		}
 	})
-
-	// let consumer block first
-	time.Sleep(10 * time.Millisecond)
-
-	// unblock via close
-	q.Close()
-
-	// await unblock
-	wg.Wait()
-
-	if !errors.Is(err, zsync.ErrQueueClosed) {
-		t.Errorf("Pop() after close error = %v, want %v", err, zsync.ErrQueueClosed)
-	}
 }

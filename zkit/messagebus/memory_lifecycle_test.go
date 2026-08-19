@@ -3,7 +3,7 @@ package messagebus_test
 import (
 	"context"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/zarldev/zarlmono/zkit/messagebus"
 )
@@ -49,24 +49,20 @@ func TestMemoryBus_DoubleUnsubscribeNoPanic(t *testing.T) {
 // closes the channel and lets processMessages exit — proven here by the sub
 // going invalid without any explicit Unsubscribe.
 func TestMemoryBus_CtxCancelAutoUnsubscribes(t *testing.T) {
-	t.Parallel()
-	bus := messagebus.NewMemoryBus[int]()
-	ctx, cancel := context.WithCancel(t.Context())
-	sub, err := bus.Subscribe(ctx, "x", noopHandler)
-	if err != nil {
-		t.Fatalf("Subscribe: %v", err)
-	}
-	if !sub.IsValid() {
-		t.Fatal("sub should be valid before cancel")
-	}
-	cancel()
-
-	// AfterFunc fires on its own goroutine; poll until the sub drops out.
-	deadline := time.Now().Add(2 * time.Second)
-	for sub.IsValid() && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if sub.IsValid() {
-		t.Fatal("ctx cancel did not auto-unsubscribe — the processMessages goroutine leaks")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		bus := messagebus.NewMemoryBus[int]()
+		ctx, cancel := context.WithCancel(t.Context())
+		sub, err := bus.Subscribe(ctx, "x", noopHandler)
+		if err != nil {
+			t.Fatalf("Subscribe: %v", err)
+		}
+		if !sub.IsValid() {
+			t.Fatal("sub should be valid before cancel")
+		}
+		cancel()
+		synctest.Wait()
+		if sub.IsValid() {
+			t.Fatal("ctx cancel did not auto-unsubscribe — the processMessages goroutine leaks")
+		}
+	})
 }

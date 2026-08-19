@@ -2,6 +2,7 @@ package filesystem_test
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -9,20 +10,27 @@ import (
 	filesystems "github.com/zarldev/zarlmono/zkit/filesystem"
 )
 
-func TestReadWriteFileFS_Contract(t *testing.T) {
+type fileStore interface {
+	ReadFile(string) ([]byte, error)
+	WriteFile(string, []byte, fs.FileMode) error
+	Remove(string) error
+	WalkDir(string, fs.WalkDirFunc) error
+}
+
+func TestFileStoreContract(t *testing.T) {
 	tests := []struct {
 		name  string
-		newFS func(t *testing.T) (filesystems.ReadWriteFileFS, func())
+		newFS func(t *testing.T) (fileStore, func())
 	}{
 		{
 			name: "MemFS",
-			newFS: func(t *testing.T) (filesystems.ReadWriteFileFS, func()) {
+			newFS: func(t *testing.T) (fileStore, func()) {
 				return filesystems.NewMemFS(), func() {}
 			},
 		},
 		{
 			name: "OSFileSystem",
-			newFS: func(t *testing.T) (filesystems.ReadWriteFileFS, func()) {
+			newFS: func(t *testing.T) (fileStore, func()) {
 				tmpDir := t.TempDir()
 				return filesystems.NewOSFileSystem(tmpDir), func() {}
 			},
@@ -34,12 +42,12 @@ func TestReadWriteFileFS_Contract(t *testing.T) {
 			fs, cleanup := tt.newFS(t)
 			defer cleanup()
 
-			testReadWriteFileFS(t, fs)
+			testFileStore(t, fs)
 		})
 	}
 }
 
-func testReadWriteFileFS(t *testing.T, fs filesystems.ReadWriteFileFS) {
+func testFileStore(t *testing.T, fs fileStore) {
 	t.Helper()
 
 	t.Run("WriteFile and ReadFile operations", func(t *testing.T) {

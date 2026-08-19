@@ -41,7 +41,7 @@ import (
 // `tea.Program.Send` writes to bubbletea's internal channel and
 // blocks while the loop is mid-Update / mid-View. Before this pump,
 // every runner-goroutine publish blocked on Send during slow frames,
-// which back-pressured into the spawn_agent path (each sub-agent
+// which back-pressured into the agent_spawn path (each sub-agent
 // runs synchronously on a parent tool-dispatch goroutine) and froze
 // the UI under sub-agent storms.
 //
@@ -103,7 +103,7 @@ const coalesceWindow = 16 * time.Millisecond
 const pumpBuffer = 4096
 
 // contentKey identifies a streaming target. Chunks for different
-// tasks (root vs spawn_agent recursion) or different depths merge
+// tasks (root vs agent_spawn recursion) or different depths merge
 // separately so a sub-agent's stream doesn't contaminate the
 // parent's.
 type contentKey struct {
@@ -438,6 +438,7 @@ func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
 		TaskID:           string(e.TaskID),
 		Depth:            e.Depth,
 		Reason:           e.Reason,
+		Cause:            e.Cause,
 		Error:            e.Error,
 		RateLimit:        e.RateLimit,
 		Duration:         e.Duration,
@@ -454,12 +455,13 @@ func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
 func (s *Sink) OnIterationCompleted(e runner.IterationCompleted) {
 	s.flush()
 	s.dispatch(IterationCompletedMsg{
-		TaskID:  string(e.TaskID),
-		Depth:   e.Depth,
-		Iter:    e.Iter,
-		Usage:   e.Usage,
-		Delta:   e.Delta,
-		Context: e.Context,
+		TaskID:      string(e.TaskID),
+		Depth:       e.Depth,
+		Iter:        e.Iter,
+		Usage:       e.Usage,
+		Delta:       e.Delta,
+		Context:     e.Context,
+		ToolSurface: e.ToolSurface,
 	})
 }
 
@@ -485,6 +487,9 @@ func (s *Sink) OnCompactionApplied(e runner.CompactionApplied) {
 		Engine:         e.Engine,
 	})
 }
+
+// OnDiagnostic intentionally keeps recovery diagnostics out of the transcript.
+func (s *Sink) OnDiagnostic(runner.Diagnostic) {}
 
 // PlanUpdated forwards a structured plan update from the update_plan tool's
 // PlanStore. Not a runner event — the tool calls it directly — but it flushes

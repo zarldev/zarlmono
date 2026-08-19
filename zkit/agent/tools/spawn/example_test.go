@@ -13,7 +13,7 @@ func ExampleNew() {
 	// godoc rendering.
 	tool := spawn.New(nil)
 	fmt.Println(tool.Definition().Name)
-	// Output: spawn_agent
+	// Output: agent_spawn
 }
 
 // WithMaxDepth tightens the recursion ceiling for consumers that

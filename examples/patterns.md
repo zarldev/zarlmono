@@ -187,7 +187,7 @@ r := runner.New(client,
 
 ## Pattern: Fanout Guardrail
 
-Prevent the model from reading file-by-file when it should delegate to `spawn_agent`.
+Prevent the model from reading file-by-file when it should delegate to `agent_spawn`.
 
 ```go
 import "github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -198,7 +198,7 @@ fanout := guardrails.NewFanoutGuardrail(map[tools.ToolName]int{
 })
 ```
 
-**Why**: A model exploring a 200-file project via individual `read` calls burns context. The fanout guardrail nudges it toward `spawn_agent` for bulk exploration.
+**Why**: A model exploring a 200-file project via individual `read` calls burns context. The fanout guardrail nudges it toward `agent_spawn` for bulk exploration.
 
 **Examples**: `stuck_recovery`, `healthcheck`
 

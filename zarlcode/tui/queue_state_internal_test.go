@@ -21,7 +21,7 @@ func newQueueTestLive(t *testing.T) *engine.LiveRunner {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	return engine.NewLiveRunner(nil, ws, nil, "")
+	return engine.NewLiveRunner(nil, ws, "")
 }
 
 func collectQueue(l *engine.LiveRunner, t *testing.T) []llm.Message {

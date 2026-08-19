@@ -18,6 +18,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -55,7 +56,7 @@ type InspectorSnapshot struct {
 	PromptSource string
 	// PromptPreferencesSource is the additive preferences source, when present.
 	PromptPreferencesSource string
-	// PromptResolutionMode identifies embedded, explicit override, or legacy override resolution.
+	// PromptResolutionMode identifies embedded or explicit override resolution.
 	PromptResolutionMode home.PromptResolutionMode
 	// Errors are non-fatal snapshot/render issues surfaced in the inspector.
 	Errors []string
@@ -74,6 +75,9 @@ type InspectorSnapshot struct {
 	// Hooks is the loaded command-hook catalog for the workspace — what the
 	// next turn's hook guardrail arms.
 	Hooks []catalog.Hook
+	// ToolSurface is the exact post-gate surface from the latest top-level
+	// request. Zero before the first iteration completes.
+	ToolSurface runner.ToolSurface
 }
 
 type inspector struct {
@@ -260,6 +264,17 @@ func (d *inspector) toolLines(width int) []string {
 	lines := []string{
 		headerLine(fmt.Sprintf("tools · %s mode · %d available", mode, total), width, palette.Primary.On),
 		"",
+	}
+	if surface := d.snapshot.ToolSurface; surface.Fingerprint != "" {
+		state := "stable"
+		if surface.Changed {
+			state = "changed"
+		}
+		lines = append(lines,
+			fmt.Sprintf("  surface: %d tools · %d bytes · %s", surface.Count, surface.JSONBytes, state),
+			fmt.Sprintf("  fingerprint: %s", surface.Fingerprint[:min(12, len(surface.Fingerprint))]),
+			"",
+		)
 	}
 	lines = append(lines, d.errorLines()...)
 	if len(d.snapshot.Errors) > 0 {
@@ -597,6 +612,7 @@ func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *
 	ctx := context.Background()
 	if session != nil && session.EventLog != nil {
 		s.EventLog = session.EventLog.Snapshot()
+		s.ToolSurface = session.Run.toolSurface
 	}
 	if live != nil {
 		ins := live.Inspect(ctx)

@@ -14,7 +14,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/checkpoint"
 	"github.com/zarldev/zarlmono/zkit/agent/hitl"
 	agentretrieval "github.com/zarldev/zarlmono/zkit/agent/retrieval"
-	"github.com/zarldev/zarlmono/zkit/agent/trace"
 	"github.com/zarldev/zarlmono/zkit/agent/workflow"
 	airetrieval "github.com/zarldev/zarlmono/zkit/ai/retrieval"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -100,7 +99,6 @@ func run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	runnable.Sink = &trace.WorkflowSink{Exporter: trace.NewJSONLExporter(stdout)}
 
 	out, _, err := runnable.InvokeState(ctx, Request{Query: "How do agents resume after human approval?"})
 	if err != nil {

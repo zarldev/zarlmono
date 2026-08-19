@@ -21,7 +21,7 @@ The codebase doesn't contain this function. The agent will:
 | Failure tracking | `guardrails.go` | `decomposeBucket` counts failures per signature |
 | Graduated response | `guardrails.go` | 1-2 pass, 3 advise, 4 fatal |
 | Verdict judge | `guardrails.go` | LLM shapes the advisory message |
-| Spawn recommendation | `guardrails.go` | Advisory suggests `spawn_agent` with specific agent |
+| Spawn recommendation | `guardrails.go` | Advisory suggests `agent_spawn` with specific agent |
 | Harness retry | `harness.go` | Parent re-drives with feedback after fatal |
 | World verification | `harness.go` | Oracle confirms function really doesn't exist |
 
@@ -45,7 +45,7 @@ Failure count │ Action          │ Model sees
 ──────────────┼─────────────────┼─────────────────────────────
 1             │ Pass through    │ (normal tool failure)
 2             │ Pass through    │ (normal tool failure)
-3             │ Advisory        │ "Consider using spawn_agent 
+3             │ Advisory        │ "Consider using agent_spawn
               │                 │  with researcher agent to do
               │                 │  a broader codebase search"
 4             │ Fatal           │ (guardrail blocks execution)
@@ -56,10 +56,10 @@ Failure count │ Action          │ Model sees
 
 ```sh
 # Deterministic scripted mode (no LLM)
-go run ./examples/stuck_recovery -scripted
+go run -C examples ./stuck_recovery -scripted
 
 # Real provider (shows actual LLM-based verdict)
-go run ./examples/stuck_recovery -provider openai -model gpt-4o-mini
+go run -C examples ./stuck_recovery -provider openai -model gpt-4o-mini
 ```
 
 ## Output
@@ -71,11 +71,11 @@ attempt 2/5: running
   → grep: pattern not found (failure 2/4 for signature)
 attempt 3/5: running
   → grep: pattern not found
-  ⚠ advisory: DecomposeGuardrail suggests: spawn_agent with researcher
+  ⚠ advisory: DecomposeGuardrail suggests: agent_spawn with researcher
 attempt 4/5: running
   → grep: BLOCKED by guardrail (failure 4/4)
 attempt 5/5: running with feedback
-  → spawn_agent (researcher, explore)
+  → agent_spawn (researcher, explore)
   ← Child completed: Function NonExistentHandler not found in codebase
 status=succeeded attempts=5 decompose_interventions=2
 ```
@@ -91,7 +91,7 @@ status=succeeded attempts=5 decompose_interventions=2
 ## Testing
 
 ```sh
-go test ./examples/stuck_recovery/
+go test -C examples ./stuck_recovery
 ```
 
 Tests verify:

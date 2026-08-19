@@ -3,9 +3,9 @@ package sensor_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/sensor"
@@ -47,48 +47,36 @@ func TestFunc_EmitsOnlyOnChange(t *testing.T) {
 }
 
 func TestRunner_FiresHandlerOnChange(t *testing.T) {
-	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
+		var tick atomic.Int32
+		s := sensor.NewFunc("t", 10*time.Millisecond, func(context.Context) (sensor.Observation, error) {
+			n := tick.Add(1)
+			if n > 3 {
+				return sensor.Observation{}, sensor.ErrNoChange
+			}
+			return sensor.Observation{Value: "v" + string('0'+n)}, nil
+		})
 
-	var tick atomic.Int32
-	s := sensor.NewFunc("t", 10*time.Millisecond, func(context.Context) (sensor.Observation, error) {
-		n := tick.Add(1)
-		if n > 3 {
-			return sensor.Observation{}, sensor.ErrNoChange
+		r := sensor.New()
+		r.Register(s)
+		seen := make(chan string, 3)
+		r.OnChange(func(_ context.Context, _ string, o sensor.Observation) { seen <- o.Value })
+		r.Start(ctx)
+		t.Cleanup(r.Stop)
+
+		for range 3 {
+			time.Sleep(100 * time.Millisecond)
 		}
-		return sensor.Observation{Value: "v" + string('0'+n)}, nil
-	})
-
-	r := sensor.New()
-	r.Register(s)
-	var mu sync.Mutex
-	var seen []string
-	r.OnChange(func(_ context.Context, _ string, o sensor.Observation) {
-		mu.Lock()
-		seen = append(seen, o.Value)
-		mu.Unlock()
-	})
-	r.Start(ctx)
-	t.Cleanup(func() { r.Stop() })
-
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		mu.Lock()
-		n := len(seen)
-		mu.Unlock()
-		if n >= 3 || time.Now().After(deadline) {
-			break
+		synctest.Wait()
+		for _, want := range []string{"v1", "v2", "v3"} {
+			if got := <-seen; got != want {
+				t.Errorf("handler value = %q, want %q", got, want)
+			}
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(seen) < 3 {
-		t.Fatalf("handler saw %v, want 3 distinct values", seen)
-	}
+	})
 }
 
 func TestRunner_IsRunningAndRemove(t *testing.T) {
@@ -138,29 +126,17 @@ func (f *fakeReactive) Start(ctx context.Context, emit func(sensor.Observation))
 func (f *fakeReactive) Stop() { close(f.stopped) }
 
 func TestRunner_RegisterReactiveStartsImmediately(t *testing.T) {
-	t.Parallel()
-
 	r := sensor.New()
 	got := make(chan string, 1)
-	r.OnChange(func(_ context.Context, _ string, o sensor.Observation) {
-		select {
-		case got <- o.Value:
-		default:
-		}
-	})
+	r.OnChange(func(_ context.Context, _ string, o sensor.Observation) { got <- o.Value })
 
 	rc := &fakeReactive{key: "rk", value: "first", stopped: make(chan struct{})}
-	r.RegisterReactive(rc)
-
-	select {
-	case v := <-got:
-		if v != "first" {
-			t.Errorf("got %q, want first", v)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("did not receive emitted value within 500ms")
+	if err := r.RegisterReactive(rc); err != nil {
+		t.Fatalf("RegisterReactive: %v", err)
 	}
-
+	if got := <-got; got != "first" {
+		t.Errorf("got %q, want first", got)
+	}
 	if !r.Remove("rk") {
 		t.Error("Remove(rk) returned false")
 	}

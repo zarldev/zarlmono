@@ -1,8 +1,10 @@
 package cache_test
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/filesystem"
@@ -46,6 +48,50 @@ func TestCache_Contract(t *testing.T) {
 func testCacheContract(t *testing.T, c cache.Cache[string, int]) {
 	t.Helper()
 	ctx := t.Context()
+
+	t.Run("canceled and expired contexts", func(t *testing.T) {
+		contexts := []struct {
+			name string
+			new  func() (context.Context, context.CancelFunc)
+		}{
+			{
+				name: "canceled",
+				new: func() (context.Context, context.CancelFunc) {
+					ctx, cancel := context.WithCancel(t.Context())
+					cancel()
+					return ctx, func() {}
+				},
+			},
+			{
+				name: "deadline exceeded",
+				new: func() (context.Context, context.CancelFunc) {
+					return context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+				},
+			},
+		}
+		for _, tc := range contexts {
+			t.Run(tc.name, func(t *testing.T) {
+				operationCtx, cancel := tc.new()
+				defer cancel()
+				want := operationCtx.Err()
+				if err := c.Set(operationCtx, "key", 1); !errors.Is(err, want) {
+					t.Errorf("Set() error = %v, want %v", err, want)
+				}
+				if _, err := c.Get(operationCtx, "key"); !errors.Is(err, want) {
+					t.Errorf("Get() error = %v, want %v", err, want)
+				}
+				if _, err := c.Delete(operationCtx, "key"); !errors.Is(err, want) {
+					t.Errorf("Delete() error = %v, want %v", err, want)
+				}
+				if _, err := c.Len(operationCtx); !errors.Is(err, want) {
+					t.Errorf("Len() error = %v, want %v", err, want)
+				}
+				if err := c.Clear(operationCtx); !errors.Is(err, want) {
+					t.Errorf("Clear() error = %v, want %v", err, want)
+				}
+			})
+		}
+	})
 
 	t.Run("Get operations", func(t *testing.T) {
 		tests := []struct {

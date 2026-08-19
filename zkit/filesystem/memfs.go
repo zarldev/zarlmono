@@ -3,6 +3,7 @@ package filesystem
 import (
 	"bytes"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,12 +13,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zsync"
 )
 
-var (
-	_ ReadWriteFileFS = (*MemFS)(nil)
-)
-
 // MemFS provides an in-memory filesystem implementation.
-// It implements ReadWriteFileFS and is safe for concurrent use.
+// It is safe for concurrent use.
 type MemFS struct {
 	files *zsync.Map[string, *memFile]
 }
@@ -105,7 +102,7 @@ func (mfs *MemFS) MkdirAll(path string, perm fs.FileMode) error {
 // open on an existing file would also silently overwrite — the
 // adversarial review's "MemFS OpenFile semantics are incomplete"
 // finding.
-func (mfs *MemFS) OpenFile(name string, flag int, perm fs.FileMode) (File, error) {
+func (mfs *MemFS) OpenFile(name string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error) {
 	writable := flag&(os.O_WRONLY|os.O_RDWR) != 0 || flag&os.O_CREATE != 0
 	if !writable {
 		file, err := mfs.files.Get(name)

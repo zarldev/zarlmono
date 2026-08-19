@@ -19,7 +19,7 @@ type liveComputer struct {
 }
 
 func (c *liveComputer) Observe(ctx context.Context, req model.ObserveRequest) (model.Observation, error) {
-	s, err := c.sessionFor()
+	s, err := c.sessionFor(ctx)
 	if err != nil {
 		return model.Observation{}, err
 	}
@@ -39,7 +39,7 @@ func newBrowserSession(ctx context.Context, opts ...browser.Option) (computerSes
 }
 
 func (c *liveComputer) Act(ctx context.Context, req model.ActionRequest) (model.Observation, error) {
-	s, err := c.sessionFor()
+	s, err := c.sessionFor(ctx)
 	if err != nil {
 		return model.Observation{}, err
 	}
@@ -60,7 +60,7 @@ func (c *liveComputer) Close() error {
 	return nil
 }
 
-func (c *liveComputer) sessionFor() (computerSession, error) {
+func (c *liveComputer) sessionFor(ctx context.Context) (computerSession, error) {
 	if c == nil || c.owner == nil {
 		return nil, errors.New("computer browser backend is not configured")
 	}
@@ -72,7 +72,7 @@ func (c *liveComputer) sessionFor() (computerSession, error) {
 
 	var opts []browser.Option
 	if settings := c.owner.settings; settings != nil {
-		if cp := settings.ChromeBinPath(c.owner.parentContext()); cp != "" {
+		if cp := settings.ChromeBinPath(ctx); cp != "" {
 			opts = append(opts, browser.WithChromePath(cp))
 		}
 	}
@@ -80,11 +80,9 @@ func (c *liveComputer) sessionFor() (computerSession, error) {
 	if newSession == nil {
 		newSession = newBrowserSession
 	}
-	// A browser session spans tool calls and turns, so its lifetime must be
-	// rooted in the application context. The dispatch context is canceled as
-	// soon as the current tool returns, which would kill a session created by
-	// the first computer_observe before the next call can reuse it.
-	s, err := newSession(c.owner.parentContext(), opts...)
+	// The owned session spans tool calls and is closed by LiveRunner.Close. Detach
+	// only cancellation; request values remain available during session setup.
+	s, err := newSession(context.WithoutCancel(ctx), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("start computer browser backend: %w", err)
 	}

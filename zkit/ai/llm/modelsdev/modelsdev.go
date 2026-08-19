@@ -19,6 +19,7 @@ const (
 	providerGoogle = "google"
 	snapshotKey    = "models.dev"
 	defaultTTL     = 6 * time.Hour
+	snapshotSchema = 2
 )
 
 // fetchClient is the shared client for models.dev/api.json. zhttp's
@@ -26,20 +27,32 @@ const (
 // transient failures.
 var fetchClient = zhttp.NewClient(zhttp.WithUserAgent("zarlmono/1"))
 
-// Entry is a single model's metadata parsed from models.dev.
-type Entry struct {
+// Intrinsic is provider-independent model metadata parsed from models.dev.
+type Intrinsic struct {
+	ContextWindow    int
+	MaxOutputTokens  int
+	SupportsTools    bool
+	SupportsVision   bool
+	SupportsThinking bool
+	SupportsVideo    bool
+}
+
+// Pricing is a provider-specific model price in USD per million tokens.
+type Pricing struct {
 	InputCostPerMTok  float64
 	OutputCostPerMTok float64
-	ContextWindow     int
-	MaxOutputTokens   int
-	SupportsTools     bool
-	SupportsVision    bool
-	SupportsThinking  bool
-	SupportsVideo     bool
+}
+
+// Entry composes provider-independent model metadata with provider-specific
+// pricing from a models.dev provider catalogue entry.
+type Entry struct {
+	Intrinsic
+	Pricing
 }
 
 // Snapshot is the cached whole-fetch blob.
 type Snapshot struct {
+	Schema    int                         `json:"schema"`
 	FetchedAt time.Time                   `json:"fetched_at"`
 	Entries   map[string]map[string]Entry `json:"entries"`
 }
@@ -97,6 +110,67 @@ func (s *Source) Lookup(ctx context.Context, providerKey, model string) (Entry, 
 	return e, ok
 }
 
+// LookupIntrinsic returns provider-independent metadata for a model name. It
+// is used when an endpoint serves a model owned by another provider. Exact
+// provider lookup remains authoritative for pricing; this method returns no
+// match when matching catalogue entries disagree on intrinsic limits or
+// capabilities.
+func (s *Source) LookupIntrinsic(ctx context.Context, model string) (Intrinsic, bool) {
+	snap, ok, _ := s.ensureSnapshot(ctx)
+	if !ok {
+		return Intrinsic{}, false
+	}
+	full := normalizeModelID(model)
+	if full == "" {
+		return Intrinsic{}, false
+	}
+	if entry, ok := intrinsicConsensus(snap, full, false); ok {
+		return entry, true
+	}
+	base := modelBaseName(full)
+	if base == full {
+		return Intrinsic{}, false
+	}
+	return intrinsicConsensus(snap, base, true)
+}
+
+func intrinsicConsensus(snap Snapshot, model string, baseName bool) (Intrinsic, bool) {
+	var consensus Intrinsic
+	found := false
+	for _, models := range snap.Entries {
+		for id, entry := range models {
+			candidate := normalizeModelID(id)
+			if baseName {
+				candidate = modelBaseName(candidate)
+			}
+			if candidate != model {
+				continue
+			}
+			intrinsic := entry.Intrinsic
+			if !found {
+				consensus = intrinsic
+				found = true
+				continue
+			}
+			if intrinsic != consensus {
+				return Intrinsic{}, false
+			}
+		}
+	}
+	return consensus, found
+}
+
+func normalizeModelID(model string) string {
+	return strings.ToLower(strings.TrimSpace(model))
+}
+
+func modelBaseName(model string) string {
+	if i := strings.LastIndexByte(model, '/'); i >= 0 && i+1 < len(model) {
+		return model[i+1:]
+	}
+	return model
+}
+
 // Warm ensures a fresh-enough snapshot is cached, fetching one when the
 // cache is empty or stale. Call it once at startup (in a
 // lifecycle-managed goroutine) so subsequent Lookup calls are cache hits
@@ -116,7 +190,7 @@ func (s *Source) Warm(ctx context.Context) error {
 // it even when a stale snapshot is still served.
 func (s *Source) ensureSnapshot(ctx context.Context) (Snapshot, bool, error) {
 	snap, gerr := s.store.Get(ctx, snapshotKey)
-	gotFromCache := gerr == nil
+	gotFromCache := gerr == nil && snap.Schema == snapshotSchema
 	if gotFromCache && time.Since(snap.FetchedAt) <= s.ttl {
 		return snap, true, nil
 	}
@@ -180,27 +254,33 @@ func (s *Source) fetch(ctx context.Context) (Snapshot, error) {
 			continue
 		}
 		models := make(map[string]Entry, len(p.Models))
-		for _, m := range p.Models {
+		for id, m := range p.Models {
+			if m.ID == "" {
+				m.ID = id
+			}
 			if m.ID == "" {
 				continue
 			}
-			e := Entry{
+			e := Entry{Intrinsic: Intrinsic{
 				ContextWindow:    m.Limit.Context,
 				MaxOutputTokens:  m.Limit.Output,
 				SupportsTools:    m.ToolCall,
 				SupportsThinking: m.Reasoning,
 				SupportsVision:   hasVision(m.Modalities.Input),
 				SupportsVideo:    hasVideo(m.Modalities.Input),
-			}
+			}}
 			if m.Cost.Input > 0 || m.Cost.Output > 0 {
-				e.InputCostPerMTok = m.Cost.Input
-				e.OutputCostPerMTok = m.Cost.Output
+				e.Pricing = Pricing{
+					InputCostPerMTok:  m.Cost.Input,
+					OutputCostPerMTok: m.Cost.Output,
+				}
 			}
 			models[m.ID] = e
 		}
 		entries[providerKey] = models
 	}
 	return Snapshot{
+		Schema:    snapshotSchema,
 		FetchedAt: time.Now(),
 		Entries:   entries,
 	}, nil
@@ -227,7 +307,7 @@ func hasVideo(inputs []string) bool {
 // --- wire types for deserialisation ---
 
 type providerWire struct {
-	Models []modelWire `json:"models"`
+	Models map[string]modelWire `json:"models"`
 }
 
 type modelWire struct {

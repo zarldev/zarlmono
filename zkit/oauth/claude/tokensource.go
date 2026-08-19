@@ -54,14 +54,14 @@ func NewTokenSource(svc *prefs.Service) *tokenSource {
 func (s *tokenSource) Token(ctx context.Context) (claudecode.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cred, ok, err := s.readCred(ctx)
+	cred, err := s.readCred(ctx)
 	if err != nil {
+		if errors.Is(err, prefs.ErrNotFound) {
+			return claudecode.Token{}, errors.New(
+				"claudecode: not signed in — sign in to Claude Code first",
+			)
+		}
 		return claudecode.Token{}, err
-	}
-	if !ok {
-		return claudecode.Token{}, errors.New(
-			"claudecode: not signed in — sign in to Claude Code first",
-		)
 	}
 	tok := cred.toToken()
 	if tok.Access == "" {
@@ -75,15 +75,15 @@ func (s *tokenSource) Token(ctx context.Context) (claudecode.Token, error) {
 	return tok, nil
 }
 
-func (s *tokenSource) readCred(ctx context.Context) (cred, bool, error) {
-	kv, ok, err := s.svc.GetKeyEffective(ctx, CredProvider)
-	if err != nil || !ok {
-		return cred{}, ok, err
+func (s *tokenSource) readCred(ctx context.Context) (cred, error) {
+	kv, err := s.svc.GetKeyEffective(ctx, CredProvider)
+	if err != nil {
+		return cred{}, err
 	}
 	var c cred
 	if err := json.Unmarshal([]byte(kv.Value), &c); err != nil {
-		return cred{}, false, fmt.Errorf(
+		return cred{}, fmt.Errorf(
 			"claudecode: stored credential is not valid JSON — sign in to Claude Code again: %w", err)
 	}
-	return c, true, nil
+	return c, nil
 }

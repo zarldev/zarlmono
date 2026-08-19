@@ -51,43 +51,11 @@ func TestResolveBuildPromptDir(t *testing.T) {
 			files: map[string]string{
 				home.PreferencesFile:    "Prefer concise responses.",
 				home.PromptOverrideFile: "custom override",
-				home.LegacyPromptFile:   "legacy override",
 			},
 			wantMode: home.PromptExplicitOverride,
 			wantBody: "custom override",
 			noPrefs:  true,
 			wantDiag: "preferences.md is skipped",
-		},
-		{
-			name: "known seed legacy prompt is ignored",
-			files: map[string]string{
-				home.LegacyPromptFile: embedded,
-			},
-			wantMode: home.PromptEmbeddedCore,
-			wantBody: embedded,
-			noPrefs:  true,
-			wantDiag: "matches a shipped seed",
-		},
-		{
-			name: "empty legacy prompt is ignored",
-			files: map[string]string{
-				home.LegacyPromptFile: "  \n",
-			},
-			wantMode: home.PromptEmbeddedCore,
-			wantBody: embedded,
-			noPrefs:  true,
-			wantDiag: "ignoring empty legacy",
-		},
-		{
-			name: "unknown legacy prompt preserves full override behavior",
-			files: map[string]string{
-				home.PreferencesFile:  "Prefer concise responses.",
-				home.LegacyPromptFile: "legacy custom",
-			},
-			wantMode: home.PromptLegacyOverride,
-			wantBody: "legacy custom",
-			noPrefs:  true,
-			wantDiag: "using customized legacy prompt.md",
 		},
 	}
 
@@ -143,13 +111,6 @@ func TestResolveBuildPromptDirReportsReadErrors(t *testing.T) {
 	}
 }
 
-func TestIsKnownLegacyPromptSeedAcceptsCurrentDefaultBody(t *testing.T) {
-	body := "current embedded body"
-	if !home.IsKnownLegacyPromptSeed([]byte(body), body) {
-		t.Fatal("exact current default body should be treated as an untouched seed")
-	}
-}
-
 func diagnosticsContain(diags []string, want string) bool {
 	for _, diag := range diags {
 		if strings.Contains(diag, want) {
@@ -162,7 +123,7 @@ func diagnosticsContain(diags []string, want string) bool {
 func snapshotFiles(t *testing.T, dir string) string {
 	t.Helper()
 	var out strings.Builder
-	for _, name := range []string{home.PreferencesFile, home.PromptOverrideFile, home.LegacyPromptFile} {
+	for _, name := range []string{home.PreferencesFile, home.PromptOverrideFile} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if os.IsNotExist(err) {
 			continue

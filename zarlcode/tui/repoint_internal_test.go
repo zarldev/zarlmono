@@ -25,7 +25,7 @@ func TestMaybeRepoint_UnchangedReturnsNilMsg(t *testing.T) {
 	}
 	m := New()
 	m.SetSettings(s)
-	m.SetLiveRunner(engine.NewLiveRunner(nil, ws, nil, "local"))
+	m.SetLiveRunner(engine.NewLiveRunner(nil, ws, "local"))
 
 	fb := engine.ProviderSpec{Name: "llamacpp", Model: "local"}
 	m.SetProviderContext(fb, s.ActiveProvider(ctx, fb))
@@ -48,7 +48,7 @@ func TestHandleRepointMsg_AppliesSwitch(t *testing.T) {
 	}
 	m := New()
 	m.SetSettings(s)
-	live := engine.NewLiveRunner(nil, ws, nil, "old-model")
+	live := engine.NewLiveRunner(nil, ws, "old-model")
 	m.SetLiveRunner(live)
 	m.SetProviderContext(engine.ProviderSpec{Name: "llamacpp", Model: "local"}, engine.ProviderSpec{Name: "llamacpp", Model: "old-model"})
 
@@ -88,7 +88,7 @@ func TestHandleRepointMsg_RefreshesCostBasis(t *testing.T) {
 	}
 	m := New()
 	m.SetSettings(s)
-	m.SetLiveRunner(engine.NewLiveRunner(nil, ws, nil, "local"))
+	m.SetLiveRunner(engine.NewLiveRunner(nil, ws, "local"))
 	m.session.Run.local = true // started on a local backend
 
 	// handleRepointMsg derives the cost basis from the spec (name/model), not
@@ -116,7 +116,7 @@ func TestApplyLimits_FlowsSettingsToRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := engine.NewLiveRunner(nil, ws, nil, "m")
+	live := engine.NewLiveRunner(nil, ws, "m")
 	m := New()
 	m.SetSettings(s)
 	m.SetLiveRunner(live)
@@ -138,7 +138,7 @@ func TestApplyLimits_FlowsSettingsToRunner(t *testing.T) {
 
 func TestHandleRepointMsg_ErrorIsNoticed(t *testing.T) {
 	m := New()
-	m.SetLiveRunner(engine.NewLiveRunner(nil, code.Workspace{}, nil, "m"))
+	m.SetLiveRunner(engine.NewLiveRunner(nil, code.Workspace{}, "m"))
 	if !m.handleRepointMsg(providerRepointedMsg{err: errors.New("boom")}) {
 		t.Fatal("error repoint message should be consumed")
 	}

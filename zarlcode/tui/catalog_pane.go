@@ -49,6 +49,7 @@ type catalogPane struct {
 
 	status   string
 	statusAt time.Time
+	revision uint64
 }
 
 func newAgentsPane(s *engine.Settings) *catalogPane {
@@ -76,6 +77,7 @@ func (p *catalogPane) reload(s *engine.Settings) {
 		p.wsRoot = wsRootOf(s)
 	}
 	p.rows = p.rows[:0]
+	p.revision++
 	var errs []error
 	switch p.kind {
 	case kindAgent:
@@ -364,6 +366,7 @@ func (p *catalogPane) bodyLines(r catalogRow, width int) []string {
 		tone:       toneMuted,
 		stripANSI:  true,
 		cacheKey:   "catalog:" + r.name,
+		revision:   p.revision,
 	})...)
 	return out
 }

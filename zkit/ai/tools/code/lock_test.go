@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -25,6 +25,8 @@ func TestWorkspaceLockPathSerialisesConcurrentHolders(t *testing.T) {
 		peak   int32
 		wg     sync.WaitGroup
 	)
+	acquired := make(chan struct{}, n)
+	release := make(chan struct{})
 	wg.Add(n)
 	for range n {
 		go func() {
@@ -39,11 +41,17 @@ func TestWorkspaceLockPathSerialisesConcurrentHolders(t *testing.T) {
 					break
 				}
 			}
-			time.Sleep(10 * time.Millisecond)
+			acquired <- struct{}{}
+			<-release
 		}()
 	}
-	wg.Wait()
 
+	<-acquired
+	if got := atomic.LoadInt32(&peak); got != 1 {
+		t.Fatalf("peak concurrent holders=%d before release, want 1", got)
+	}
+	close(release)
+	wg.Wait()
 	if got := atomic.LoadInt32(&peak); got != 1 {
 		t.Errorf("peak concurrent holders=%d, want 1 (LockPath should serialise same-key callers)", got)
 	}
@@ -60,19 +68,22 @@ func TestWorkspaceLockPathDoesNotBlockDifferentPaths(t *testing.T) {
 	a := ws.LockPath("/path/a")
 	defer a()
 
-	done := make(chan struct{})
-	go func() {
-		b := ws.LockPath("/path/b")
-		b()
-		close(done)
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		done := make(chan struct{})
+		go func() {
+			b := ws.LockPath("/path/b")
+			b()
+			close(done)
+		}()
 
-	select {
-	case <-done:
-		// expected: different keys take independent locks
-	case <-time.After(500 * time.Millisecond):
-		t.Fatalf("LockPath blocked across distinct keys")
-	}
+		synctest.Wait()
+		select {
+		case <-done:
+			// expected: different keys take independent locks
+		default:
+			t.Fatal("LockPath blocked across distinct keys")
+		}
+	})
 }
 
 func TestWriteEditConcurrentSerialisedByPathLock(t *testing.T) {

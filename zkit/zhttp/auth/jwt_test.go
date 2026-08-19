@@ -64,13 +64,12 @@ func TestMintAccessFromRefresh_AcceptsValidRefreshToken(t *testing.T) {
 
 func TestMintAccessFromRefresh_RejectsExpiredRefresh(t *testing.T) {
 	t.Parallel()
-	// Refresh TTL of 1ns → token is born expired.
-	mgr := auth.NewJWTManager("test-secret-key-32-bytes-or-more", time.Hour, time.Nanosecond)
+	// A negative TTL creates a token whose expiration is deterministically past.
+	mgr := auth.NewJWTManager("test-secret-key-32-bytes-or-more", time.Hour, -time.Hour)
 	pair, err := mgr.GenerateTokenPair(uuid.New(), "alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
-	time.Sleep(2 * time.Millisecond) // ensure exp is in the past
 	if _, err := mgr.MintAccessFromRefresh(pair.RefreshToken); err == nil {
 		t.Error("MintAccessFromRefresh accepted an expired refresh token; want error")
 	}

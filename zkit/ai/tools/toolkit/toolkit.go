@@ -67,7 +67,7 @@ type Handler interface {
 }
 
 // Tool is the typed handler builder. Args is the JSON shape the
-// runner sends; Out is whatever the handler returns. SchemaFor[Args]
+// runner sends; Out is whatever the handler returns. tools.SchemaFor[Args]
 // derives the JSON Schema automatically.
 type Tool[Args any, Out any] struct {
 	// Name is the registered tool name. Must match
@@ -87,7 +87,7 @@ func (t Tool[Args, Out]) Describe() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        t.Name,
 		Description: t.Description,
-		Parameters:  SchemaFor[Args](),
+		Parameters:  tools.SchemaFor[Args](),
 	}
 }
 

@@ -149,15 +149,15 @@ func TestRenderContentBlock_ToolResultLoadSkillRendersMarkdown(t *testing.T) {
 	out := renderContentBlock(80, contentBlock{
 		kind:     contentToolResult,
 		text:     "# Skill\n\nUse **care**.",
-		toolName: "load_skill",
+		toolName: "skill_load",
 	})
 
 	plain := ansi.Strip(strings.Join(out, "\n"))
 	if strings.Contains(plain, "# Skill") || strings.Contains(plain, "**care**") {
-		t.Fatalf("load_skill result should render markdown instead of raw markers:\n%s", plain)
+		t.Fatalf("skill_load result should render markdown instead of raw markers:\n%s", plain)
 	}
 	if !strings.Contains(plain, "Skill") || !strings.Contains(plain, "care") {
-		t.Fatalf("load_skill result lost markdown content:\n%s", plain)
+		t.Fatalf("skill_load result lost markdown content:\n%s", plain)
 	}
 }
 

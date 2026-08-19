@@ -15,15 +15,20 @@ import (
 
 type fakeKeyService struct{}
 
-func (fakeKeyService) GetKey(context.Context, string) (string, bool, error) { return "", false, nil }
-func (fakeKeyService) HasVault() bool                                       { return false }
+func (fakeKeyService) GetKey(context.Context, string) (string, error) {
+	return "", backends.ErrKeyNotFound
+}
+func (fakeKeyService) HasVault() bool { return false }
 
 // fakeVault is a backends.SettingsService with a populated, name-keyed vault.
 type fakeVault struct{ keys map[string]string }
 
-func (f fakeVault) GetKey(_ context.Context, provider string) (string, bool, error) {
+func (f fakeVault) GetKey(_ context.Context, provider string) (string, error) {
 	k, ok := f.keys[provider]
-	return k, ok, nil
+	if !ok {
+		return "", backends.ErrKeyNotFound
+	}
+	return k, nil
 }
 func (fakeVault) HasVault() bool { return true }
 

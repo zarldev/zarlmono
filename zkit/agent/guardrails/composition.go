@@ -80,10 +80,11 @@ const (
 // schema, in order. "Post-schema" is the chain position; the returned set mixes
 // PreCall and PostCall guardrails.
 func PostSchemaGuardrails(deps Deps) []Guardrail {
-	decompose := NewDecomposeGuardrail(0)
+	decomposeOpts := make([]DecomposeGuardrailOption, 0, 1)
 	if deps.DecomposeJudge != nil {
-		decompose = decompose.WithJudge(deps.DecomposeJudge)
+		decomposeOpts = append(decomposeOpts, WithDecomposeJudge(deps.DecomposeJudge))
 	}
+	decompose := NewDecomposeGuardrail(0, decomposeOpts...)
 
 	guards := []Guardrail{
 		NewShellGuardrail(code.ToolNameBash, WithShellLenient(deps.ShellLenient)),

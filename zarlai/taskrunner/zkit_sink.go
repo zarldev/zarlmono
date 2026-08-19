@@ -67,6 +67,8 @@ type taskEventSink struct {
 	pending map[string]map[string]any // ToolID -> arguments, awaiting completion
 }
 
+var _ runner.EventSink = (*taskEventSink)(nil)
+
 // newTaskEventSink builds the per-task sink. taskCtx is the task's run
 // context; its cancellation is stripped for the logging path so
 // terminal tool-call rows still persist.

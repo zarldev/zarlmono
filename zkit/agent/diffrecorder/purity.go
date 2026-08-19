@@ -1,8 +1,6 @@
 package diffrecorder
 
 import (
-	"maps"
-
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -56,17 +54,6 @@ func NewClassifier() Classifier {
 			code.ToolNameApplyPatch:  Recordable,
 		},
 	}
-}
-
-// WithOverride returns a classifier where name maps to p. Useful when
-// a workspace ships custom tools the default registry doesn't know
-// about — register them as Recordable so the Files pane picks up
-// their diffs.
-func (c Classifier) WithOverride(name tools.ToolName, p Purity) Classifier {
-	out := Classifier{overrides: make(map[tools.ToolName]Purity, len(c.overrides)+1)}
-	maps.Copy(out.overrides, c.overrides)
-	out.overrides[name] = p
-	return out
 }
 
 // Classify returns the purity for the given tool name. Unrecognised

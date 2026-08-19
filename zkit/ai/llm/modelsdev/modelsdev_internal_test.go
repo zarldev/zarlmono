@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/cache"
 )
@@ -86,6 +87,15 @@ func stubAPI(t *testing.T) *httptest.Server {
 				},
 			},
 		},
+	}
+	for _, provider := range payload {
+		block := provider.(map[string]any)
+		list := block["models"].([]map[string]any)
+		models := make(map[string]any, len(list))
+		for _, model := range list {
+			models[model["id"].(string)] = model
+		}
+		block["models"] = models
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -192,6 +202,63 @@ func TestSource_Lookup(t *testing.T) {
 	_, ok = src.Lookup(t.Context(), "llamacpp", "qwen3")
 	if ok {
 		t.Error("llamacpp (local) should not be found in models.dev")
+	}
+}
+
+func TestSource_LookupIntrinsic_NormalizedUniqueMatch(t *testing.T) {
+	store := cache.NewMemoryCache[string, Snapshot]()
+	snapshot := Snapshot{
+		Schema:    snapshotSchema,
+		FetchedAt: time.Now(),
+		Entries: map[string]map[string]Entry{
+			"openai": {
+				"GPT-4O": {Intrinsic: Intrinsic{ContextWindow: 128000, SupportsTools: true, SupportsVision: true}, Pricing: Pricing{InputCostPerMTok: 5}},
+			},
+		},
+	}
+	if err := store.Set(t.Context(), snapshotKey, snapshot); err != nil {
+		t.Fatalf("set snapshot: %v", err)
+	}
+
+	entry, ok := New(store).LookupIntrinsic(t.Context(), "gateway/GPT-4O")
+	if !ok {
+		t.Fatal("namespaced normalized model should match")
+	}
+	want := Intrinsic{ContextWindow: 128000, SupportsTools: true, SupportsVision: true}
+	if entry != want {
+		t.Fatalf("intrinsic metadata = %+v, want %+v", entry, want)
+	}
+}
+
+func TestSource_LookupIntrinsic_AmbiguousMetadataDoesNotMatch(t *testing.T) {
+	store := cache.NewMemoryCache[string, Snapshot]()
+	snapshot := Snapshot{
+		Schema:    snapshotSchema,
+		FetchedAt: time.Now(),
+		Entries: map[string]map[string]Entry{
+			"one": {"model": {Intrinsic: Intrinsic{ContextWindow: 100000}}},
+			"two": {"model": {Intrinsic: Intrinsic{ContextWindow: 200000}}},
+		},
+	}
+	if err := store.Set(t.Context(), snapshotKey, snapshot); err != nil {
+		t.Fatalf("set snapshot: %v", err)
+	}
+	if _, ok := New(store).LookupIntrinsic(t.Context(), "gateway/model"); ok {
+		t.Fatal("conflicting intrinsic metadata must not match")
+	}
+}
+
+func TestSource_DecodesObjectShapedModels(t *testing.T) {
+	payload := `{"openai":{"models":{"gpt-object":{"tool_call":true,"limit":{"context":64000}}}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	t.Cleanup(srv.Close)
+
+	src := New(cache.NewMemoryCache[string, Snapshot](), WithBaseURL(srv.URL), WithTTL(0))
+	entry, ok := src.Lookup(t.Context(), "openai", "gpt-object")
+	if !ok || entry.ContextWindow != 64000 || !entry.SupportsTools {
+		t.Fatalf("object-shaped model = %+v ok=%v", entry, ok)
 	}
 }
 

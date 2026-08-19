@@ -144,7 +144,7 @@ func (d *settingsDialog) rowSourceLabel(r *settingsRow) string {
 // themeSource returns the persisted theme name + the scope it resolved from.
 func (d *settingsDialog) themeSource() (string, string) {
 	if d.s != nil && d.s.Svc != nil {
-		if v, ok, err := d.s.Svc.GetSetting(d.ctx, prefs.ScopeEffective, prefs.KeyTheme); err == nil && ok && v.Value != "" {
+		if v, err := d.s.Svc.GetSetting(d.ctx, prefs.ScopeEffective, prefs.KeyTheme); err == nil && v.Value != "" {
 			return v.Value, v.Source.String()
 		}
 	}

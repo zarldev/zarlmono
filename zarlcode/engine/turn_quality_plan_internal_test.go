@@ -12,7 +12,7 @@ import (
 
 func TestPlanAwareTurnQuality_IgnoresCompletedPlan(t *testing.T) {
 	t.Parallel()
-	store := &livePlanStore{}
+	store := newLivePlanStore()
 	q, ok := newPlanAwareTurnQuality(store, func() bool { return false }).(*planAwareTurnQuality)
 	if !ok {
 		t.Fatal("newPlanAwareTurnQuality should return *planAwareTurnQuality")
@@ -26,7 +26,7 @@ func TestPlanAwareTurnQuality_IgnoresCompletedPlan(t *testing.T) {
 
 func TestPlanAwareTurnQuality_InjectsWhenRunUpdatedPlanButLeftStepsOpen(t *testing.T) {
 	t.Parallel()
-	store := &livePlanStore{}
+	store := newLivePlanStore()
 	q, ok := newPlanAwareTurnQuality(store, func() bool { return false }).(*planAwareTurnQuality)
 	if !ok {
 		t.Fatal("newPlanAwareTurnQuality should return *planAwareTurnQuality")
@@ -47,7 +47,7 @@ func TestPlanAwareTurnQuality_InjectsWhenRunUpdatedPlanButLeftStepsOpen(t *testi
 
 func TestPlanAwareTurnQuality_IgnoresStaleIncompletePlanFromEarlierTurn(t *testing.T) {
 	t.Parallel()
-	store := &livePlanStore{}
+	store := newLivePlanStore()
 	store.SetPlan(code.Plan{Steps: []code.PlanStep{{Text: "old", Status: code.StepStatuses.PENDING}}})
 	q, ok := newPlanAwareTurnQuality(store, func() bool { return false }).(*planAwareTurnQuality)
 	if !ok {
@@ -61,7 +61,7 @@ func TestPlanAwareTurnQuality_IgnoresStaleIncompletePlanFromEarlierTurn(t *testi
 
 func TestPlanAwareTurnQuality_DisabledInPlanMode(t *testing.T) {
 	t.Parallel()
-	store := &livePlanStore{}
+	store := newLivePlanStore()
 	q, ok := newPlanAwareTurnQuality(store, func() bool { return true }).(*planAwareTurnQuality)
 	if !ok {
 		t.Fatal("newPlanAwareTurnQuality should return *planAwareTurnQuality")
@@ -75,7 +75,7 @@ func TestPlanAwareTurnQuality_DisabledInPlanMode(t *testing.T) {
 
 func TestPlanAwareTurnQuality_PreservesEmptyResponseDetector(t *testing.T) {
 	t.Parallel()
-	store := &livePlanStore{}
+	store := newLivePlanStore()
 	q, ok := newPlanAwareTurnQuality(store, func() bool { return false }).(*planAwareTurnQuality)
 	if !ok {
 		t.Fatal("newPlanAwareTurnQuality should return *planAwareTurnQuality")

@@ -45,9 +45,9 @@ func rawToolArg(name string, params map[string]any) string {
 		return get("pattern", "query", "regex", "regexp")
 	case "glob", "ls", "list", "list_dir":
 		return get("pattern", "path", "glob", "dir")
-	case "load_skill":
+	case "skill_load":
 		return get("name")
-	case "spawn_agent", "agent", "task":
+	case "agent_spawn", "agent", "task":
 		prompt := get("prompt", "task", "goal", "objective")
 		if agent := get("agent"); agent != "" {
 			if prompt != "" {

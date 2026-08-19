@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,102 +18,72 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-// streamForeverProvider yields a chunk every 20ms forever, ignoring ctx —
-// a runaway generation that STREAMS steadily (so the stream-idle watchdog
-// never fires). The only thing that can bound it is the iteration
-// wall-clock timeout. Models that burn their whole budget emitting
-// thinking tokens look exactly like this: chunks keep coming, nothing
-// useful is produced, and the iteration never ends on its own.
+// streamForeverProvider yields chunks until the consumer stops the sequence.
 type streamForeverProvider struct{ thinkingOnly bool }
 
 func (p streamForeverProvider) Name() string { return "stream-forever" }
 
-func (p streamForeverProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p streamForeverProvider) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
 	return func(yield func(llm.CompletionChunk, error) bool) {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
 		for {
 			chunk := llm.CompletionChunk{Content: "tok "}
 			if p.thinkingOnly {
 				chunk = llm.CompletionChunk{Thinking: "reasoning "}
 			}
 			if !yield(chunk, nil) {
-				return // consumer stopped ranging (iterCtx fired) — unwind
+				return
 			}
-			time.Sleep(20 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
 	}, nil
 }
 
-// TestRunner_IterationTimeoutBoundsStreamingGeneration is the decisive
-// check for the unseen-run anomaly: a task ran 10m47s on one iteration
-// while the iteration cap supposedly applied. A continuously-streaming
-// generation must be cut by the iteration timeout even though the idle
-// watchdog (gap between chunks) never trips. (The live overrun was timer
-// starvation under a saturated box, not broken logic — this proves the
-// logic; the token/thinking budgets are the load-independent bound.)
 func TestRunner_IterationTimeoutBoundsStreamingGeneration(t *testing.T) {
-	t.Parallel()
-	r := runner.New(
-		runner.ClientFromProvider(streamForeverProvider{thinkingOnly: true}),
-		runner.WithTools(tools.NewRegistry()),
-		runner.WithMaxIterations(1),
-		runner.WithIterationTimeout(200*time.Millisecond),
-		runner.WithStreamIdleTimeout(10*time.Second), // long: must NOT be what saves us
-		runner.WithEmptyStreamBackoff(0),
-	)
+	synctest.Test(t, func(t *testing.T) {
+		r := runner.New(
+			runner.ClientFromProvider(streamForeverProvider{thinkingOnly: true}),
+			runner.WithTools(tools.NewRegistry()),
+			runner.WithMaxIterations(1),
+			runner.WithIterationTimeout(200*time.Millisecond),
+			runner.WithStreamIdleTimeout(10*time.Second),
+			runner.WithEmptyStreamBackoff(0),
+		)
 
-	done := make(chan runner.TaskResult, 1)
-	go func() {
-		done <- r.Run(t.Context(), runner.TaskSpec{
-			ID:     taskscope.ID(uuid.NewString()),
-			Prompt: "go",
-		})
-	}()
-
-	select {
-	case res := <-done:
-		// It returned promptly — the iteration timeout did its job. (Reason
-		// can be max-iterations or error depending on recovery; the property
-		// under test is that it TERMINATED quickly, not how it's labelled.)
-		t.Logf("bounded: reason=%q err=%v", res.Reason, res.Err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not terminate within 5s on a continuously-streaming generation — " +
-			"the iteration timeout does NOT bound a steadily-streaming runaway")
-	}
+		done := make(chan runner.TaskResult, 1)
+		go func() {
+			done <- r.Run(t.Context(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
+		}()
+		time.Sleep(200 * time.Millisecond)
+		synctest.Wait()
+		res := <-done
+		if res.Cause != runner.TerminalCauseIterationTimeout {
+			t.Errorf("Cause = %q, want %q", res.Cause, runner.TerminalCauseIterationTimeout)
+		}
+	})
 }
 
-// TestRunner_ThinkingBudgetCutsStuckReasoning verifies the content-aware
-// early-cut: a turn that streams only thinking past the budget is cut with
-// ErrThinkingBudget, nudged, and (after the recover limit) terminates —
-// bounding the stuck-thinking loop WITHOUT relying on the wall-clock
-// timeout. Timeouts are set long so the thinking budget is unambiguously
-// what fires.
 func TestRunner_ThinkingBudgetCutsStuckReasoning(t *testing.T) {
-	t.Parallel()
-	r := runner.New(
-		runner.ClientFromProvider(streamForeverProvider{thinkingOnly: true}),
-		runner.WithTools(tools.NewRegistry()),
-		runner.WithMaxIterations(20),
-		runner.WithIterationTimeout(30*time.Second),
-		runner.WithStreamIdleTimeout(30*time.Second),
-		runner.WithThinkingBudget(512), // tiny: trips after a few thinking chunks
-	)
+	synctest.Test(t, func(t *testing.T) {
+		r := runner.New(
+			runner.ClientFromProvider(streamForeverProvider{thinkingOnly: true}),
+			runner.WithTools(tools.NewRegistry()),
+			runner.WithMaxIterations(20),
+			runner.WithIterationTimeout(30*time.Second),
+			runner.WithStreamIdleTimeout(30*time.Second),
+			runner.WithThinkingBudget(512),
+		)
 
-	done := make(chan runner.TaskResult, 1)
-	go func() {
-		done <- r.Run(t.Context(), runner.TaskSpec{
-			ID:     taskscope.ID(uuid.NewString()),
-			Prompt: "go",
-		})
-	}()
-
-	select {
-	case res := <-done:
+		res := r.Run(t.Context(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
 		if !errors.Is(res.Err, runner.ErrThinkingBudget) {
 			t.Fatalf("Err = %v, want ErrThinkingBudget after the recover limit is spent", res.Err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not terminate within 5s — thinking-only budget did not bound the stuck-reasoning loop")
-	}
+	})
 }
 
 // thinkThenAnswerProvider streams a little thinking (under any sane budget)

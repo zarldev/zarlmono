@@ -6,6 +6,7 @@ Agent/contributor guidance for the zarlai module. The LLM layer delegates to the
 
 A local, multimodal conversational assistant: speech-to-text (Whisper/Moonshine via sherpa-onnx), LLM inference (any OpenAI-compatible endpoint — llama.cpp, vLLM, OpenRouter, Anthropic, …), text-to-speech (Kokoro via sherpa-onnx), and face recognition (dlib/go-face). A single Go binary with an embedded React frontend. Its tool-calling system controls Home Assistant, searches the web, manages per-person memory, and runs autonomous background tasks.
 
+Standard root `check`/`lint` intentionally omit this module. Use delegated tasks (`go tool task zarlai:doctor`, `zarlai:setup`, `zarlai:up`, `zarlai:test`) or the module-local Task targets below. Some integration paths require live Dolt and Qdrant; CI runs only the infra-free package set (`./service/... ./tools/... ./taskrunner/... ./sensor/... ./subscribers/...`).
 ## Build & dev commands
 
 Uses **Task** (`Taskfile.yml`):

@@ -35,10 +35,11 @@ func (c *countingTool) Execute(_ context.Context, call tools.ToolCall) (*tools.T
 // toolNameCapturingProvider records the tool names offered on each
 // completion request, so a test can assert a gated tool is hidden.
 type toolNameCapturingProvider struct {
-	mu    sync.Mutex
-	turns [][]llm.CompletionChunk
-	calls int
-	seen  [][]string
+	mu        sync.Mutex
+	turns     [][]llm.CompletionChunk
+	calls     int
+	seen      [][]string
+	afterCall func(int)
 }
 
 func (p *toolNameCapturingProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
@@ -49,8 +50,12 @@ func (p *toolNameCapturingProvider) Complete(_ context.Context, req llm.Completi
 		names = append(names, t.Function.Name)
 	}
 	p.seen = append(p.seen, names)
-	chunks := p.turns[p.calls]
+	call := p.calls
+	chunks := p.turns[call]
 	p.calls++
+	if p.afterCall != nil {
+		p.afterCall(call)
+	}
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		for _, c := range chunks {
 			err := c.Error
@@ -110,6 +115,84 @@ func TestRun_ToolGateHidesAndRefuses(t *testing.T) {
 	}
 	if !containsStr(offered, "read") {
 		t.Errorf("allowed tool missing from offered set: %v", offered)
+	}
+}
+
+func TestRun_ToolSurfaceEventsDescribeExactGatedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	provider := &toolNameCapturingProvider{turns: [][]llm.CompletionChunk{
+		{chunkToolCall("c1", "read", `{}`), chunkDone()},
+		{chunkText("done"), chunkDone()},
+	}}
+	reg := newRegistry(&countingTool{name: "mutate"}, &countingTool{name: "read"})
+	sink := newRecordingSink()
+	ctx := runner.WithToolGate(t.Context(), func(spec tools.ToolSpec) bool { return spec.Name != "mutate" })
+
+	r := runner.New(
+		runner.ClientFromProvider(provider),
+		runner.WithTools(reg),
+		runner.WithSink(sink),
+		runner.WithMaxIterations(5),
+	)
+	if res := r.Run(ctx, runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"}); res.Err != nil {
+		t.Fatalf("Run: %v", res.Err)
+	}
+
+	if got := len(sink.iterCompletes); got != 2 {
+		t.Fatalf("surface events = %d, want 2", got)
+	}
+	first := sink.iterCompletes[0].ToolSurface
+	second := sink.iterCompletes[1].ToolSurface
+	if first.Count != 1 {
+		t.Errorf("first Count = %d, want exact post-gate count 1", first.Count)
+	}
+	if first.JSONBytes <= 0 || first.Fingerprint == "" {
+		t.Errorf("first surface lacks accounting: %+v", first)
+	}
+	if first.Changed {
+		t.Error("first surface Changed = true, want false")
+	}
+	if second.Fingerprint != first.Fingerprint || second.Changed {
+		t.Errorf("stable second surface = %+v, first = %+v", second, first)
+	}
+}
+
+func TestRun_ToolSurfaceEventReportsControlledChange(t *testing.T) {
+	t.Parallel()
+
+	reg := newRegistry(&countingTool{name: "read"})
+	provider := &toolNameCapturingProvider{turns: [][]llm.CompletionChunk{
+		{chunkToolCall("c1", "read", `{}`), chunkDone()},
+		{chunkText("done"), chunkDone()},
+	}}
+	provider.afterCall = func(call int) {
+		if call == 0 {
+			reg.Register(&countingTool{name: "search"})
+		}
+	}
+	sink := newRecordingSink()
+
+	r := runner.New(
+		runner.ClientFromProvider(provider),
+		runner.WithTools(reg),
+		runner.WithSink(sink),
+		runner.WithMaxIterations(5),
+	)
+	if res := r.Run(t.Context(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"}); res.Err != nil {
+		t.Fatalf("Run: %v", res.Err)
+	}
+
+	if got := len(sink.iterCompletes); got != 2 {
+		t.Fatalf("surface events = %d, want 2", got)
+	}
+	first := sink.iterCompletes[0].ToolSurface
+	second := sink.iterCompletes[1].ToolSurface
+	if first.Count != 1 || second.Count != 2 {
+		t.Fatalf("surface counts = %d then %d, want 1 then 2", first.Count, second.Count)
+	}
+	if !second.Changed || second.Fingerprint == first.Fingerprint {
+		t.Errorf("changed surface not reported: first=%+v second=%+v", first, second)
 	}
 }
 

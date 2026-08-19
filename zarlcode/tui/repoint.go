@@ -61,7 +61,7 @@ func (m *UI) maybeRepoint() tea.Cmd {
 	seq := atomic.AddUint64(&m.repointSeq, 1)
 	fb, prev := m.session.ProviderContext()
 	settings := m.settings
-	parent := m.live.ParentContext()
+	parent := m.appContext()
 	appliedReasoning := m.appliedReasoning
 	appliedWindow := m.appliedWindow
 	return func() tea.Msg {
@@ -119,7 +119,7 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 	if rp.prov == nil || m.live == nil {
 		return true
 	}
-	m.live.SetProviderSpec(rp.prov, rp.spec)
+	m.live.ApplyTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window})
 	m.appliedReasoning = rp.reasoning
 	m.appliedWindow = rp.defWindow
 	m.session.SetActiveProviderSpec(rp.spec)
@@ -129,7 +129,6 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 	m.session.ApplyProviderCostBasis(rp.spec)
 	if rp.window > 0 {
 		m.session.SetContextWindow(rp.window)
-		m.live.SetContextWindow(rp.window)
 		m.SetPressureConfig(rp.window, m.session.Run.pressureReserve)
 	}
 	m.session.SetSuccessToast("switched to " + rp.spec.Name + " · " + rp.spec.Model)

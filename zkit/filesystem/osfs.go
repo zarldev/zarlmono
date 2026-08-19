@@ -3,14 +3,11 @@ package filesystem
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-)
-
-var (
-	_ ReadWriteFileFS = (*OSFileSystem)(nil)
 )
 
 // ErrEscapesRoot is returned by [OSFileSystem] operations when the
@@ -18,7 +15,7 @@ var (
 // Surfaced as a sentinel so callers can switch on it.
 var ErrEscapesRoot = errors.New("filesystem: path escapes base directory")
 
-// OSFileSystem implements ReadWriteFileFS using the standard os
+// OSFileSystem uses the standard os
 // package, confined to a base directory.
 //
 // Earlier shape concatenated `filepath.Join(baseDir, userPath)`
@@ -163,7 +160,7 @@ func (osfs *OSFileSystem) MkdirAll(path string, perm fs.FileMode) error {
 }
 
 // OpenFile opens the named file with specified flag and perm.
-func (osfs *OSFileSystem) OpenFile(name string, flag int, perm fs.FileMode) (File, error) {
+func (osfs *OSFileSystem) OpenFile(name string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error) {
 	abs, err := osfs.resolveInsideRoot(name)
 	if err != nil {
 		return nil, err

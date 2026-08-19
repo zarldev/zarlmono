@@ -142,10 +142,14 @@ extra tools to the same flat tool list once connected.
 
 ### Keep large tasks manageable
 
-Sub-agents run focused child tasks in fresh context and return summaries to the
-parent run. Long sessions compact older history when context gets tight. Skills
-and agent profiles let a workspace carry its own operating notes without baking
-them into the binary.
+Sub-agents run focused child tasks in fresh context. `agent_spawn` returns a task
+receipt immediately so the parent can continue independent work; `agent_status`
+inspects progress, `agent_await` explicitly joins and returns the summary, and
+`agent_stop` cancels. All children are owned by the current turn and are cancelled
+and joined during shutdown. Workspace leases allow concurrent read-only children
+while preventing conflicting shared-tree writes. Long sessions compact older history
+when context gets tight. Skills and agent profiles let a workspace carry its own
+operating notes without baking them into the binary.
 
 Dynamic tool authoring also exists, but it is opt-in rather than part of the
 default TUI surface.

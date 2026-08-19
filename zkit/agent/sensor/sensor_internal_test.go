@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -11,17 +12,25 @@ import (
 // run on the cancelled runner ctx) and must not Add to the WaitGroup after
 // Stop's Wait (a reuse panic).
 func TestRunnerStartAfterStopIsNoop(t *testing.T) {
-	s := NewFunc("after-stop", time.Hour, func(context.Context) (Observation, error) {
-		t.Error("poll must not run after Stop")
-		return Observation{}, nil
+	synctest.Test(t, func(t *testing.T) {
+		pollStarted := make(chan struct{}, 1)
+		s := NewFunc("after-stop", time.Hour, func(context.Context) (Observation, error) {
+			pollStarted <- struct{}{}
+			return Observation{}, nil
+		})
+		r := New()
+		if err := r.Register(s); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		r.Stop()
+		r.Start(t.Context())
+		synctest.Wait()
+		select {
+		case <-pollStarted:
+			t.Fatal("poll ran after Stop")
+		default:
+		}
 	})
-	r := New()
-	if err := r.Register(s); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	r.Stop()
-	r.Start(t.Context()) // must not panic, must not spawn
-	time.Sleep(50 * time.Millisecond)
 }
 
 // Concurrent Start/Stop must be race-free (run under -race). The Add-under-lock
@@ -42,91 +51,66 @@ func TestRunnerConcurrentStartStop(t *testing.T) {
 }
 
 func TestRunnerStopCancelsContextAwarePoll(t *testing.T) {
-	oldCap := pollShutdownCap
-	pollShutdownCap = time.Second
-	t.Cleanup(func() { pollShutdownCap = oldCap })
+	synctest.Test(t, func(t *testing.T) {
+		pollStarted := make(chan struct{})
+		pollCanceled := make(chan struct{})
+		s := NewFunc("blocking", 100*time.Millisecond, func(ctx context.Context) (Observation, error) {
+			pollStarted <- struct{}{}
+			<-ctx.Done()
+			close(pollCanceled)
+			return Observation{}, ctx.Err()
+		})
 
-	pollStarted := make(chan struct{})
-	pollCanceled := make(chan struct{})
-	s := NewFunc("blocking", 100*time.Millisecond, func(ctx context.Context) (Observation, error) {
-		close(pollStarted)
-		<-ctx.Done()
-		close(pollCanceled)
-		return Observation{}, ctx.Err()
+		r := New()
+		if err := r.Register(s); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		r.Start(t.Context())
+		time.Sleep(100 * time.Millisecond)
+		<-pollStarted
+
+		done := make(chan struct{})
+		go func() {
+			r.Stop()
+			close(done)
+		}()
+		<-pollCanceled
+		<-done
 	})
-
-	r := New()
-	if err := r.Register(s); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	r.Start(t.Context())
-
-	select {
-	case <-pollStarted:
-	case <-time.After(time.Second):
-		t.Fatal("poll did not start")
-	}
-
-	done := make(chan struct{})
-	go func() {
-		r.Stop()
-		close(done)
-	}()
-
-	select {
-	case <-pollCanceled:
-	case <-time.After(time.Second):
-		t.Fatal("Stop did not cancel poll context")
-	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("Stop did not return after poll observed cancellation")
-	}
 }
 
 func TestRunnerStopBoundedForContextIgnoringPoll(t *testing.T) {
-	oldCap := pollShutdownCap
-	pollShutdownCap = 20 * time.Millisecond
-	t.Cleanup(func() { pollShutdownCap = oldCap })
+	synctest.Test(t, func(t *testing.T) {
+		oldCap := pollShutdownCap
+		pollShutdownCap = 20 * time.Millisecond
+		t.Cleanup(func() { pollShutdownCap = oldCap })
 
-	pollStarted := make(chan struct{})
-	releasePoll := make(chan struct{})
-	handlerCalled := make(chan struct{}, 1)
-	s := NewFunc("stubborn", 100*time.Millisecond, func(context.Context) (Observation, error) {
-		close(pollStarted)
-		<-releasePoll
-		return Observation{Value: "late"}, nil
-	})
+		pollStarted := make(chan struct{})
+		releasePoll := make(chan struct{})
+		handlerCalled := make(chan struct{}, 1)
+		s := NewFunc("stubborn", 100*time.Millisecond, func(context.Context) (Observation, error) {
+			pollStarted <- struct{}{}
+			<-releasePoll
+			return Observation{Value: "late"}, nil
+		})
 
-	r := New()
-	if err := r.Register(s); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	r.OnChange(func(context.Context, string, Observation) {
+		r := New()
+		if err := r.Register(s); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		r.OnChange(func(context.Context, string, Observation) { handlerCalled <- struct{}{} })
+		r.Start(t.Context())
+		time.Sleep(100 * time.Millisecond)
+		<-pollStarted
+
+		r.Stop()
+		close(releasePoll)
+		time.Sleep(100 * time.Millisecond)
+		synctest.Wait()
 		select {
-		case handlerCalled <- struct{}{}:
+		case <-handlerCalled:
+			t.Fatal("handler fired after Stop returned")
 		default:
 		}
 	})
-	r.Start(t.Context())
-
-	select {
-	case <-pollStarted:
-	case <-time.After(time.Second):
-		t.Fatal("poll did not start")
-	}
-
-	start := time.Now()
-	r.Stop()
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Fatalf("Stop took %s, want bounded return", elapsed)
-	}
-
-	close(releasePoll)
-	select {
-	case <-handlerCalled:
-		t.Fatal("handler fired after Stop returned")
-	case <-time.After(50 * time.Millisecond):
-	}
 }

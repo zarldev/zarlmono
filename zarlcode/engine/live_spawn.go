@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,15 +9,15 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
-	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-func (l *LiveRunner) registerSpawnTool(reg *tools.Registry, parent *runner.Runner, maxDepth, spawnMaxIter int) {
-	if reg == nil || parent == nil || maxDepth == 0 {
+func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int) {
+	if reg == nil || parent == nil || group == nil || maxDepth == 0 {
 		return
 	}
 	var planner spawn.SpawnPlanner
@@ -39,18 +40,25 @@ func (l *LiveRunner) registerSpawnTool(reg *tools.Registry, parent *runner.Runne
 			planner = spawn.NewLLMSpawnPlanner(plannerProv)
 		}
 	}
-	_ = reg.Register(spawn.New(parent,
+	base := spawn.New(parent,
 		spawn.WithMaxDepth(maxDepth),
-		spawn.WithAgentResolver(l.resolveAgentRunner),
+		spawn.WithAgentResolver(func(name string) (*runner.Runner, error) { return l.resolveAgentRunner(ctx, group, coordinator, name) }),
 		spawn.WithSpawnPlannerCandidates(planner, candidates),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
-		// Arm the same explore/verify tool gating coderunner.RegisterSpawnTool
-		// uses — without it the mode arg is advisory prompt text only.
 		spawn.WithModeToolPolicy(coderunner.SpawnModePolicy()),
-	))
+	)
+	for _, tool := range []tools.Tool{
+		spawn.NewAsync(base, group, coordinator),
+		spawn.NewAwait(group),
+		spawn.NewStatus(group),
+		spawn.NewStop(group),
+		spawn.NewList(group),
+	} {
+		_ = reg.Register(tool)
+	}
 }
 
-func (l *LiveRunner) resolveAgentRunner(name string) (*runner.Runner, error) {
+func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, name string) (*runner.Runner, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("empty agent name")
@@ -63,10 +71,10 @@ func (l *LiveRunner) resolveAgentRunner(name string) (*runner.Runner, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown agent %q", name)
 	}
-	return l.buildAgentRunner(agent)
+	return l.buildAgentRunner(ctx, group, coordinator, agent)
 }
 
-func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, error) {
+func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, agent catalog.Agent) (*runner.Runner, error) {
 	l.mu.Lock()
 	parentProv, parentModel, parentSpec := l.target.Provider, l.target.Model, l.target.Spec
 	window, searxngURL := l.target.Window, l.target.SearxngURL
@@ -88,7 +96,7 @@ func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, erro
 			spec = ProviderSpec{Name: agent.Provider}
 		}
 		spec.Model = model
-		built, err := BuildProvider(l.parentContext(), settings.Registry, settings.Svc, spec)
+		built, err := BuildProvider(ctx, settings.Registry, settings.Svc, spec)
 		if err != nil {
 			return nil, fmt.Errorf("agent %q provider: %w", agent.Name, err)
 		}
@@ -109,10 +117,9 @@ func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, erro
 		reserve = liveReserveTokens
 	}
 
-	engine, compactProv, compactModel := compact.EngineTiered, parentProv, parentModel
+	engine, compactProv, compactModel := agentcompact.EngineTiered, parentProv, parentModel
 	var streamIdle time.Duration
 	if settings != nil {
-		ctx := l.parentContext()
 		engine = settings.CompactEngine(ctx)
 		compactProv, compactModel = settings.CompactorProvider(ctx, parentProv, parentModel)
 		streamIdle = settings.ResponseTimeout(ctx)
@@ -139,13 +146,14 @@ func (l *LiveRunner) buildAgentRunner(agent catalog.Agent) (*runner.Runner, erro
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
 	}
-	src, reg, err := l.source(searxngURL)
+	src, reg, err := l.source(ctx, searxngURL)
 	if err != nil {
 		return nil, err
 	}
+	src = coderunner.CoordinateWorkspace(src, coordinator)
 	visible = NewModeFilteredSource(src, l.isPlan)
 	opts = append(opts, runner.WithTools(visible))
 	r := runner.New(runner.ClientFromProvider(prov), opts...)
-	l.registerSpawnTool(reg, r, spawnDepth, spawnMaxIter)
+	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth, spawnMaxIter)
 	return r, nil
 }
