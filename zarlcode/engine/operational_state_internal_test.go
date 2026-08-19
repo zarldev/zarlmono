@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -48,12 +48,12 @@ func TestOperationalStateTracksLatestFilesAndToolCounts(t *testing.T) {
 	}
 
 	files := state.workingFiles()
-	wantFiles := []compact.FileTouch{{Path: "pkg/b.go", Action: fileActionEdit}, {Path: "pkg/a.go", Action: fileActionEdit}}
+	wantFiles := []agentcompact.FileTouch{{Path: "pkg/b.go", Action: fileActionEdit}, {Path: "pkg/a.go", Action: fileActionEdit}}
 	if fmt.Sprint(files) != fmt.Sprint(wantFiles) {
 		t.Fatalf("files = %+v, want %+v", files, wantFiles)
 	}
 	usage := state.topTools()
-	wantUsage := []compact.ToolUsage{{Name: "edit", Count: 2}, {Name: "bash", Count: 1}, {Name: "read", Count: 1}}
+	wantUsage := []agentcompact.ToolUsage{{Name: "edit", Count: 2}, {Name: "bash", Count: 1}, {Name: "read", Count: 1}}
 	if fmt.Sprint(usage) != fmt.Sprint(wantUsage) {
 		t.Fatalf("usage = %+v, want %+v", usage, wantUsage)
 	}
@@ -98,7 +98,7 @@ func TestOperationalStateBoundsWorkingFiles(t *testing.T) {
 	t.Parallel()
 	state := newOperationalState()
 	for i := range maxOperationalFiles + 5 {
-		state.recordFile(compact.FileTouch{Path: fmt.Sprintf("file-%02d.go", i), Action: fileActionRead})
+		state.recordFile(agentcompact.FileTouch{Path: fmt.Sprintf("file-%02d.go", i), Action: fileActionRead})
 	}
 	files := state.workingFiles()
 	if len(files) != maxOperationalFiles {
@@ -115,7 +115,7 @@ func TestLiveRunnerOperationalStateFeedsExecutiveBriefing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	live := NewLiveRunner(nil, ws, nil, "local")
+	live := NewLiveRunner(nil, ws, "local")
 	live.operational.record(
 		tools.ToolCall{ToolName: code.ToolNameEdit},
 		tools.Success("", "edited", tools.NewFileEffect(tools.FileModify, "pkg/file.go")),
@@ -129,7 +129,7 @@ func TestLiveRunnerOperationalStateFeedsExecutiveBriefing(t *testing.T) {
 	)
 	live.operational.record(tools.ToolCall{ToolName: code.ToolNameEdit}, tools.Failure("", tools.Stale("edit", "anchors changed")), nil)
 
-	compactor := compact.NewExecutive(operationalNarrativeProvider{}, "model", live)
+	compactor := agentcompact.NewExecutive(operationalNarrativeProvider{}, "model", live)
 	history := []llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
 		{Role: llm.RoleUser, Content: "old request"},

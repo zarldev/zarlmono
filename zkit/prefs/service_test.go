@@ -79,12 +79,9 @@ func TestService_SetSetting_ScopeWorkspace_Roundtrip(t *testing.T) {
 		t.Fatalf("SetSetting workspace: %v", err)
 	}
 
-	sv, ok, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, "editor")
+	sv, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, "editor")
 	if err != nil {
 		t.Fatalf("GetSetting workspace: %v", err)
-	}
-	if !ok {
-		t.Fatal("GetSetting workspace: not found")
 	}
 	if sv.Value != "vim" {
 		t.Errorf("value = %q, want vim", sv.Value)
@@ -104,7 +101,7 @@ func TestService_SetSetting_ScopeWorkspace_ErrNoWorkspace(t *testing.T) {
 		t.Errorf("SetSetting: err = %v, want ErrNoWorkspace", err)
 	}
 
-	_, _, err = svc.GetSetting(ctx, prefs.ScopeWorkspace, "editor")
+	_, err = svc.GetSetting(ctx, prefs.ScopeWorkspace, "editor")
 	if !errors.Is(err, prefs.ErrNoWorkspace) {
 		t.Errorf("GetSetting: err = %v, want ErrNoWorkspace", err)
 	}
@@ -120,6 +117,35 @@ func TestService_SetSetting_ScopeWorkspace_ErrNoWorkspace(t *testing.T) {
 	}
 }
 
+func TestService_SetModelSelection_AtomicPair(t *testing.T) {
+	svc := openTestService(t)
+	ctx := t.Context()
+	if err := svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, "old-model"); err != nil {
+		t.Fatalf("seed model: %v", err)
+	}
+	selection := prefs.ModelSelection{Provider: "openai", Model: "gpt-4o"}
+	if err := svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
+		t.Fatalf("set model selection: %v", err)
+	}
+	provider, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider)
+	if err != nil {
+		t.Fatalf("get provider: %v", err)
+	}
+	model, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel)
+	if err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+	if provider.Value != selection.Provider || model.Value != selection.Model {
+		t.Fatalf("selection = %s/%s, want %s/%s", provider.Value, model.Value, selection.Provider, selection.Model)
+	}
+	if err := svc.SetModelSelection(ctx, prefs.ScopeWorkspace, prefs.ModelSelection{Provider: "llamacpp"}); err != nil {
+		t.Fatalf("clear model selection: %v", err)
+	}
+	if _, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel); !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("cleared model error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestService_SetSetting_ScopeGlobal_Roundtrip(t *testing.T) {
 	// Not parallel — openTestVault uses t.Setenv.
 	// Service with empty wsRoot — global scope must still work.
@@ -131,12 +157,9 @@ func TestService_SetSetting_ScopeGlobal_Roundtrip(t *testing.T) {
 		t.Fatalf("SetSetting global: %v", err)
 	}
 
-	sv, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, "theme")
+	sv, err := svc.GetSetting(ctx, prefs.ScopeGlobal, "theme")
 	if err != nil {
 		t.Fatalf("GetSetting global: %v", err)
-	}
-	if !ok {
-		t.Fatal("GetSetting global: not found")
 	}
 	if sv.Value != "dark" {
 		t.Errorf("value = %q, want dark", sv.Value)
@@ -152,12 +175,9 @@ func TestService_GetSetting_ScopeEffective_Fallback(t *testing.T) {
 	ctx := t.Context()
 
 	// Neither set → not found.
-	_, ok, err := svc.GetSetting(ctx, prefs.ScopeEffective, "model")
-	if err != nil {
-		t.Fatalf("GetSetting effective (empty): %v", err)
-	}
-	if ok {
-		t.Fatal("expected not found when nothing set")
+	_, err := svc.GetSetting(ctx, prefs.ScopeEffective, "model")
+	if !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("GetSetting effective (empty): err=%v, want ErrNotFound", err)
 	}
 
 	// Set global only → effective returns global value.
@@ -165,12 +185,9 @@ func TestService_GetSetting_ScopeEffective_Fallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetSetting global: %v", err)
 	}
-	sv, ok, err := svc.GetSetting(ctx, prefs.ScopeEffective, "model")
+	sv, err := svc.GetSetting(ctx, prefs.ScopeEffective, "model")
 	if err != nil {
 		t.Fatalf("GetSetting effective (global only): %v", err)
-	}
-	if !ok {
-		t.Fatal("expected found after global set")
 	}
 	if sv.Value != "global-model" {
 		t.Errorf("value = %q, want global-model", sv.Value)
@@ -184,12 +201,9 @@ func TestService_GetSetting_ScopeEffective_Fallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetSetting workspace: %v", err)
 	}
-	sv, ok, err = svc.GetSetting(ctx, prefs.ScopeEffective, "model")
+	sv, err = svc.GetSetting(ctx, prefs.ScopeEffective, "model")
 	if err != nil {
 		t.Fatalf("GetSetting effective (both): %v", err)
-	}
-	if !ok {
-		t.Fatal("expected found after workspace set")
 	}
 	if sv.Value != "ws-model" {
 		t.Errorf("value = %q, want ws-model", sv.Value)
@@ -263,21 +277,15 @@ func TestService_PromoteSetting_Move(t *testing.T) {
 	}
 
 	// Workspace row should be gone.
-	_, ok, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, "theme")
-	if err != nil {
-		t.Fatalf("GetSetting workspace after promote: %v", err)
-	}
-	if ok {
-		t.Fatal("workspace row still exists after promote")
+	_, err = svc.GetSetting(ctx, prefs.ScopeWorkspace, "theme")
+	if !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("GetSetting workspace after promote: err=%v, want ErrNotFound", err)
 	}
 
 	// Global row should have the value.
-	sv, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, "theme")
+	sv, err := svc.GetSetting(ctx, prefs.ScopeGlobal, "theme")
 	if err != nil {
 		t.Fatalf("GetSetting global after promote: %v", err)
-	}
-	if !ok {
-		t.Fatal("global row missing after promote")
 	}
 	if sv.Value != "light" {
 		t.Errorf("global value = %q, want light", sv.Value)
@@ -295,12 +303,9 @@ func TestService_SetKey_Roundtrip(t *testing.T) {
 	}
 
 	// Read back via GetKeyEffective.
-	kv, ok, err := svc.GetKeyEffective(ctx, "openai")
+	kv, err := svc.GetKeyEffective(ctx, "openai")
 	if err != nil {
 		t.Fatalf("GetKeyEffective: %v", err)
-	}
-	if !ok {
-		t.Fatal("GetKeyEffective: not found")
 	}
 	if kv.Value != "sk-test-plaintext" {
 		t.Errorf("value = %q, want sk-test-plaintext", kv.Value)
@@ -310,12 +315,9 @@ func TestService_SetKey_Roundtrip(t *testing.T) {
 	}
 
 	// Read back via GetKey with explicit scope.
-	val, ok, err := svc.GetKey(ctx, prefs.ScopeWorkspace, "openai")
+	val, err := svc.GetKey(ctx, prefs.ScopeWorkspace, "openai")
 	if err != nil {
 		t.Fatalf("GetKey workspace: %v", err)
-	}
-	if !ok {
-		t.Fatal("GetKey workspace: not found")
 	}
 	if val != "sk-test-plaintext" {
 		t.Errorf("value = %q, want sk-test-plaintext", val)
@@ -349,20 +351,20 @@ func TestService_NoVaultPlaintextMode(t *testing.T) {
 		t.Fatalf("SetKey plaintext without vault: %v", err)
 	}
 
-	got, ok, err := svc.GetKey(ctx, prefs.ScopeGlobal, "openai")
+	got, err := svc.GetKey(ctx, prefs.ScopeGlobal, "openai")
 	if err != nil {
 		t.Fatalf("GetKey plaintext without vault: %v", err)
 	}
-	if !ok || got != "sk-test" {
-		t.Fatalf("GetKey plaintext = %q, %v; want sk-test, true", got, ok)
+	if got != "sk-test" {
+		t.Fatalf("GetKey plaintext = %q; want sk-test", got)
 	}
 
-	kv, ok, err := svc.GetKeyEffective(ctx, "openai")
+	kv, err := svc.GetKeyEffective(ctx, "openai")
 	if err != nil {
 		t.Fatalf("GetKeyEffective plaintext without vault: %v", err)
 	}
-	if !ok || kv.Value != "sk-test" || kv.Source != prefs.ScopeGlobal {
-		t.Fatalf("GetKeyEffective = %#v, %v; want global sk-test", kv, ok)
+	if kv.Value != "sk-test" || kv.Source != prefs.ScopeGlobal {
+		t.Fatalf("GetKeyEffective = %#v; want global sk-test", kv)
 	}
 
 	if err := svc.DeleteKey(ctx, prefs.ScopeGlobal, "openai"); err != nil {
@@ -465,9 +467,9 @@ func TestService_UnknownScope(t *testing.T) {
 	svc := openTestService(t)
 	ctx := t.Context()
 
-	unknown := prefs.Scope(99)
+	unknown := prefs.Scopes.INVALID
 
-	_, _, err := svc.GetSetting(ctx, unknown, "theme")
+	_, err := svc.GetSetting(ctx, unknown, "theme")
 	if err == nil || !strings.Contains(err.Error(), "unknown scope") {
 		t.Errorf("GetSetting: err = %v, want unknown scope", err)
 	}
@@ -484,7 +486,7 @@ func TestService_UnknownScope(t *testing.T) {
 
 	// Key methods require a vault.
 	svcVault := openTestService(t)
-	_, _, err = svcVault.GetKey(ctx, unknown, "openai")
+	_, err = svcVault.GetKey(ctx, unknown, "openai")
 	if err == nil || !strings.Contains(err.Error(), "unknown scope") {
 		t.Errorf("GetKey: err = %v, want unknown scope", err)
 	}
@@ -511,12 +513,9 @@ func TestService_GetKey_Effective_PrefersWorkspace(t *testing.T) {
 		t.Fatalf("SetKey global: %v", err)
 	}
 
-	kv, ok, err := svc.GetKeyEffective(ctx, "openai")
+	kv, err := svc.GetKeyEffective(ctx, "openai")
 	if err != nil {
 		t.Fatalf("GetKeyEffective (global only): %v", err)
-	}
-	if !ok {
-		t.Fatal("expected found")
 	}
 	if kv.Value != "sk-global" {
 		t.Errorf("value = %q, want sk-global", kv.Value)
@@ -531,12 +530,9 @@ func TestService_GetKey_Effective_PrefersWorkspace(t *testing.T) {
 		t.Fatalf("SetKey workspace: %v", err)
 	}
 
-	kv, ok, err = svc.GetKeyEffective(ctx, "openai")
+	kv, err = svc.GetKeyEffective(ctx, "openai")
 	if err != nil {
 		t.Fatalf("GetKeyEffective (both): %v", err)
-	}
-	if !ok {
-		t.Fatal("expected found")
 	}
 	if kv.Value != "sk-ws" {
 		t.Errorf("value = %q, want sk-ws", kv.Value)
@@ -570,21 +566,15 @@ func TestService_PromoteKey_Move(t *testing.T) {
 	}
 
 	// Workspace row should be gone.
-	_, ok, err := svc.GetKey(ctx, prefs.ScopeWorkspace, "openai")
-	if err != nil {
-		t.Fatalf("GetKey workspace after promote: %v", err)
-	}
-	if ok {
-		t.Fatal("workspace key row still exists after promote")
+	_, err = svc.GetKey(ctx, prefs.ScopeWorkspace, "openai")
+	if !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("GetKey workspace after promote: err=%v, want ErrNotFound", err)
 	}
 
 	// Global row should have the plaintext.
-	kv, ok, err := svc.GetKeyEffective(ctx, "openai")
+	kv, err := svc.GetKeyEffective(ctx, "openai")
 	if err != nil {
 		t.Fatalf("GetKeyEffective after promote: %v", err)
-	}
-	if !ok {
-		t.Fatal("global key row missing after promote")
 	}
 	if kv.Value != "sk-promote-me" {
 		t.Errorf("global value = %q, want sk-promote-me", kv.Value)
@@ -646,12 +636,12 @@ func TestService_Scope_String(t *testing.T) {
 		{prefs.ScopeWorkspace, "workspace"},
 		{prefs.ScopeGlobal, "global"},
 		{prefs.ScopeEffective, "effective"},
-		{prefs.Scope(99), "unknown"},
+		{prefs.Scopes.INVALID, "invalid"},
 	}
 
 	for _, tt := range tests {
 		if got := tt.scope.String(); got != tt.want {
-			t.Errorf("Scope(%d).String() = %q, want %q", tt.scope, got, tt.want)
+			t.Errorf("Scope(%v).String() = %q, want %q", tt.scope, got, tt.want)
 		}
 	}
 }
@@ -670,21 +660,15 @@ func TestService_GetSetting_ExactScopes(t *testing.T) {
 		t.Fatalf("SetSetting global: %v", err)
 	}
 
-	_, ok, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, "editor")
-	if err != nil {
-		t.Fatalf("GetSetting workspace: %v", err)
-	}
-	if ok {
-		t.Fatal("workspace should not fall back to global")
+	_, err = svc.GetSetting(ctx, prefs.ScopeWorkspace, "editor")
+	if !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("GetSetting workspace: err=%v, want ErrNotFound", err)
 	}
 
 	// Global should find it.
-	sv, ok, err := svc.GetSetting(ctx, prefs.ScopeGlobal, "editor")
+	sv, err := svc.GetSetting(ctx, prefs.ScopeGlobal, "editor")
 	if err != nil {
 		t.Fatalf("GetSetting global: %v", err)
-	}
-	if !ok {
-		t.Fatal("global not found")
 	}
 	if sv.Value != "nano" {
 		t.Errorf("value = %q, want nano", sv.Value)
@@ -698,7 +682,7 @@ func TestService_KeyMethods_ErrNoWorkspace(t *testing.T) {
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
 
-	_, _, err := svc.GetKey(ctx, prefs.ScopeWorkspace, "openai")
+	_, err := svc.GetKey(ctx, prefs.ScopeWorkspace, "openai")
 	if !errors.Is(err, prefs.ErrNoWorkspace) {
 		t.Errorf("GetKey workspace: err = %v, want ErrNoWorkspace", err)
 	}
@@ -731,12 +715,9 @@ func TestService_GetKeyEffective_WithoutWorkspace(t *testing.T) {
 		t.Fatalf("SetKey global: %v", err)
 	}
 
-	kv, ok, err := svc.GetKeyEffective(ctx, "openai")
+	kv, err := svc.GetKeyEffective(ctx, "openai")
 	if err != nil {
 		t.Fatalf("GetKeyEffective: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected found")
 	}
 	if kv.Value != "sk-global-only" {
 		t.Errorf("value = %q, want sk-global-only", kv.Value)
@@ -801,12 +782,9 @@ func TestService_GetSetting_Effective_WithoutWorkspace(t *testing.T) {
 		t.Fatalf("SetSetting global: %v", err)
 	}
 
-	sv, ok, err := svc.GetSetting(ctx, prefs.ScopeEffective, "theme")
+	sv, err := svc.GetSetting(ctx, prefs.ScopeEffective, "theme")
 	if err != nil {
 		t.Fatalf("GetSetting effective: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected found")
 	}
 	if sv.Value != "global-theme" {
 		t.Errorf("value = %q, want global-theme", sv.Value)
@@ -880,9 +858,9 @@ func TestService_MigrateVaultKeys(t *testing.T) {
 
 	// 4. The credential reads back under the new key — and crucially, still
 	//    reads back when reopened with ONLY the passphrase (no legacy present).
-	got, ok, err := svcNew.GetKey(t.Context(), prefs.ScopeGlobal, "openai")
-	if err != nil || !ok || got != "sk-OLD" {
-		t.Fatalf("GetKey after migrate = %q,%v,%v; want sk-OLD,true,nil", got, ok, err)
+	got, err := svcNew.GetKey(t.Context(), prefs.ScopeGlobal, "openai")
+	if err != nil || got != "sk-OLD" {
+		t.Fatalf("GetKey after migrate = %q,%v; want sk-OLD,nil", got, err)
 	}
 	vFinal, err := vault.Open(func(_, _ bool) (string, error) { return "pp", nil })
 	if err != nil {
@@ -891,9 +869,9 @@ func TestService_MigrateVaultKeys(t *testing.T) {
 	if vFinal.HasLegacy() {
 		t.Error("legacy should be gone after migration")
 	}
-	got, ok, err = prefs.NewService(store, vFinal, "").GetKey(t.Context(), prefs.ScopeGlobal, "openai")
-	if err != nil || !ok || got != "sk-OLD" {
-		t.Fatalf("GetKey passphrase-only = %q,%v,%v; want sk-OLD,true,nil", got, ok, err)
+	got, err = prefs.NewService(store, vFinal, "").GetKey(t.Context(), prefs.ScopeGlobal, "openai")
+	if err != nil || got != "sk-OLD" {
+		t.Fatalf("GetKey passphrase-only = %q,%v; want sk-OLD,nil", got, err)
 	}
 }
 
@@ -913,12 +891,9 @@ func TestService_PlaintextStorageDefaultWithoutVault(t *testing.T) {
 	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-plain"); err != nil {
 		t.Fatalf("SetKey plaintext: %v", err)
 	}
-	row, ok, err := store.GetAPIKeyExact(ctx, "", "openai")
+	row, err := store.GetAPIKeyExact(ctx, "", "openai")
 	if err != nil {
 		t.Fatalf("GetAPIKeyExact: %v", err)
-	}
-	if !ok {
-		t.Fatal("stored key row missing")
 	}
 	if row.Storage != db.APIKeyStoragePlaintext {
 		t.Fatalf("storage = %q, want plaintext", row.Storage)
@@ -948,9 +923,9 @@ func TestService_CredentialProtectionEnableDisableMigratesRows(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("enabled migrated %d rows, want 1", n)
 	}
-	row, ok, err := store.GetAPIKeyExact(ctx, "", "openai")
-	if err != nil || !ok {
-		t.Fatalf("read encrypted row: ok=%v err=%v", ok, err)
+	row, err := store.GetAPIKeyExact(ctx, "", "openai")
+	if err != nil {
+		t.Fatalf("read encrypted row: err=%v", err)
 	}
 	if row.Storage != db.APIKeyStorageVault {
 		t.Fatalf("enabled storage = %q, want vault", row.Storage)
@@ -959,7 +934,7 @@ func TestService_CredentialProtectionEnableDisableMigratesRows(t *testing.T) {
 		t.Fatal("encrypted row still stores plaintext bytes")
 	}
 	locked := prefs.NewService(store, nil, "/home/test/project")
-	if _, _, err := locked.GetKey(ctx, prefs.ScopeGlobal, "openai"); !errors.Is(err, prefs.ErrCredentialsLocked) {
+	if _, err := locked.GetKey(ctx, prefs.ScopeGlobal, "openai"); !errors.Is(err, prefs.ErrCredentialsLocked) {
 		t.Fatalf("locked GetKey err = %v, want ErrCredentialsLocked", err)
 	}
 
@@ -971,11 +946,11 @@ func TestService_CredentialProtectionEnableDisableMigratesRows(t *testing.T) {
 		t.Fatalf("disabled migrated %d rows, want 1", n)
 	}
 	plain := prefs.NewService(store, nil, "/home/test/project")
-	got, ok, err := plain.GetKey(ctx, prefs.ScopeGlobal, "openai")
+	got, err := plain.GetKey(ctx, prefs.ScopeGlobal, "openai")
 	if err != nil {
 		t.Fatalf("plaintext GetKey after disable: %v", err)
 	}
-	if !ok || got != "sk-migrate" {
-		t.Fatalf("plaintext GetKey = %q, %v; want sk-migrate, true", got, ok)
+	if got != "sk-migrate" {
+		t.Fatalf("plaintext GetKey = %q; want sk-migrate", got)
 	}
 }

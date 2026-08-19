@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -126,25 +127,34 @@ func clampSavedToolData(data any) any {
 	return map[string]any{"truncated": true, "original_bytes": len(b), "preview": string(b[:maxSavedToolResultBytes])}
 }
 
-func encodeToolTraceJSON(tl *timeline) []byte {
+func encodeToolTraceJSON(tl *timeline) ([]byte, error) {
 	trace := buildSavedToolTrace(tl)
 	b, err := json.Marshal(trace)
-	if err != nil || len(b) == 0 {
-		return []byte("null")
+	if err != nil {
+		return nil, fmt.Errorf("encode tool trace: %w", err)
+	}
+	if len(b) == 0 {
+		return []byte("null"), nil
 	}
 	if len(b) > maxSavedToolTraceBytes {
-		trimmed := savedToolTrace{Version: trace.Version}
-		trimmed.TraceTruncated = true
+		trimmed := savedToolTrace{Version: trace.Version, TraceTruncated: true}
 		for _, item := range trace.Items {
 			trimmed.Items = append(trimmed.Items, item)
-			blob, merr := json.Marshal(trimmed)
-			if merr != nil || len(blob) > maxSavedToolTraceBytes {
+			blob, marshalErr := json.Marshal(trimmed)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("encode trimmed tool trace: %w", marshalErr)
+			}
+			if len(blob) > maxSavedToolTraceBytes {
+				trimmed.Items = trimmed.Items[:len(trimmed.Items)-1]
 				break
 			}
 		}
-		b, _ = json.Marshal(trimmed)
+		b, err = json.Marshal(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("encode trimmed tool trace: %w", err)
+		}
 	}
-	return b
+	return b, nil
 }
 
 func restoreToolTrace(tl *timeline, raw []byte) traceRestoreStatus {

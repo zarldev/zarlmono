@@ -32,7 +32,6 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -143,62 +142,6 @@ func DefaultPolicy(workspaceRoot string) Policy {
 	return p
 }
 
-// WithExecPath augments p so the sandbox can execute a binary located at path.
-// It grants read access to the file itself plus read+execute traversal on each
-// ancestor directory down to the file's parent. Relative/empty paths are
-// ignored. Missing paths are fine — Landlock grants are installed with
-// ignore-if-missing semantics, so a configured browser/tool path can be wired
-// before the binary exists.
-func (p Policy) WithExecPath(path string) Policy {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "" || !filepath.IsAbs(path) {
-		return p
-	}
-	p = grantExecPath(p, path)
-	if interp, ok := wslInteropInterpreterFor(path); ok {
-		p = grantExecPath(p, interp)
-	}
-	return p
-}
-
-func grantExecPath(p Policy, path string) Policy {
-	p.ReadFiles = appendUniquePath(p.ReadFiles, path)
-	for dir := filepath.Dir(path); dir != "." && dir != string(filepath.Separator) && dir != ""; dir = filepath.Dir(dir) {
-		p.ReadDirs = appendUniquePath(p.ReadDirs, dir)
-		next := filepath.Dir(dir)
-		if next == dir {
-			break
-		}
-	}
-	return p
-}
-
-func wslInteropInterpreterFor(path string) (string, bool) {
-	if !strings.HasSuffix(strings.ToLower(path), ".exe") {
-		return "", false
-	}
-	b, err := os.ReadFile("/proc/sys/fs/binfmt_misc/WSLInterop")
-	if err != nil {
-		return "", false
-	}
-	var enabled bool
-	for line := range strings.SplitSeq(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "enabled" {
-			enabled = true
-			continue
-		}
-		if rest, ok := strings.CutPrefix(line, "interpreter "); ok && enabled {
-			interp := filepath.Clean(strings.TrimSpace(rest))
-			if filepath.IsAbs(interp) {
-				return interp, true
-			}
-			return "", false
-		}
-	}
-	return "", false
-}
-
 // EnvOverride reports whether ZARLCODE_SANDBOX was set explicitly and, if so,
 // which state it requests. The historic contract is preserved: explicit
 // off/0/false/no disables; any other explicit value enables.
@@ -281,15 +224,4 @@ func splitPathList(s string) []string {
 		}
 	}
 	return paths
-}
-
-func appendUniquePath(paths []string, p string) []string {
-	p = filepath.Clean(p)
-	if p == "" {
-		return paths
-	}
-	if slices.Contains(paths, p) {
-		return paths
-	}
-	return append(paths, p)
 }

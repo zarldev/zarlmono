@@ -47,7 +47,9 @@ func PlanAllows(name tools.ToolName) bool {
 		dynamic.ToolNameMCPList,
 		code.ToolNameBashOutput,
 		code.ToolNameListProcesses,
-		spawn.ToolNameSpawnAgent:
+		spawn.ToolNameAgentSpawn,
+		spawn.ToolNameAgentStatus,
+		spawn.ToolNameListAgentTasks:
 		return true
 	default:
 		return false

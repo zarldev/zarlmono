@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -36,7 +35,6 @@ func (r *Runner) drainStream(
 	ctx, iterCtx context.Context,
 	cancelIter context.CancelFunc,
 	spec TaskSpec,
-	iterNum int,
 	stream iter.Seq2[llm.CompletionChunk, error],
 ) streamResult {
 	var contentBuilder strings.Builder
@@ -145,14 +143,6 @@ drain:
 			}
 		}
 	}
-
-	slog.InfoContext(ctx, "runner: drain done", "task", string(spec.ID), "iter", iterNum,
-		"chunks_content_bytes", contentBuilder.Len(),
-		"tool_calls", len(toolCallOrder),
-		"stream_err", streamErr,
-		"iter_ctx_err", iterCtx.Err(),
-		"outer_ctx_err", ctx.Err(),
-		"idle_for_ms", time.Since(lastChunk.Get()).Milliseconds())
 
 	// Classify *before* the manual cancelIter — the iterCtx.Err() check
 	// needs to distinguish "watchdog or outer-ctx fired" from "we cancelled

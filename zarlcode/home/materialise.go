@@ -36,8 +36,7 @@ func (r Result) String() string {
 
 // Materialise ensures ~/.zarlcode exists with the canonical
 // directory layout (skills/, tools/, hooks/) plus state.db (created lazily by
-// the first store Open). Idempotent — existing files are left exactly as they
-// are, including legacy prompt files.
+// the first store Open). It is idempotent and does not modify definition files.
 //
 // Returns the [Result] describing what was touched. Any
 // filesystem error short-circuits with an error; partial state on

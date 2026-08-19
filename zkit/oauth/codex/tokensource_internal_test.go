@@ -173,9 +173,9 @@ func TestCodexTokenSource_RefreshesWhenExpired(t *testing.T) {
 	}
 
 	// Persisted blob should now carry the new refresh token.
-	stored, ok, err := prefs.NewService(store, v, "").GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
-	if err != nil || !ok {
-		t.Fatalf("getStoredAPIKey: ok=%v err=%v", ok, err)
+	stored, err := prefs.NewService(store, v, "").GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
+	if err != nil {
+		t.Fatalf("getStoredAPIKey: err=%v", err)
 	}
 	var persisted Cred
 	if err := json.Unmarshal([]byte(stored), &persisted); err != nil {

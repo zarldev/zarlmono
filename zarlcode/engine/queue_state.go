@@ -51,7 +51,7 @@ func (q *queueState) Append(text string) (int, int) {
 // Drain satisfies runner.Steerer. It atomically takes the ready messages and
 // yields them without blocking; an empty queue returns an empty sequence.
 //
-// Only top-level runs may drain the UI queue. The default spawn_agent path
+// Only top-level runs may drain the UI queue. The default agent_spawn path
 // reuses the parent runner for unnamed/fallback sub-agents, which means the
 // child Run inherits this same Steerer. Without the depth check, user input
 // typed while a sub-agent is running gets consumed into the child transcript

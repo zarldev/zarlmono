@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"context"
+
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -17,13 +20,13 @@ type liveTurnFinishedMsg struct{}
 // runs off the Update loop, and streaming output reaches the timeline through
 // the sink's pump. It is a package func, not a method, because RunFn must live
 // in the TUI (it returns a tea.Cmd) while LiveRunner lives in the engine.
-func RunFn(l *engine.LiveRunner, prompt string) tea.Cmd {
-	return RunFnWithAttachments(l, prompt, nil)
+func RunFn(ctx context.Context, l *engine.LiveRunner, prompt string) tea.Cmd {
+	return RunFnWithAttachments(ctx, l, prompt, nil)
 }
 
-func RunFnWithAttachments(l *engine.LiveRunner, prompt string, attachments []llm.ContentPart) tea.Cmd {
+func RunFnWithAttachments(ctx context.Context, l *engine.LiveRunner, prompt string, attachments []llm.ContentPart) tea.Cmd {
 	return func() tea.Msg {
-		if err := l.RunTurnWithAttachments(prompt, attachments); err != nil {
+		if err := l.RunTurnWithAttachments(ctx, prompt, attachments); err != nil {
 			return turnSetupFailedMsg{Prompt: prompt, Error: err.Error()}
 		}
 		return liveTurnFinishedMsg{}

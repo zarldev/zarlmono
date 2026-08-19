@@ -24,34 +24,40 @@ import (
 // Construct with NewLLMVerdictJudge. Then wire onto the guardrail:
 //
 //	judge := guardrails.NewLLMVerdictJudge(provider)
-//	g := guardrails.NewDecomposeGuardrail(0).WithJudge(judge)
+//	g := guardrails.NewDecomposeGuardrail(0, guardrails.WithDecomposeJudge(judge))
 type LLMVerdictJudge struct {
 	provider  llm.Provider
 	maxTokens int
 }
 
-// NewLLMVerdictJudge builds a judge backed by the supplied provider.
-// The provider's configured model is used as-is — for verdicts you
-// typically want a small fast model, so construct a dedicated
-// provider with WithModel(<small-model>) rather than sharing the
-// driving agent's provider.
-func NewLLMVerdictJudge(provider llm.Provider) *LLMVerdictJudge {
-	return &LLMVerdictJudge{
-		provider:  provider,
-		maxTokens: defaultVerdictMaxTokens,
+// LLMVerdictJudgeOption configures an [LLMVerdictJudge].
+type LLMVerdictJudgeOption func(*LLMVerdictJudge)
+
+// WithVerdictMaxTokens overrides the per-verdict token cap. Non-positive
+// values leave the default unchanged.
+func WithVerdictMaxTokens(n int) LLMVerdictJudgeOption {
+	return func(j *LLMVerdictJudge) {
+		if n > 0 {
+			j.maxTokens = n
+		}
 	}
 }
 
-// WithMaxTokens overrides the per-verdict token cap. The default
-// (defaultVerdictMaxTokens) is generous for one sentence of
-// rationale plus the JSON envelope; raise it only if you broaden
-// the schema.
-func (j *LLMVerdictJudge) WithMaxTokens(n int) *LLMVerdictJudge {
-	if n > 0 {
-		j.maxTokens = n
+// NewLLMVerdictJudge builds a judge backed by the supplied provider. The
+// provider's configured model is used as-is; pass a dedicated provider when
+// verdicts should use a smaller model.
+func NewLLMVerdictJudge(provider llm.Provider, opts ...LLMVerdictJudgeOption) *LLMVerdictJudge {
+	j := &LLMVerdictJudge{
+		provider:  provider,
+		maxTokens: defaultVerdictMaxTokens,
+	}
+	for _, opt := range opts {
+		opt(j)
 	}
 	return j
 }
+
+var _ VerdictJudge = (*LLMVerdictJudge)(nil)
 
 // defaultVerdictMaxTokens caps the JSON response. The schema is
 // rationale (≈1 short sentence) + action (one enum value) + JSON

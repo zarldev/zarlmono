@@ -39,11 +39,13 @@ type Store interface {
 // It is the source of truth at runtime — Add/Remove persist
 // immediately and Load reads back what's in the store.
 //
-// Safe for concurrent use; in-memory state is mutex-guarded.
+// Catalog serializes each complete store and snapshot transition. Its mutex
+// deliberately remains held during store I/O so concurrent operations cannot
+// leave persistence and the in-memory snapshot representing different sets.
 type Catalog struct {
 	store Store
 
-	mu      sync.RWMutex
+	mu      sync.Mutex
 	entries []Entry
 }
 
@@ -54,27 +56,24 @@ func NewCatalog(store Store) *Catalog {
 	return &Catalog{store: store}
 }
 
-// Load reads the catalog from the store with a background context. Prefer
-// LoadContext on request paths that already carry cancellation/deadline state.
-func (c *Catalog) Load() error { return c.LoadContext(context.Background()) }
-
 // LoadContext reads the catalog from the store. A missing source is not
 // an error — it produces an empty catalog.
 func (c *Catalog) LoadContext(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	rows, err := c.store.List(ctx)
 	if err != nil {
 		return fmt.Errorf("catalog load: %w", err)
 	}
-	c.mu.Lock()
 	c.entries = rows
-	c.mu.Unlock()
 	return nil
 }
 
 // Entries returns a snapshot of the current entries.
 func (c *Catalog) Entries() []Entry {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	out := make([]Entry, len(c.entries))
 	copy(out, c.entries)
 	return out
@@ -82,8 +81,8 @@ func (c *Catalog) Entries() []Entry {
 
 // Get returns the entry for the given tool name, or false if absent.
 func (c *Catalog) Get(name tools.ToolName) (Entry, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, e := range c.entries {
 		if e.Spec.Name == name {
 			return e, true
@@ -92,14 +91,9 @@ func (c *Catalog) Get(name tools.ToolName) (Entry, bool) {
 	return Entry{}, false
 }
 
-// Add inserts (or replaces) an entry by name using a background context. Prefer
-// AddContext on request paths that already carry cancellation/deadline state.
-func (c *Catalog) Add(entry Entry) error { return c.AddContext(context.Background(), entry) }
-
 // AddContext inserts (or replaces) an entry by name and persists to the
-// store. The in-memory cache is updated only on a successful store
-// write, so a transient store failure leaves Catalog reading the
-// pre-Add state.
+// store. The in-memory cache is updated only on a successful store write, so
+// a transient store failure leaves the catalog unchanged.
 func (c *Catalog) AddContext(ctx context.Context, entry Entry) error {
 	if entry.Spec.Name == "" {
 		return errors.New("catalog add: empty tool name")
@@ -107,61 +101,43 @@ func (c *Catalog) AddContext(ctx context.Context, entry Entry) error {
 	if entry.BinaryPath == "" {
 		return fmt.Errorf("catalog add %q: empty binary path", entry.Spec.Name)
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := c.store.Upsert(ctx, entry); err != nil {
 		return fmt.Errorf("catalog add %q: %w", entry.Spec.Name, err)
 	}
-	c.mu.Lock()
-	replaced := false
-	for i, e := range c.entries {
-		if e.Spec.Name == entry.Spec.Name {
+	for i, current := range c.entries {
+		if current.Spec.Name == entry.Spec.Name {
 			c.entries[i] = entry
-			replaced = true
-			break
+			return nil
 		}
 	}
-	if !replaced {
-		c.entries = append(c.entries, entry)
-	}
-	c.mu.Unlock()
+	c.entries = append(c.entries, entry)
 	return nil
 }
 
-// Remove deletes the entry matching name using a background context. Prefer
-// RemoveContext on request paths that already carry cancellation/deadline state.
-func (c *Catalog) Remove(name tools.ToolName) (bool, error) {
-	return c.RemoveContext(context.Background(), name)
-}
-
-// RemoveContext deletes the entry matching name and persists to the store.
-// Returns false if no entry matched (not an error — idempotent rollback).
-func (c *Catalog) RemoveContext(ctx context.Context, name tools.ToolName) (bool, error) {
+// RemoveContext deletes the entry matching name. It is idempotent: absence is
+// success. Persistence is completed before the snapshot changes.
+func (c *Catalog) RemoveContext(ctx context.Context, name tools.ToolName) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	idx := -1
-	for i, e := range c.entries {
-		if e.Spec.Name == name {
+	for i, entry := range c.entries {
+		if entry.Spec.Name == name {
 			idx = i
 			break
 		}
 	}
-	c.mu.Unlock()
 	if idx < 0 {
-		return false, nil
+		return nil
 	}
 	if err := c.store.Delete(ctx, name); err != nil {
-		return false, fmt.Errorf("catalog remove %q: %w", name, err)
+		return fmt.Errorf("catalog remove %q: %w", name, err)
 	}
-	c.mu.Lock()
-	// Re-find: another goroutine may have mutated entries between
-	// the find above and the lock here. Defensive — the runtime
-	// pattern is single-threaded today.
-	for i, e := range c.entries {
-		if e.Spec.Name == name {
-			c.entries = append(c.entries[:i], c.entries[i+1:]...)
-			break
-		}
-	}
-	c.mu.Unlock()
-	return true, nil
+	c.entries = append(c.entries[:idx], c.entries[idx+1:]...)
+	return nil
 }
 
 type fileStore struct {

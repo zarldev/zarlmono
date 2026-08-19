@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -74,11 +76,19 @@ func TestRunState_UsageSnapshotRoundTrip(t *testing.T) {
 }
 
 func TestEncodePlanJSON_EmptyIsNull(t *testing.T) {
-	if got := string(encodePlanJSON(code.Plan{})); got != "null" {
+	got, err := encodePlanJSON(code.Plan{})
+	if err != nil {
+		t.Fatalf("encode empty plan: %v", err)
+	}
+	if string(got) != "null" {
 		t.Errorf("empty plan = %q, want null", got)
 	}
 	plan := code.Plan{Steps: []code.PlanStep{{Text: "do it", Status: code.StepStatuses.COMPLETED}}}
-	if got := string(encodePlanJSON(plan)); got == "null" || got == "" {
+	got, err = encodePlanJSON(plan)
+	if err != nil {
+		t.Fatalf("encode plan: %v", err)
+	}
+	if string(got) == "null" || len(got) == 0 {
 		t.Errorf("non-empty plan should marshal, got %q", got)
 	}
 }
@@ -156,5 +166,49 @@ func TestRunState_RestoreOldUsageSnapshotWithoutCostFields(t *testing.T) {
 	}
 	if rs.sessionCost() != 0 || rs.sessionCostParent() != 0 || rs.cacheSaved() != 0 {
 		t.Fatalf("old snapshot should restore zero cost fields: cost=%v parent=%v saved=%v", rs.sessionCost(), rs.sessionCostParent(), rs.cacheSaved())
+	}
+}
+
+func TestSaveSessionCmdUsesCapturedSnapshot(t *testing.T) {
+	m := New()
+	m.settings = newTestSettings(t)
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	m.live = engine.NewLiveRunner(nil, ws, "model-a")
+	m.live.RestoreHistory([]llm.Message{{Role: llm.RoleUser, Content: "before"}})
+	m.session.Provider = "provider-a"
+	m.session.Model = "model-a"
+
+	cmd := m.saveSessionCmd()
+	capturedID := m.session.ID
+	m.live.RestoreHistory([]llm.Message{{Role: llm.RoleUser, Content: "after"}})
+	m.session.Provider = "provider-b"
+	m.session.Model = "model-b"
+	if msg := cmd(); msg != nil {
+		t.Fatalf("save command message = %#v", msg)
+	}
+
+	rec, err := m.settings.Store.GetSession(t.Context(), capturedID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if rec.Provider != "provider-a" || rec.Model != "model-a" {
+		t.Fatalf("saved target = %s/%s, want provider-a/model-a", rec.Provider, rec.Model)
+	}
+	var history []llm.Message
+	if err := json.Unmarshal(rec.HistoryJSON, &history); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	if len(history) != 1 || history[0].Content != "before" {
+		t.Fatalf("saved history = %+v, want captured history", history)
+	}
+	activeID, err := m.settings.Store.GetSettingExact(t.Context(), m.settings.WorkspaceRoot(), activeSessionKey)
+	if err != nil {
+		t.Fatalf("get active session: %v", err)
+	}
+	if activeID != capturedID {
+		t.Fatalf("active session = %q, want %q", activeID, capturedID)
 	}
 }

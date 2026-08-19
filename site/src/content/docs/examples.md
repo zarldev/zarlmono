@@ -14,7 +14,7 @@ API key.
 | `healthcheck` | A world-verifying goal: the agent probes a fake server farm until every endpoint reports healthy. Schema + fan-out guardrails policing the calls. |
 | `releasegate` | Pre/post guardrails around a workflow: the agent may only publish after every required check is green, and the goal confirms the publish actually happened. |
 | `hnupvote` | Browser automation under pursue: a real chromedp session where the oracle is verified world state and a login wall forces the re-drive path. |
-| `spawn_worker` | Hierarchical decomposition: a coordinator delegates to researcher / reviewer / coder sub-agents with per-mode tool gating and a depth cap. |
+| `spawn_worker` | Hierarchical decomposition: a coordinator launches researcher / reviewer / coder tasks with `agent_spawn`, continues independently, and collects results explicitly under work-mode gates and a depth cap. |
 | `stuck_recovery` | The decompose guardrail's graduated response — pass, advisory, fatal — as an agent repeats a failing search, then recovers by delegating. |
 | `long_conversation` | Compactor integration: a pressure-gated compactor keeps a long exploration inside the context window without orphaning tool calls. |
 | `shared_infra` | Shared infrastructure without an LLM: retrieval indexing/search, workflow graph execution, checkpoints, HITL review, and JSONL traces. |

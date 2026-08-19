@@ -17,10 +17,16 @@ import (
 // build/plan-mode prompt bodies (zarlcode/prompts). They are the SAME assets
 // the eval harness renders, so the interactive agent and the eval agent can't
 // drift on operating instructions. The TUI additionally resolves per-user
-// preferences and explicit/legacy build-prompt overrides at turn time.
+// preferences and explicit build-prompt overrides at turn time.
 var (
-	LiveSystemPromptTemplate = prompts.System
-	LivePlanPromptTemplate   = prompts.Plan
+	LiveSystemPromptTemplate  = prompts.System
+	LiveCompactPromptTemplate = prompts.SystemCompact
+	LivePlanPromptTemplate    = prompts.Plan
+)
+
+const (
+	embeddedSystemPromptSource  = "embedded system prompt"
+	embeddedCompactPromptSource = "embedded compact system prompt"
 )
 
 // promptTool is the name/description shape the prompt templates range over.
@@ -38,14 +44,23 @@ type livePromptSelection struct {
 	Diagnostics       []string
 }
 
-func selectLivePrompt(plan bool) livePromptSelection {
-	resolved := home.ResolveBuildPrompt(prompts.System)
+func selectLivePrompt(plan bool, profile PromptProfile) livePromptSelection {
+	body := prompts.System
+	bodySource := embeddedSystemPromptSource
+	if profile == PromptProfiles.LEAN {
+		body = prompts.SystemCompact
+		bodySource = embeddedCompactPromptSource
+	}
+	resolved := home.ResolveBuildPrompt(body)
 	selection := livePromptSelection{
 		Name:           "system",
 		Body:           resolved.Body,
 		BodySource:     resolved.BodySource,
 		ResolutionMode: resolved.Mode,
 		Diagnostics:    append([]string(nil), resolved.Diagnostics...),
+	}
+	if resolved.Mode == home.PromptEmbeddedCore {
+		selection.BodySource = bodySource
 	}
 	if resolved.UsePreferences {
 		selection.Preferences = resolved.Preferences
@@ -62,15 +77,16 @@ func selectLivePrompt(plan bool) livePromptSelection {
 }
 
 // promptFunc renders the build/plan-mode system prompt for a top-level turn.
-// Build mode may use an explicit/legacy full override; plan mode always uses
-// the embedded plan prompt. Literal preferences are reloaded each turn.
+// Build mode may use an explicit full override; plan mode always uses the
+// embedded plan prompt. Literal preferences are reloaded each turn.
 func (l *LiveRunner) promptFunc(src func() tools.Source) runner.PromptFunc {
 	return func(ctx context.Context, _ runner.PromptVars) (string, error) {
 		l.mu.Lock()
 		plan := l.target.Plan
+		profile := l.promptProfile
 		l.mu.Unlock()
 
-		selection := selectLivePrompt(plan)
+		selection := selectLivePrompt(plan, profile)
 		l.publishPromptDiagnostics(selection.Diagnostics)
 		return RenderLivePrompt(selection.Name, selection.Body, l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, src()), selection.Preferences)
 	}
@@ -88,7 +104,7 @@ type promptDiagnosticsSink interface {
 }
 
 func (l *LiveRunner) publishPromptDiagnostics(diags []string) {
-	if l == nil || len(diags) == 0 || l.sink == nil {
+	if len(diags) == 0 {
 		return
 	}
 	sink, ok := l.sink.(promptDiagnosticsSink)

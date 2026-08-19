@@ -33,7 +33,7 @@ func TestFanoutGuardrail_PassesUnderCap(t *testing.T) {
 	}
 }
 
-// At/above the cap: Validation rejection with the spawn_agent nudge.
+// At/above the cap: Validation rejection with the agent_spawn nudge.
 // The model is brute-forcing a fanout that should have been delegated.
 func TestFanoutGuardrail_RejectsAtCapWithSpawnNudge(t *testing.T) {
 	t.Parallel()
@@ -53,7 +53,7 @@ func TestFanoutGuardrail_RejectsAtCapWithSpawnNudge(t *testing.T) {
 	if te.Kind != tools.Kinds.VALIDATION {
 		t.Errorf("Kind = %v, want Validation", te.Kind)
 	}
-	for _, want := range []string{"spawn_agent", "cap 3"} {
+	for _, want := range []string{"agent_spawn", "cap 3"} {
 		if !strings.Contains(te.Reason, want) {
 			t.Errorf("nudge missing %q in: %q", want, te.Reason)
 		}
@@ -82,7 +82,7 @@ func TestFanoutGuardrail_FailuresBurnBudget(t *testing.T) {
 }
 
 // Unregistered tools are unbounded — the guardrail caps only what
-// the consumer asks it to cap. Bash / spawn_agent / etc. pass through.
+// the consumer asks it to cap. Bash / agent_spawn / etc. pass through.
 func TestFanoutGuardrail_UnregisteredToolUnbounded(t *testing.T) {
 	t.Parallel()
 	g := guardrails.NewFanoutGuardrail(map[tools.ToolName]int{"read": 1})

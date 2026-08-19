@@ -8,6 +8,7 @@ package zlog
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"log/slog"
 	"os"
@@ -20,9 +21,14 @@ import (
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
+// FileSystem is the file capability zlog needs when callers do not use the OS.
+type FileSystem interface {
+	MkdirAll(path string, perm fs.FileMode) error
+	OpenFile(name string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error)
+}
+
 // Config holds zlog setup parameters. FileFormat and StdoutFormat configure
-// each destination independently. A zero format is resolved for compatibility
-// using the deprecated JSONOutput field.
+// each destination independently.
 type Config struct {
 	Level        slog.Level
 	AddSource    bool
@@ -33,12 +39,7 @@ type Config struct {
 	Stdout       bool
 	StdoutFormat OutputFormat
 	Stdlib       bool
-	FS           filesystem.ReadWriteFileFS
-
-	// JSONOutput is retained for source compatibility with direct Config users.
-	//
-	// Deprecated: use FileFormat and StdoutFormat.
-	JSONOutput bool
+	FS           FileSystem
 }
 
 // DefaultConfig returns debug logging with source annotations, JSON file
@@ -93,26 +94,8 @@ func WithStdoutFormat(format OutputFormat) options.Option[Config] {
 	return func(config *Config) { config.StdoutFormat = format }
 }
 
-// WithJSONOutput selects compatible formats for both destinations. When
-// enabled both are JSON; when disabled files are plain text and stdout uses
-// console presentation.
-//
-// Deprecated: use [WithFileFormat] and [WithStdoutFormat].
-func WithJSONOutput(enabled bool) options.Option[Config] {
-	return func(config *Config) {
-		config.JSONOutput = enabled
-		if enabled {
-			config.FileFormat = FormatJSON()
-			config.StdoutFormat = FormatJSON()
-			return
-		}
-		config.FileFormat = FormatText()
-		config.StdoutFormat = FormatConsole()
-	}
-}
-
 // WithFS injects a custom filesystem.
-func WithFS(fs filesystem.ReadWriteFileFS) options.Option[Config] {
+func WithFS(fs FileSystem) options.Option[Config] {
 	return func(config *Config) { config.FS = fs }
 }
 
@@ -137,7 +120,7 @@ func SetStdlibOutput(writer io.Writer) {
 }
 
 // Setup configures slog as the package default and returns the open log file.
-func Setup(opts ...options.Option[Config]) (filesystem.File, error) {
+func Setup(opts ...options.Option[Config]) (io.ReadWriteCloser, error) {
 	config := DefaultConfig()
 	for _, option := range opts {
 		option(&config)
@@ -147,7 +130,7 @@ func Setup(opts ...options.Option[Config]) (filesystem.File, error) {
 
 // SetupConfig configures slog from an explicit Config and returns the open log
 // file. The caller owns the returned file and must close it.
-func SetupConfig(config Config) (filesystem.File, error) {
+func SetupConfig(config Config) (io.ReadWriteCloser, error) {
 	resolveFormats(&config)
 	if !validOutputFormat(config.FileFormat) {
 		return nil, fmt.Errorf("file format: %w: %d", ErrInvalidOutputFormat, config.FileFormat)
@@ -199,22 +182,14 @@ func SetupConfig(config Config) (filesystem.File, error) {
 
 func resolveFormats(config *Config) {
 	if config.FileFormat == formatUnspecified {
-		if config.JSONOutput {
-			config.FileFormat = FormatJSON()
-		} else {
-			config.FileFormat = FormatText()
-		}
+		config.FileFormat = FormatText()
 	}
 	if config.StdoutFormat == formatUnspecified {
-		if config.JSONOutput {
-			config.StdoutFormat = FormatJSON()
-		} else {
-			config.StdoutFormat = FormatConsole()
-		}
+		config.StdoutFormat = FormatConsole()
 	}
 }
 
-func openLogFile(config Config) (filesystem.File, error) {
+func openLogFile(config Config) (io.ReadWriteCloser, error) {
 	logPath := filepath.Join(config.LogDir, fmt.Sprintf("%s_%s.log", config.FilePrefix, time.Now().Format("2006-01-02_15-04-05")))
 	if config.FS == nil {
 		if err := os.MkdirAll(config.LogDir, filesystem.ModePublicDir); err != nil {

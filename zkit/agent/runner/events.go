@@ -96,7 +96,7 @@ type ToolFailed struct {
 // (set by spawn-agent for sub-agents). Empty for top-level Runs. The
 // TUI uses it to attribute a sub-agent's events back to the exact
 // parent tool call that spawned it — critical for parallel
-// spawn_agent dispatch where multiple sub-agents are in flight and
+// agent_spawn dispatch where multiple sub-agents are in flight and
 // can't be distinguished by task ID + Depth alone.
 type ConversationStarted struct {
 	TaskID           taskscope.ID
@@ -126,6 +126,7 @@ type ConversationEnded struct {
 	Depth  int
 	Reason TerminalReason
 	Error  string
+	Cause  TerminalCause
 	// RateLimit is set when the terminal error is (or wraps) a
 	// *llm.RateLimitError, so subscribers can render structured timing
 	// (retry-after / reset / permanent-quota) without re-parsing Error.
@@ -164,11 +165,22 @@ type IterationCompleted struct {
 	// itself (the runner owns it; the slice would alias and race). Nil
 	// when the runner didn't compute one. Advisory, like Usage.
 	Context *ContextBreakdown
+	// ToolSurface describes the exact post-gate tool snapshot sent on this
+	// iteration. It is present even when the surface is empty.
+	ToolSurface ToolSurface
+}
+
+// ToolSurface is request accounting for the exact model-visible tool set.
+type ToolSurface struct {
+	Count       int
+	JSONBytes   int
+	Fingerprint string
+	Changed     bool
 }
 
 // ContextBreakdown is the composition of a Run's working history by role,
 // in raw content bytes plus message counts. Tool bytes are further split
-// into the load_skill / spawn_agent content that dominates most coding
+// into the skill_load / agent_spawn content that dominates most coding
 // sessions, so a subscriber can show "how much of the window is reference
 // docs vs delegated summaries vs ordinary tool output". Bytes are raw
 // content bytes; a chars/4 token estimate is the subscriber's to make.
@@ -178,8 +190,8 @@ type ContextBreakdown struct {
 	AssistantBytes int
 	ToolBytes      int
 
-	// SkillBytes / AgentBytes / InstructionBytes are the load_skill /
-	// spawn_agent / load_instruction slices of ToolBytes.
+	// SkillBytes / AgentBytes / InstructionBytes are the skill_load /
+	// agent_spawn / instruction_load slices of ToolBytes.
 	SkillBytes       int
 	AgentBytes       int
 	InstructionBytes int
@@ -211,6 +223,18 @@ type CompactionApplied struct {
 	MessagesAfter  int
 	BytesTrimmed   int
 	Engine         string
+}
+
+// Diagnostic reports a non-terminal recovery or operational decision.
+type Diagnostic struct {
+	TaskID  taskscope.ID
+	Depth   int
+	Kind    string
+	Message string
+	Attempt int
+	Limit   int
+	Backoff time.Duration
+	Err     error
 }
 
 // --- Sub-sinks: small, single-purpose ---
@@ -265,6 +289,11 @@ type CompactionSink interface {
 	OnCompactionApplied(CompactionApplied)
 }
 
+// DiagnosticSink observes non-terminal recovery decisions.
+type DiagnosticSink interface {
+	OnDiagnostic(Diagnostic)
+}
+
 // EventSink is the composite the runner takes. Adding an event method
 // here breaks every full-EventSink implementer until they handle it —
 // that's the compile-time exhaustiveness contract. Implementers that
@@ -294,6 +323,7 @@ type EventSink interface {
 	ConversationSink
 	SteerSink
 	CompactionSink
+	DiagnosticSink
 }
 
 // NopSink satisfies EventSink with no-op methods. Embed when you want
@@ -312,3 +342,4 @@ func (NopSink) OnConversationEnded(ConversationEnded)     {}
 func (NopSink) OnIterationCompleted(IterationCompleted)   {}
 func (NopSink) OnSteerInjected(SteerInjected)             {}
 func (NopSink) OnCompactionApplied(CompactionApplied)     {}
+func (NopSink) OnDiagnostic(Diagnostic)                   {}

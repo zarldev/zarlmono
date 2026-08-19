@@ -95,7 +95,7 @@ func TestSettingsDialog_ModelPickerFromFetchedList(t *testing.T) {
 	if pick := lp.handleKey(skey(tea.KeyEnter)); pick == nil {
 		t.Fatal("picker enter returned nil action")
 	}
-	if got, ok, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel); !ok || got.Value != "gpt-4o-mini" {
+	if got, _ := s.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel); got.Value != "gpt-4o-mini" {
 		t.Errorf("model not committed from picker: ok=%v val=%q", ok, got.Value)
 	}
 }

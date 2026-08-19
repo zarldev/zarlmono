@@ -2,6 +2,7 @@ package code_test
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -74,9 +75,8 @@ func TestBash_Background_LogFileCaptures(t *testing.T) {
 	logPath := extractLogPath(t, body)
 	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
 
-	// Wait for the echo to flush. 500ms is plenty for an echo + sleep
-	// to start; we poll instead of blocking on a single sleep so the
-	// test stays snappy.
+	// The command emits this marker before sleeping. A bounded polling loop
+	// observes the external process without an arbitrary delay.
 	deadline := time.Now().Add(2 * time.Second)
 	var data []byte
 	for time.Now().Before(deadline) {
@@ -84,7 +84,7 @@ func TestBash_Background_LogFileCaptures(t *testing.T) {
 		if strings.Contains(string(data), "background-marker") {
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		runtime.Gosched()
 	}
 	if !strings.Contains(string(data), "background-marker") {
 		t.Errorf("log %s missing marker; got %q", logPath, string(data))

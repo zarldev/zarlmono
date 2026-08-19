@@ -41,12 +41,9 @@ func TestStoreToken_PersistsParsedCredential(t *testing.T) {
 	if err := StoreToken(t.Context(), svc, out); err != nil {
 		t.Fatalf("StoreToken() error = %v", err)
 	}
-	got, ok, err := svc.GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
+	got, err := svc.GetKey(t.Context(), prefs.ScopeGlobal, CredProvider)
 	if err != nil {
 		t.Fatalf("GetKey() error = %v", err)
-	}
-	if !ok {
-		t.Fatal("stored key missing")
 	}
 	if got == "" {
 		t.Fatal("stored credential empty")

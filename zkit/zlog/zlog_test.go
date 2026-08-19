@@ -117,18 +117,6 @@ func TestSetupFileFormats(t *testing.T) {
 	}
 }
 
-func TestWithJSONOutputCompatibility(t *testing.T) {
-	config := zlog.DefaultConfig()
-	zlog.WithJSONOutput(false)(&config)
-	if config.FileFormat != zlog.FormatText() || config.StdoutFormat != zlog.FormatConsole() {
-		t.Fatalf("false formats = %v, %v", config.FileFormat, config.StdoutFormat)
-	}
-	zlog.WithJSONOutput(true)(&config)
-	if config.FileFormat != zlog.FormatJSON() || config.StdoutFormat != zlog.FormatJSON() {
-		t.Fatalf("true formats = %v, %v", config.FileFormat, config.StdoutFormat)
-	}
-}
-
 func TestSetupRejectsInvalidFormatBeforeOpeningFile(t *testing.T) {
 	dir := t.TempDir()
 	config := zlog.DefaultConfig()

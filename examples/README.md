@@ -18,5 +18,5 @@ See [`patterns.md`](patterns.md) for the patterns these examples demonstrate and
 Run all example tests:
 
 ```sh
-go test ./...
+go test -C examples ./...
 ```

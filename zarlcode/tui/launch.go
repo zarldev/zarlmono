@@ -32,6 +32,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zlog"
 )
 
+const startupMCPConnectTimeout = 15 * time.Second
+
 // Zarlcode is the running application: workspace, settings, the live runner,
 // and the bubbletea model. It's the typed instance carried by the zapp
 // lifecycle harness — [Launch.Create] wires it (registering closers with the
@@ -51,14 +53,16 @@ type Zarlcode struct {
 // zarlcode.Main and threaded through here so Create/Run never touch the flag
 // package — they read intent off the struct.
 type Launch struct {
-	EnvFile   string
-	AgentName string
-	Resume    bool
-	Headless  bool
-	Prompt    string // pre-resolved in Main from --prompt-file/--prompt-text
-	MaxIter   int
-	PprofAddr string
-	TraceFile string
+	EnvFile       string
+	AgentName     string
+	Resume        bool
+	Headless      bool
+	Prompt        string // pre-resolved in Main from --prompt-file/--prompt-text
+	MaxIter       int
+	PprofAddr     string
+	TraceFile     string
+	PromptProfile engine.PromptProfile
+	ReportFile    string
 }
 
 // Name identifies the program to the zapp harness (errors, signals).
@@ -143,11 +147,11 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		} else {
 			_ = app.AddCloser("askpass", askpassSrv)
 			toolEnv = askpassSrv.Env()
-			sbPolicy = sbPolicy.WithExecPath(askpassSrv.script)
+			sbPolicy = grantSandboxExecPath(sbPolicy, askpassSrv.script)
 		}
 	}
 	if cp := settings.ChromeBinPath(ctx); cp != "" {
-		sbPolicy = sbPolicy.WithExecPath(cp)
+		sbPolicy = grantSandboxExecPath(sbPolicy, cp)
 	}
 	sandboxEnabled := settings.ShellSandbox(ctx)
 	if enabled, ok := sandbox.EnvOverride(); ok {
@@ -217,6 +221,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	ctxWindow := settings.ContextWindow(ctx, spec)
 
 	m := New()
+	m.ctx = ctx
 	m.SetWorkspace(root, spec.Model)
 	m.SetProvider(spec.Name)
 	m.SetContextWindow(ctxWindow)
@@ -224,8 +229,17 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	m.SetProviderContext(fallback, spec)
 	m.appliedReasoning, m.appliedWindow = activeProviderPolicy(settings, spec.Name) // baseline for maybeRepoint
 
-	live := engine.NewLiveRunner(prov, ws, sink, spec.Model)
-	live.SetContext(ctx)
+	live := engine.NewLiveRunner(
+		prov,
+		ws,
+		spec.Model,
+		engine.WithPromptProfile(p.PromptProfile),
+		engine.WithLiveSink(sink),
+		engine.WithSettings(settings),
+		engine.WithProcessManager(pm),
+		engine.WithSandbox(sb),
+		engine.WithToolEnvironment(toolEnv),
+	)
 	_ = app.AddCloser("live", closerFunc(func() error {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -241,14 +255,10 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	mcpReg := dynamic.NewMCPRegistry(mcpHost, agentmcp.NotifierFor(live.QueueInjector()))
 	connectConfiguredMCPServers(ctx, settings, mcpReg)
 
-	live.SetProcessManager(pm)
-	live.SetSandbox(sb)
-	live.SetToolEnv(toolEnv)
-	live.SetMCP(mcpReg, mcpHost)
+	live.AttachMCP(mcpReg, mcpHost)
 	live.SetProviderSpec(prov, spec)
 	live.SetContextWindow(ctxWindow)
 	live.SetSearxngURL(settings.SearxngURL(ctx)) // enable web_search (SearXNG)
-	live.SetSettingsHandle(settings)             // resolve compaction engine live per turn
 	lim := settings.Limits(ctx)
 	live.SetLimits(lim.ReserveTokens, lim.MaxIterations, lim.SpawnMaxIterations, lim.SpawnMaxDepth)
 	live.SetVerifyLoop(settings.VerifyLoop(ctx)) // headless verified re-drive (verify_tests / verify_attempts)
@@ -279,7 +289,17 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 // then persists the resumable session.
 func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) int {
 	if p.Headless {
-		return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter)
+		var report *os.File
+		if p.ReportFile != "" {
+			f, err := os.Create(p.ReportFile)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "headless: report:", err)
+				return zapp.ExitFailure
+			}
+			defer f.Close()
+			report = f
+		}
+		return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter, report)
 	}
 	prog := tea.NewProgram(z.model, tea.WithContext(ctx))
 	if z.sink != nil {
@@ -302,6 +322,30 @@ func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) in
 		fmt.Fprintln(os.Stderr, "session save:", err)
 	}
 	return zapp.ExitOK
+}
+
+func grantSandboxExecPath(policy sandbox.Policy, path string) sandbox.Policy {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || !filepath.IsAbs(path) {
+		return policy
+	}
+	grant := func(path string) {
+		policy.ReadFiles = append(policy.ReadFiles, path)
+		for dir := filepath.Dir(path); dir != "." && dir != string(filepath.Separator) && dir != ""; dir = filepath.Dir(dir) {
+			policy.ReadDirs = append(policy.ReadDirs, dir)
+		}
+	}
+	grant(path)
+	if strings.HasSuffix(strings.ToLower(path), ".exe") {
+		if b, err := os.ReadFile("/proc/sys/fs/binfmt_misc/WSLInterop"); err == nil {
+			for line := range strings.SplitSeq(string(b), "\n") {
+				if interpreter, ok := strings.CutPrefix(strings.TrimSpace(line), "interpreter "); ok && filepath.IsAbs(interpreter) {
+					grant(filepath.Clean(interpreter))
+				}
+			}
+		}
+	}
+	return policy
 }
 
 // closerFunc adapts a func() error to io.Closer for app.AddCloser.
@@ -357,7 +401,9 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 		wg.Add(1)
 		go func(srv startupMCPServer) {
 			defer wg.Done()
-			res, err := connect.Execute(ctx, tools.ToolCall{
+			connectCtx, cancel := context.WithTimeout(ctx, startupMCPConnectTimeout)
+			defer cancel()
+			res, err := connect.Execute(connectCtx, tools.ToolCall{
 				ID: tools.ToolCallID("startup-mcp-" + srv.row.Name),
 				Arguments: tools.ToolParameters{
 					"name":       srv.row.Name,
@@ -373,9 +419,9 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 			defer errMu.Unlock()
 			switch {
 			case err != nil:
-				fmt.Fprintf(os.Stderr, "mcp: connect %q: %v\n", srv.row.Name, err)
+				slog.WarnContext(ctx, "mcp: startup connect", "server", srv.row.Name, "err", err)
 			case res != nil && !res.Success:
-				fmt.Fprintf(os.Stderr, "mcp: connect %q: %s\n", srv.row.Name, res.Error)
+				slog.WarnContext(ctx, "mcp: startup connect", "server", srv.row.Name, "err", res.Error)
 			}
 		}(srv)
 	}
@@ -391,7 +437,7 @@ func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings,
 // but functional). All failures are non-fatal: launch must not be blocked.
 func resolveMCPAuthToken(ctx context.Context, settings *engine.Settings, srv db.MCPServerRow) string {
 	if settings.Svc != nil {
-		if k, ok, err := settings.Svc.GetKey(ctx, prefs.ScopeEffective, mcpAuthKeyProvider(srv.Name)); err == nil && ok && k != "" {
+		if k, err := settings.Svc.GetKey(ctx, prefs.ScopeEffective, mcpAuthKeyProvider(srv.Name)); err == nil && k != "" {
 			return k
 		}
 	}
@@ -446,10 +492,10 @@ func peekTheme(ctx context.Context, wsRoot string) theme.Theme {
 		return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))
 	}
 	defer store.Close()
-	if name, ok, _ := store.GetSetting(ctx, wsRoot, prefs.KeyTheme); ok && name != "" {
+	if name, err := store.GetSetting(ctx, wsRoot, prefs.KeyTheme); err == nil && name != "" {
 		return selectThemeByName(name)
 	}
-	if name, ok, _ := store.GetSetting(ctx, "", prefs.KeyTheme); ok && name != "" {
+	if name, err := store.GetSetting(ctx, "", prefs.KeyTheme); err == nil && name != "" {
 		return selectThemeByName(name)
 	}
 	return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))

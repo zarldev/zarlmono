@@ -18,8 +18,8 @@ func TestNew_Definition(t *testing.T) {
 	t.Parallel()
 	tool := spawn.New(nil) // Definition doesn't touch parent
 	def := tool.Definition()
-	if def.Name != spawn.ToolNameSpawnAgent {
-		t.Errorf("Name = %q, want %q", def.Name, spawn.ToolNameSpawnAgent)
+	if def.Name != spawn.ToolNameAgentSpawn {
+		t.Errorf("Name = %q, want %q", def.Name, spawn.ToolNameAgentSpawn)
 	}
 	if !strings.Contains(strings.ToLower(def.Description), "sub-agent") {
 		t.Errorf("Description should mention sub-agent: %q", def.Description)

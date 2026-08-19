@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
-	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -44,22 +44,18 @@ type conversation struct {
 // TUI surfaces as an error toast + log + idle-clear (see
 // Session.applyConversationEnded). So there is nothing to return here — we
 // keep only the partial history.
-func (c *conversation) runSpecWithSetup(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
+func (c *conversation) transition(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	spec.ID = taskscope.ID(uuid.NewString())
-	repaired, changed := compact.RepairToolPairing(c.history)
-	if changed > 0 {
-		slog.Warn("turn: repaired unbalanced tool-call pairing before provider request",
-			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
-	}
-	c.history = repaired
-	spec.Context = c.history
+	repaired, _ := agentcompact.RepairToolPairing(c.history)
+	spec.Context = repaired
 	exec, err := setup()
 	if err != nil {
 		return err
 	}
+	c.history = repaired
 	res := exec(spec)
 	if len(res.Messages) > 0 {
 		c.history = res.Messages
@@ -72,21 +68,7 @@ func (c *conversation) run(prompt string, exec func(runner.TaskSpec) runner.Task
 }
 
 func (c *conversation) runSpec(spec runner.TaskSpec, exec func(runner.TaskSpec) runner.TaskResult) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	spec.ID = taskscope.ID(uuid.NewString())
-	repaired, changed := compact.RepairToolPairing(c.history)
-	if changed > 0 {
-		slog.Warn("turn: repaired unbalanced tool-call pairing before provider request",
-			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
-	}
-	c.history = repaired
-	spec.Context = c.history
-	res := exec(spec)
-	if len(res.Messages) > 0 {
-		c.history = res.Messages
-	}
+	_ = c.transition(spec, func() (func(runner.TaskSpec) runner.TaskResult, error) { return exec, nil })
 }
 
 func (c *conversation) snapshot() []llm.Message {
@@ -106,7 +88,7 @@ func (c *conversation) snapshot() []llm.Message {
 func (c *conversation) restore(history []llm.Message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	repaired, changed := compact.RepairToolPairing(history)
+	repaired, changed := agentcompact.RepairToolPairing(history)
 	if changed > 0 {
 		slog.Warn("restore: repaired unbalanced tool-call pairing in saved history",
 			"stripped_or_dropped", changed, "before", len(history), "after", len(repaired))
@@ -116,21 +98,21 @@ func (c *conversation) restore(history []llm.Message) {
 	c.history = repaired
 }
 
-func (c *conversation) compactNow(ctx context.Context, compactor compact.Compactor, sink runner.EventSink) (ManualCompactionResult, error) {
+func (c *conversation) compactNow(ctx context.Context, compactor agentcompact.Compactor, sink runner.EventSink) (ManualCompactionResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	before := len(c.history)
 	if before == 0 {
-		return ManualCompactionResult{MessagesBefore: 0, MessagesAfter: 0, Engine: compact.EngineTiered}, nil
+		return ManualCompactionResult{MessagesBefore: 0, MessagesAfter: 0, Engine: agentcompact.EngineTiered}, nil
 	}
-	repaired, changed := compact.RepairToolPairing(c.history)
+	repaired, changed := agentcompact.RepairToolPairing(c.history)
 	if changed > 0 {
 		slog.WarnContext(ctx, "manual compact: repaired unbalanced tool-call pairing before compaction",
 			"stripped_or_dropped", changed, "before", len(c.history), "after", len(repaired))
 	}
 	c.history = repaired
 	before = len(c.history)
-	keep := compact.AdaptiveKeepRecent(c.history, coderunner.AdaptiveKeepTargetTokens, coderunner.AdaptiveKeepMin, coderunner.AdaptiveKeepMax)
+	keep := agentcompact.AdaptiveKeepRecent(c.history, coderunner.AdaptiveKeepTargetTokens, coderunner.AdaptiveKeepMin, coderunner.AdaptiveKeepMax)
 	res, err := compactor.Compact(ctx, c.history, keep)
 	if err != nil {
 		return ManualCompactionResult{}, fmt.Errorf("compact now: %w", err)

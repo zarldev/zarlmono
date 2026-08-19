@@ -108,10 +108,12 @@ func TestRun_RateLimitRetryBudgetResetsAfterSuccess(t *testing.T) {
 		{rateLimited()},
 		{chunkText("finished"), chunkDone()},
 	}}
+	sink := newRecordingSink()
 	r := runner.New(
 		runner.ClientFromProvider(provider),
 		runner.WithTools(newRegistry(stubTool{name: "echo", result: "ok"})),
 		runner.WithMaxIterations(8),
+		runner.WithSink(sink),
 	)
 
 	res := r.Run(t.Context(), runner.TaskSpec{
@@ -126,5 +128,19 @@ func TestRun_RateLimitRetryBudgetResetsAfterSuccess(t *testing.T) {
 	}
 	if got := provider.callCount(); got != 6 {
 		t.Fatalf("provider calls = %d, want 6", got)
+	}
+	sink.mu.Lock()
+	diagnostics := append([]runner.Diagnostic(nil), sink.diagnostics...)
+	sink.mu.Unlock()
+	if len(diagnostics) != 4 {
+		t.Fatalf("diagnostic count = %d, want 4 rate-limit retries", len(diagnostics))
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Kind != "rate_limit_retry" {
+			t.Errorf("diagnostic kind = %q, want rate_limit_retry", diagnostic.Kind)
+		}
+		if diagnostic.Err == nil {
+			t.Error("diagnostic Err = nil, want typed recovery cause")
+		}
 	}
 }

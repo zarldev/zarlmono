@@ -444,6 +444,18 @@ func (m *ProcessManager) Output(id ProcessID, stdoutCursor, stderrCursor uint64,
 	return snap, nil
 }
 
+// Wait blocks until the managed process has exited and its output pipes have drained.
+func (m *ProcessManager) Wait(id ProcessID) error {
+	m.mu.RLock()
+	proc, ok := m.procs[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrProcessNotFound, id)
+	}
+	<-proc.done
+	return nil
+}
+
 // Kill sends signal to the process. SIGTERM (the default) gives the
 // process 5s to exit cleanly before escalating to SIGKILL. SIGINT
 // applies a similar two-stage escalation. SIGKILL is immediate.

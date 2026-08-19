@@ -449,9 +449,6 @@ linters:
       - path: '^zkit/agent/diffrecorder/diffrecorder_test\.go'
         text: 'result 1 \(error\) is always nil'
         linters: [ unparam ]
-      - path: '(?:^|/monorepo/)zkit/zrpc/h2c\.go'
-        text: 'SA1019:'
-        linters: [ staticcheck ]
       # Doctor checks run version commands from a safe, known-good list;
       # the arguments are not user-controlled.
       - path: '^zarlai/cmd/doctor/main\.go'

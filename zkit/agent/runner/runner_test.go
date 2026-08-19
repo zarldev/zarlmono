@@ -356,18 +356,18 @@ func TestRun_SinkEventsPublished(t *testing.T) {
 	}
 }
 
-// --- spawn_agent tests (now a registry tool, depth via ctx) ---
+// --- agent_spawn tests (now a registry tool, depth via ctx) ---
 
 func TestRun_SpawnAgentRunsChildAndReturnsSummary(t *testing.T) {
 	t.Parallel()
 
 	// Three calls in sequence:
-	//   parent turn 1 → spawn_agent
+	//   parent turn 1 → agent_spawn
 	//   child turn 1  → text-only answer (terminates child)
 	//   parent turn 2 → text-only answer using the child's summary
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("p1", string(spawn.ToolNameSpawnAgent), `{"prompt":"compute X"}`), chunkDone()},
+			{chunkToolCall("p1", string(spawn.ToolNameAgentSpawn), `{"prompt":"compute X"}`), chunkDone()},
 			{chunkText("X = 42"), chunkDone()},
 			{chunkText("parent saw child say X = 42"), chunkDone()},
 		},
@@ -407,14 +407,14 @@ func TestRun_SpawnAgentRespectsDepthCap(t *testing.T) {
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
 			// Depth 0 → spawn (becomes depth 1)
-			{chunkToolCall("a", string(spawn.ToolNameSpawnAgent), `{"prompt":"down"}`), chunkDone()},
+			{chunkToolCall("a", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
 			// Depth 1 → spawn (becomes depth 2)
-			{chunkToolCall("b", string(spawn.ToolNameSpawnAgent), `{"prompt":"down"}`), chunkDone()},
+			{chunkToolCall("b", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
 			// Depth 2 → spawn (becomes depth 3)
-			{chunkToolCall("c", string(spawn.ToolNameSpawnAgent), `{"prompt":"down"}`), chunkDone()},
+			{chunkToolCall("c", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
 			// Depth 3 — refused. The deepest agent gets a tool error
 			// back and then settles on text.
-			{chunkToolCall("d", string(spawn.ToolNameSpawnAgent), `{"prompt":"down"}`), chunkDone()},
+			{chunkToolCall("d", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
 			{chunkText("hit cap"), chunkDone()},
 			// Depth 2 sees its child done, finishes itself.
 			{chunkText("d2 done"), chunkDone()},
@@ -467,6 +467,7 @@ type recordingSink struct {
 	iterCompletes []runner.IterationCompleted
 	steerInjects  []runner.SteerInjected
 	compactions   []runner.CompactionApplied
+	diagnostics   []runner.Diagnostic
 }
 
 func newRecordingSink() *recordingSink { return &recordingSink{} }
@@ -515,6 +516,11 @@ func (s *recordingSink) OnCompactionApplied(e runner.CompactionApplied) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.compactions = append(s.compactions, e)
+}
+func (s *recordingSink) OnDiagnostic(e runner.Diagnostic) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.diagnostics = append(s.diagnostics, e)
 }
 
 func (s *recordingSink) contentCount() int {

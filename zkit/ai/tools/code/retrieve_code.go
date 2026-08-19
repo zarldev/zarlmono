@@ -54,7 +54,8 @@ func NewRetrieveCodeTool(ws Workspace, opts ...ReadOption) *RetrieveCodeTool {
 // Definition advertises retrieve_code as a read-only deterministic retrieval tool.
 func (t *RetrieveCodeTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameRetrieveCode,
+		Name:            ToolNameRetrieveCode,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Deterministically retrieve relevant source chunks without embeddings or LSP. " +
 			"Go files are split by SyntaxChunker (go/parser+go/ast) into whole funcs, methods, and types, then ranked by stable lexical matching against query tokens, paths, symbols, and source text.",
 		Parameters: tools.SchemaFor[RetrieveCodeArgs](),

@@ -39,9 +39,10 @@ func (t *ObserveTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.
 
 func observeSpec() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameComputerObserve,
-		Description: "Observe the current computer surface. Returns surface metadata and, when requested, visible text, semantic targets, screenshot, and backend-specific raw metadata.",
-		Parameters:  tools.SchemaFor[ObserveArgs](),
+		Name:            ToolNameComputerObserve,
+		WorkspaceAccess: tools.WorkspaceAccesses.NONE,
+		Description:     "Observe the current computer surface. Returns surface metadata and, when requested, visible text, semantic targets, screenshot, and backend-specific raw metadata.",
+		Parameters:      tools.SchemaFor[ObserveArgs](),
 	}
 }
 

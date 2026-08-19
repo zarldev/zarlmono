@@ -210,17 +210,16 @@ enter the conversation. The default caps at 50KB / 2000 lines and
 spills the full output to disk — the model sees a tail summary with a
 path to the full file.
 
-**`ToolGate`.** Profile-based tool allow/deny. A `researcher` profile
-might gate out file-mutating tools entirely; a `coder` profile
-might gate out `spawn_agent` at certain depths. `WithToolGate(fn)`
-receives `(ctx, toolName)` and returns a rejection reason or nil.
+**`ToolGate`.** Run-scoped capability filtering. A `researcher` profile might
+hide every workspace-mutating `ToolSpec`; a deeper child might hide `agent_spawn`.
+`WithToolGate(ctx, fn)` stores a `func(tools.ToolSpec) bool` on the run context.
+Rejected tools are omitted from the model-visible surface and refused if called.
 
-**`TurnQuality`** and **`CompletionGate`.** `TurnQuality` classifies
-each turn's usefulness (signal / noise / stall). `CompletionGate`
-is an arbitrary pre-dispatch hook — return an error message and the
-runner injects it as a user correction rather than dispatching the
-tool call. Both are extension points for consumers building their
-own quality heuristics.
+**`TurnQuality`** and **`CompletionGate`.** Both are consulted when an iteration
+has no tool calls and would otherwise complete. `TurnQuality` can reject a degenerate
+assistant turn and inject a corrective user message. `CompletionGate` independently
+checks whether required durable work happened before allowing the terminal exit.
+They are consumer extension points, not pre-dispatch hooks.
 
 **`runnertest`.** A deterministic fake client for testing agent
 wiring. `runnertest.NewClient` replays a scripted sequence of turns

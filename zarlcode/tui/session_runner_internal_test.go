@@ -63,7 +63,7 @@ func TestSessionApplyLoadSkillLifecycle(t *testing.T) {
 	s.applyToolStarted(teasink.ToolStartedMsg{
 		TaskID:     "task-1",
 		ToolID:     "tool-1",
-		ToolName:   "load_skill",
+		ToolName:   "skill_load",
 		Parameters: map[string]any{"name": "go-testing"},
 	})
 	if got := s.PendingSkillNames["tool-1"]; got != "go-testing" {
@@ -76,7 +76,7 @@ func TestSessionApplyLoadSkillLifecycle(t *testing.T) {
 	effect := s.applyToolCompleted(teasink.ToolCompletedMsg{
 		TaskID:   "task-1",
 		ToolID:   "tool-1",
-		ToolName: "load_skill",
+		ToolName: "skill_load",
 		Result:   "loaded",
 		Duration: time.Second,
 	})

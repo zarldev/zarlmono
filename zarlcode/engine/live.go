@@ -15,7 +15,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/hooks"
 	"github.com/zarldev/zarlmono/zarlcode/instructions"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
-	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
@@ -53,6 +53,13 @@ type planEmitter interface {
 	PlanUpdated(code.Plan)
 }
 
+type nopLiveSink struct{ runner.NopSink }
+
+func (nopLiveSink) DiffEvent(diffrecorder.DiffEvent) {}
+func (nopLiveSink) PlanUpdated(code.Plan)            {}
+
+var _ LiveSink = nopLiveSink{}
+
 // LiveRunner builds and drives real agent runs against a provider, delivering
 // events through the sink. Construct one, wire its sink to the program
 // (sink.SetSend(program.Send)), then hand it to the TUI's run handler.
@@ -70,19 +77,23 @@ type LiveRunner struct {
 	conv  conversation
 	queue *queueState
 
-	// mu guards target (the hot-swappable run target) and appCtx so the
-	// settings overlay can re-point them while a run may be in flight; a turn
-	// snapshots target under the lock at start, so an update takes effect on the
-	// next turn. Read it via RunTarget, write it via the SetX setters.
-	mu     sync.Mutex
-	appCtx context.Context
-	target RunTarget
+	// mu guards the hot-swappable run target. A turn snapshots target under the
+	// lock at start, so an update takes effect on the next turn.
+	mu            sync.Mutex
+	target        RunTarget
+	promptProfile PromptProfile
 
 	// turnCancel cancels the context driving the current turn's runner.Run.
 	// Set under mu before entering the run loop, cleared under mu on exit.
 	// Nil when no turn is in flight — safe for the TUI to call unconditionally.
 	turnCancel context.CancelFunc
 	turnDone   chan struct{}
+	// closing is a one-way lifecycle transition. shutdownDone is created by the
+	// first Close call; one owned goroutine waits for the active turn, then closes
+	// dependencies and publishes shutdownErr to every Close caller.
+	closing      bool
+	shutdownDone chan struct{}
+	shutdownErr  error
 
 	// settings is the prefs handle used to resolve the compaction engine (and
 	// its optional LLM provider/model) live at turn start. nil keeps the
@@ -96,7 +107,7 @@ type LiveRunner struct {
 	planStore *livePlanStore
 
 	// catalog is the live skills/agents/hooks snapshot used by prompts,
-	// load_skill, list_* tools, skill-hint guardrails, named spawn_agent
+	// skill_load, list_* tools, skill-hint guardrails, named agent_spawn
 	// routing, and the per-turn hook guardrail.
 	catalog *RuntimeCatalog
 
@@ -107,7 +118,7 @@ type LiveRunner struct {
 	instructionErrs []error
 	// nestedInstructionIndex is the lazy-loaded index of nested AGENTS.md /
 	// CLAUDE.md files below the workspace root, enumerable via list_instructions
-	// and loadable via load_instruction. Set by reloadInstructions and
+	// and loadable via instruction_load. Set by reloadInstructions and
 	// snapshotted per turn alongside instructionDocs.
 	nestedInstructionIndex []instructions.NestedDoc
 	// operational records bounded session-wide file touches and tool counts for
@@ -177,14 +188,16 @@ type livePlanStore struct {
 	version uint64
 }
 
+func newLivePlanStore() *livePlanStore {
+	return &livePlanStore{sink: nopLiveSink{}}
+}
+
 func (p *livePlanStore) SetPlan(pl code.Plan) {
 	p.mu.Lock()
 	p.plan = clonePlan(pl)
 	p.version++
 	p.mu.Unlock()
-	if p.sink != nil {
-		p.sink.PlanUpdated(pl)
-	}
+	p.sink.PlanUpdated(pl)
 }
 
 func (p *livePlanStore) GetPlan() code.Plan {
@@ -206,10 +219,43 @@ func clonePlan(pl code.Plan) code.Plan {
 	return out
 }
 
+// WithSettings configures live preference resolution.
+func WithSettings(s *Settings) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.settings = s }
+}
+
+// WithProcessManager configures owned background-process access.
+func WithProcessManager(pm *code.ProcessManager) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.pm = pm }
+}
+
+// WithSandbox configures foreground shell confinement.
+func WithSandbox(sb code.Sandboxer) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.sandbox = sb }
+}
+
+// WithToolEnvironment configures copied subprocess environment additions.
+func WithToolEnvironment(env map[string]string) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.toolEnv = cloneStringMap(env) }
+}
+
+// WithMCP configures the persistent MCP registry and discovered-tool host.
+func WithMCP(reg *dynamic.MCPRegistry, host *tools.Registry) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.mcp, l.mcpHost = reg, host }
+}
+
+// WithLiveSink overrides the no-op event sink. Passing nil is invalid.
+func WithLiveSink(s LiveSink) options.Option[LiveRunner] {
+	if s == nil {
+		panic("engine: nil live sink")
+	}
+	return func(l *LiveRunner) { l.sink, l.planStore.sink = s, s }
+}
+
 // NewLiveRunner wires the provider, workspace, and sink for live runs. The
 // compactor window defaults to LiveContextWindow until SetContextWindow
 // overrides it with the provider's real window.
-func NewLiveRunner(prov llm.Provider, ws code.Workspace, sink LiveSink, model string) *LiveRunner {
+func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...options.Option[LiveRunner]) *LiveRunner {
 	l := &LiveRunner{
 		ws: ws,
 		target: RunTarget{
@@ -218,147 +264,123 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, sink LiveSink, model st
 			Model:    model,
 			Window:   LiveContextWindow,
 		},
-		queue:       newQueueState(),
-		planStore:   &livePlanStore{},
-		catalog:     newRuntimeCatalog(ws.Root()),
-		truncator:   &runner.SpillingTruncator{Prefix: "zarlcode-"},
-		operational: newOperationalState(),
-		fetchTool:   fetch.New(),
+		promptProfile: PromptProfiles.LEAN,
+		queue:         newQueueState(),
+		planStore:     newLivePlanStore(),
+		catalog:       newRuntimeCatalog(ws.Root()),
+		truncator:     &runner.SpillingTruncator{Prefix: "zarlcode-"},
+		operational:   newOperationalState(),
+		fetchTool:     fetch.New(),
+		sink:          nopLiveSink{},
+	}
+	for _, opt := range opts {
+		opt(l)
 	}
 	l.computer = &liveComputer{owner: l}
-	// Only populate the sink seams when a real sink was supplied; callers	// disable events by passing a nil LiveSink.
-	if sink != nil {
-		l.sink = sink
-		l.planStore.sink = sink
-	}
+	l.planStore.sink = l.sink
 	return l
 }
 
-// SetContext wires the application lifetime into interactive turns. A nil
-// context clears the app binding and RunFn falls back to context.Background in
-// tests. Production launch passes the zapp/Bubble Tea context so quit/signal
-// cancellation reaches in-flight providers and tools.
-func (l *LiveRunner) SetContext(ctx context.Context) {
-	if l == nil {
-		return
-	}
-	l.mu.Lock()
-	l.appCtx = ctx
-	l.mu.Unlock()
-}
-
-func (l *LiveRunner) parentContext() context.Context {
-	if l == nil {
-		return context.Background()
-	}
-	l.mu.Lock()
-	ctx := l.appCtx
-	l.mu.Unlock()
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
-
-// Close cancels the current turn and waits for any RunFn command to return.
-// It is intended to run before sink/process/settings closers so active tools
-// observe cancellation while their dependencies still exist.
-func (l *LiveRunner) Close(ctx context.Context) error {
-	if l == nil {
-		return nil
-	}
-	// Once the in-flight turn has drained: remove this session's tool-result
-	// spill dir and tear down any live MCP/browser connections. Both are
-	// best-effort — a non-nil return is informational.
-	defer func() {
-		if l.truncator != nil {
-			_ = l.truncator.Cleanup()
-		}
-		l.mu.Lock()
-		mcp := l.mcp
-		computer := l.computer
-		fetchTool := l.fetchTool
-		l.mu.Unlock()
-		if mcp != nil {
-			_ = mcp.CloseAll()
-		}
-		if computer != nil {
-			_ = computer.Close()
-		}
-		if fetchTool != nil {
-			_ = fetchTool.Close()
-		}
-	}()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	l.CancelTurn()
-	l.mu.Lock()
-	done := l.turnDone
-	l.mu.Unlock()
-	if done == nil {
-		return nil
-	}
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("live runner close: %w", ctx.Err())
-	}
-}
-
-// SetSettingsHandle wires the prefs handle so RunFn can resolve the
-// compaction engine (compact_engine / compact_provider / compact_model) live.
-func (l *LiveRunner) SetSettingsHandle(s *Settings) {
-	l.mu.Lock()
-	l.settings = s
-	l.mu.Unlock()
-}
-
-// SetProcessManager wires the background-process manager so the bash tool can
-// background commands and the bash_output / stop_process / list_processes
-// tools are registered.
-func (l *LiveRunner) SetProcessManager(pm *code.ProcessManager) {
-	l.mu.Lock()
-	l.pm = pm
-	l.mu.Unlock()
-}
-
-// SetSandbox wires the shell-command sandbox for foreground bash. The
-// caller wires the same instance into the process manager
-// (code.WithProcessSandbox) so background commands match.
-func (l *LiveRunner) SetSandbox(sb code.Sandboxer) {
-	l.mu.Lock()
-	l.sandbox = sb
-	l.mu.Unlock()
-}
-
-// SetToolEnv wires environment variables appended to bash subprocesses.
-func (l *LiveRunner) SetToolEnv(env map[string]string) {
-	l.mu.Lock()
-	l.toolEnv = cloneStringMap(env)
-	l.mu.Unlock()
-}
-
-// SetMCP wires the persistent MCP registry (and the host registry its
-// connected tools land on) so mcp_connect / mcp_disconnect / mcp_list are
-// available and connected servers' tools are merged into each turn's registry.
-func (l *LiveRunner) SetMCP(reg *dynamic.MCPRegistry, host *tools.Registry) {
+// AttachMCP attaches the registry whose notifier already targets this runner's
+// queue. It is a composition-time lifecycle transition required by that cycle.
+func (l *LiveRunner) AttachMCP(reg *dynamic.MCPRegistry, host *tools.Registry) {
 	l.mu.Lock()
 	l.mcp, l.mcpHost = reg, host
 	l.mu.Unlock()
 }
 
-// Plan satisfies compact.StateProvider for the executive engine, surfacing the
+// Close begins the one-way shutdown transition, cancels the active turn, and
+// waits for the single owned shutdown operation. A caller deadline only bounds
+// that caller's wait: dependencies remain open until the turn actually drains.
+// Concurrent and repeated calls observe the same terminal cleanup result.
+func (l *LiveRunner) Close(ctx context.Context) error {
+	if l == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	l.mu.Lock()
+	if !l.closing {
+		l.closing = true
+		l.shutdownDone = make(chan struct{})
+		turnCancel := l.turnCancel
+		turnDone := l.turnDone
+		shutdownDone := l.shutdownDone
+		go l.shutdown(turnDone, shutdownDone)
+		if turnCancel != nil {
+			turnCancel()
+		}
+	}
+	shutdownDone := l.shutdownDone
+	l.mu.Unlock()
+
+	select {
+	case <-shutdownDone:
+		l.mu.Lock()
+		err := l.shutdownErr
+		l.mu.Unlock()
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("wait for live runner shutdown: %w", ctx.Err())
+	}
+}
+
+func (l *LiveRunner) shutdown(turnDone, shutdownDone chan struct{}) {
+	if turnDone != nil {
+		<-turnDone
+	}
+
+	l.mu.Lock()
+	mcp := l.mcp
+	computer := l.computer
+	fetchTool := l.fetchTool
+	truncator := l.truncator
+	l.mcp, l.mcpHost = nil, nil
+	l.computer = nil
+	l.fetchTool = nil
+	l.truncator = nil
+	l.mu.Unlock()
+
+	var errs []error
+	if mcp != nil {
+		if err := mcp.CloseAll(); err != nil {
+			errs = append(errs, fmt.Errorf("close MCP connections: %w", err))
+		}
+	}
+	if computer != nil {
+		if err := computer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close computer session: %w", err))
+		}
+	}
+	if fetchTool != nil {
+		if err := fetchTool.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close web fetch: %w", err))
+		}
+	}
+	if truncator != nil {
+		if err := truncator.Cleanup(); err != nil {
+			errs = append(errs, fmt.Errorf("clean tool spills: %w", err))
+		}
+	}
+
+	l.mu.Lock()
+	l.shutdownErr = errors.Join(errs...)
+	close(shutdownDone)
+	l.mu.Unlock()
+}
+
+// Plan satisfies agentcompact.StateProvider for the executive engine, surfacing the
 // live update_plan state so the briefing can carry the current step list.
-func (l *LiveRunner) Plan() []compact.PlanStep {
+func (l *LiveRunner) Plan() []agentcompact.PlanStep {
 	if l == nil || l.planStore == nil {
 		return nil
 	}
 	plan := l.planStore.GetPlan()
-	out := make([]compact.PlanStep, 0, len(plan.Steps))
+	out := make([]agentcompact.PlanStep, 0, len(plan.Steps))
 	for _, s := range plan.Steps {
-		out = append(out, compact.PlanStep{Title: s.Text, Status: s.Status.String()})
+		out = append(out, agentcompact.PlanStep{Title: s.Text, Status: s.Status.String()})
 	}
 	return out
 }
@@ -366,7 +388,7 @@ func (l *LiveRunner) Plan() []compact.PlanStep {
 // WorkingFiles returns the bounded, oldest-to-newest snapshot of files touched
 // by successful tool calls in this session. Repeated paths move to the tail with
 // their latest action.
-func (l *LiveRunner) WorkingFiles() []compact.FileTouch {
+func (l *LiveRunner) WorkingFiles() []agentcompact.FileTouch {
 	if l == nil || l.operational == nil {
 		return nil
 	}
@@ -375,7 +397,7 @@ func (l *LiveRunner) WorkingFiles() []compact.FileTouch {
 
 // TopTools returns session-wide tool counts ordered by count descending and
 // then name. Executive rendering applies its own display cap.
-func (l *LiveRunner) TopTools() []compact.ToolUsage {
+func (l *LiveRunner) TopTools() []agentcompact.ToolUsage {
 	if l == nil || l.operational == nil {
 		return nil
 	}
@@ -384,7 +406,7 @@ func (l *LiveRunner) TopTools() []compact.ToolUsage {
 
 // Verification returns the latest foreground verification command observed in
 // this session.
-func (l *LiveRunner) Verification() *compact.VerificationState {
+func (l *LiveRunner) Verification() *agentcompact.VerificationState {
 	if l == nil || l.operational == nil {
 		return nil
 	}
@@ -392,7 +414,7 @@ func (l *LiveRunner) Verification() *compact.VerificationState {
 }
 
 // UnresolvedFailures returns the bounded latest unresolved tool failures.
-func (l *LiveRunner) UnresolvedFailures() []compact.FailureState {
+func (l *LiveRunner) UnresolvedFailures() []agentcompact.FailureState {
 	if l == nil || l.operational == nil {
 		return nil
 	}
@@ -403,31 +425,31 @@ func (l *LiveRunner) UnresolvedFailures() []compact.FailureState {
 // executive need an LLM provider; without one they fall back to tiered so a
 // misconfigured engine never breaks compaction. structural and tiered are
 // no-LLM; anything unknown is tiered (the quiet progressive default).
-func buildLiveCompactor(engine string, window int, prov llm.Provider, model string, state compact.StateProvider, wsRoot string) compact.Compactor {
+func buildLiveCompactor(engine string, window int, prov llm.Provider, model string, state agentcompact.StateProvider, wsRoot string) agentcompact.Compactor {
 	switch engine {
 	case "structural":
-		return compact.NewStructural()
+		return agentcompact.NewStructural()
 	case "summary":
 		if prov != nil {
-			return compact.NewSummary(prov, model)
+			return agentcompact.NewSummary(prov, model)
 		}
 	case "executive":
 		if prov != nil {
-			return compact.NewExecutive(prov, model, state)
+			return agentcompact.NewExecutive(prov, model, state)
 		}
 	case "handover":
 		if prov != nil {
-			return compact.NewHandover(prov, model, state, handoverWriter(wsRoot))
+			return agentcompact.NewHandover(prov, model, state, handoverWriter(wsRoot))
 		}
 	}
-	return compact.NewTiered(window)
+	return agentcompact.NewTiered(window)
 }
 
 // handoverWriter persists a handover document under <wsRoot>/.zarlcode/handovers
 // as a timestamped markdown file, returning its path. Empty wsRoot (or a nil
 // return) leaves the handover in-context only — the reseed still works, just
 // without a durable artifact.
-func handoverWriter(wsRoot string) compact.HandoverWriter {
+func handoverWriter(wsRoot string) agentcompact.HandoverWriter {
 	if wsRoot == "" {
 		return nil
 	}
@@ -586,6 +608,21 @@ func (l *LiveRunner) SetProviderSpec(prov llm.Provider, spec ProviderSpec) {
 	l.mu.Unlock()
 }
 
+// ApplyTarget atomically updates provider identity and context-window policy.
+func (l *LiveRunner) ApplyTarget(update TargetUpdate) {
+	if update.Provider == nil {
+		return
+	}
+	l.mu.Lock()
+	l.target.Provider = update.Provider
+	l.target.Model = update.Spec.Model
+	l.target.Spec = update.Spec
+	if update.Window > 0 {
+		l.target.Window = update.Window
+	}
+	l.mu.Unlock()
+}
+
 // SetModel updates only the model name on the current provider.
 // The change takes effect on the next turn without a rebuild.
 func (l *LiveRunner) SetModel(name string) {
@@ -613,22 +650,22 @@ func (l *LiveRunner) CancelTurn() bool {
 // the verifiers, fan-out caps, and test-edit policy. source() wires these into
 // the chain and the inspector reports them from the same place, so a change
 // here can't drift from what the inspector shows.
-func (l *LiveRunner) guardrailDeps() guardrails.Deps {
-	return l.guardrailDepsFor(false)
+func (l *LiveRunner) guardrailDeps(ctx context.Context) guardrails.Deps {
+	return l.guardrailDepsFor(ctx, false)
 }
 
-func (l *LiveRunner) headlessGuardrailDeps() guardrails.Deps {
-	return l.guardrailDepsFor(true)
+func (l *LiveRunner) headlessGuardrailDeps(ctx context.Context) guardrails.Deps {
+	return l.guardrailDepsFor(ctx, true)
 }
 
-func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
+func (l *LiveRunner) guardrailDepsFor(ctx context.Context, headless bool) guardrails.Deps {
 	var testEdit guardrails.Guardrail
 	switch {
 	case headless:
 		// Headless stays strict for eval determinism, whatever the user set.
 		testEdit = guardrails.NewTestEditStrict()
 	case l.settings != nil:
-		switch l.settings.TestEditMode(l.parentContext()) {
+		switch l.settings.TestEditMode(ctx) {
 		case guardModeAdvisory:
 			testEdit = guardrails.NewTestEditAdvisory()
 		case guardModeStrict:
@@ -641,11 +678,11 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 	// when the decompose_judge setting is on; nil keeps the deterministic path.
 	deps := coderunner.StandardGuardrailDeps(l.ws.Root(), testEdit)
 	deps.SkillLookup = l.catalog
-	deps.DecomposeJudge = l.decomposeJudge()
+	deps.DecomposeJudge = l.decomposeJudge(ctx)
 	// plan_first gate: refuse the first workspace-changing call until update_plan
 	// has run. Off unless the user opts in (weak/local-model profile). PlanTool
 	// matches what sourceWithDeps registers against the live plan store.
-	if l.settings != nil && l.settings.PlanFirst(l.parentContext()) {
+	if l.settings != nil && l.settings.PlanFirst(ctx) {
 		deps.PlanFirst = true
 		deps.PlanTool = code.ToolNameUpdatePlan
 	}
@@ -653,22 +690,22 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 	// context growth on small-window local models). 0 keeps the eval-shared
 	// StandardFanoutLimits.
 	if l.settings != nil {
-		if fanoutCap := l.settings.FanoutCap(l.parentContext()); fanoutCap > 0 {
+		if fanoutCap := l.settings.FanoutCap(ctx); fanoutCap > 0 {
 			deps.FanoutLimits = map[tools.ToolName]int{
 				code.ToolNameLs:   fanoutCap,
 				code.ToolNameGrep: fanoutCap,
 				code.ToolNameGlob: fanoutCap,
 			}
 		}
-		// Per-task spawn_agent budget, applied after the discovery-cap block
+		// Per-task agent_spawn budget, applied after the discovery-cap block
 		// (which replaces the whole map and would otherwise drop it). 0 flows
 		// through as "uncapped" since the guardrail treats a non-positive limit
 		// as unbounded.
 		if deps.FanoutLimits == nil {
 			deps.FanoutLimits = map[tools.ToolName]int{}
 		}
-		deps.FanoutLimits[spawn.ToolNameSpawnAgent] = l.settings.SpawnFanoutCap(l.parentContext())
-		deps.ReadBeforeWriteMode = l.settings.ReadBeforeWriteMode(l.parentContext())
+		deps.FanoutLimits[spawn.ToolNameAgentSpawn] = l.settings.SpawnFanoutCap(ctx)
+		deps.ReadBeforeWriteMode = l.settings.ReadBeforeWriteMode(ctx)
 		// Strict profile follows the sandbox: ON (the kernel is the real
 		// boundary) keeps the static shell/read-before-write blocks; OFF is
 		// the operator's opt-in to an unconfined, high-trust mode, so they
@@ -676,23 +713,23 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 		// setting (not whether Landlock materialised) so a sandbox that
 		// failed to start stays strict. The ZARLCODE_SANDBOX env override
 		// wins where set, matching the launch path.
-		sandboxOn := l.settings.ShellSandbox(l.parentContext())
+		sandboxOn := l.settings.ShellSandbox(ctx)
 		if enabled, ok := sandbox.EnvOverride(); ok {
 			sandboxOn = enabled
 		}
-		deps.ShellLenient = l.settings.ShellGuardLenient(l.parentContext(), sandboxOn)
+		deps.ShellLenient = l.settings.ShellGuardLenient(ctx, sandboxOn)
 		// Always-on guardrails the user can drop from the chain. Names come
 		// from the guardrails package so they can't drift from Name().
-		if l.settings.ShellGuardOff(l.parentContext()) {
+		if l.settings.ShellGuardOff(ctx) {
 			// "off" removes the shell guardrail outright — a high-trust opt-in
 			// beyond "lenient" (which keeps it and only relaxes the steers).
 			// ShellLenient is then moot since the guardrail is gone.
 			deps.Disabled = append(deps.Disabled, guardrails.NameShellPolicy)
 		}
-		if !l.settings.ImprovementGuard(l.parentContext()) {
+		if !l.settings.ImprovementGuard(ctx) {
 			deps.Disabled = append(deps.Disabled, guardrails.NameImprovementLoop)
 		}
-		if !l.settings.SkillHints(l.parentContext()) {
+		if !l.settings.SkillHints(ctx) {
 			deps.Disabled = append(deps.Disabled, guardrails.NameSkillHint)
 		}
 	}
@@ -705,7 +742,7 @@ func (l *LiveRunner) guardrailDepsFor(headless bool) guardrails.Deps {
 // takes effect on the next turn without a restart. nil — judge off, no
 // settings handle, or no provider to run it on — keeps the guardrail's
 // deterministic advisory path.
-func (l *LiveRunner) decomposeJudge() guardrails.VerdictJudge {
+func (l *LiveRunner) decomposeJudge(ctx context.Context) guardrails.VerdictJudge {
 	l.mu.Lock()
 	settings := l.settings
 	active := l.target.Provider
@@ -714,7 +751,7 @@ func (l *LiveRunner) decomposeJudge() guardrails.VerdictJudge {
 	if settings == nil {
 		return nil
 	}
-	prov := settings.DecomposeJudgeProvider(l.parentContext(), active, spec)
+	prov := settings.DecomposeJudgeProvider(ctx, active, spec)
 	if prov == nil {
 		return nil
 	}
@@ -729,15 +766,15 @@ func (l *LiveRunner) decomposeJudge() guardrails.VerdictJudge {
 // It returns the wrapped source AND the underlying registry: the caller
 // late-registers the spawn tool onto the registry after building the runner
 // (the registry enumerates lazily, so it's visible to the turn's schema).
-func (l *LiveRunner) source(searxngURL string) (tools.Source, *tools.Registry, error) {
-	return l.sourceWithDeps(searxngURL, l.guardrailDeps())
+func (l *LiveRunner) source(ctx context.Context, searxngURL string) (tools.Source, *tools.Registry, error) {
+	return l.sourceWithDeps(ctx, searxngURL, l.guardrailDeps(ctx))
 }
 
-func (l *LiveRunner) headlessSource(searxngURL string) (tools.Source, *tools.Registry, error) {
-	return l.sourceWithDeps(searxngURL, l.headlessGuardrailDeps())
+func (l *LiveRunner) headlessSource(ctx context.Context, searxngURL string) (tools.Source, *tools.Registry, error) {
+	return l.sourceWithDeps(ctx, searxngURL, l.headlessGuardrailDeps(ctx))
 }
 
-func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (tools.Source, *tools.Registry, error) {
+func (l *LiveRunner) sourceWithDeps(ctx context.Context, searxngURL string, deps guardrails.Deps) (tools.Source, *tools.Registry, error) {
 	reg := tools.NewRegistry()
 	l.mu.Lock()
 	toolEnv := cloneStringMap(l.toolEnv)
@@ -750,7 +787,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	enableWeb, enableMCP, enableBackground, enableProgrammatic := true, true, true, true
 	programParallel := 0
 	if l.settings != nil {
-		sctx := l.parentContext()
+		sctx := ctx
 		enableWeb = l.settings.EnableWeb(sctx)
 		enableMCP = l.settings.EnableMCP(sctx)
 		enableBackground = l.settings.EnableBackground(sctx)
@@ -794,7 +831,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 			ft = fetch.New()
 		}
 		if l.settings != nil {
-			ft.WithChromeBinPath(l.settings.ChromeBinPath(l.parentContext()))
+			ft.ConfigureChromeBinary(l.settings.ChromeBinPath(ctx))
 		}
 		_ = reg.Register(ft)
 	}
@@ -811,7 +848,7 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 	}
 
 	// Nested instruction docs (non-root AGENTS.md / CLAUDE.md) are discoverable
-	// via list_instructions and loadable via load_instruction, mirroring the
+	// via list_instructions and loadable via instruction_load, mirroring the
 	// skill/agent lazy-loading surface. Registered before GuardedSource so
 	// they run under the same guardrail chain.
 	_ = reg.Register(NewListInstructionsTool(l.instructionNestedSnapshot))
@@ -885,17 +922,17 @@ func (l *LiveRunner) sourceWithDeps(searxngURL string, deps guardrails.Deps) (to
 // route through buildTurnWithSource so the loop body is shared and cannot
 // drift — they differ only in guardrail policy (interactive test-edit is
 // advisory; headless/eval is strict).
-func (l *LiveRunner) buildTurn() (*runner.Runner, error) {
+func (l *LiveRunner) buildTurn(ctx context.Context) (*runner.Runner, error) {
 	// Interactive only: the cockpit's context-window graph consumes the
 	// per-iteration breakdown. Headless/eval (buildHeadlessTurn) leave it off.
-	r, _, err := l.buildTurnWithSource(l.source, runner.WithContextBreakdown())
+	r, _, _, err := l.buildTurnWithSource(ctx, l.source, runner.WithContextBreakdown())
 	return r, err
 }
-func (l *LiveRunner) buildHeadlessTurn(extraOpts ...options.Option[runner.Runner]) (*runner.Runner, error) {
-	r, _, err := l.buildTurnWithSource(l.headlessSource, extraOpts...)
-	return r, err
+func (l *LiveRunner) buildHeadlessTurn(ctx context.Context, extraOpts ...options.Option[runner.Runner]) (*runner.Runner, *spawn.Group, error) {
+	r, _, group, err := l.buildTurnWithSource(ctx, l.headlessSource, extraOpts...)
+	return r, group, err
 }
-func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, error) {
+func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, string) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, *spawn.Group, error) {
 	// Snapshot the (re-pointable) run target for this turn. The PLAN flag
 	// is still read live by prompt/source closures so a mid-turn toggle
 	// gates the next dispatch.
@@ -913,9 +950,9 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 
 	// Resolve the compaction engine (and its optional LLM target) live, so
 	// a settings change takes effect on the next turn without a restart.
-	engine, compactProv, compactModel := compact.EngineTiered, prov, model
+	engine, compactProv, compactModel := agentcompact.EngineTiered, prov, model
 	if settings != nil {
-		ctx := l.parentContext()
+		ctx := ctx
 		engine = settings.CompactEngine(ctx)
 		compactProv, compactModel = settings.CompactorProvider(ctx, prov, model)
 	}
@@ -935,7 +972,7 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 	var streamIdle time.Duration
 	autoCompact := true
 	if settings != nil {
-		sctx := l.parentContext()
+		sctx := ctx
 		l.truncator.MaxBytes = settings.ToolResultMaxBytes(sctx)
 		l.truncator.MaxLines = settings.ToolResultMaxLines(sctx)
 		temperature = settings.Temperature(sctx)
@@ -969,22 +1006,25 @@ func (l *LiveRunner) buildTurnWithSource(sourceFn func(string) (tools.Source, *t
 
 	// Wrap the guarded source with the PLAN-mode filter, reading the flag
 	// live so toggling mid-run gates the next dispatch.
-	src, reg, err := sourceFn(searxngURL)
+	src, reg, err := sourceFn(ctx, searxngURL)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	src = newOperationalSource(src, l.operational)
 	evidence := newCompletionEvidence()
+	group := spawn.NewGroup()
+	coordinator := tools.NewWorkspaceCoordinator()
+	src = coderunner.CoordinateWorkspace(src, coordinator)
 	visible = NewModeFilteredSource(newEvidenceSource(src, evidence), l.isPlan)
 	opts = append(opts, extraOpts...)
-	opts = append(opts, runner.WithTurnQuality(newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence)))
+	opts = append(opts, runner.WithTurnQuality(NewAgentAwareTurnQuality(newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence), group)))
 	opts = append(opts, runner.WithTools(visible))
 	r := runner.New(runner.ClientFromProvider(prov), opts...)
 	// Late-register spawn onto the base registry now that the parent
 	// runner exists (the registry enumerates lazily, so it's visible to
 	// this turn). spawnDepth 0 leaves spawning disabled.
-	l.registerSpawnTool(reg, r, spawnDepth, spawnMaxIter)
-	return r, thinking, nil
+	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth, spawnMaxIter)
+	return r, thinking, group, nil
 }
 
 // ManualCompactionResult reports the effect of a user-triggered conversation
@@ -1010,7 +1050,7 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 	if window <= 0 {
 		window = LiveContextWindow
 	}
-	engineName, compactProv, compactModel := compact.EngineTiered, prov, model
+	engineName, compactProv, compactModel := agentcompact.EngineTiered, prov, model
 	if settings != nil {
 		engineName = settings.CompactEngine(ctx)
 		compactProv, compactModel = settings.CompactorProvider(ctx, prov, model)
@@ -1018,35 +1058,60 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 	return l.conv.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l, l.ws.Root()), l.sink)
 }
 
-func (l *LiveRunner) RunTurn(prompt string) error {
-	return l.RunTurnWithAttachments(prompt, nil)
+func (l *LiveRunner) RunTurn(ctx context.Context, prompt string) error {
+	return l.RunTurnWithAttachments(ctx, prompt, nil)
 }
 
-func (l *LiveRunner) RunTurnWithAttachments(prompt string, attachments []llm.ContentPart) error {
-	return l.conv.runSpecWithSetup(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
-		r, thinking, err := l.buildTurnWithSource(l.source, runner.WithContextBreakdown())
+func (l *LiveRunner) beginTurn(ctx context.Context) (context.Context, func(), error) {
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	l.mu.Lock()
+	if l.closing {
+		l.mu.Unlock()
+		cancel()
+		return nil, nil, errors.New("live runner is closing")
+	}
+	l.turnCancel = cancel
+	l.turnDone = done
+	l.mu.Unlock()
+
+	var once sync.Once
+	finish := func() {
+		once.Do(func() {
+			cancel()
+			close(done)
+			l.mu.Lock()
+			if l.turnDone == done {
+				l.turnCancel = nil
+				l.turnDone = nil
+			}
+			l.mu.Unlock()
+		})
+	}
+	return runCtx, finish, nil
+}
+
+func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, attachments []llm.ContentPart) error {
+	return l.conv.transition(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
+		runCtx, finish, err := l.beginTurn(ctx)
 		if err != nil {
 			return nil, err
 		}
-		ctx, cancel := context.WithCancel(l.parentContext())
-		done := make(chan struct{})
-		l.mu.Lock()
-		l.turnCancel = cancel
-		l.turnDone = done
-		l.mu.Unlock()
+		r, thinking, group, err := l.buildTurnWithSource(runCtx, l.source, runner.WithContextBreakdown())
+		if err != nil {
+			finish()
+			return nil, err
+		}
 		return func(spec runner.TaskSpec) runner.TaskResult {
-			defer func() {
-				cancel()
-				close(done)
-				l.mu.Lock()
-				if l.turnDone == done {
-					l.turnCancel = nil
-					l.turnDone = nil
-				}
-				l.mu.Unlock()
-			}()
+			defer finish()
 			spec.Thinking = thinking
-			return r.Run(ctx, spec)
+			result := r.Run(runCtx, spec)
+			if closeErr := group.Close(runCtx); closeErr != nil && result.Err == nil {
+				result.Reason = runner.TerminalError
+				result.Err = closeErr
+			}
+			return result
 		}, nil
 	})
 }

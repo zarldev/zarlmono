@@ -76,6 +76,8 @@ var (
 	// ErrWrongPassphrase is returned after the interactive attempt budget is
 	// exhausted, or immediately when the env passphrase is wrong.
 	ErrWrongPassphrase = errors.New("vault: wrong passphrase")
+	// ErrNotFound means optional vault material does not exist on disk.
+	ErrNotFound = errors.New("vault: material not found")
 )
 
 // PassphraseFunc supplies the master passphrase interactively. setup is true on
@@ -140,7 +142,10 @@ func Open(passphrase PassphraseFunc) (*Vault, error) {
 		return nil, err
 	}
 	legacyPath := filepath.Join(dir, legacyKeyFileRelPath)
-	legacyAEAD, _, err := loadLegacy(legacyPath)
+	legacyAEAD, err := loadLegacy(legacyPath)
+	if errors.Is(err, ErrNotFound) {
+		legacyAEAD, err = nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +164,11 @@ func Open(passphrase PassphraseFunc) (*Vault, error) {
 		return nil, fmt.Errorf("vault dir: %w", err)
 	}
 	kdfPath := filepath.Join(dir, kdfFileRelPath)
-	kdf, kdfExists, err := loadKDF(kdfPath)
+	kdf, err := loadKDF(kdfPath)
+	kdfExists := err == nil
+	if errors.Is(err, ErrNotFound) {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -175,12 +184,9 @@ func Open(passphrase PassphraseFunc) (*Vault, error) {
 
 	// Env passphrase: one shot, no retry.
 	if envPass != "" {
-		key, ok, err := deriveOrInit(envPass, &kdf, kdfExists, kdfPath)
+		key, err := deriveOrInit(envPass, &kdf, kdfExists, kdfPath)
 		if err != nil {
 			return nil, err
-		}
-		if !ok {
-			return nil, ErrWrongPassphrase
 		}
 		return newVault(key, legacyAEAD, legacyPath)
 	}
@@ -192,65 +198,53 @@ func Open(passphrase PassphraseFunc) (*Vault, error) {
 		if perr != nil {
 			return nil, fmt.Errorf("vault passphrase: %w", perr)
 		}
-		key, ok, derr := deriveOrInit(pass, &kdf, kdfExists, kdfPath)
-		if derr != nil {
-			return nil, derr
-		}
-		if ok {
+		key, derr := deriveOrInit(pass, &kdf, kdfExists, kdfPath)
+		if derr == nil {
 			return newVault(key, legacyAEAD, legacyPath)
+		}
+		if !errors.Is(derr, ErrWrongPassphrase) {
+			return nil, derr
 		}
 	}
 	return nil, ErrWrongPassphrase
 }
 
-// deriveOrInit derives the master key from pass. When the KDF file doesn't
-// exist yet (setup), it generates a salt, seals the verifier, and persists the
-// KDF file atomically — always returning ok=true. Otherwise it derives against
-// the stored salt/params and reports ok=false when the verifier fails to open
-// (wrong passphrase). A non-nil error is an I/O fault, not a wrong passphrase.
-func deriveOrInit(pass string, kdf *kdfFile, exists bool, kdfPath string) ([]byte, bool, error) {
+// deriveOrInit derives or creates the master key. A wrong verifier returns
+// ErrWrongPassphrase; all other errors are operational failures.
+func deriveOrInit(pass string, kdf *kdfFile, exists bool, kdfPath string) ([]byte, error) {
 	if !exists {
 		salt := make([]byte, masterKeySize)
 		if _, err := rand.Read(salt); err != nil {
-			return nil, false, fmt.Errorf("vault salt: %w", err)
+			return nil, fmt.Errorf("vault salt: %w", err)
 		}
 		key := argon2.IDKey([]byte(pass), salt, argonTime, argonMemory, argonThreads, masterKeySize)
 		aead, err := aeadFromKey(key)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		nonce := make([]byte, aead.NonceSize())
 		if _, err := rand.Read(nonce); err != nil {
-			return nil, false, fmt.Errorf("vault verifier nonce: %w", err)
+			return nil, fmt.Errorf("vault verifier nonce: %w", err)
 		}
-		f := kdfFile{
-			Salt:      salt,
-			Time:      argonTime,
-			Memory:    argonMemory,
-			Threads:   argonThreads,
-			KeyLength: masterKeySize,
-			VNonce:    nonce,
-			Verifier:  aead.Seal(nil, nonce, []byte(verifierPlaintext), nil),
-		}
+		f := kdfFile{Salt: salt, Time: argonTime, Memory: argonMemory, Threads: argonThreads, KeyLength: masterKeySize, VNonce: nonce, Verifier: aead.Seal(nil, nonce, []byte(verifierPlaintext), nil)}
 		blob, err := json.Marshal(f)
 		if err != nil {
-			return nil, false, fmt.Errorf("vault kdf encode: %w", err)
+			return nil, fmt.Errorf("vault kdf encode: %w", err)
 		}
 		if err := writeFileAtomic(kdfPath, blob, filesystem.ModePrivateFile); err != nil {
-			return nil, false, err
+			return nil, err
 		}
-		return key, true, nil
+		return key, nil
 	}
-
 	derived := argon2.IDKey([]byte(pass), kdf.Salt, kdf.Time, kdf.Memory, kdf.Threads, kdf.KeyLength)
 	aead, err := aeadFromKey(derived)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if _, oerr := aead.Open(nil, kdf.VNonce, kdf.Verifier, nil); oerr == nil {
-		return derived, true, nil
+	if _, err := aead.Open(nil, kdf.VNonce, kdf.Verifier, nil); err != nil {
+		return nil, ErrWrongPassphrase
 	}
-	return nil, false, nil // wrong passphrase — ok=false, not an error
+	return derived, nil
 }
 
 func newVault(key []byte, legacy cipher.AEAD, legacyPath string) (*Vault, error) {
@@ -284,42 +278,39 @@ func decodeRawKey(v string) ([]byte, error) {
 	return key, nil
 }
 
-// loadKDF reads the KDF file. Returns exists=false (and no error) when the file
-// is absent — the first-run setup path.
-func loadKDF(path string) (kdfFile, bool, error) {
+// loadKDF reads the KDF file or returns ErrNotFound.
+func loadKDF(path string) (kdfFile, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return kdfFile{}, false, nil
+		return kdfFile{}, ErrNotFound
 	}
 	if err != nil {
-		return kdfFile{}, false, fmt.Errorf("read %s: %w", path, err)
+		return kdfFile{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var f kdfFile
 	if err := json.Unmarshal(data, &f); err != nil {
-		return kdfFile{}, false, fmt.Errorf("decode %s: %w", path, err)
+		return kdfFile{}, fmt.Errorf("decode %s: %w", path, err)
 	}
-	return f, true, nil
+	return f, nil
 }
 
-// loadLegacy builds an AEAD from a pre-passphrase ~/.zarlcode/master.key when
-// present, so old ciphertext keeps decrypting until prefs migrates it. A
-// wrong-length file is fatal (won't silently ignore credentials it can't read).
-func loadLegacy(path string) (cipher.AEAD, bool, error) {
+// loadLegacy builds an AEAD from legacy key material or returns ErrNotFound.
+func loadLegacy(path string) (cipher.AEAD, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	if len(data) != masterKeySize {
-		return nil, false, fmt.Errorf("%s: %d bytes, want %d (legacy master key corrupt)", path, len(data), masterKeySize)
+		return nil, fmt.Errorf("%s: %d bytes, want %d (legacy master key corrupt)", path, len(data), masterKeySize)
 	}
 	aead, err := aeadFromKey(data)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	return aead, true, nil
+	return aead, nil
 }
 
 // Encrypt returns ciphertext + nonce for plaintext, under the primary

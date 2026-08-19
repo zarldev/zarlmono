@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -59,6 +58,8 @@ type taskRun struct {
 	// but provider didn't report usage" (the latter would surface as
 	// zeroed totals).
 	totalUsage *llm.Usage
+	// toolSurface is the accounting for the most recent provider request.
+	toolSurface ToolSurface
 
 	// st groups the per-run recovery budgets + the finalize-warn latch.
 	st loopState
@@ -80,7 +81,7 @@ type taskRun struct {
 // completed builds the TerminalCompleted result: the model emitted no more
 // tool calls and the run ended on its own terms.
 func (t *taskRun) completed(ctx context.Context) TaskResult {
-	t.r.publishConversationEnded(ctx, t.spec, TerminalCompleted, nil, time.Since(t.start), t.iter+1, t.totalUsage)
+	t.r.publishConversationEnded(ctx, t.spec, TerminalCompleted, nil, time.Since(t.start), t.iter+1, t.totalUsage, "")
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalCompleted,
@@ -91,13 +92,14 @@ func (t *taskRun) completed(ctx context.Context) TaskResult {
 		SystemPrompt: systemPromptFrom(t.messages),
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
+		ToolSurface:  t.toolSurface,
 	}
 }
 
 // maxedOut builds the TerminalMaxIterations result: the loop exhausted its
 // iteration cap without a terminal condition.
 func (t *taskRun) maxedOut(ctx context.Context) TaskResult {
-	t.r.publishConversationEnded(ctx, t.spec, TerminalMaxIterations, nil, time.Since(t.start), t.maxIter, t.totalUsage)
+	t.r.publishConversationEnded(ctx, t.spec, TerminalMaxIterations, nil, time.Since(t.start), t.maxIter, t.totalUsage, "")
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalMaxIterations,
@@ -108,6 +110,7 @@ func (t *taskRun) maxedOut(ctx context.Context) TaskResult {
 		SystemPrompt: systemPromptFrom(t.messages),
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
+		ToolSurface:  t.toolSurface,
 	}
 }
 
@@ -122,17 +125,20 @@ func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
 	// so the terminal event carries the run's context — the publish path
 	// is cancellation-driven, so the original ctx is already Done. A sink
 	// that honors ctx cancellation would otherwise drop this event.
-	t.r.publishConversationEnded(context.WithoutCancel(ctx), t.spec, TerminalCancelled, nil, time.Since(t.start), t.iter, t.totalUsage)
+	cause := terminalCause(cancelErr)
+	t.r.publishConversationEnded(context.WithoutCancel(ctx), t.spec, TerminalCancelled, nil, time.Since(t.start), t.iter, t.totalUsage, cause)
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalCancelled,
 		Iterations:   t.iter,
 		Duration:     time.Since(t.start),
+		Cause:        cause,
 		FinalContent: t.finalContent,
 		Messages:     stripSystem(t.messages),
 		SystemPrompt: systemPromptFrom(t.messages),
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
+		ToolSurface:  t.toolSurface,
 		Err:          cancelErr,
 	}
 }
@@ -144,16 +150,19 @@ func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
 // path. Unlike the other exits it leaves SystemPrompt empty (long-standing
 // shape; consumers of error results read Err, not the prompt).
 func (t *taskRun) errored(ctx context.Context, err error) TaskResult {
-	t.r.publishConversationEnded(ctx, t.spec, TerminalError, err, time.Since(t.start), t.iter+1, t.totalUsage)
+	cause := terminalCause(err)
+	t.r.publishConversationEnded(ctx, t.spec, TerminalError, err, time.Since(t.start), t.iter+1, t.totalUsage, cause)
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalError,
 		Iterations:   t.iter + 1,
 		Duration:     time.Since(t.start),
+		Cause:        cause,
 		FinalContent: t.finalContent,
 		Messages:     stripSystem(t.messages),
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
+		ToolSurface:  t.toolSurface,
 		Err:          err,
 	}
 }
@@ -187,13 +196,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 		if backoff <= 0 {
 			backoff = 5 * time.Second
 		}
-		slog.WarnContext(ctx, "runner: provider rate limited, retrying",
-			"task", string(t.spec.ID), "iter", t.iter,
-			"retry_attempt", t.st.rateLimitRetries,
-			"limit", rateLimitRetryLimit,
-			"backoff_ms", backoff.Milliseconds(),
-			"err", streamErr,
-		)
+		t.r.publishDiagnostic(t.spec, "rate_limit_retry", "provider rate limited; retrying", t.st.rateLimitRetries, rateLimitRetryLimit, backoff, streamErr)
 		select {
 		case <-ctx.Done():
 			tr := t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, ctx.Err()))
@@ -206,13 +209,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 	if errors.Is(streamErr, ErrEmptyStream) && t.st.emptyStreamRetries < emptyStreamRetryLimit {
 		t.st.emptyStreamRetries++
 		backoff := t.r.emptyStreamBackoff << (t.st.emptyStreamRetries - 1)
-		slog.WarnContext(ctx, "runner: empty stream from provider, retrying",
-			"task", string(t.spec.ID), "iter", t.iter,
-			"retry_attempt", t.st.emptyStreamRetries,
-			"limit", emptyStreamRetryLimit,
-			"backoff_ms", backoff.Milliseconds(),
-			"err", streamErr,
-		)
+		t.r.publishDiagnostic(t.spec, "empty_stream_retry", "provider returned an empty stream; retrying", t.st.emptyStreamRetries, emptyStreamRetryLimit, backoff, streamErr)
 		if backoff > 0 {
 			select {
 			case <-ctx.Done():
@@ -226,12 +223,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 
 	if errors.Is(streamErr, ErrThinkingBudget) && t.st.thinkingBudgetCuts < thinkingBudgetRecoverLimit {
 		t.st.thinkingBudgetCuts++
-		slog.WarnContext(ctx, "runner: thinking-only budget exceeded, injecting corrective message",
-			"task", string(t.spec.ID), "iter", t.iter,
-			"recover_attempt", t.st.thinkingBudgetCuts,
-			"limit", thinkingBudgetRecoverLimit,
-			"err", streamErr,
-		)
+		t.r.publishDiagnostic(t.spec, "thinking_budget_recovery", "thinking budget exceeded; injecting correction", t.st.thinkingBudgetCuts, thinkingBudgetRecoverLimit, 0, streamErr)
 		t.messages = append(t.messages, llm.Message{
 			Role:    llm.RoleUser,
 			Content: thinkingBudgetRecoveryMessage,
@@ -241,12 +233,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 
 	if isUpstreamToolCallJSONError(streamErr) && t.st.toolCallJSONRecovers < toolCallJSONRecoverLimit {
 		t.st.toolCallJSONRecovers++
-		slog.WarnContext(ctx, "runner: upstream rejected tool-call JSON, injecting corrective message",
-			"task", string(t.spec.ID), "iter", t.iter,
-			"recover_attempt", t.st.toolCallJSONRecovers,
-			"limit", toolCallJSONRecoverLimit,
-			"err", streamErr,
-		)
+		t.r.publishDiagnostic(t.spec, "tool_call_json_recovery", "upstream rejected tool-call JSON; injecting correction", t.st.toolCallJSONRecovers, toolCallJSONRecoverLimit, 0, streamErr)
 		t.messages = append(t.messages, llm.Message{
 			Role:    llm.RoleUser,
 			Content: upstreamToolCallJSONRecoveryMessage,

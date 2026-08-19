@@ -504,7 +504,7 @@ func (m *UI) submit(text string) tea.Cmd {
 	if m.live != nil {
 		attachments := m.attachmentParts()
 		m.pendingAttachments = nil
-		return RunFnWithAttachments(m.live, text, attachments)
+		return RunFnWithAttachments(m.appContext(), m.live, text, attachments)
 	}
 	if m.runFn != nil {
 		return m.runFn(text)

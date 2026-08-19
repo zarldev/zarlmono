@@ -1,6 +1,6 @@
 # spawn_worker
 
-A worked example of **hierarchical agent decomposition** using `spawn_agent`. The parent coordinates a complex refactor by delegating to specialized child agents, each running in a different work mode with appropriate tool gating.
+A worked example of **hierarchical agent decomposition** using `agent_spawn`. The parent coordinates a complex refactor by delegating to specialized child agents, each running in a different work mode with appropriate tool gating.
 
 ## The Scenario
 
@@ -18,7 +18,7 @@ The parent agent doesn't do the work itself. Instead, it:
 |---------|------|------------------|
 | Named agents | `workers.go` | `AgentResolver` maps names to runners with different prompts/models |
 | Mode enforcement | `harness.go` | `WithModeToolPolicy` gates tools by `spec.Mutates` |
-| Parallel spawn | `harness.go` | Parent emits multiple `spawn_agent` calls in one turn |
+| Parallel spawn | `harness.go` | Parent emits multiple `agent_spawn` calls in one turn |
 | Depth limiting | `harness.go` | `WithMaxDepth(1)` prevents children from spawning grandchildren |
 | Child result aggregation | `tools.go` | Parent receives structured summaries from each child |
 | World verification | `harness.go` | Oracle checks filesystem state, not model claims |
@@ -27,7 +27,7 @@ The parent agent doesn't do the work itself. Instead, it:
 
 ```
 Parent Runner (coordinator)
-  └── spawn_agent tool
+  └── agent_spawn tool
         ├── researcher runner (explore mode) → read-only
         ├── reviewer runner (verify mode) → read + test
         └── coder runner (implement mode) → full surface
@@ -38,20 +38,20 @@ Parent Runner (coordinator)
 
 ```sh
 # Deterministic scripted mode (no LLM)
-go run ./examples/spawn_worker -scripted
+go run -C examples ./spawn_worker -scripted
 
 # Real provider (OpenAI; OPENAI_MODEL defaults to gpt-4o-mini)
-OPENAI_API_KEY=sk-... go run ./examples/spawn_worker
+OPENAI_API_KEY=sk-... go run -C examples ./spawn_worker
 ```
 
 ## Output
 
 ```
-→ spawn_agent (researcher, explore)
+→ agent_spawn (researcher, explore)
   ← Child completed: Found auth in auth.go, session.go (2 files, 47 lines)
-→ spawn_agent (reviewer, verify)
+→ agent_spawn (reviewer, verify)
   ← Child completed: Plan approved: extract JWT logic to jwt.go, update middleware
-→ spawn_agent (coder, implement)
+→ agent_spawn (coder, implement)
   ← Child completed: Created jwt.go (89 lines), modified auth.go (3 changes)
 ✓ All children completed, files verified on disk
 status=succeeded attempts=1 children=3 files_modified=2 files_created=1
@@ -59,15 +59,18 @@ status=succeeded attempts=1 children=3 files_modified=2 files_created=1
 
 ## Key Design Points
 
+- **Asynchronous launch**: `agent_spawn` returns a receipt immediately; the parent may continue independent work
+- **Explicit collection**: `agent_status` polls without waiting and `agent_await` joins for the final summary
 - **Children cannot spawn children**: Depth cap at 1 keeps the tree flat
 - **Mode is enforced**: Explore child literally cannot write files (tool gate)
-- **Results are structured**: Each child returns summary, iterations, and reason
+- **Workspace access is coordinated**: read-only children may overlap; implement work is exclusive
+- **Results are structured**: Each terminal task retains summary, iterations, and reason
 - **Parent aggregates**: Coordinator checks filesystem to verify outcomes
 
 ## Testing
 
 ```sh
-go test ./examples/spawn_worker/
+go test -C examples ./spawn_worker
 ```
 
 Tests verify:

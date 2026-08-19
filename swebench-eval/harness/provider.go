@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -64,11 +65,15 @@ type settingsAdapter struct{ svc *prefs.Service }
 
 func (a settingsAdapter) HasVault() bool { return a.svc != nil && a.svc.HasVault() }
 
-func (a settingsAdapter) GetKey(ctx context.Context, provider string) (string, bool, error) {
+func (a settingsAdapter) GetKey(ctx context.Context, provider string) (string, error) {
 	if a.svc == nil {
-		return "", false, nil
+		return "", backends.ErrKeyNotFound
 	}
-	return a.svc.GetKey(ctx, prefs.ScopeEffective, provider)
+	k, err := a.svc.GetKey(ctx, prefs.ScopeEffective, provider)
+	if errors.Is(err, prefs.ErrNotFound) {
+		return "", backends.ErrKeyNotFound
+	}
+	return k, err
 }
 
 // buildProvider constructs the llm.Provider for (name, model). OAuth

@@ -52,6 +52,7 @@ type UI struct {
 	// runFn launches a live run for a submitted prompt; nil means the
 	// composer just echoes prompts locally (no runner wired).
 	runFn              func(prompt string) tea.Cmd
+	ctx                context.Context
 	pendingAttachments []pendingAttachment
 
 	// settings is the persistence handle (prefs + provider registry) the
@@ -169,8 +170,8 @@ func (m *UI) SetStartupFailure(wsRoot, title, err string) {
 }
 
 func (m *UI) appContext() context.Context {
-	if m != nil && m.live != nil {
-		return m.live.ParentContext()
+	if m != nil && m.ctx != nil {
+		return m.ctx
 	}
 	return context.Background()
 }
@@ -180,7 +181,7 @@ func (m *UI) appContext() context.Context {
 // mid-session (see maybeRepoint).
 func (m *UI) SetLiveRunner(l *engine.LiveRunner) {
 	m.live = l
-	m.runFn = func(prompt string) tea.Cmd { return RunFn(l, prompt) }
+	m.runFn = func(prompt string) tea.Cmd { return RunFn(m.appContext(), l, prompt) }
 }
 
 // SetProviderContext records the env-derived fallback spec and the currently
@@ -242,22 +243,13 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 	maps.Copy(cache, m.session.ModelCache)
 
 	picker := newModelQuickPick(provNames, cache, current.Name, m.session.Model, func(prov, model string) {
-		active := m.session.ActiveProviderSpec()
 		// Persist provider + model to settings so the change survives
 		// restart and maybeRepoint can read it back as the new spec.
 		if m.settings != nil && m.settings.Svc != nil {
 			ctx := m.appContext()
-			if prov != active.Name {
-				if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider, prov); err != nil {
-					slog.WarnContext(ctx, "persist provider switch", "err", err, "provider", prov)
-				}
-				// Reset to the new provider's default so a cross-provider
-				// model (e.g. deepseek + claude-opus) can't be stranded.
-				// The user's explicit pick below overwrites it.
-				m.settings.ResetModelToProviderDefault(ctx, prov)
-			}
-			if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, model); err != nil {
-				slog.WarnContext(ctx, "persist model switch", "err", err, "model", model)
+			selection := prefs.ModelSelection{Provider: prov, Model: model}
+			if err := m.settings.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
+				slog.WarnContext(ctx, "persist model selection", "err", err, "provider", prov, "model", model)
 			}
 		}
 
@@ -311,6 +303,7 @@ func (m *UI) SetPressureConfig(window, reserve int) {
 func New() *UI {
 	s := NewSession("", "", "")
 	m := &UI{
+		ctx:        context.Background(),
 		timeline:   newTimeline(),
 		session:    s,
 		headerPane: newHeaderPane(s),

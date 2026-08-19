@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/cli"
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 	"github.com/zarldev/zarlmono/zarlcode/version"
@@ -78,6 +79,16 @@ func Main() {
 		"",
 		"inline task prompt (for --headless; wins over --prompt-file when both set)",
 	)
+	promptProfileFlag := flag.String(
+		"prompt-profile",
+		"compact",
+		"embedded BUILD prompt profile: compact (default) or standard rollback; full user overrides still win",
+	)
+	reportFile := flag.String(
+		"report-file",
+		"",
+		"write one JSON cold-start report after a headless run",
+	)
 	maxIterFlag := flag.Int(
 		"max-iter",
 		0,
@@ -94,6 +105,11 @@ func Main() {
 		"write a Go execution trace to this file until zarlcode exits",
 	)
 	flag.Parse()
+	promptProfile, err := engine.ParsePromptProfile(*promptProfileFlag)
+	if err != nil || !promptProfile.IsValid() {
+		fmt.Fprintf(os.Stderr, "prompt-profile: invalid %q (want standard or compact)\n", *promptProfileFlag)
+		os.Exit(4)
+	}
 
 	if *versionFlag {
 		fmt.Fprintln(os.Stdout, version.String())
@@ -116,14 +132,16 @@ func Main() {
 	// services (registering closers), tui.Launch.Run drives the
 	// TUI/headless task.
 	os.Exit(zapp.New(tui.Launch{
-		EnvFile:   *envFile,
-		AgentName: *agentName,
-		Resume:    *resumeFlag,
-		Headless:  *headlessFlag,
-		Prompt:    prompt,
-		MaxIter:   *maxIterFlag,
-		PprofAddr: *pprofAddr,
-		TraceFile: *traceFile,
+		EnvFile:       *envFile,
+		AgentName:     *agentName,
+		Resume:        *resumeFlag,
+		Headless:      *headlessFlag,
+		Prompt:        prompt,
+		PromptProfile: promptProfile,
+		ReportFile:    *reportFile,
+		MaxIter:       *maxIterFlag,
+		PprofAddr:     *pprofAddr,
+		TraceFile:     *traceFile,
 	}, zapp.WithPanicHandler[*tui.Zarlcode](recordPanic)).Run(context.Background()))
 }
 

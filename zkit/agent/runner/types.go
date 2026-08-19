@@ -59,12 +59,12 @@ type TaskSpec struct {
 	// call ID, but the child Run that follows publishes events at
 	// the new depth with a fresh task ID and no link back. The
 	// model's stack-based heuristic ("bind to the most recently
-	// dispatched spawn_agent") breaks under parallel fan-out
+	// dispatched agent_spawn") breaks under parallel fan-out
 	// because both children publish their ConversationStarted in
 	// arbitrary order; this field gives the binding directly.
 	ParentToolCallID string
 
-	// AgentName is set by spawn_agent when a named sub-agent profile was
+	// AgentName is set by agent_spawn when a named sub-agent profile was
 	// resolved for this task. Empty means the default/parent runner.
 	AgentName string
 
@@ -90,12 +90,28 @@ const (
 	TerminalCancelled TerminalReason = "cancelled"
 )
 
+// TerminalCause identifies the concrete lifecycle boundary behind a terminal
+// cancellation or timeout. The zero value means no classified boundary.
+type TerminalCause string
+
+const (
+	// TerminalCauseCaller means the caller's context ended.
+	TerminalCauseCaller TerminalCause = "caller"
+	// TerminalCauseIterationTimeout means the per-iteration budget ended.
+	TerminalCauseIterationTimeout TerminalCause = "iteration_timeout"
+	// TerminalCauseStreamIdle means the completion stream stopped producing chunks.
+	TerminalCauseStreamIdle TerminalCause = "stream_idle"
+)
+
 // TaskResult is the output of Runner.Run.
 type TaskResult struct {
 	ID         taskscope.ID
 	Reason     TerminalReason
 	Iterations int
 	Duration   time.Duration
+	// Cause refines cancelled and timeout outcomes without requiring callers to
+	// inspect wrapped errors. It is empty for ordinary completion and faults.
+	Cause TerminalCause
 
 	// FinalContent is the LLM's last assistant message (if any).
 	FinalContent string
@@ -131,6 +147,8 @@ type TaskResult struct {
 	// spawn-agent's child Run) should prefer TotalUsage over
 	// LastUsage. Nil when the run never completed an LLM call.
 	TotalUsage *llm.Usage
+	// ToolSurface is the exact model-visible tool set from the final request.
+	ToolSurface ToolSurface
 
 	// Err is non-nil when Reason is TerminalError or TerminalCancelled. Nil otherwise.
 	Err error

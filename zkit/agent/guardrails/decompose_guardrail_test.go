@@ -404,7 +404,7 @@ func TestDecomposeGuardrail_JudgeShapesAdvisory(t *testing.T) {
 			Rationale: "the diff spans five files; a sub-agent can chunk it",
 		},
 	}
-	g := guardrails.NewDecomposeGuardrail(0).WithJudge(judge)
+	g := guardrails.NewDecomposeGuardrail(0, guardrails.WithDecomposeJudge(judge))
 	call := callWithArgs("write", "c", tools.ToolParameters{"path": "foo.go"})
 
 	_ = g.Inspect(t.Context(), call, failingResult("tool failed"), nil)
@@ -424,8 +424,8 @@ func TestDecomposeGuardrail_JudgeShapesAdvisory(t *testing.T) {
 	if !strings.HasPrefix(e.Reason, "tool failed") {
 		t.Errorf("Reason = %q, advisory must still lead with the original error", e.Reason)
 	}
-	if !strings.Contains(e.Reason, "spawn_agent") {
-		t.Errorf("Reason = %q, spawn_subagent verdict should mention spawn_agent", e.Reason)
+	if !strings.Contains(e.Reason, "agent_spawn") {
+		t.Errorf("Reason = %q, spawn_subagent verdict should mention agent_spawn", e.Reason)
 	}
 	if !strings.Contains(e.Reason, "five files") {
 		t.Errorf("Reason = %q, rationale should appear in the advisory body", e.Reason)
@@ -440,7 +440,7 @@ func TestDecomposeGuardrail_JudgeShapesAdvisory(t *testing.T) {
 
 func TestDecomposeGuardrail_JudgeErrorFallsBackToDefault(t *testing.T) {
 	judge := &fakeJudge{err: errors.New("provider down")}
-	g := guardrails.NewDecomposeGuardrail(0).WithJudge(judge)
+	g := guardrails.NewDecomposeGuardrail(0, guardrails.WithDecomposeJudge(judge))
 	call := callWithArgs("write", "c", tools.ToolParameters{"path": "foo.go"})
 
 	_ = g.Inspect(t.Context(), call, failingResult("tool failed"), nil)
@@ -461,7 +461,7 @@ func TestDecomposeGuardrail_JudgeInvalidActionFallsBack(t *testing.T) {
 	// string against a non-grammar-capable provider) must not poison
 	// the advisory — fall back to deterministic instead.
 	judge := &fakeJudge{verdict: guardrails.Verdict{Action: "wat", Rationale: "..."}}
-	g := guardrails.NewDecomposeGuardrail(0).WithJudge(judge)
+	g := guardrails.NewDecomposeGuardrail(0, guardrails.WithDecomposeJudge(judge))
 	call := callWithArgs("write", "c", tools.ToolParameters{"path": "foo.go"})
 
 	_ = g.Inspect(t.Context(), call, failingResult("tool failed"), nil)
@@ -476,7 +476,7 @@ func TestDecomposeGuardrail_JudgeInvalidActionFallsBack(t *testing.T) {
 
 func TestDecomposeGuardrail_JudgeNotCalledBelowNudge(t *testing.T) {
 	judge := &fakeJudge{verdict: guardrails.Verdict{Action: guardrails.ActionSmallerScope}}
-	g := guardrails.NewDecomposeGuardrail(0).WithJudge(judge)
+	g := guardrails.NewDecomposeGuardrail(0, guardrails.WithDecomposeJudge(judge))
 	call := callWithArgs("write", "c", tools.ToolParameters{"path": "foo.go"})
 
 	// First two failures pass through; the judge must not be consulted

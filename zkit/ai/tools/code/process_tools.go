@@ -48,7 +48,8 @@ func NewBashOutputTool(m *ProcessManager) *BashOutputTool { return &BashOutputTo
 // polling never mutates.
 func (*BashOutputTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameBashOutput,
+		Name:            ToolNameBashOutput,
+		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Poll a background process for new stdout/stderr lines since the last cursor. " +
 			"Returns labelled plaintext — a header row of cursors + counters, then `--- stdout ---` / " +
 			"`--- stderr ---` sections with the new lines indented; set output=\"json\" for " +
@@ -221,7 +222,8 @@ func NewListProcessesTool(m *ProcessManager) *ListProcessesTool { return &ListPr
 // labeled|json output enum; listing never mutates.
 func (*ListProcessesTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameListProcesses,
+		Name:            ToolNameListProcesses,
+		WorkspaceAccess: tools.WorkspaceAccesses.NONE,
 		Description: "List background processes started via bash(background=true). Returns labelled " +
 			"plaintext — one process per block with id, pid, state, age, command, cwd, and line counts; " +
 			"set output=\"json\" for [{process_id, command, pid, cwd, started_at, running, exited_at?, " +

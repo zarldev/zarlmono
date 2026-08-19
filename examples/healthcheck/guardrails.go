@@ -12,4 +12,4 @@ package main
 //
 // FanoutGuardrail caps check_endpoint at 5 calls per task. Once the model
 // has checked every endpoint individually, the fanout guardrail nudges
-// toward delegation (spawn_agent). Below 5, calls pass through normally.
+// toward delegation (agent_spawn). Below 5, calls pass through normally.

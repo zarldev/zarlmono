@@ -13,7 +13,7 @@ import (
 
 func TestRuntimeCatalogToolsDoNotInlineIntoPrompt(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "edit.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "edit", "SKILL.md"), `---
 name: edit
 description: recover from edit failures
 ---
@@ -33,17 +33,17 @@ You review code changes.
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := NewLiveRunner(nil, ws, nil, "local")
+	l := NewLiveRunner(nil, ws, "local")
 	l.catalog.Reload(root)
 
-	if path, ok := l.catalog.Lookup("edit"); !ok || !strings.HasSuffix(path, filepath.Join("skills", "edit.md")) {
+	if path, ok := l.catalog.Lookup("edit"); !ok || !strings.HasSuffix(path, filepath.Join("skills", "edit", "SKILL.md")) {
 		t.Fatalf("skill lookup = (%q,%v), want edit skill path", path, ok)
 	}
 	if _, ok := l.catalog.Agent("reviewer"); !ok {
 		t.Fatalf("agent reviewer not loaded")
 	}
 
-	src, _, err := l.source("")
+	src, _, err := l.source(t.Context(), "")
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}
@@ -58,7 +58,7 @@ You review code changes.
 	}
 
 	prompt, err := RenderLivePrompt("test", LiveSystemPromptTemplate,
-		root, l.catalog.Skills(), l.catalog.Agents(), nil, []promptTool{{Name: "spawn_agent"}}, "")
+		root, l.catalog.Skills(), l.catalog.Agents(), nil, []promptTool{{Name: "agent_spawn"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ You review code changes.
 }
 func TestLoadSkillTool(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "go.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "go", "SKILL.md"), `---
 name: go
 description: go workflow
 ---
@@ -87,7 +87,7 @@ Run go test ./...
 		t.Fatal(err)
 	}
 	if res == nil || !res.Success || !strings.Contains(res.Data.(string), "go test") {
-		t.Fatalf("load_skill result = %#v", res)
+		t.Fatalf("skill_load result = %#v", res)
 	}
 }
 
@@ -110,7 +110,7 @@ Review fresh changes.
 		t.Fatalf("list_agents did not refresh catalogue: %#v", res)
 	}
 
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "fresh-skill.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "fresh-skill", "SKILL.md"), `---
 name: fresh-skill
 description: newly added skill
 ---
@@ -129,7 +129,7 @@ Use fresh skill.
 func TestLoadSkillToolRefreshesOnceOnMiss(t *testing.T) {
 	root := t.TempDir()
 	cat := newRuntimeCatalog(root)
-	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "late.md"), `---
+	mustWrite(t, filepath.Join(root, ".zarlcode", "skills", "late", "SKILL.md"), `---
 name: late
 description: late skill
 ---
@@ -146,7 +146,7 @@ Loaded after refresh.
 		t.Fatal(err)
 	}
 	if res == nil || !res.Success || !strings.Contains(res.Data.(string), "Loaded after refresh") {
-		t.Fatalf("load_skill did not refresh on miss: %#v", res)
+		t.Fatalf("skill_load did not refresh on miss: %#v", res)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestCreateSkillToolWritesPortablePackageAndReloadsCatalog(t *testing.T) {
 	cat := newRuntimeCatalog(t.TempDir())
 	tool := NewCreateSkillTool(cat)
 	if !tool.Definition().Mutates {
-		t.Fatal("create_skill must declare mutation for explore/verify gating")
+		t.Fatal("skill_create must declare mutation for explore/verify gating")
 	}
 	res, err := tool.Execute(t.Context(), tools.ToolCall{
 		ID:       "create",
@@ -170,7 +170,7 @@ func TestCreateSkillToolWritesPortablePackageAndReloadsCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res == nil || !res.Success {
-		t.Fatalf("create_skill result = %#v", res)
+		t.Fatalf("skill_create result = %#v", res)
 	}
 	skill, ok := cat.Skill("self-extension")
 	if !ok {

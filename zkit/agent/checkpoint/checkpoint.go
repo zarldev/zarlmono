@@ -1,6 +1,12 @@
 package checkpoint
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrNotFound reports a requested checkpoint that does not exist.
+var ErrNotFound = errors.New("checkpoint not found")
 
 // ID identifies a checkpoint.
 type ID string

@@ -58,7 +58,7 @@ func TestApplyPlanner_EmptyAgentNames_NoOp(t *testing.T) {
 func TestApplyPlanner_AgentInRegisteredSet_SkipsPlanner(t *testing.T) {
 	// Model picked a valid name — no rerouting needed, planner stays
 	// silent. Avoiding the call here matters: spawn fan-out emits 3
-	// parallel spawn_agent calls per turn, and one llm round-trip per
+	// parallel agent_spawn calls per turn, and one llm round-trip per
 	// call adds up fast if we don't gate.
 	plan := &fakeSpawnPlanner{}
 	tool := &Tool{planner: plan, plannerAgents: []AgentCandidate{{Name: "researcher"}, {Name: "coder"}}}

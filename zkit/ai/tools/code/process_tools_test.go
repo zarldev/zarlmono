@@ -38,21 +38,12 @@ func TestStopProcessDeclaresMutation(t *testing.T) {
 	}
 }
 
-// waitForExit polls m.Info until the process exits or the deadline fires.
-func waitForExit(t *testing.T, m *code.ProcessManager, id code.ProcessID, timeout time.Duration) {
+// waitForExit waits until process output has drained.
+func waitForExit(t *testing.T, m *code.ProcessManager, id code.ProcessID) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		info, err := m.Info(id)
-		if err != nil {
-			t.Fatalf("Info: %v", err)
-		}
-		if !info.Running {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	if err := m.Wait(id); err != nil {
+		t.Fatalf("Wait: %v", err)
 	}
-	t.Fatalf("process %s did not exit within %s", id, timeout)
 }
 
 func bashOutputText(t *testing.T, res *tools.ToolResult) string {
@@ -82,7 +73,7 @@ func TestBashOutput_DefaultOutputShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
-	waitForExit(t, mgr, id, 3*time.Second)
+	waitForExit(t, mgr, id)
 
 	tool := code.NewBashOutputTool(mgr)
 	res, _ := tool.Execute(t.Context(), tools.ToolCall{
@@ -115,7 +106,7 @@ func TestBashOutput_JSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartProcess: %v", err)
 	}
-	waitForExit(t, mgr, id, 3*time.Second)
+	waitForExit(t, mgr, id)
 
 	tool := code.NewBashOutputTool(mgr)
 	res, _ := tool.Execute(t.Context(), tools.ToolCall{

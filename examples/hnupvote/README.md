@@ -39,7 +39,7 @@ Prerequisites: Go, Chrome installed, and an LLM backend.
 ```sh
 cp examples/hnupvote/.env.example examples/hnupvote/.env
 # edit .env: set HN_USER / HN_PASS and pick an LLM backend
-go run ./examples/hnupvote -confirm
+go run -C examples ./hnupvote -confirm
 ```
 
 `.env` is gitignored. By default the LLM backend is `openai-codex`, which reuses zarlcode's encrypted vault — the ChatGPT OAuth credential you logged in with via `zarlcode keys oauth openai-codex` drives the agent and auto-refreshes. No LLM secret goes in `.env`. Set `LLM_PROVIDER` to anything else to use an OpenAI-compatible endpoint via `OPENAI_API_KEY` / `LLM_BASE_URL`. See `.env.example` and `provider.go`.
@@ -202,7 +202,7 @@ The same harness spans "fire and forget" and "verify against the world and keep 
 `hnupvote_test.go` runs the full stack with no browser and no LLM: a fake `Page` and a scripted `runnertest.Client` that plays the model (upvote → login → upvote → settle). The guardrail blocks the first upvote, the login tool flips the session, the second upvote verifies, and the oracle confirms success against the fake world.
 
 ```sh
-go test ./examples/hnupvote/
+go test -C examples ./hnupvote
 ```
 
 Because correctness lives in the harness contract — guardrails, oracle, re-drive — and not in the model, it is fully testable deterministically.

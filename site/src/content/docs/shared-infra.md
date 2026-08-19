@@ -18,7 +18,6 @@ or traces.
 | `zkit/agent/workflow` | Typed graph/workflow composition: nodes, static edges, conditional routes, compiled `Runnable`, execution state, event sink, and workflow-as-tool adapter. |
 | `zkit/agent/checkpoint` | Transport-neutral run snapshots and a concurrent in-memory `Store`. Durable filesystem/SQLite stores can implement the same interface later. |
 | `zkit/agent/hitl` | Human-in-the-loop request/review model: risk levels, decisions, reviewer patches/comments, and policy hooks like `RequireHuman` and `ApproveLowRisk`. |
-| `zkit/agent/trace` | Normalized trace events, exporters, JSONL output, and adapters from runner/workflow event sinks. |
 
 The split matters: `zkit/ai/retrieval` has no dependency on the agent
 runtime, while `zkit/agent/retrieval` is where retrieved documents
@@ -159,28 +158,3 @@ if !decided {
 
 zarlcode and zarlai can route these requests through their own UI/API
 surfaces while sharing the same request, decision, and checkpoint types.
-
-## Tracing
-
-`agent/trace` normalizes runner and workflow events into one stream.
-Start with JSONL when debugging locally:
-
-```go
-exporter := trace.NewJSONLExporter(os.Stdout)
-sink := &trace.Sink{Exporter: exporter}
-
-r := runner.New(client,
-    runner.WithTools(tools),
-    runner.WithSink(sink),
-)
-```
-
-Workflow events use the sibling adapter:
-
-```go
-run.Sink = &trace.WorkflowSink{Exporter: exporter}
-```
-
-Exporters are intentionally tiny. OpenTelemetry, Langfuse, or an
-application-specific timeline can implement the same `Exporter`
-interface without changing runner or workflow code.

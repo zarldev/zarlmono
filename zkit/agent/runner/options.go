@@ -24,11 +24,12 @@ import (
 
 // -- Core wiring --
 
-// WithSink installs the event sink the runner publishes content,
-// tool, and conversation lifecycle events to. The default is
-// [StderrSink] (tool-progress lines on stderr); pass nil to
-// silence the loop entirely for headless background tasks.
+// WithSink installs the event sink the runner publishes lifecycle and
+// diagnostic events to. Passing nil is invalid configuration and panics.
 func WithSink(s EventSink) options.Option[Runner] {
+	if s == nil {
+		panic("runner: nil event sink")
+	}
 	return func(r *Runner) { r.sink = s }
 }
 

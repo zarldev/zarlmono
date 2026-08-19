@@ -2,11 +2,11 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -130,14 +130,15 @@ func (r *Runner) dispatch(
 	}
 	startTS := time.Now()
 	execCtx := ctx
-	if r.timeouts.tool > 0 {
+	toolTimeout := r.toolTimeout(name)
+	if toolTimeout > 0 {
 		// Apply the per-tool budget. A well-behaved tool sees
 		// ctx.Done() and unwinds; one that ignores ctx keeps running
 		// in its own goroutine past the deadline, but the runner stops
 		// waiting and reports a timeout result so subsequent iterations
 		// aren't blocked by a wedged dispatch.
 		var cancel context.CancelFunc
-		execCtx, cancel = context.WithTimeout(ctx, r.timeouts.tool)
+		execCtx, cancel = context.WithTimeout(ctx, toolTimeout)
 		defer cancel()
 	}
 	type toolExecResult struct {
@@ -155,10 +156,6 @@ func (r *Runner) dispatch(
 		// even if the select already moved on via the per-tool deadline.
 		defer func() {
 			if rec := recover(); rec != nil {
-				slog.ErrorContext(execCtx, "tool execution panicked; recovered",
-					"tool", string(name),
-					"panic", fmt.Sprintf("%v", rec),
-					"stack", string(debug.Stack()))
 				done <- toolExecResult{result: tools.Failure(call.ID, tools.Transient(string(name), fmt.Errorf(
 					"tool %q panicked during execution: %v; the dispatch was abandoned. "+
 						"This is a bug in the tool itself, not your arguments — try a different "+
@@ -188,7 +185,7 @@ func (r *Runner) dispatch(
 	// the model sees a clear "tool exceeded its time budget" signal
 	// rather than a generic "context deadline exceeded" string.
 	abandoned := false
-	if err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && r.timeouts.tool > 0 {
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && toolTimeout > 0 {
 		// Abandoned only when the tool didn't stop on the deadline — its
 		// goroutine is still in flight and may keep mutating state.
 		abandoned = inFlight
@@ -197,10 +194,14 @@ func (r *Runner) dispatch(
 			"tool %q exceeded the per-tool time budget (%s); the dispatch was abandoned. "+
 				"If the work is legitimately long-running, split it across multiple calls "+
 				"or run it as a background bash with `background: true`",
-			name, r.timeouts.tool)))
+			name, toolTimeout)))
 	}
 	r.publishToolFinished(ctx, spec, call, result, time.Since(startTS), err, abandoned)
 	return result, err
+}
+
+func (r *Runner) toolTimeout(tools.ToolName) time.Duration {
+	return r.timeouts.tool
 }
 
 // toolMutates reports whether the named tool declares Mutates in its
@@ -230,31 +231,69 @@ func (r *Runner) specForGate(ctx context.Context, name tools.ToolName) (tools.To
 	return tools.ToolSpec{}, false
 }
 
-// buildLLMTools snapshots the registry's current tool list as the
-// per-iteration tool set shipped to the LLM. Called once per iteration
-// so newly-registered tools (the agent built one with `register`,
-// MCP just connected, etc.) become callable on the next turn without
-// needing a runner restart.
-func (r *Runner) buildLLMTools(ctx context.Context) []llm.Tool {
+type requestTools struct {
+	tools   []llm.Tool
+	surface ToolSurface
+}
+
+type diagnosticTool struct {
+	Tool             llm.Tool `json:"tool"`
+	Mutates          bool     `json:"mutates"`
+	AffectsWorkspace bool     `json:"affects_workspace"`
+}
+
+// buildRequestTools takes one post-gate snapshot and derives both the provider
+// payload and its accounting from it. Keeping those outputs under one owner
+// prevents observability from measuring a different surface than the request.
+func (r *Runner) buildRequestTools(ctx context.Context, previousFingerprint string) (requestTools, error) {
 	gate := toolGateFrom(ctx)
-	var out []llm.Tool
-	for t := range r.tools.Tools(ctx) {
-		s := t.Definition()
-		if gate != nil && !gate(s) {
-			continue // hidden from this (gated) Run's tool surface
-		}
-		if strings.TrimSpace(s.Name.String()) == "" {
-			slog.WarnContext(ctx, "runner: skipping tool with empty name")
+	var out requestTools
+	var diagnostic []diagnosticTool
+	seen := make(map[tools.ToolName]struct{})
+	for tool := range r.tools.Tools(ctx) {
+		spec := tool.Definition()
+		if gate != nil && !gate(spec) {
 			continue
 		}
-		out = append(out, llm.Tool{
+		if err := tools.ValidateToolSpec(spec); err != nil {
+			continue
+		}
+		if _, ok := seen[spec.Name]; ok {
+			return requestTools{}, fmt.Errorf("build request tools: duplicate tool name %q", spec.Name)
+		}
+		seen[spec.Name] = struct{}{}
+
+		modelTool := llm.Tool{
 			Type: "function",
 			Function: llm.ToolFunction{
-				Name:        s.Name.String(),
-				Description: s.Description,
-				Parameters:  s.Parameters,
+				Name:        spec.Name.String(),
+				Description: spec.Description,
+				Parameters:  spec.Parameters,
 			},
+		}
+		out.tools = append(out.tools, modelTool)
+		diagnostic = append(diagnostic, diagnosticTool{
+			Tool:             modelTool,
+			Mutates:          spec.Mutates,
+			AffectsWorkspace: spec.AffectsWorkspace,
 		})
 	}
-	return out
+
+	wireJSON, err := json.Marshal(out.tools)
+	if err != nil {
+		return requestTools{}, fmt.Errorf("serialize request tools: %w", err)
+	}
+	diagnosticJSON, err := json.Marshal(diagnostic)
+	if err != nil {
+		return requestTools{}, fmt.Errorf("serialize diagnostic tools: %w", err)
+	}
+	digest := sha256.Sum256(diagnosticJSON)
+	fingerprint := hex.EncodeToString(digest[:])
+	out.surface = ToolSurface{
+		Count:       len(out.tools),
+		JSONBytes:   len(wireJSON),
+		Fingerprint: fingerprint,
+		Changed:     previousFingerprint != "" && previousFingerprint != fingerprint,
+	}
+	return out, nil
 }

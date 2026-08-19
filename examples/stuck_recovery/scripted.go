@@ -16,7 +16,7 @@ func NewScriptedClient() runner.Client {
 	// 1-2: Normal failures (pass through)
 	// 3: Failure with advisory from guardrail (nudge)
 	// 4: Failure triggers fatal (blocked)
-	// 5: Recovery via spawn_agent
+	// 5: Recovery via agent_spawn
 	// The pattern is kept identical on turns 1-4 on purpose: distinct
 	// patterns would each be a fresh signature and never trip the
 	// signature escalation this example is demonstrating.

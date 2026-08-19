@@ -236,30 +236,6 @@ func TestDefaultPolicyWorktree(t *testing.T) {
 	}
 }
 
-func TestPolicyWithExecPath(t *testing.T) {
-	p := sandbox.DefaultPolicy(t.TempDir()).WithExecPath(`/mnt/c/Program Files/Google/Chrome/Application/chrome.exe`)
-	if !contains(p.ReadFiles, `/mnt/c/Program Files/Google/Chrome/Application/chrome.exe`) {
-		t.Fatalf("exec path missing from read files: %v", p.ReadFiles)
-	}
-	for _, dir := range []string{
-		`/mnt`,
-		`/mnt/c`,
-		`/mnt/c/Program Files`,
-		`/mnt/c/Program Files/Google`,
-		`/mnt/c/Program Files/Google/Chrome`,
-		`/mnt/c/Program Files/Google/Chrome/Application`,
-	} {
-		if !contains(p.ReadDirs, dir) {
-			t.Fatalf("ancestor dir %q missing from read dirs: %v", dir, p.ReadDirs)
-		}
-	}
-	if _, err := os.Stat("/proc/sys/fs/binfmt_misc/WSLInterop"); err == nil {
-		if !contains(p.ReadFiles, "/init") {
-			t.Fatalf("wsl interop interpreter /init missing from read files: %v", p.ReadFiles)
-		}
-	}
-}
-
 func contains(paths []string, p string) bool {
 	return slices.Contains(paths, p)
 }

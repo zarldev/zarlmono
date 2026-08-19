@@ -151,15 +151,16 @@ func (s Tool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult
 // All accessors take the internal mutex; safe under -race.
 type Sink struct {
 	runner.NopSink
-	mu        sync.Mutex
-	contents  []runner.Content
-	starts    []runner.ToolStarted
-	completes []runner.ToolCompleted
-	fails     []runner.ToolFailed
-	convStart []runner.ConversationStarted
-	convEnded []runner.ConversationEnded
-	steers    []runner.SteerInjected
-	compacts  []runner.CompactionApplied
+	mu          sync.Mutex
+	contents    []runner.Content
+	starts      []runner.ToolStarted
+	completes   []runner.ToolCompleted
+	fails       []runner.ToolFailed
+	convStart   []runner.ConversationStarted
+	convEnded   []runner.ConversationEnded
+	steers      []runner.SteerInjected
+	compacts    []runner.CompactionApplied
+	diagnostics []runner.Diagnostic
 }
 
 // NewSink returns an empty recording sink.
@@ -219,6 +220,13 @@ func (s *Sink) OnCompactionApplied(e runner.CompactionApplied) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.compacts = append(s.compacts, e)
+}
+
+// OnDiagnostic appends e to the diagnostics slice under the mutex.
+func (s *Sink) OnDiagnostic(e runner.Diagnostic) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.diagnostics = append(s.diagnostics, e)
 }
 
 // --- Sink read-side helpers ---
@@ -320,4 +328,11 @@ func (s *Sink) CompactionCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.compacts)
+}
+
+// Diagnostics returns an independent snapshot of recovery diagnostics.
+func (s *Sink) Diagnostics() []runner.Diagnostic {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]runner.Diagnostic(nil), s.diagnostics...)
 }

@@ -1,6 +1,7 @@
 package checkpoint_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -27,5 +28,12 @@ func TestMemoryStoreCopiesAndLists(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].ID != "a" {
 		t.Fatalf("list = %#v", list)
+	}
+}
+
+func TestMemoryStoreLoadNotFound(t *testing.T) {
+	_, err := checkpoint.NewMemoryStore().Load(t.Context(), "missing")
+	if !errors.Is(err, checkpoint.ErrNotFound) {
+		t.Fatalf("Load() error = %v, want ErrNotFound", err)
 	}
 }

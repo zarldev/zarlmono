@@ -98,6 +98,40 @@ func TestBrowse_SelectsExpandedGroupChildren(t *testing.T) {
 	}
 }
 
+func TestBrowse_SelectsNestedProgramToolCalls(t *testing.T) {
+	tl := newTimeline()
+	tl.startTurn("t", 0)
+	tl.startToolWithParent("t", 0, "program", "program", "grep, glob", "", 0)
+	tl.startToolWithParent("t", 0, "grep", "grep", "TODO", "program", 0)
+	tl.startToolWithParent("t", 0, "glob", "glob", "*.go", "program", 1)
+	tl.finishTool("grep", "grep result", nil, 0, false, tools.Kinds.UNKNOWN)
+	tl.finishTool("glob", "glob result", nil, 0, false, tools.Kinds.UNKNOWN)
+	tl.finishTool("program", "[]", nil, 0, false, tools.Kinds.UNKNOWN)
+
+	groupIdx := len(tl.items) - 1
+	group := tl.items[groupIdx].(*groupItem)
+	group.expanded = true
+	program := group.children[0].(*toolItem)
+	program.expanded = true
+
+	tl.viewWidth, tl.viewHeight = 80, 20
+	tl.browsing, tl.sel, tl.selLocal = true, groupIdx, 0
+
+	for _, want := range []int{1, 2, 3} {
+		tl.cursorDown()
+		if tl.sel != groupIdx || tl.selLocal != want {
+			t.Fatalf("cursorDown: sel=%d local=%d, want sel=%d local=%d", tl.sel, tl.selLocal, groupIdx, want)
+		}
+	}
+	tl.toggleSelected()
+	if !program.children[1].expanded {
+		t.Fatal("second nested program tool should expand when selected")
+	}
+	if program.children[0].expanded {
+		t.Fatal("expanding second nested program tool must not expand the first")
+	}
+}
+
 // TestBrowse_LineScrollReadsTallItem verifies the wheel/page scroll moves by
 // lines (so a tall entry can be read through) while keeping a selection.
 func TestBrowse_LineScrollReadsTallItem(t *testing.T) {

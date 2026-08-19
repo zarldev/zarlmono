@@ -136,6 +136,9 @@ func TestErr_Cancelled_IsErrCancelled(t *testing.T) {
 		if !errors.Is(got.res.Err, runner.ErrCancelled) {
 			t.Errorf("res.Err: errors.Is(err, ErrCancelled) = false; got %v", got.res.Err)
 		}
+		if got.res.Cause != runner.TerminalCauseCaller {
+			t.Errorf("Cause = %q, want %q", got.res.Cause, runner.TerminalCauseCaller)
+		}
 		if !errors.Is(got.res.Err, context.Canceled) {
 			t.Errorf("res.Err should also wrap context.Canceled; got %v", got.res.Err)
 		}
