@@ -5,6 +5,7 @@ import (
 	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
@@ -77,6 +78,10 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	for i, ln := range lines {
 		if i >= bodyH {
 			break
+		}
+		if strings.HasPrefix(ansi.Strip(ln), "├") {
+			drawLine(scr, uv.Rect(l.Detail.Min.X-1, l.Detail.Min.Y+i, l.Detail.Dx()+2, 1), paneSectionRule(ln, l.Detail.Dx()+2))
+			continue
 		}
 		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, detailW, 1), ln)
 	}

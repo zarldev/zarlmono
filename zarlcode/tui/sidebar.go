@@ -36,14 +36,14 @@ func (m *UI) drawSidebar(scr uv.Screen, r uv.Rectangle) {
 		// stripping escapes. They span the full pane width to avoid the normal
 		// one-column content gutters rendering as "│ ├─... │".
 		if strings.HasPrefix(ansi.Strip(ln), "├") {
-			drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1+i, w, 1), sidebarSectionRule(ln, w))
+			drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1+i, w, 1), paneSectionRule(ln, w))
 		} else {
 			drawLine(scr, uv.Rect(r.Min.X+1+sidePad, r.Min.Y+1+i, innerW, 1), ln)
 		}
 	}
 }
 
-func sidebarSectionRule(line string, width int) string {
+func paneSectionRule(line string, width int) string {
 	if width < 1 {
 		return ""
 	}

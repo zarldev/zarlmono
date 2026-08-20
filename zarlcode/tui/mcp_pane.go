@@ -249,10 +249,11 @@ func (d *mcpPane) detailLines(width int) []string {
 	if d.adding {
 		return d.addFormLines()
 	}
+	head := []string{sectionHead("servers", width), ""}
 	if len(d.servers) == 0 {
-		return []string{palette.Muted.On("no mcp servers configured — press n to add one.")}
+		return append(head, palette.Muted.On("no mcp servers configured — press n to add one."))
 	}
-	lines := make([]string, 0, len(d.servers))
+	lines := head
 	for i, srv := range d.servers {
 		marker := "  "
 		namecell := palette.Subtle.On(pad(srv.Name, 16))
