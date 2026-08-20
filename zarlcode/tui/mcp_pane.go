@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -36,10 +35,6 @@ type mcpPane struct {
 
 	status   string
 	statusAt time.Time
-}
-
-func (d *mcpPane) summary() string {
-	return fmt.Sprintf("%d server(s)", len(d.servers))
 }
 
 var mcpAddLabels = [6]string{"name", "transport", "command", "args", "base url", "auth token"}

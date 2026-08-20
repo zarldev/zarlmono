@@ -195,7 +195,7 @@ func (b *NATSBus[T]) Subscribe(ctx context.Context, subject string, handler Hand
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	wrappedHandler := b.wrapHandler(ctx, subject, handler)
+	wrappedHandler := b.wrapHandler(ctx, handler)
 
 	var sub *nats.Subscription
 	var err error
@@ -232,7 +232,7 @@ func (b *NATSBus[T]) QueueSubscribe(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	wrappedHandler := b.wrapHandler(ctx, subject, handler)
+	wrappedHandler := b.wrapHandler(ctx, handler)
 
 	var sub *nats.Subscription
 	var err error
@@ -316,7 +316,7 @@ func (b *NATSBus[T]) Close() error {
 // // log error comments in the original were placeholders). They
 // now go to slog at Warn — visible without breaking message
 // processing on the next delivery.
-func (b *NATSBus[T]) wrapHandler(subCtx context.Context, subject string, handler Handler[T]) nats.MsgHandler {
+func (b *NATSBus[T]) wrapHandler(subCtx context.Context, handler Handler[T]) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		// If the subscription's ctx has been cancelled, skip
 		// delivery. context.AfterFunc will unsubscribe shortly; this

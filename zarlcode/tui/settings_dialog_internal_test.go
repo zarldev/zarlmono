@@ -446,3 +446,53 @@ func TestSettingsDialog_ThemePickerRevertsOnCancel(t *testing.T) {
 		t.Errorf("esc should revert preview to %q, got %q", names[0], palette.Name)
 	}
 }
+
+// The web search key is a credential row: enter edits it (masked on render),
+// commit persists at global scope (account-level, like the providers panel),
+// and empty + enter clears it.
+func TestSettingsDialog_SearchKeyPersistsAndClears(t *testing.T) {
+	ctx := t.Context()
+	s := newTestSettings(t)
+	d := newSettingsDialog(s)
+	if !gotoCat(d, "tools") {
+		t.Fatal("tools category missing")
+	}
+	d.handleKey(skey(tea.KeyTab)) // focus rows; row 0 = web tools
+	for d.curRow().kind != rowKey && d.row < len(d.rows())-1 {
+		d.handleKey(skey(tea.KeyDown))
+	}
+	if d.curRow().kind != rowKey || d.curRow().cred != engine.SearchKeyProviderBrave {
+		t.Fatalf("could not reach search key row: kind=%d cred=%q", d.curRow().kind, d.curRow().cred)
+	}
+
+	d.handleKey(skey(tea.KeyEnter))
+	if !d.editing {
+		t.Fatal("enter on a key row should open the editor")
+	}
+	typeStr(d, "bsa-test-123")
+	d.handleKey(skey(tea.KeyEnter)) // commit
+	if got, err := s.Svc.GetKey(ctx, prefs.ScopeGlobal, engine.SearchKeyProviderBrave); err != nil || got != "bsa-test-123" {
+		t.Fatalf("key not persisted at global: got %q err %v", got, err)
+	}
+	if r := d.curRow(); !r.isSet || r.scope != prefs.ScopeGlobal {
+		t.Fatalf("row after set: set=%v scope=%v, want set/global", r.isSet, r.scope)
+	}
+
+	// The value renders masked, never in the clear.
+	buf := uvScreen(120, 30)
+	d.draw(buf, uvRect(120, 30))
+	out := buf.Render()
+	if !strings.Contains(out, "••••••") {
+		t.Error("key row should render masked bullets")
+	}
+	if strings.Contains(out, "bsa-test-123") {
+		t.Error("raw key leaked into the rendered pane")
+	}
+
+	// Empty + enter clears it.
+	d.handleKey(skey(tea.KeyEnter))
+	d.handleKey(skey(tea.KeyEnter)) // empty commit → clear
+	if got, err := s.Svc.GetKey(ctx, prefs.ScopeGlobal, engine.SearchKeyProviderBrave); err == nil || got != "" {
+		t.Fatalf("key not cleared: got %q err %v", got, err)
+	}
+}

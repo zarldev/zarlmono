@@ -94,13 +94,24 @@ default) with sentence-boundary truncation.
 
 ## search — web_search
 
-`zkit/ai/tools/search` provides `web_search` against a local SearXNG
-instance (`/search?format=json`). Results default to a **labelled**
-plaintext format — numbered title/URL/snippet triples — rather than
-JSON, because that mirrors the search UIs models are trained on and
-lets them refer to "result 2" without token-heavy array indexing; pass
-`output=json` for structured results. Failures (no endpoint configured,
-empty query, a 5xx from the backend) come back as typed
-`tools.ToolResult`s, never a Go `error`, so a failed search is
-something the model reasons about instead of something that kills the
-loop.
+`zkit/ai/tools/search` provides one stable `web_search` contract with
+swappable backends. `NewSearxng` queries a local SearXNG instance
+(`/search?format=json`); `NewBrave` queries the Brave Search API, whose
+independent licensed index avoids the upstream scraper throttling a
+self-hosted metasearch instance can encounter. The application composition
+root selects one backend, but both normalize transport-specific responses to
+the same `Args`, `Hit`, and `Result` types, so changing providers does not
+change the model-facing schema or result format.
+
+Results default to **labelled** plaintext — numbered title/URL/snippet triples
+— because that mirrors the search UIs models are trained on and lets them
+refer to "result 2" without token-heavy array indexing; pass `output=json` for
+structured results. Default result count is 10, with a hard cap of 25.
+Failures (missing endpoint/key, empty query, or backend HTTP errors) come back
+as typed `tools.ToolResult`s, never a Go `error`, so a failed search is
+something the model reasons about instead of something that kills the loop.
+
+In zarlcode, SearXNG remains the backward-compatible default. Choose Brave and
+enter its masked API key under **Settings → tools → Services**; the key uses
+the existing global credential vault. The SearXNG endpoint and optional local
+service remain available in the same section.

@@ -284,6 +284,65 @@ func TestParseSSEStream_Failure(t *testing.T) {
 	}
 }
 
+func TestParseSSEStream_IncompleteIsTruncatedNotError(t *testing.T) {
+	t.Parallel()
+	// response.incomplete is a normal terminal status (the model stopped
+	// before emitting a final turn), not a failure: it must yield a truncated
+	// "length" Done chunk carrying partial usage and no error. Regression for
+	// the "codex response response.incomplete" terminal failure on gpt-5.x-codex.
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"partial answer"}`,
+		``,
+		`data: {"type":"response.incomplete","response":{"status":"incomplete","usage":{"input_tokens":20,"output_tokens":4,"total_tokens":24,"input_tokens_details":{"cached_tokens":8}}}}`,
+		``,
+	}, "\n")
+	chunks, err := collectChunks(t, stream)
+	if err != nil {
+		t.Fatalf("parseSSEStream: %v", err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("expected text + Done, got %d chunks", len(chunks))
+	}
+	last := chunks[len(chunks)-1]
+	if last.Error != nil {
+		t.Fatalf("incomplete must not carry an error, got: %v", last.Error)
+	}
+	if !last.Done {
+		t.Errorf("last chunk should be Done")
+	}
+	if last.FinishReason != "length" {
+		t.Errorf("finish reason = %q, want %q", last.FinishReason, "length")
+	}
+	if last.Usage == nil || last.Usage.PromptTokens != 20 || last.Usage.CachedTokens != 8 {
+		t.Errorf("usage = %+v, want prompt=20 cached=8", last.Usage)
+	}
+}
+
+func TestParseSSEStream_FailedRateLimitIsRetryable(t *testing.T) {
+	t.Parallel()
+	// A response.failed with code=rate_limited is a transient, recoverable
+	// condition: it must surface as a typed *llm.RateLimitError (which the
+	// runner's retry ladder errors.As on) rather than a plain terminal error.
+	stream := strings.Join([]string{
+		`data: {"type":"response.failed","response":{"error":{"message":"rate limit","code":"rate_limited"}}}`,
+		``,
+	}, "\n")
+	chunks, err := collectChunks(t, stream)
+	if err != nil {
+		t.Fatalf("parseSSEStream: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("expected a chunk")
+	}
+	last := chunks[len(chunks)-1]
+	if last.Error == nil {
+		t.Fatal("last chunk should carry error")
+	}
+	if !llm.IsRateLimitError(last.Error) {
+		t.Fatalf("error = %T %v, want *llm.RateLimitError", last.Error, last.Error)
+	}
+}
+
 func TestParseSSEStream_TruncatedStream(t *testing.T) {
 	t.Parallel()
 	// No completed event — parser should still emit a synthetic Done.

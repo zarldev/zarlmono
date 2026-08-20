@@ -64,15 +64,16 @@ func firstNonEmptyEnv(keys ...string) string {
 }
 
 // handleCatalogEditMsg refreshes UI surfaces after an external edit and reports
-// the outcome. Returns true when it consumed the message.
-func (m *UI) handleCatalogEditMsg(msg tea.Msg) bool {
+// the outcome. The optional command reloads an open file viewer asynchronously.
+func (m *UI) handleCatalogEditMsg(msg tea.Msg) (bool, tea.Cmd) {
 	ed, ok := msg.(catalogEditedMsg)
 	if !ok {
-		return false
+		return false, nil
 	}
+	var cmd tea.Cmd
 	if m.overlay.active() {
 		if v, ok := m.overlay.top().(*fileViewer); ok {
-			v.refreshEditedPath(ed.path)
+			cmd = m.handleAction(v.refreshEditedPath(ed.path))
 		}
 	}
 	if d, ok := topSettingsDialog(m); ok {
@@ -86,5 +87,5 @@ func (m *UI) handleCatalogEditMsg(msg tea.Msg) bool {
 	default:
 		m.session.SetSuccessToast("saved " + shortenHome(ed.path))
 	}
-	return true
+	return true, cmd
 }

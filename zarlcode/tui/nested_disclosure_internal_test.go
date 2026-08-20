@@ -38,6 +38,28 @@ func TestNestedProgramDisclosureReusesChildLayout(t *testing.T) {
 	}
 }
 
+func TestNestedProgramMouseDisclosureUsesRenderedRow(t *testing.T) {
+	tl, _, program := nestedProgramTimeline(t, 2, "child result")
+	lines := tl.renderViewport(100, 30)
+
+	childLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, "grep  needle") {
+			childLine = i
+			break
+		}
+	}
+	if childLine < 0 {
+		t.Fatalf("nested child row not found in:\n%s", strings.Join(lines, "\n"))
+	}
+	if !tl.toggleAtViewportLine(childLine) {
+		t.Fatal("nested child disclosure was not toggled")
+	}
+	if !program.children[0].expanded {
+		t.Fatal("clicking the nested child row did not expand that child")
+	}
+}
+
 func BenchmarkNestedProgramDisclosure(b *testing.B) {
 	tl, groupIdx, program := nestedProgramTimeline(b, 20, strings.Repeat("wrapped result content\n", 100))
 	group := tl.items[groupIdx].(*groupItem)

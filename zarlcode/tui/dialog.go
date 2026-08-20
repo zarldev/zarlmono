@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 
@@ -57,6 +58,32 @@ type actionFetchModels struct{ provider string }
 
 func (actionFetchModels) isAction() {}
 
+// actionFileViewerEntries requests an asynchronous directory listing. resolvePath
+// is used by newFileViewerAt: the command resolves whether path is a file or
+// directory and returns the appropriate directory + selected file name.
+type actionFileViewerEntries struct {
+	viewer      *fileViewer
+	requestID   uint64
+	dir         string
+	path        string
+	resolvePath bool
+	selectName  string
+	ctx         context.Context
+}
+
+func (actionFileViewerEntries) isAction() {}
+
+// actionFileViewerPreview requests asynchronous file/directory preview work.
+type actionFileViewerPreview struct {
+	viewer    *fileViewer
+	requestID uint64
+	path      string
+	directory bool
+	ctx       context.Context
+}
+
+func (actionFileViewerPreview) isAction() {}
+
 // actionEditFile opens path in the user's $EDITOR. The root turns it into a
 // tea.ExecProcess command (suspending the alt-screen) and reloads the catalog
 // panes when the editor exits. Used by the agents / skills managers.
@@ -68,6 +95,14 @@ func (actionEditFile) isAction() {}
 type actionAttachImage struct{ path string }
 
 func (actionAttachImage) isAction() {}
+
+type actionAttachFile struct{ path string }
+
+func (actionAttachFile) isAction() {}
+
+type actionCopyText struct{ text string }
+
+func (actionCopyText) isAction() {}
 
 // actionRollback restores files from a recorded checkpoint after a confirmation
 // dialog. Empty path means rollback the whole turn.
@@ -128,6 +163,9 @@ func (o *overlay) coversScreen() bool {
 
 func (o *overlay) pop() {
 	if len(o.stack) > 0 {
+		if closer, ok := o.stack[len(o.stack)-1].(interface{ close() }); ok {
+			closer.close()
+		}
 		o.stack = o.stack[:len(o.stack)-1]
 	}
 }
@@ -172,7 +210,14 @@ func (m *UI) handleAction(a action) tea.Cmd {
 	case actionPush:
 		if a.d != nil {
 			m.overlay.push(a.d)
+			if viewer, ok := a.d.(*fileViewer); ok {
+				return m.fileViewerInitialCmd(viewer)
+			}
 		}
+	case actionFileViewerEntries:
+		return fileViewerEntriesCmd(a)
+	case actionFileViewerPreview:
+		return fileViewerPreviewCmd(a)
 	case actionOAuthLogin:
 		return m.startOAuthLogin(a.provider)
 	case actionFetchModels:
@@ -184,6 +229,21 @@ func (m *UI) handleAction(a action) tea.Cmd {
 			m.session.SetErrorToast(err.Error())
 		} else {
 			m.session.SetSuccessToast("attached " + filepath.Base(a.path) + " to next prompt")
+		}
+	case actionAttachFile:
+		m.overlay.pop()
+		if err := m.attachFilePath(a.path); err != nil {
+			m.session.SetErrorToast(err.Error())
+		} else {
+			rel, _ := filepath.Rel(m.session.WorkspaceDir, a.path)
+			m.composer.insert("@" + filepath.ToSlash(rel) + " ")
+			m.session.SetSuccessToast("attached " + rel + " to next prompt")
+		}
+		return m.toastExpiryCmd()
+	case actionCopyText:
+		if a.text != "" {
+			m.session.SetSuccessToast("copied transcript selection")
+			return tea.Batch(tea.SetClipboard(a.text), m.toastExpiryCmd())
 		}
 		return m.toastExpiryCmd()
 	case actionRollback:
@@ -254,7 +314,8 @@ func composeHelpSections() []helpSection {
 		{
 			title: "compose",
 			rows: [][]keyHint{
-				{{"enter", "submit prompt"}, {"shift+enter", "newline"}, {"tab", "browse transcript"}},
+				{{"enter", "submit prompt"}, {"shift+enter", "newline"}, {"@", "attach file"}},
+				{{"tab", "browse transcript"}, {"ctrl+r", "transcript reader"}, {"ctrl+a", "agent activity"}},
 				{{"shift+tab", "plan ⇄ build"}, {"ctrl+l", "context dashboard"}, {"esc", "stop current turn"}},
 			},
 		},

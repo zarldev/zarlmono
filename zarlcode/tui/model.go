@@ -95,6 +95,13 @@ type UI struct {
 	// cockpit and exits on enter/esc.
 	startupFailure *startupFailurePane
 	repointSeq     uint64
+	// startupCmd holds non-critical initialization that should begin only after
+	// Bubble Tea can render the first frame. The command is owned and cancelled
+	// by the program context.
+	startupCmd         tea.Cmd
+	startupReady       bool
+	startupPrompt      string
+	startupAttachments []llm.ContentPart
 }
 
 type contextViewTab int
@@ -309,15 +316,16 @@ func New() *UI {
 		headerPane: newHeaderPane(s),
 		statusPane: newStatusPane(s, nil),
 	}
+	m.startupReady = true
 	m.statusPane.input = m.composer.text
 	s.Run = RunState{window: engine.LiveContextWindow}
 	return m
 }
 
-// Init implements tea.Model. bubbletea sends an initial WindowSizeMsg on
-// start; the TUI has nothing else to schedule until then.
+// Init implements tea.Model. Non-critical startup work runs as Bubble Tea
+// commands so the first frame is not blocked by external services.
 func (m *UI) Init() tea.Cmd {
-	return m.fetchPRCmd()
+	return tea.Batch(m.fetchPRCmd(), m.startupCmd)
 }
 
 // Update implements tea.Model. Resize recomputes the layout rects; esc stops
@@ -375,12 +383,34 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionClearFailedMsg:
 		m.session.SetErrorToast("clear: " + msg.Error)
 		return m, m.toastExpiryCmd()
+	case startupReadyMsg:
+		if msg.modelChanged && msg.provider != nil && m.live != nil {
+			m.live.ApplyTarget(engine.TargetUpdate{Provider: msg.provider, Spec: msg.spec, Window: msg.window})
+			m.session.SetActiveProviderSpec(msg.spec)
+			m.session.ApplyProviderCostBasis(msg.spec)
+			m.session.SetSuccessToast("saved model was unavailable; switched to " + msg.spec.Model)
+		}
+		if msg.window > 0 && m.live != nil {
+			m.live.SetContextWindow(msg.window)
+			m.SetContextWindow(msg.window)
+			m.SetPressureConfig(msg.window, m.session.Run.pressureReserve)
+		}
+		m.startupReady = true
+		if m.startupPrompt != "" && m.live != nil {
+			prompt, attachments := m.startupPrompt, m.startupAttachments
+			m.startupPrompt, m.startupAttachments = "", nil
+			return m, RunFnWithAttachments(m.appContext(), m.live, prompt, attachments)
+		}
+		return m, nil
 	}
 	if m.handleOAuthMsg(msg) {
 		return m, nil
 	}
-	if m.handleCatalogEditMsg(msg) {
-		return m, m.toastExpiryCmd()
+	if ok, cmd := m.handleCatalogEditMsg(msg); ok {
+		return m, tea.Batch(cmd, m.toastExpiryCmd())
+	}
+	if cmd, ok := m.handleFileViewerMsg(msg); ok {
+		return m, cmd
 	}
 	if m.handleModelsMsg(msg) {
 		return m, nil

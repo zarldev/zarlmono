@@ -136,9 +136,14 @@ conversation and spooled to disk when it gets large.
 
 ### Reach outside the repo when asked
 
-`web_search` uses a configured SearXNG instance. `web_fetch` reads page text and
-can fall back to a real browser for JavaScript-heavy pages. MCP servers can add
-extra tools to the same flat tool list once connected.
+`web_search` uses a selectable backend: a local SearXNG instance by default, or
+the Brave Search API for a licensed independent index that avoids upstream scraper
+rate limits. Configure both from **Settings → tools → Services** (`Ctrl+S`): choose
+**web search provider**, enter the masked **web search key** for Brave, or set the
+SearXNG endpoint and manage the optional local service. Search credentials use the
+same local key vault as model-provider keys. `web_fetch` reads page text and can
+fall back to a real browser for JavaScript-heavy pages. MCP servers can add extra
+tools to the same flat tool list once connected.
 
 ### Keep large tasks manageable
 

@@ -580,6 +580,38 @@ func (s *Settings) ContextWindow(ctx context.Context, spec ProviderSpec) int {
 	return s.Registry.ResolveContextWindow(ctx, spec.Name, spec.BaseURL, spec.Model)
 }
 
+// ValidateCodexModel checks an OAuth Codex model against the account's live
+// catalogue. If a persisted model disappeared, it selects and persists the
+// first supported model so subsequent launches do not repeat the failure.
+// Other providers and catalogue probe failures leave the selection unchanged.
+func (s *Settings) ValidateCodexModel(ctx context.Context, spec ProviderSpec) (ProviderSpec, bool, error) {
+	if s == nil || s.Svc == nil {
+		return spec, false, nil
+	}
+	id, _ := llm.ParseLLMProvider(spec.Name)
+	if id != backends.NameOpenAICodex {
+		return spec, false, nil
+	}
+	models, err := openaicodex.FetchModels(ctx, codex.NewTokenSource(s.Svc), spec.BaseURL)
+	if err != nil {
+		return spec, false, err
+	}
+	for _, model := range models {
+		if strings.EqualFold(model.ID, spec.Model) {
+			return spec, false, nil
+		}
+	}
+	if len(models) == 0 {
+		return spec, false, errors.New("codex account returned no supported models")
+	}
+	spec.Model = models[0].ID
+	selection := prefs.ModelSelection{Provider: spec.Name, Model: spec.Model}
+	if err := s.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
+		return spec, false, fmt.Errorf("persist supported Codex model: %w", err)
+	}
+	return spec, true, nil
+}
+
 // Theme resolves the configured theme name, or def when unset.
 func (s *Settings) Theme(ctx context.Context, def string) string {
 	return s.setting(ctx, prefs.KeyTheme, def)

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +151,23 @@ func TestUserFacingProviderErrorParsesJSONBlob(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("got %q, want %q", got, want)
 		}
+	}
+}
+
+func TestUserFacingProviderErrorDoesNotRecurseOnOtherJSON(t *testing.T) {
+	raw := `provider request: {"detail":"model is unavailable"}`
+
+	if got := userFacingProviderError(raw); got != "model is unavailable" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestUserFacingProviderErrorParsesQuotedJSONBlob(t *testing.T) {
+	raw := strconv.Quote(`provider request: {"error":{"message":"model is unavailable","type":"server_error"}}`)
+
+	got := userFacingProviderError(raw)
+	if got != "model is unavailable (server_error)" {
+		t.Fatalf("got %q", got)
 	}
 }
 

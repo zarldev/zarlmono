@@ -226,6 +226,9 @@ func (d *settingsDialog) renderRow(row settingsRow, sel bool, width int) string 
 			value = palette.Subtle.On(row.def)
 			right = hint
 		}
+	case row.kind == rowKey && row.isSet:
+		value = palette.Subtle.On("••••••")
+		right = scopeBadge(row.scope)
 	case row.isSet && row.value != "":
 		value = row.value
 		right = scopeBadge(row.scope)

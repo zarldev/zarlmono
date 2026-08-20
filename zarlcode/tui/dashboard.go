@@ -44,9 +44,15 @@ func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
 	contentH := max(innerH-4, 1)
 	cw := innerW
 	contentLines := m.activeContextViewLines(cw)
-	m.clampContextViewScroll()
+	maxScroll := max(len(contentLines)-contentH, 0)
+	if m.contextView.activeScroll() > maxScroll {
+		m.contextView.setActiveScroll(maxScroll)
+	}
+	if m.contextView.activeScroll() < 0 {
+		m.contextView.setActiveScroll(0)
+	}
 	scroll := m.contextView.activeScroll()
-	if maxScroll := m.dashboardMaxScroll(); maxScroll > 0 {
+	if maxScroll > 0 {
 		indicator := palette.Subtle.On(" ↑↓ scroll ") + palette.Fg.On(itoa(scroll+1)) + palette.Subtle.On("/") + palette.Fg.On(itoa(maxScroll+1))
 		indicatorW := ansi.StringWidth(indicator)
 		drawLine(scr, uv.Rect(max(r.Min.X+1, r.Max.X-indicatorW-2), r.Min.Y, indicatorW, 1), indicator)

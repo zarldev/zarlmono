@@ -96,6 +96,7 @@ workspace/
 
 # zarlcode runtime state (workspace dir + askpass socket + materialised binaries)
 .zarlcode/
+.zarlcodeold/
 /session.json
 /manifest.json
 /agent-demo

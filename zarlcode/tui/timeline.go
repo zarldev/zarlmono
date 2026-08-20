@@ -338,22 +338,35 @@ func (t *toolItem) render(width int) []string {
 		}
 		head = glyph + head
 	}
+	bodyLines := t.resultBodyLines(width)
 	lines := []string{head}
-	if t.result != "" && t.expanded {
-		if t.suppressesResultBody() {
-			lines = append(lines, palette.Muted.On("    "+t.childSummary()))
-		} else {
-			lines = append(lines, renderToolResult(width-t.depth*2, t.name, t.arg, t.result,
-				withBodyPrefix("    "),
-				withMaxLines(toolResultMaxLines),
-				withData(t.data),
-			)...)
-		}
+	if len(bodyLines) > 0 {
+		lines = append(lines, bodyLines...)
 	}
 	if t.expanded {
 		lines = append(lines, t.layout.render(t.childItems(), width, t.version()).rawLines...)
 	}
 	return indentLines(lines, t.depth)
+}
+
+// resultBodyLines returns the result rows rendered between a tool's disclosure
+// header and any nested child calls. Hit-testing uses the same rows so deeply
+// nested disclosure coordinates cannot drift from rendering.
+func (t *toolItem) resultBodyLines(width int) []string {
+	if t.result == "" || !t.expanded {
+		return nil
+	}
+	if t.suppressesResultBody() {
+		// Program results only repeat the child-call summary already present in
+		// the header. Keep the children directly beneath that header so render,
+		// keyboard navigation, and mouse hit-testing share contiguous rows.
+		return nil
+	}
+	return renderToolResult(width-t.depth*2, t.name, t.arg, t.result,
+		withBodyPrefix("    "),
+		withMaxLines(toolResultMaxLines),
+		withData(t.data),
+	)
 }
 
 func (t *toolItem) suppressesResultBody() bool {
@@ -368,7 +381,8 @@ func (t *toolItem) togglerAt(width, ln int) toggler {
 		return nil
 	}
 	children := t.childItems()
-	return t.layout.render(children, width, t.version()).togglerForLine(ln, width, children, t.bump)
+	bodyLines := len(t.resultBodyLines(width))
+	return t.layout.render(children, width, t.version()).togglerForLine(ln-bodyLines, width, children, t.bump)
 }
 
 func (t *toolItem) toggleLocals(width int) []int {
@@ -377,7 +391,12 @@ func (t *toolItem) toggleLocals(width int) []int {
 	}
 	children := t.childItems()
 	block := t.layout.render(children, width, t.version())
-	return append([]int{0}, block.toggleLocals(width, children)...)
+	locals := append([]int{0}, block.toggleLocals(width, children)...)
+	bodyLines := len(t.resultBodyLines(width))
+	for i := 1; i < len(locals); i++ {
+		locals[i] += bodyLines
+	}
+	return locals
 }
 func (t *toolItem) finished() bool { return t.state != toolRunning }
 
@@ -568,7 +587,7 @@ func (tl *timeline) attachCompaction(taskID, text string) {
 // route into this item instead of the flat timeline.
 func (tl *timeline) startSubAgent(taskID string, depth int, agentName, prompt string) *subAgentItem {
 	if tl.agents == nil {
-		tl.agents = &groupItem{kind: groupAgents}
+		tl.agents = &groupItem{kind: groupAgents, nested: true}
 		tl.agents.notify = func() { tl.invalidateItem(tl.agents) }
 		tl.pushItem(tl.agents)
 	}
@@ -857,8 +876,19 @@ func (tl *timeline) renderTail(width, height int) []string {
 	total := 0
 	for i := len(tl.items) - 1; i >= 0 && total < height; i-- {
 		ls := tl.renderItem(tl.items[i], width)
+		if len(ls) == 0 {
+			// Invisible placeholders (notably a turn's unloaded skills item)
+			// occupy no viewport space and must not stop the tail scan early.
+			continue
+		}
+		// In forward render order, a separator belongs immediately before the
+		// newer block. vis is newest-first here, so its current last entry is
+		// the block that will follow this one.
+		if len(vis) > 0 && !itemNested(vis[len(vis)-1].it) {
+			total++
+		}
 		vis = append(vis, timelineRenderBlock{i, tl.items[i], ls})
-		total += len(ls) + 1
+		total += len(ls)
 	}
 	var out []string
 	vItem, vLocal := tl.visItem[:0], tl.visLocal[:0]

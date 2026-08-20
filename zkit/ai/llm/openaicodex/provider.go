@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://chatgpt.com/backend-api"
-	defaultModel   = "gpt-5.6"
+	defaultBaseURL    = "https://chatgpt.com/backend-api"
+	defaultModel      = "gpt-5.6"
+	finishReasonError = "error"
 )
 
 // Provider implements llm.Provider against OpenAI's Codex backend
@@ -123,7 +124,7 @@ func (p *Provider) Name() string { return llm.LLMProviders.OPENAICODEX.String() 
 func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		if err := p.run(ctx, req, yield); err != nil {
-			yield(llm.CompletionChunk{Done: true, FinishReason: "error"}, err)
+			yield(llm.CompletionChunk{Done: true, FinishReason: finishReasonError}, err)
 		}
 	}, nil
 }

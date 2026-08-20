@@ -106,6 +106,7 @@ type sseFailed struct {
 //   - response.completed  → emits a final chunk with Done=true,
 //     finish_reason, and Usage.
 //   - response.failed     → emits a chunk with Error set.
+//   - response.incomplete  → emits a truncated "length" Done chunk (not an error).
 //
 // The function returns nil when the stream completes cleanly; an error
 // when the connection drops mid-stream. SSE protocol errors (malformed
@@ -357,7 +358,7 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		}}}, nil) {
 			return true
 		}
-	case "response.completed":
+	case "response.completed", "response.incomplete":
 		var ev sseCompleted
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			return !yield(llm.CompletionChunk{}, fmt.Errorf("sse completed: %w", err))
@@ -365,6 +366,15 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		finish := "stop"
 		if len(s.toolCallByIdx) > 0 {
 			finish = "tool_calls"
+		}
+		// response.incomplete is a normal terminal status, not an error: the
+		// model stopped before emitting a final turn (max output tokens, safety
+		// stop, or an early stop). Report it as a truncated "length" completion
+		// so the runner processes the partial content/tool calls instead of
+		// surfacing a spurious "codex response response.incomplete" terminal
+		// failure.
+		if ev.Type == "response.incomplete" || ev.Response.Status == "incomplete" {
+			finish = "length"
 		}
 		yield(llm.CompletionChunk{
 			Done:         true,
@@ -377,7 +387,7 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 			},
 		}, nil)
 		return true
-	case "response.failed", "response.incomplete":
+	case "response.failed":
 		var ev sseFailed
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			yield(llm.CompletionChunk{}, fmt.Errorf("sse failed: %w", err))
@@ -387,9 +397,20 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		if msg == "" {
 			msg = env.Type
 		}
+		// A transient rate-limit is recoverable: surface it as a typed
+		// *llm.RateLimitError so the runner's retry ladder backs off and
+		// retries instead of terminating the turn. Quota/permanent codes
+		// deliberately fall through to the plain terminal error below.
+		if ev.Response.Error.Code == "rate_limited" {
+			yield(llm.CompletionChunk{
+				Done:         true,
+				FinishReason: finishReasonError,
+			}, &llm.RateLimitError{Message: "codex response failed: " + msg, Retryable: true})
+			return true
+		}
 		yield(llm.CompletionChunk{
 			Done:         true,
-			FinishReason: "error",
+			FinishReason: finishReasonError,
 		}, fmt.Errorf("codex response %s: %s", env.Type, msg))
 		return true
 	default:

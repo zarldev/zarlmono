@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.11.0] — 2026-08-21
+`zarlcode/v0.11.0`
+
+### Added
+
+- Added a full-screen transcript reader with user-turn navigation, search, stable line selection, range copy, and whole-message copy.
+- Typing `@` in the composer now opens fuzzy workspace-file selection and attaches the selected text file to the next prompt.
+- Added a dedicated agent activity screen showing delegated-agent status, task details, output, and elapsed time.
+- The cockpit now reports separate live elapsed times for the current turn and current iteration.
+
+### Changed
+
+- Directory listings and previews in the file viewer now run asynchronously, cancel obsolete work, and discard stale results.
+- Web-search provider changes apply to the live runner when settings close, without restarting Zarlcode.
+- Interactive startup now renders before MCP and provider probes complete while holding the first prompt until the runtime is ready.
+- Codex OAuth selections are validated against the account's live model catalogue; unavailable persisted models are replaced with a supported selection.
+
+### Fixed
+
+- Fixed a fatal recursive provider-error parser panic that could crash Zarlcode as soon as a conversation started and flood the terminal with stack output.
+- Fixed conversation history disappearing or scrolling incorrectly after terminal resizes and display-scale changes.
+- Fixed nested agent disclosure rendering and alignment of the collapsed `[+] agents` row with conversation content.
+- Provider errors using top-level `detail` or `message` fields now render as concise user-facing errors.
+- File previews reject symlinks escaping the workspace and bound image bytes and decoded pixel counts.
+
+## [zkit/v0.11.1] — 2026-08-21
+`zkit/v0.11.1`
+
+### Changed
+
+- models.dev metadata snapshots are retained in memory, stale snapshots remain available during refresh failures, and failed refreshes use retry backoff instead of blocking or repeatedly contacting the upstream service.
+- Updated root tooling to golangci-lint v2.13.1 and adapted logging, message-bus, formatting, and provider code to its current analysis and dependency APIs.
+
+### Fixed
+
+- Codex response-stream terminal error handling consistently uses the provider error finish reason and preserves error events without duplicated literals.
+
 ## [zkit/v0.11.0] — 2026-08-19
 `zkit/v0.11.0`
 

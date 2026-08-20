@@ -2,6 +2,7 @@ package tui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -73,5 +74,23 @@ func TestRenderViewport_OnlyRendersVisible(t *testing.T) {
 	}
 	if bot := tl.items[49].(*spyItem); bot.renders != 1 {
 		t.Fatalf("bottom item should render once, got %d", bot.renders)
+	}
+}
+
+func TestRenderTailInvisibleItemsDoNotHideHistory(t *testing.T) {
+	tl := newTimeline()
+	tl.addUser("oldest visible message")
+	for range 20 {
+		// Every conversation turn creates this placeholder before a skill is
+		// loaded. It renders no rows but remains in the timeline.
+		tl.appendItem(&skillsItem{nested: true})
+	}
+	tl.addUser("newest visible message")
+
+	got := strings.Join(tl.renderViewport(80, 5), "\n")
+	for _, want := range []string{"oldest visible message", "newest visible message"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("tail lost %q behind invisible items:\n%s", want, got)
+		}
 	}
 }

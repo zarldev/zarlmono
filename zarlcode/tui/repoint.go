@@ -55,6 +55,7 @@ func (m *UI) maybeRepoint() tea.Cmd {
 	m.session.SetConfirmQuit(m.settings.ConfirmQuit(m.appContext()))
 	// Run-budget limits are cheap to apply synchronously (no rebuild needed).
 	m.applyLimits()
+	m.live.SetWebSearch(configuredWebSearch(m.appContext(), m.settings))
 	// Cost basis is cheap to recompute (reads the registry), so a custom-
 	// provider price edit takes effect on close without a provider rebuild.
 	m.session.ApplyProviderCostBasis(m.session.ActiveProviderSpec())

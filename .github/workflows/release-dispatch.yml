@@ -199,7 +199,7 @@ jobs:
             printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")"
           } >> "$GITHUB_OUTPUT"
 
-      - name: preflight checks
+      - name: preflight build, vet, test, and lint
         env:
           MODULES: ${{ steps.plan.outputs.modules }}
         run: |
@@ -208,6 +208,9 @@ jobs:
           for module in "${modules[@]}"; do
             echo "::group::go build ${module} ./..."
             go build -C "$module" ./...
+            go vet -C "$module" ./...
+            go test -C "$module" -count=1 ./...
+            go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "./$module/..."
             echo "::endgroup::"
           done
 

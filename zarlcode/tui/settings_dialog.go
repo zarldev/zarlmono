@@ -80,6 +80,7 @@ const (
 	rowEnum                          // pick-one; enter/→ cycles, committed live
 	rowAction                        // enter opens a nested dialog (open())
 	rowModel                         // enter opens the per-provider model picker
+	rowKey                           // vault-stored credential; enter edits it (masked)
 )
 
 type settingsCat struct {
@@ -106,6 +107,7 @@ type settingsRow struct {
 	label   string
 	section string // optional group header rendered above the row
 	key     string
+	cred    string // rowKey: api_keys provider tag
 	kind    settingsRowKind
 	def     string                        // shown (dim) when no row is set
 	desc    string                        // one-line help shown in the detail panel
@@ -223,6 +225,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "enable bash background mode + the bash_output/stop_process/list_processes tools. off drops the trio and bash runs foreground-only."},
 				{label: "web search provider", section: "Services", key: prefs.KeySearchProvider, kind: rowEnum, def: "searxng", opts: []string{"searxng", "brave"},
 					desc: "backend the web_search tool queries. brave uses the brave_search key from the credential store (set it with: zarlcode keys set brave_search <key>); searxng uses the endpoint below."},
+				{label: "web search key", section: "Services", kind: rowKey, cred: engine.SearchKeyProviderBrave, def: "(unset)",
+					desc: "brave search api key for web_search, stored encrypted in the credential vault (global — shared across workspaces). enter to set/replace; empty + enter clears."},
 				{label: "web search", section: "Services", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,
 					desc: "searxng endpoint the web_search tool queries. empty uses the local default."},
 				{label: "local web_search service", section: "Services", kind: rowAction, def: "SearXNG",
@@ -291,6 +295,18 @@ func (d *settingsDialog) refresh(ctx context.Context) {
 	for ci := range d.cats {
 		for ri := range d.cats[ci].rows {
 			r := &d.cats[ci].rows[ri]
+			if r.kind == rowKey {
+				if d.s == nil || d.s.Svc == nil {
+					continue
+				}
+				k, err := d.s.Svc.GetKey(ctx, prefs.ScopeGlobal, r.cred)
+				if err == nil && k != "" {
+					r.value, r.scope, r.isSet = k, prefs.ScopeGlobal, true
+				} else {
+					r.value, r.isSet = "", false
+				}
+				continue
+			}
 			if r.key == "" || d.s == nil || d.s.Svc == nil {
 				continue // action rows have no backing setting
 			}
@@ -502,7 +518,7 @@ func (d *settingsDialog) activate(dir int) action {
 		if r.open != nil {
 			return actionPush{d: r.open(d.s)}
 		}
-	case rowText:
+	case rowText, rowKey:
 		d.startEdit()
 	case rowEnum:
 		return d.activateEnum(dir)
@@ -614,7 +630,7 @@ func (d *settingsDialog) startEdit() {
 	r := d.curRow()
 	d.editing = true
 	d.editor = composer{}
-	if r.isSet {
+	if r.kind != rowKey && r.isSet {
 		d.editor.insert(r.value)
 	}
 }
@@ -850,6 +866,11 @@ func (d *settingsDialog) handleEdit(msg tea.KeyPressMsg) action {
 		d.editing = false
 	case "enter":
 		val := d.editor.submit()
+		if d.curRow().kind == rowKey {
+			d.commitCred(d.curRow().cred, strings.TrimSpace(val))
+			d.editing = false
+			return actionNone{}
+		}
 		if d.curRow().numeric && val != "" {
 			if n, err := strconv.Atoi(val); err != nil || n < 0 {
 				d.setStatus(d.curRow().label + ": want a non-negative integer")
@@ -921,6 +942,32 @@ func (d *settingsDialog) commit(key, val string) {
 	d.refresh(ctx)
 }
 
+// commitCred persists a vault-stored credential at global scope (or clears it
+// when empty), records a status badge, and refreshes the view. Credentials are
+// account-level, so — like the providers panel and `zarlcode keys set` — they
+// never pin to a single workspace. It's the rowKey counterpart to commit.
+func (d *settingsDialog) commitCred(provider, val string) {
+	if d.s == nil || d.s.Svc == nil {
+		return
+	}
+	ctx := d.ctx
+	switch val {
+	case "":
+		if err := d.s.Svc.DeleteKey(ctx, prefs.ScopeGlobal, provider); err != nil {
+			d.setStatus("clear key: " + err.Error())
+		} else {
+			d.setStatus(provider + " key cleared")
+		}
+	default:
+		if err := d.s.Svc.SetKey(ctx, prefs.ScopeGlobal, provider, val); err != nil {
+			d.setStatus("save key: " + err.Error())
+		} else {
+			d.setStatus(provider + " key saved (global)")
+		}
+	}
+	d.refresh(ctx)
+}
+
 func (d *settingsDialog) commitModelSelection(selection prefs.ModelSelection) {
 	if d.s == nil || d.s.Svc == nil {
 		return
@@ -938,6 +985,10 @@ func (d *settingsDialog) promote() {
 		return
 	}
 	r := d.curRow()
+	if r.kind == rowKey {
+		d.setStatus("credentials are stored globally")
+		return
+	}
 	if !r.isSet || r.scope != prefs.ScopeWorkspace {
 		d.setStatus("nothing to promote (already global / unset)")
 		return

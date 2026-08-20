@@ -3,7 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -204,10 +203,10 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 	return sessionEffect{}
 }
 
-var quotedProviderJSONRE = regexp.MustCompile(`(\{.*\})$`)
-
 type providerErrorEnvelope struct {
-	Error providerErrorBody `json:"error"`
+	Error   providerErrorBody `json:"error"`
+	Detail  string            `json:"detail"`
+	Message string            `json:"message"`
 }
 
 type providerErrorBody struct {
@@ -283,20 +282,30 @@ func humanizeDuration(d time.Duration) string {
 
 func parseProviderJSONError(msg string) (string, bool) {
 	raw := strings.TrimSpace(msg)
-	if i := strings.Index(raw, "{"); i >= 0 {
-		raw = raw[i:]
-	}
+	// Some transports quote the complete error string. Unquote that layer
+	// before looking for the JSON envelope so escaped braces and quotes become
+	// valid JSON again.
 	if unquoted, err := strconv.Unquote(raw); err == nil {
 		raw = unquoted
 	}
+	if i := strings.Index(raw, "{"); i >= 0 {
+		raw = raw[i:]
+	}
 	var env providerErrorEnvelope
-	if err := json.Unmarshal([]byte(raw), &env); err != nil || env.Error.Message == "" {
-		if matches := quotedProviderJSONRE.FindStringSubmatch(msg); len(matches) == 2 {
-			return parseProviderJSONError(matches[1])
-		}
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
 		return "", false
 	}
-	parts := []string{env.Error.Message}
+	message := env.Error.Message
+	if message == "" {
+		message = env.Detail
+	}
+	if message == "" {
+		message = env.Message
+	}
+	if message == "" {
+		return "", false
+	}
+	parts := []string{message}
 	var meta []string
 	if env.Error.Type != "" {
 		meta = append(meta, env.Error.Type)

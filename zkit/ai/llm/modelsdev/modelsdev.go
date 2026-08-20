@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/cache"
@@ -64,6 +65,15 @@ type Source struct {
 	store   cache.Cache[string, Snapshot]
 	ttl     time.Duration
 	baseURL string
+
+	// mu owns the process-local snapshot. Lookups are on UI/render hot paths;
+	// once Warm or the first lookup has loaded the immutable snapshot, readers
+	// must not reread and unmarshal the whole file cache for every model field.
+	mu        sync.RWMutex
+	snapshot  Snapshot
+	hasSnap   bool
+	refreshMu sync.Mutex
+	retryAt   time.Time
 }
 
 // WithTTL sets the duration after which a cached snapshot is
@@ -189,16 +199,55 @@ func (s *Source) Warm(ctx context.Context) error {
 // failed. err carries any fetch/cache failure so a caller (Warm) can log
 // it even when a stale snapshot is still served.
 func (s *Source) ensureSnapshot(ctx context.Context) (Snapshot, bool, error) {
-	snap, gerr := s.store.Get(ctx, snapshotKey)
-	gotFromCache := gerr == nil && snap.Schema == snapshotSchema
-	if gotFromCache && time.Since(snap.FetchedAt) <= s.ttl {
+	s.mu.RLock()
+	snap, ok, retryAt := s.snapshot, s.hasSnap, s.retryAt
+	s.mu.RUnlock()
+	if ok && time.Since(snap.FetchedAt) <= s.ttl {
 		return snap, true, nil
+	}
+	if ok && (time.Now().Before(retryAt) || !s.refreshMu.TryLock()) {
+		return snap, true, nil
+	}
+	if !ok {
+		s.refreshMu.Lock()
+	}
+	defer s.refreshMu.Unlock()
+
+	s.mu.RLock()
+	snap, ok = s.snapshot, s.hasSnap
+	s.mu.RUnlock()
+	if ok && time.Since(snap.FetchedAt) <= s.ttl {
+		return snap, true, nil
+	}
+
+	cached, gotFromCache := snap, ok
+	if !ok {
+		var gerr error
+		cached, gerr = s.store.Get(ctx, snapshotKey)
+		gotFromCache = gerr == nil && cached.Schema == snapshotSchema
+		if gotFromCache && time.Since(cached.FetchedAt) <= s.ttl {
+			s.mu.Lock()
+			s.snapshot, s.hasSnap, s.retryAt = cached, true, time.Time{}
+			s.mu.Unlock()
+			return cached, true, nil
+		}
 	}
 	fresh, ferr := s.fetch(ctx)
 	if ferr != nil {
-		// Serve stale if we had one; otherwise no usable snapshot.
-		return snap, gotFromCache, ferr
+		// Serve stale if we had one in memory or on disk; otherwise no usable
+		// snapshot. Keep it process-local so subsequent lookups do not repeat the
+		// same disk read while the upstream is unavailable.
+		if gotFromCache {
+			s.mu.Lock()
+			s.snapshot, s.hasSnap = cached, true
+			s.retryAt = time.Now().Add(time.Minute)
+			s.mu.Unlock()
+		}
+		return cached, gotFromCache, ferr
 	}
+	s.mu.Lock()
+	s.snapshot, s.hasSnap, s.retryAt = fresh, true, time.Time{}
+	s.mu.Unlock()
 	if serr := s.store.Set(ctx, snapshotKey, fresh); serr != nil {
 		return fresh, true, fmt.Errorf("modelsdev: cache snapshot: %w", serr)
 	}
