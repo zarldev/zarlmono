@@ -25,13 +25,12 @@ on:
         options:
           - zkit
           - zarlcode
-          - zarlai
           - swebench-eval
           - examples
           - all
           - custom
       custom_modules:
-        description: Comma-separated modules for scope=custom (zkit,zarlcode,zarlai,swebench-eval,examples)
+        description: Comma-separated modules for scope=custom (zkit,zarlcode,swebench-eval,examples)
         required: false
         type: string
       mode:
@@ -103,11 +102,11 @@ jobs:
 
           resolve_modules() {
             case "$SCOPE" in
-              zkit|zarlcode|zarlai|swebench-eval|examples)
+              zkit|zarlcode|swebench-eval|examples)
                 printf '%s\n' "$SCOPE"
                 ;;
               all)
-                printf '%s\n' zkit zarlcode zarlai swebench-eval examples
+                printf '%s\n' zkit zarlcode swebench-eval examples
                 ;;
               custom)
                 if [ -z "${CUSTOM_MODULES// }" ]; then
@@ -125,7 +124,7 @@ jobs:
 
           valid_module() {
             case "$1" in
-              zkit|zarlcode|zarlai|swebench-eval|examples) return 0 ;;
+              zkit|zarlcode|swebench-eval|examples) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -199,13 +198,6 @@ jobs:
             printf 'modules=%s\n' "$(IFS=,; echo "${modules[*]}")"
             printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")"
           } >> "$GITHUB_OUTPUT"
-
-      - name: preflight system deps (zarlai)
-        if: ${{ contains(steps.plan.outputs.modules, 'zarlai') }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libdlib-dev libatlas-base-dev libblas-dev liblapack-dev libjpeg-dev
 
       - name: preflight checks
         env:

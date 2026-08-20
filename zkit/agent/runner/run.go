@@ -382,6 +382,14 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 				r.toolMutates(ctx, tc.Function.Name) {
 				t.st.mutatingCalls++
 			}
+			if r.toolOutputSink != nil && d.result != nil {
+				r.toolOutputSink.Record(ctx, ToolOutput{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Function.Name,
+					Args:       tc.Function.Arguments,
+					Output:     fullToolResultText(d.result),
+				})
+			}
 			t.messages = append(t.messages, llm.Message{
 				Role:       llm.RoleTool,
 				Content:    r.toolResultText(d.result, tc.Function.Name),
@@ -565,23 +573,27 @@ func (r *Runner) initialMessages(ctx context.Context, spec TaskSpec) ([]llm.Mess
 	return msgs, nil
 }
 
-func (r *Runner) toolResultText(result *tools.ToolResult, toolName string) string {
+// fullToolResultText returns the untruncated, model-facing text of a tool
+// result: the error line for failures, "ok" for nil data, otherwise the
+// formatted data.
+func fullToolResultText(result *tools.ToolResult) string {
 	if result == nil {
 		return ""
 	}
 	if !result.Success {
-		var msg string
 		if result.Error != "" {
-			msg = "ERROR: " + result.Error + toolErrorHint(result.Err)
-		} else {
-			msg = "ERROR: tool reported failure"
+			return "ERROR: " + result.Error + toolErrorHint(result.Err)
 		}
-		return r.truncator.Truncate(msg, toolName)
+		return "ERROR: tool reported failure"
 	}
 	if result.Data == nil {
 		return "ok"
 	}
-	return r.truncator.Truncate(formatToolData(result.Data), toolName)
+	return formatToolData(result.Data)
+}
+
+func (r *Runner) toolResultText(result *tools.ToolResult, toolName string) string {
+	return r.truncator.Truncate(fullToolResultText(result), toolName)
 }
 
 func toolErrorHint(err *tools.Error) string {

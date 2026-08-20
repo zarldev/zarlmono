@@ -61,9 +61,10 @@ type ProcessManager struct {
 	// Close; nil for managers that haven't been Close'd (the
 	// goroutine still gets reclaimed when the manager itself is
 	// GC'd, but that's process-exit-only).
-	closeCh   chan struct{}
-	closeOnce sync.Once
-	reapDone  chan struct{} // closed when reapLoop returns
+	closeCh    chan struct{}
+	closeOnce  sync.Once
+	reapDone   chan struct{} // closed when reapLoop returns
+	outputSink ProcessOutputSink
 }
 
 // ProcessWorkspace is the minimum surface from code.Workspace the
@@ -232,6 +233,24 @@ func WithProcessEnv(env map[string]string) ProcessManagerOption {
 	return func(m *ProcessManager) { m.env = cloneEnvMap(env) }
 }
 
+// ProcessOutputSink receives a background process's full accumulated output
+// when it exits. Runs on the process's reaper goroutine; implementations
+// should be fast and must not block indefinitely.
+type ProcessOutputSink func(id ProcessID, command string, exitCode int, stdout, stderr []string)
+
+// WithProcessOutputSink installs a callback that receives a background
+// process's full accumulated stdout/stderr when it exits.
+func WithProcessOutputSink(s ProcessOutputSink) ProcessManagerOption {
+	return func(m *ProcessManager) { m.outputSink = s }
+}
+
+// SetOutputSink installs (or clears) the process-exit output callback after
+// construction. The app wires this once both the manager and the sink that
+// persists its output exist. Set before starting background processes.
+func (m *ProcessManager) SetOutputSink(s ProcessOutputSink) {
+	m.outputSink = s
+}
+
 // ErrTooManyProcesses is returned by StartProcess when the live
 // count is already at the configured cap.
 var ErrTooManyProcesses = errors.New("processmgr: too many live processes")
@@ -386,6 +405,11 @@ func (m *ProcessManager) waitAndReap(proc *managedProcess, drainWG *sync.WaitGro
 		}
 	}
 	proc.lifecycleMu.Unlock()
+	if m.outputSink != nil {
+		stdout, _, _ := proc.stdout.ReadSince(0, 0)
+		stderr, _, _ := proc.stderr.ReadSince(0, 0)
+		m.outputSink(proc.id, proc.command, proc.exitCode, bytesToStrings(stdout), bytesToStrings(stderr))
+	}
 	close(proc.done)
 }
 

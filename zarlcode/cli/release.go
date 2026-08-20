@@ -67,7 +67,7 @@ func releaseVersion(tag string) string {
 // resolveRelease finds the release to install and its platform assets. An empty
 // or "latest" version walks the repo's releases (newest first) and returns the
 // first published one that actually carries a zarlcode asset for this platform —
-// so a monorepo that also tags other binaries (e.g. zarlai/vX) is handled
+// so a monorepo that also tags other binaries (e.g. swebench-eval/vX) is handled
 // correctly. A pinned version resolves the submodule-prefixed tag directly.
 func resolveRelease(ctx context.Context, repo, version, goos, goarch string) (ghRelease, ghAsset, ghAsset, error) {
 	if v := strings.TrimSpace(version); v != "" && v != "latest" {

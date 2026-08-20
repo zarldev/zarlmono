@@ -227,6 +227,7 @@ Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls
 | `Ctrl+W` | Working set pane — files touched this session |
 | `Ctrl+Y` | Execution tray — steer a live run |
 | `Ctrl+I` | Inspector — drill into tool calls and results |
+| `Ctrl+H` | Tool history — full output of captured tool calls |
 
 #### Browse mode (`Tab` to enter)
 

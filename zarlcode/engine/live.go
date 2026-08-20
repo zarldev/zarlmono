@@ -100,6 +100,10 @@ type LiveRunner struct {
 	// default tiered compactor.
 	settings *Settings
 
+	// toolOutputSink persists full, untruncated tool results for the history
+	// viewer. nil disables capture.
+	toolOutputSink *ToolOutputSink
+
 	// planStore is an engine-side adapter for update_plan: SetPlan pushes a
 	// PlanUpdatedMsg through the sink so the TUI writes the canonical Session.Plan,
 	// while retaining a runner-local copy for executive compaction. UI panes must
@@ -222,6 +226,12 @@ func clonePlan(pl code.Plan) code.Plan {
 // WithSettings configures live preference resolution.
 func WithSettings(s *Settings) options.Option[LiveRunner] {
 	return func(l *LiveRunner) { l.settings = s }
+}
+
+// WithToolOutputSink configures full tool-result capture to the session's
+// tool-output store. nil (the default) disables capture.
+func WithToolOutputSink(s *ToolOutputSink) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.toolOutputSink = s }
 }
 
 // WithProcessManager configures owned background-process access.
@@ -1002,6 +1012,9 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	}
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
+	}
+	if l.toolOutputSink != nil {
+		opts = append(opts, runner.WithToolOutputSink(l.toolOutputSink))
 	}
 
 	// Wrap the guarded source with the PLAN-mode filter, reading the flag

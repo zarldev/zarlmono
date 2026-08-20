@@ -449,11 +449,6 @@ linters:
       - path: '^zkit/agent/diffrecorder/diffrecorder_test\.go'
         text: 'result 1 \(error\) is always nil'
         linters: [ unparam ]
-      # Doctor checks run version commands from a safe, known-good list;
-      # the arguments are not user-controlled.
-      - path: '^zarlai/cmd/doctor/main\.go'
-        text: 'G204:'
-        linters: [ gosec ]
       # TUI keybind, navigation, and display labels are UI constants more readable as literals.
       - path: '^zarlcode/tui/.*\.go'
         linters: [ goconst ]
@@ -547,11 +542,6 @@ linters:
       - path: '^examples/'
         text: 'S1005:'
         linters: [ staticcheck ]
-      # Doctor checks run version commands from a safe, known-good list;
-      # the arguments are not user-controlled.
-      - path: '^zarlai/cmd/doctor/main\.go'
-        text: 'G204:'
-        linters: [ gosec ]
       # Example harness entrypoints that reserve params for future use.
       - path: '^examples/spawn_worker/scripted\.go'
         text: 'NewScriptedClient - fs is unused'
@@ -564,60 +554,6 @@ linters:
         text: 'G204:'
         linters: [ gosec ]
       - path: '^swebench-eval/runner/score\.go'
-        text: 'G204:'
-        linters: [ gosec ]
-
-
-      # --- zarlai: large assistant app migrated onto zkit. Its bespoke
-      #     .golangci.yml was removed in favour of this scoped carve-out — the
-      #     golden set's pure-style/opinion linters are relaxed for zarlai
-      #     while the correctness set stays active. Burn these down over time. ---
-      - path: '^zarlai/'
-        linters:
-          - protogetter    # proto getter-vs-direct-field is a style preference
-          - goconst        # repeated literals; not worth the constant churn here
-          - perfsprint     # fmt vs strconv/errors.New micro-optimisation
-          - sloglint       # InfoContext/WarnContext sweep deferred
-          - nonamedreturns
-          - forbidigo      # fmt.Print* in the cmd/* CLI tools is intentional
-          - unconvert
-          - predeclared
-          - intrange
-          - gocritic
-          - funcorder
-          - unparam
-          - wastedassign
-          - testpackage    # white-box (in-package) tests used deliberately
-          - musttag
-          - mirror
-          - noctx          # exec/sql/CLI sites without a ctx are acceptable here
-      # zarlai deliberately ignores errors on WAV/JPEG buffer codecs and the
-      # streamed Sends (its old config excluded these via errcheck functions).
-      - path: '^zarlai/(service/(face|stt)\.go|transport/grpc/server\.go)'
-        linters: [ errcheck ]
-      # Benign gosec in zarlai: G115 (int→int32 on bounded DB counts), G117
-      # (OAuth token field name matches a secret pattern — it IS a token),
-      # G104 (deliberately ignored Close/writes), G301/G306 (intentional file
-      # and dir perms for the agent's write tools).
-      - path: '^zarlai/'
-        text: 'G(115|117|104|301|306):'
-        linters: [ gosec ]
-      # spotify-auth is a one-shot localhost OAuth callback helper.
-      - path: '^zarlai/cmd/spotify-auth/main\.go'
-        text: 'G705:'
-        linters: [ gosec ]
-      # Path "traversal" is the feature of the agent's file edit/write tools —
-      # they act on agent-specified paths within the workspace.
-      - path: '^zarlai/tools/code/'
-        text: 'G703:'
-        linters: [ gosec ]
-      # The voice controller documents a group of methods in one doc comment.
-      - path: '^zarlai/service/tts_controller\.go'
-        text: 'ST1020:'
-        linters: [ staticcheck ]
-      # Doctor checks run version commands from a safe, known-good list;
-      # the arguments are not user-controlled.
-      - path: '^zarlai/cmd/doctor/main\.go'
         text: 'G204:'
         linters: [ gosec ]
 

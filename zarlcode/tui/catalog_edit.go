@@ -76,14 +76,8 @@ func (m *UI) handleCatalogEditMsg(msg tea.Msg) bool {
 		}
 	}
 	if d, ok := topSettingsDialog(m); ok {
-		if d.agentsPane != nil {
-			d.agentsPane.reload(d.s)
-		}
-		if d.skillsPane != nil {
-			d.skillsPane.reload(d.s)
-		}
-		if d.hooksPane != nil {
-			d.hooksPane.reload(d.s)
+		if d.catalogPane != nil {
+			d.catalogPane.reload(d.s)
 		}
 	}
 	switch {

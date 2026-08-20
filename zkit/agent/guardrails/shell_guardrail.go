@@ -21,7 +21,7 @@ import (
 // guardrail only fires on a configurable shell-tool name. zarlcode
 // wires it for ToolNameBash; other consumers can build their own
 // ShellGuardrail bound to a different name (e.g. a sandboxed shell
-// in zarlai).
+// elsewhere).
 type ShellGuardrail struct {
 	parser shellpolicy.Parser
 	engine *shellpolicy.PolicyEngine

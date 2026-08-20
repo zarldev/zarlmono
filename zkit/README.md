@@ -1,6 +1,6 @@
 # zkit
 
-`zkit` is the ordinary-Go agent substrate extracted from zarlai and used by zarlcode.
+`zkit` is the ordinary-Go agent substrate used by zarlcode.
 
 It provides reusable contracts and infrastructure for the hard parts that showed up in real products: agent runtime, LLM providers, tool execution, MCP, code/workspace tooling, guardrails, compaction, cache, document store, filesystem, message bus, HTTP/RPC helpers, logging, environment handling, notifications, app lifecycle, and synchronization primitives.
 
@@ -12,7 +12,6 @@ Although it lives in the monorepo, `zkit` has its own `go.mod` and is built, tes
 zkit
   ↑
   ├── zarlcode        terminal coding-agent workbench
-  ├── zarlai          local multimodal assistant
   ├── swebench-eval   repeatable coding-agent evaluation
   └── examples/tools  deterministic harnesses and demos
 ```
@@ -80,15 +79,6 @@ Uses `zkit` for the core coding-agent substrate:
 - MCP client/server bridges;
 - process, environment, logging, notification, and sync helpers.
 
-### `zarlai`
-
-Uses or should use `zkit` for shared assistant/service infrastructure:
-
-- LLM provider abstraction;
-- tool schema/contracts;
-- MCP/tool interfaces;
-- task, sensor, cache, bus, and notification primitives where generalized.
-
 ### `swebench-eval`
 
 Uses or should use `zkit` for repeatable agent evaluation infrastructure:
@@ -114,7 +104,6 @@ Code belongs in `zkit` when it:
 Code does **not** belong in `zkit` when it is:
 
 - `zarlcode` UI/TUI-specific;
-- `zarlai` domain-specific, such as Home Assistant, face, voice, camera, or person flows;
 - `swebench-eval` orchestration-specific;
 - prompt/config/product-specific unless generalized;
 - one-off logic without a shared contract.

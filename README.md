@@ -2,7 +2,7 @@
 
 # zarlmono
 
-**The Go-native agent monorepo — zarlcode / zkit / zarlai**
+**The Go-native agent monorepo — zarlcode / zkit**
 
 [![ci](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml)
 [![Go 1.27](https://img.shields.io/badge/go-1.27-00ADD8.svg)](https://go.dev/)
@@ -25,7 +25,6 @@
 |---|---|---|
 | **zarlcode** | [`zarlcode/`](zarlcode/) | Terminal coding-agent TUI/CLI — plan, build, switch models, resume sessions, inspect diffs, verify. |
 | **zkit** | [`zkit/`](zkit/) | The Go agent substrate: streaming runner, tool registry, LLM providers, guardrails, compaction, MCP, sandboxing, vault. |
-| **zarlai** | [`zarlai/`](zarlai/) | Local multimodal/smart-home assistant — sensors, events, gRPC, frontend. |
 | **swebench-eval** | [`swebench-eval/`](swebench-eval/) | SWE-bench evaluation driver on the same coding-agent assembly. |
 | **examples** | [`examples/`](examples/) | Deterministic harnesses that isolate individual patterns, runnable with no LLM. |
 
@@ -171,7 +170,6 @@ Add guardrails, compaction, sandboxing, retrieval, and verified completion as op
 ```
 zarlcode/       --- Coding-agent TUI & CLI
 zkit/           --- Reusable agent libraries
-zarlai/         --- Local assistant backend/frontend
 swebench-eval/  --- SWE-bench evaluation driver
 examples/       --- Deterministic harnesses & patterns
 site/           --- Astro/Starlight docs site
@@ -196,9 +194,6 @@ zarlcode
 go run ./zarlcode/cmd              # run from source
 go run ./zarlcode/cmd -continue    # resume last session
 ```
-
-> [!TIP]
-> `zarlai` is excluded from standard pure-Go checks — parts of it require CGO (dlib/go-face, sherpa-onnx). Use `go tool task zarlai:test` for its focused suite.
 
 ---
 

@@ -18,7 +18,7 @@ Use the GitHub Actions **release-dispatch** workflow as the operator-facing rele
 
 Inputs:
 - `version`: `vX.Y.Z`
-- `scope`: direct choices for `zkit`, `zarlcode`, `zarlai`, `swebench-eval`, `examples`, plus `all` and `custom`
+- `scope`: direct choices for `zkit`, `zarlcode`, `swebench-eval`, `examples`, plus `all` and `custom`
 - `custom_modules`: comma-separated list for `scope=custom`
 - `mode`: `dry-run` or `publish`
 
@@ -49,4 +49,3 @@ For a coordinated zarlcode + swebench-eval release, use separate release-dispatc
 ## Later release planning
 
 - Consider whether beta packages have matured to shared/stable tier.
-- Consider adding `zarlai` to the standard CI matrix if CGO dependencies are resolved.

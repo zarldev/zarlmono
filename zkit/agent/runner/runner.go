@@ -55,7 +55,7 @@ import (
 // concurrent Run calls do not corrupt each other.
 //
 // Concurrent Run calls do, however, share the installed plumbing —
-// EventSink, Steerer, Truncator, PromptSource. Each interface
+// EventSink, Steerer, Truncator, PromptSource, ToolOutputSink. Each interface
 // documents its own concurrency expectations; for a Steerer in
 // particular, sharing one queue across concurrent Runs splits
 // inbound messages arbitrarily and is rarely what a caller wants.
@@ -70,6 +70,7 @@ type Runner struct {
 	prompt         PromptSource
 	steerer        Steerer
 	truncator      Truncator
+	toolOutputSink ToolOutputSink
 	compactor      compact.Compactor
 	turnQuality    TurnQuality
 	finalizeWarn   FinalizeWarn

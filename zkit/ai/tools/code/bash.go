@@ -92,7 +92,7 @@ var shellPath = sync.OnceValue(func() string {
 // bash_output and kill via stop_process. When nil, background mode
 // falls back to the legacy "detach + write to log file" path. The
 // zarlcode wires a real ProcessManager via WithProcessManager;
-// other consumers (zarlai, headless tests) can omit it and keep
+// other consumers (headless tests) can omit it and keep
 // the simpler log-file behaviour.
 type BashTool struct {
 	ws      Workspace
@@ -325,7 +325,7 @@ func (t *BashTool) executeBackgroundManaged(
 
 // executeBackgroundLog is the original log-file fallback used when
 // no ProcessManager is wired. Kept verbatim for behavioural
-// compatibility with zarlai / other consumers that still rely on
+// compatibility with consumers that still rely on
 // `tail <path>` and `kill <pid>` semantics.
 func (t *BashTool) executeBackgroundLog(
 	_ context.Context,

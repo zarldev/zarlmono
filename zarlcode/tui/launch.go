@@ -229,6 +229,20 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	m.SetProviderContext(fallback, spec)
 	m.appliedReasoning, m.appliedWindow = activeProviderPolicy(settings, spec.Name) // baseline for maybeRepoint
 
+	// Persist full, untruncated tool results to state.db for the ctrl+h
+	// history viewer. Session identity resolves lazily at record time because
+	// resume/new-session identity may not be set until later.
+	toolSink := &engine.ToolOutputSink{
+		Store:     settings.Store,
+		SessionID: func() string { return m.session.ID },
+	}
+
+	// Tee background-process exit output into the same store. The manager is
+	// constructed before the sink exists, so wire it here.
+	pm.SetOutputSink(func(id code.ProcessID, command string, exitCode int, stdout, stderr []string) {
+		toolSink.RecordProcess(ctx, id.String(), command, exitCode, stdout, stderr)
+	})
+
 	live := engine.NewLiveRunner(
 		prov,
 		ws,
@@ -236,6 +250,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		engine.WithPromptProfile(p.PromptProfile),
 		engine.WithLiveSink(sink),
 		engine.WithSettings(settings),
+		engine.WithToolOutputSink(toolSink),
 		engine.WithProcessManager(pm),
 		engine.WithSandbox(sb),
 		engine.WithToolEnvironment(toolEnv),

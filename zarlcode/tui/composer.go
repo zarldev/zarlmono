@@ -208,6 +208,11 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "ctrl+g":
 		m.overlay.push(m.newHelpDialog())
 		return nil, true
+	case "ctrl+h":
+		if m.settings != nil {
+			m.overlay.push(newToolHistory(m.settings.Store, m.session.ID))
+		}
+		return nil, true
 	case "ctrl+t":
 		m.overlay.push(newThemePicker())
 		return nil, true

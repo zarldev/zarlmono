@@ -4,7 +4,6 @@ use (
 	.
 	./examples
 	./swebench-eval
-	./zarlai
 	./zarlcode
 	./zkit
 )

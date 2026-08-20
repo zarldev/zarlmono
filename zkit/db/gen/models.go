@@ -131,3 +131,13 @@ type Setting struct {
 	Value     string
 	UpdatedAt int64
 }
+
+type ToolOutput struct {
+	ID         int64
+	SessionID  string
+	ToolCallID string
+	ToolName   string
+	ArgsJson   string
+	Output     string
+	CreatedAt  int64
+}

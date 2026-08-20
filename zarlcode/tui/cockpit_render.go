@@ -167,9 +167,6 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 		out = append(out, "", sectionHead("compaction", width))
 		out = append(out, s.compactionLines()...)
 	}
-	if s.lastTotal > 0 || s.lastIn > 0 {
-		out = append(out, "", sectionHead("throughput", width), s.throughputLine(width))
-	}
 	return out
 }
 

@@ -34,7 +34,7 @@ func TestInspector_OpensWithCtrlI(t *testing.T) {
 	stepUI(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'o'})
 
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"inspector", "tools", "prompt", "guardrails", "processes", "mcp", "events", "skills", "agents"} {
+	for _, want := range []string{"inspector", "tools", "prompt", "runtime", "processes", "mcp"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("inspector missing %q:\n%s", want, out)
 		}
@@ -303,8 +303,8 @@ func TestInspector_ShowsEventsAfterRunnerMessages(t *testing.T) {
 	stepUI(t, m, teasink.ToolCompletedMsg{ToolName: "read", Duration: time.Millisecond})
 	stepUI(t, m, teasink.ConversationEndedMsg{TaskID: "insp-run", Iterations: 1})
 	stepUI(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'o'})
-	// Tab to events tab (tab 5).
-	for range 5 {
+	// Tab to the runtime tab (guardrails + events).
+	for range 2 {
 		stepUI(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	}
 

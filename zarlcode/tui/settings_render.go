@@ -60,16 +60,17 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		lines = d.providers.detailLines(detailW)
 	case d.cats[d.cat].gallery:
 		lines = d.gallery.detailLines(detailW, bodyH)
-	case d.cats[d.cat].agents:
-		lines = d.agentsPane.detailLines(detailW, bodyH)
-	case d.cats[d.cat].skills:
-		lines = d.skillsPane.detailLines(detailW, bodyH)
-	case d.cats[d.cat].hooks:
-		lines = d.hooksPane.detailLines(detailW, bodyH)
+	case d.cats[d.cat].catalog:
+		lines = d.catalogPane.detailLines(detailW, bodyH)
 	case d.cats[d.cat].mcp:
 		lines = d.mcp.detailLines(detailW)
 	default:
+		var section string
 		for i, row := range d.rows() {
+			if row.section != "" && row.section != section {
+				lines = append(lines, sectionHead(row.section, detailW))
+				section = row.section
+			}
 			lines = append(lines, d.renderRow(row, d.focusRows && i == d.row, detailW))
 		}
 	}
@@ -109,12 +110,8 @@ func (d *settingsDialog) helpLines(width int) []string {
 	case cat.gallery:
 		_, scope := d.themeSource()
 		return []string{palette.Subtle.On("theme") + palette.Muted.On(" · resolved from "+scope)}
-	case cat.agents:
-		return []string{palette.Subtle.On("discovered agents (read-only) — named profiles from ~/.zarlcode/config/agents + this workspace.")}
-	case cat.skills:
-		return []string{palette.Subtle.On("discovered skills (read-only) — capability guides from ~/.zarlcode/{config,}/skills + this workspace.")}
-	case cat.hooks:
-		return []string{palette.Subtle.On("discovered hooks (read-only) — pre/post tool commands from ~/.zarlcode/{config,}/hooks + this workspace.")}
+	case cat.catalog:
+		return []string{palette.Subtle.On("discovered agents / skills / hooks (read-only) — [ and ] switch between them.")}
 	case cat.mcp:
 		return []string{palette.Subtle.On("mcp servers — connected at launch; the agent can also mcp_connect ad-hoc. n: new · x: delete · t: toggle.")}
 	}
@@ -161,12 +158,8 @@ func (d *settingsDialog) footerHint() string {
 		return d.providers.footerHint()
 	case d.cats[d.cat].gallery && d.focusRows:
 		return keyLegend(keyHint{"↑↓←→", "preview"}, keyHint{"enter", "keep"}, keyHint{"esc", "back"})
-	case d.cats[d.cat].agents && d.focusRows:
-		return d.agentsPane.footerHint()
-	case d.cats[d.cat].skills && d.focusRows:
-		return d.skillsPane.footerHint()
-	case d.cats[d.cat].hooks && d.focusRows:
-		return d.hooksPane.footerHint()
+	case d.cats[d.cat].catalog && d.focusRows:
+		return d.catalogPane.footerHint()
 	case d.cats[d.cat].mcp && d.focusRows:
 		return d.mcp.footerHint()
 	case !d.focusRows:
@@ -193,14 +186,8 @@ func (d *settingsDialog) toast() string {
 	if d.cats[d.cat].mcp && d.focusRows {
 		text, at = d.mcp.status, d.mcp.statusAt
 	}
-	if d.cats[d.cat].agents && d.focusRows {
-		text, at = d.agentsPane.status, d.agentsPane.statusAt
-	}
-	if d.cats[d.cat].skills && d.focusRows {
-		text, at = d.skillsPane.status, d.skillsPane.statusAt
-	}
-	if d.cats[d.cat].hooks && d.focusRows {
-		text, at = d.hooksPane.status, d.hooksPane.statusAt
+	if d.cats[d.cat].catalog && d.focusRows {
+		text, at = d.catalogPane.status, d.catalogPane.statusAt
 	}
 	if text == "" || time.Since(at) > settingsToastTTL {
 		return ""

@@ -11,7 +11,7 @@ import (
 // When the agent/skill list overflows the detail height, detailLines windows
 // around the cursor so the focused row stays visible (and the top scrolls off).
 func TestCatalogPane_DetailLinesWindowsCursor(t *testing.T) {
-	p := &catalogPane{noun: "agent"}
+	p := &catalogPane{tab: 0}
 	for i := range 40 {
 		p.rows = append(p.rows, catalogRow{name: fmt.Sprintf("agent-%02d", i)})
 	}
@@ -29,7 +29,7 @@ func TestCatalogPane_DetailLinesWindowsCursor(t *testing.T) {
 // An expanded row anchors near the top so its body has room below — and stays
 // visible regardless of where it sits in a long list.
 func TestCatalogPane_DetailLinesExpandedAnchors(t *testing.T) {
-	p := &catalogPane{noun: "skill", expanded: true}
+	p := &catalogPane{tab: 1, expanded: true}
 	for i := range 40 {
 		p.rows = append(p.rows, catalogRow{name: fmt.Sprintf("skill-%02d", i), body: "the body"})
 	}
@@ -46,7 +46,7 @@ func TestCatalogPane_DetailLinesExpandedAnchors(t *testing.T) {
 
 // A list that fits renders every row from the top, unchanged.
 func TestCatalogPane_DetailLinesSmallListUnchanged(t *testing.T) {
-	p := &catalogPane{noun: "agent", cursor: 1, rows: []catalogRow{{name: "alpha"}, {name: "beta"}}}
+	p := &catalogPane{tab: 0, cursor: 1, rows: []catalogRow{{name: "alpha"}, {name: "beta"}}}
 	out := ansi.Strip(strings.Join(p.detailLines(80, 12), "\n"))
 	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") {
 		t.Errorf("a list that fits should render all rows:\n%s", out)

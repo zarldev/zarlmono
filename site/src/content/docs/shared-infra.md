@@ -156,5 +156,5 @@ if !decided {
 }
 ```
 
-zarlcode and zarlai can route these requests through their own UI/API
-surfaces while sharing the same request, decision, and checkpoint types.
+zarlcode can route these requests through its own UI surface while sharing
+the same request, decision, and checkpoint types.

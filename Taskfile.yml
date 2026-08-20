@@ -204,38 +204,6 @@ tasks:
     cmds:
       - go test -C examples -count=1 ./hnupvote/
 
-  # --- zarlai delegation ---
-
-  zarlai:setup:
-    desc: Delegate to zarlai Taskfile setup
-    cmds:
-      - go tool task --dir zarlai setup
-
-  zarlai:doctor:
-    desc: Delegate to zarlai doctor preflight
-    cmds:
-      - go tool task --dir zarlai doctor
-
-  zarlai:up:
-    desc: Start zarlai infrastructure services
-    cmds:
-      - go tool task --dir zarlai up
-
-  zarlai:up-llm:
-    desc: Start zarlai infrastructure plus llama-server
-    cmds:
-      - go tool task --dir zarlai up:llm
-
-  zarlai:build:
-    desc: Delegate to zarlai build
-    cmds:
-      - go tool task --dir zarlai build
-
-  zarlai:test:
-    desc: Delegate to zarlai tests
-    cmds:
-      - go tool task --dir zarlai test
-
   # --- docs site ---
 
   docs:dev:
