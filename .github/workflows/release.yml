@@ -77,7 +77,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zarlcode-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
           retention-days: 1
           if-no-files-found: error
 
@@ -127,13 +129,15 @@ jobs:
             gh release upload "${TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --clobber \
-              artifacts/*
+              artifacts/*.tar.gz \
+              artifacts/checksums.txt
           else
             gh release create "${TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "zarlcode ${TAG#zarlcode/}" \
               --generate-notes \
-              artifacts/*
+              artifacts/*.tar.gz \
+              artifacts/checksums.txt
           fi
 
       - name: generate homebrew formula
