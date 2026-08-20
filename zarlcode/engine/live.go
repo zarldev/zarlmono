@@ -29,7 +29,6 @@ import (
 	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/fetch"
-	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
@@ -546,12 +545,12 @@ func (l *LiveRunner) SetContextWindow(tokens int) {
 	}
 }
 
-// SetSearxngURL enables the web_search tool against the given SearXNG
-// endpoint (resolved from settings/env/default by the caller). Empty leaves
-// web_search unregistered. Snapshotted per turn like the run target.
-func (l *LiveRunner) SetSearxngURL(url string) {
+// SetWebSearch installs the web_search tool, built by the composition root
+// from the resolved backend + key. nil leaves web_search unregistered.
+// Snapshotted per turn like the run target.
+func (l *LiveRunner) SetWebSearch(tool tools.Tool) {
 	l.mu.Lock()
-	l.target.SearxngURL = url
+	l.target.WebSearch = tool
 	l.mu.Unlock()
 }
 
@@ -776,15 +775,15 @@ func (l *LiveRunner) decomposeJudge(ctx context.Context) guardrails.VerdictJudge
 // It returns the wrapped source AND the underlying registry: the caller
 // late-registers the spawn tool onto the registry after building the runner
 // (the registry enumerates lazily, so it's visible to the turn's schema).
-func (l *LiveRunner) source(ctx context.Context, searxngURL string) (tools.Source, *tools.Registry, error) {
-	return l.sourceWithDeps(ctx, searxngURL, l.guardrailDeps(ctx))
+func (l *LiveRunner) source(ctx context.Context, webSearch tools.Tool) (tools.Source, *tools.Registry, error) {
+	return l.sourceWithDeps(ctx, webSearch, l.guardrailDeps(ctx))
 }
 
-func (l *LiveRunner) headlessSource(ctx context.Context, searxngURL string) (tools.Source, *tools.Registry, error) {
-	return l.sourceWithDeps(ctx, searxngURL, l.headlessGuardrailDeps(ctx))
+func (l *LiveRunner) headlessSource(ctx context.Context, webSearch tools.Tool) (tools.Source, *tools.Registry, error) {
+	return l.sourceWithDeps(ctx, webSearch, l.headlessGuardrailDeps(ctx))
 }
 
-func (l *LiveRunner) sourceWithDeps(ctx context.Context, searxngURL string, deps guardrails.Deps) (tools.Source, *tools.Registry, error) {
+func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, deps guardrails.Deps) (tools.Source, *tools.Registry, error) {
 	reg := tools.NewRegistry()
 	l.mu.Lock()
 	toolEnv := cloneStringMap(l.toolEnv)
@@ -822,11 +821,11 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, searxngURL string, deps
 	}
 
 	// web_search isn't part of the standard code tool set (it needs an
-	// external SearXNG endpoint), so register it here when one is configured.
+	// external search backend), so register it here when one is configured.
 	// Registered before GuardedSource so it runs under the same guardrail
 	// chain as every other tool.
-	if enableWeb && searxngURL != "" {
-		_ = reg.Register(search.New(searxngURL))
+	if enableWeb && webSearch != nil {
+		_ = reg.Register(webSearch)
 	}
 
 	if l.computer != nil {
@@ -942,7 +941,7 @@ func (l *LiveRunner) buildHeadlessTurn(ctx context.Context, extraOpts ...options
 	r, _, group, err := l.buildTurnWithSource(ctx, l.headlessSource, extraOpts...)
 	return r, group, err
 }
-func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, string) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, *spawn.Group, error) {
+func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, *spawn.Group, error) {
 	// Snapshot the (re-pointable) run target for this turn. The PLAN flag
 	// is still read live by prompt/source closures so a mid-turn toggle
 	// gates the next dispatch.
@@ -951,7 +950,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	settings := l.settings
 	thinking := l.thinkingEnabledForLocked(tgt)
 	l.mu.Unlock()
-	prov, model, window, searxngURL := tgt.Provider, tgt.Model, tgt.Window, tgt.SearxngURL
+	prov, model, window, webSearch := tgt.Provider, tgt.Model, tgt.Window, tgt.WebSearch
 	reserve, maxIter, spawnMaxIter, spawnDepth := tgt.Reserve, tgt.MaxIter, tgt.SpawnMaxIter, tgt.SpawnDepth
 	if l.catalog != nil {
 		l.catalog.Reload(l.ws.Root())
@@ -1019,7 +1018,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 
 	// Wrap the guarded source with the PLAN-mode filter, reading the flag
 	// live so toggling mid-run gates the next dispatch.
-	src, reg, err := sourceFn(ctx, searxngURL)
+	src, reg, err := sourceFn(ctx, webSearch)
 	if err != nil {
 		return nil, false, nil, err
 	}

@@ -135,6 +135,10 @@ func (h *toolHistory) draw(scr uv.Screen, area uv.Rectangle) {
 	lines := h.detailLines(cw)
 	h.scroll = clampScrollOffset(h.scroll, len(lines), detailH)
 	for i := h.scroll; i < len(lines) && i-h.scroll < detailH; i++ {
+		if strings.HasPrefix(ansi.Strip(lines[i]), "├") {
+			drawSectionRule(scr, l.Detail, detailY+i-h.scroll, lines[i])
+			continue
+		}
 		drawLine(scr, uv.Rect(l.Detail.Min.X, detailY+i-h.scroll, cw, 1), ansi.Truncate(lines[i], cw, ""))
 	}
 	drawPaneScrollbar(scr, l.Detail.Max.X-1, detailY, detailH, len(lines), h.scroll)

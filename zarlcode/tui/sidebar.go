@@ -55,6 +55,13 @@ func paneSectionRule(line string, width int) string {
 	return line + palette.Border.On(strings.Repeat("─", fill)+"┤")
 }
 
+// drawSectionRule paints a section-head line as a full-width rule joining the
+// pane's left separator (r.Min.X-1) and right border (r.Max.X).
+func drawSectionRule(scr uv.Screen, r uv.Rectangle, y int, line string) {
+	width := r.Dx() + 2
+	drawLine(scr, uv.Rect(r.Min.X-1, y, width, 1), paneSectionRule(line, width))
+}
+
 func (m *UI) stateSidebarLines(innerW, innerH int) []string {
 	return m.stateSidebarContent(innerW, innerH)
 }

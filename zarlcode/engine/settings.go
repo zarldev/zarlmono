@@ -456,6 +456,37 @@ func (s *Settings) SearxngURL(ctx context.Context) string {
 	return DefaultSearxngURL
 }
 
+// SearchKeyProviderBrave is the api_keys provider tag under which the Brave
+// Search API key for the web_search tool is stored.
+const SearchKeyProviderBrave = "brave_search"
+
+// SearchProvider resolves the web_search backend: "brave" or "searxng"
+// (default). Unknown values fall back to searxng so a stale setting never
+// drops the tool.
+func (s *Settings) SearchProvider(ctx context.Context) string {
+	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeySearchProvider, "searxng"))) {
+	case "brave":
+		return "brave"
+	default:
+		return "searxng"
+	}
+}
+
+// SearchKey resolves the web_search API key for the named provider from the
+// api_keys vault (effective scope). Empty means no key configured; key errors
+// (locked vault, missing row) degrade to empty so config reads never block
+// startup.
+func (s *Settings) SearchKey(ctx context.Context, provider string) string {
+	if s == nil || s.Svc == nil {
+		return ""
+	}
+	key, err := s.Svc.GetKey(ctx, prefs.ScopeEffective, provider)
+	if err != nil {
+		return ""
+	}
+	return key
+}
+
 // ChromeBinPath returns the configured Chrome/Chromium binary path for the
 // web_fetch tool's chromedp browser fallback (effective scope). Empty means
 // chromedp auto-detects via the standard platform search paths.

@@ -259,6 +259,10 @@ func (t *steerTray) draw(scr uv.Screen, area uv.Rectangle) {
 		if i >= l.Detail.Dy() {
 			break
 		}
+		if strings.HasPrefix(ansi.Strip(ln), "├") {
+			drawSectionRule(scr, l.Detail, l.Detail.Min.Y+i, ln)
+			continue
+		}
 		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, l.Detail.Dx(), 1), ansi.Truncate(ln, l.Detail.Dx(), ""))
 	}
 	footer := compactFooterHints(

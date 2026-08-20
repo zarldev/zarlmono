@@ -24,7 +24,6 @@ type Inspection struct {
 	PlanMode                bool
 	Model                   string
 	WorkspaceRoot           string
-	SearxngURL              string
 	SpawnDepth              int
 	SpawnMaxIter            int
 	Processes               []code.ProcessInfo
@@ -56,7 +55,7 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	}
 	l.mu.Lock()
 	ins.PlanMode = l.target.Plan
-	ins.SearxngURL = l.target.SearxngURL
+	webSearch := l.target.WebSearch
 	ins.SpawnDepth = l.target.SpawnDepth
 	ins.SpawnMaxIter = l.target.SpawnMaxIter
 	ins.Model = l.target.Model
@@ -84,7 +83,7 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	ins.Agents = l.catalogSnapshotAgents()
 	ins.Hooks = l.catalogSnapshotHooks()
 
-	src, reg, err := l.source(ctx, ins.SearxngURL)
+	src, reg, err := l.source(ctx, webSearch)
 	if err != nil {
 		ins.Errors = append(ins.Errors, "source: "+err.Error())
 		return ins

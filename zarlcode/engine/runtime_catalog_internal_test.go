@@ -43,7 +43,7 @@ You review code changes.
 		t.Fatalf("agent reviewer not loaded")
 	}
 
-	src, _, err := l.source(t.Context(), "")
+	src, _, err := l.source(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}

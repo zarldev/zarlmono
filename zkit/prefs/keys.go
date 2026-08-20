@@ -87,6 +87,10 @@ const (
 	KeyPprofAddr           = "pprof_addr"
 	KeyTraceFile           = "trace_file"
 	KeySearxngURL          = "search_searxng_url"
+	// KeySearchProvider selects the web_search backend ("searxng" default, or
+	// "brave"). Unknown values fall back to searxng so a stale setting never
+	// drops the tool.
+	KeySearchProvider = "search_provider"
 	KeyEditor              = "editor"
 	KeyReserveTokens       = "reserve_tokens"
 	KeyMaxIterations       = "max_iterations"

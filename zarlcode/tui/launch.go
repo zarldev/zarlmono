@@ -24,6 +24,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/filesystem"
 	"github.com/zarldev/zarlmono/zkit/prefs"
@@ -273,7 +274,17 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	live.AttachMCP(mcpReg, mcpHost)
 	live.SetProviderSpec(prov, spec)
 	live.SetContextWindow(ctxWindow)
-	live.SetSearxngURL(settings.SearxngURL(ctx)) // enable web_search (SearXNG)
+	// web_search: pick the configured backend and build its tool here, at the
+	// composition root. SearXNG (self-host) needs a URL; Brave needs an API key
+	// from the encrypted credential store.
+	var webSearch tools.Tool
+	switch settings.SearchProvider(ctx) {
+	case "brave":
+		webSearch = search.NewBrave(settings.SearchKey(ctx, engine.SearchKeyProviderBrave))
+	default:
+		webSearch = search.NewSearxng(settings.SearxngURL(ctx))
+	}
+	live.SetWebSearch(webSearch)
 	lim := settings.Limits(ctx)
 	live.SetLimits(lim.ReserveTokens, lim.MaxIterations, lim.SpawnMaxIterations, lim.SpawnMaxDepth)
 	live.SetVerifyLoop(settings.VerifyLoop(ctx)) // headless verified re-drive (verify_tests / verify_attempts)

@@ -77,7 +77,7 @@ func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group,
 func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, agent catalog.Agent) (*runner.Runner, error) {
 	l.mu.Lock()
 	parentProv, parentModel, parentSpec := l.target.Provider, l.target.Model, l.target.Spec
-	window, searxngURL := l.target.Window, l.target.SearxngURL
+	window, webSearch := l.target.Window, l.target.WebSearch
 	reserve, maxIter, spawnMaxIter, spawnDepth := l.target.Reserve, l.target.MaxIter, l.target.SpawnMaxIter, l.target.SpawnDepth
 	settings := l.settings
 	l.mu.Unlock()
@@ -146,7 +146,7 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
 	}
-	src, reg, err := l.source(ctx, searxngURL)
+	src, reg, err := l.source(ctx, webSearch)
 	if err != nil {
 		return nil, err
 	}

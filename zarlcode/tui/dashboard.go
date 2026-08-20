@@ -52,6 +52,10 @@ func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
 		drawLine(scr, uv.Rect(max(r.Min.X+1, r.Max.X-indicatorW-2), r.Min.Y, indicatorW, 1), indicator)
 	}
 	for i := scroll; i < len(contentLines) && i-scroll < contentH; i++ {
+		if strings.HasPrefix(ansi.Strip(contentLines[i]), "├") {
+			drawLine(scr, uv.Rect(r.Min.X, contentY+i-scroll, r.Dx(), 1), paneSectionRule(contentLines[i], r.Dx()))
+			continue
+		}
 		drawLine(scr, uv.Rect(x0, contentY+i-scroll, cw, 1), ansi.Truncate(contentLines[i], cw, ""))
 	}
 	drawPaneScrollbar(scr, r.Max.X-2, contentY, contentH, len(contentLines), scroll)

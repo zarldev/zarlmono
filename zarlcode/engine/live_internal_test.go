@@ -15,6 +15,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
@@ -61,7 +62,7 @@ func TestLiveRunner_BuildsGuardedSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	src, _, err := NewLiveRunner(nil, ws, "local").source(t.Context(), "")
+	src, _, err := NewLiveRunner(nil, ws, "local").source(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestLiveRunner_ProgrammaticToolsSetting(t *testing.T) {
 	settings := NewSettings(store, nil, nil, t.TempDir())
 	l := NewLiveRunner(nil, ws, "local", WithSettings(settings))
 
-	src, _, err := l.source(t.Context(), "")
+	src, _, err := l.source(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("source default: %v", err)
 	}
@@ -118,7 +119,7 @@ func TestLiveRunner_ProgrammaticToolsSetting(t *testing.T) {
 	if err := settings.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyProgrammaticTools, "off"); err != nil {
 		t.Fatalf("disable programmatic tools: %v", err)
 	}
-	src, _, err = l.source(t.Context(), "")
+	src, _, err = l.source(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("source disabled: %v", err)
 	}
@@ -146,14 +147,14 @@ func TestLiveRunner_WebSearchRegistration(t *testing.T) {
 	}
 	l := NewLiveRunner(nil, ws, "local")
 
-	srcOff, _, err := l.source(t.Context(), "")
+	srcOff, _, err := l.source(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("source off: %v", err)
 	}
 	if hasTool(srcOff, tools.ToolNameWebSearch) {
 		t.Error("web_search should be absent when no SearXNG URL is set")
 	}
-	srcOn, _, err := l.source(t.Context(), "http://127.0.0.1:8080")
+	srcOn, _, err := l.source(t.Context(), search.NewSearxng("http://127.0.0.1:8080"))
 	if err != nil {
 		t.Fatalf("source on: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestLiveRunner_ComputerToolsRegistered(t *testing.T) {
 	}
 	l := NewLiveRunner(nil, ws, "local")
 
-	src, _, err := l.source(t.Context(), "")
+	src, _, err := l.source(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}

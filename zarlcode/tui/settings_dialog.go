@@ -221,6 +221,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "register the mcp_connect/disconnect/list tools. off drops MCP management from the tool surface."},
 				{label: "background processes", section: "Surface", key: prefs.KeyEnableBackground, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "enable bash background mode + the bash_output/stop_process/list_processes tools. off drops the trio and bash runs foreground-only."},
+				{label: "web search provider", section: "Services", key: prefs.KeySearchProvider, kind: rowEnum, def: "searxng", opts: []string{"searxng", "brave"},
+					desc: "backend the web_search tool queries. brave uses the brave_search key from the credential store (set it with: zarlcode keys set brave_search <key>); searxng uses the endpoint below."},
 				{label: "web search", section: "Services", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,
 					desc: "searxng endpoint the web_search tool queries. empty uses the local default."},
 				{label: "local web_search service", section: "Services", kind: rowAction, def: "SearXNG",
