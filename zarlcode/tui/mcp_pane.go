@@ -2,13 +2,10 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -38,10 +35,6 @@ type mcpPane struct {
 
 	status   string
 	statusAt time.Time
-}
-
-func (d *mcpPane) summary() string {
-	return fmt.Sprintf("%d server(s)", len(d.servers))
 }
 
 var mcpAddLabels = [6]string{"name", "transport", "command", "args", "base url", "auth token"}
@@ -249,10 +242,11 @@ func (d *mcpPane) detailLines(width int) []string {
 	if d.adding {
 		return d.addFormLines()
 	}
+	head := []string{sectionHead("servers", width), ""}
 	if len(d.servers) == 0 {
-		return []string{palette.Muted.On("no mcp servers configured — press n to add one.")}
+		return append(head, palette.Muted.On("no mcp servers configured — press n to add one."))
 	}
-	lines := make([]string, 0, len(d.servers))
+	lines := head
 	for i, srv := range d.servers {
 		marker := "  "
 		namecell := palette.Subtle.On(pad(srv.Name, 16))
@@ -296,59 +290,4 @@ func (d *mcpPane) tags(srv db.MCPServerRow) string {
 		state = palette.Muted.On("off")
 	}
 	return palette.Muted.On(srv.Transport) + "  " + palette.Subtle.On(endpoint) + "  " + state
-}
-func (d *mcpPane) draw(scr uv.Screen, area uv.Rectangle) {
-	w, h := area.Dx(), area.Dy()
-	if w < 50 || h < 10 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, "mcp servers", 26)
-	if !ok {
-		return
-	}
-	left := overlayTopBar("mcp servers", []string{"registry", "connections"}, 0, d.summary(), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("esc close "), palette.Border)
-	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" configured servers"))
-	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
-	lines := d.detailLines(l.Nav.Dx())
-	for i, line := range lines {
-		if i+2 >= l.Nav.Dy() {
-			break
-		}
-		drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+2+i, l.Nav.Dx(), 1), ansi.Truncate(line, l.Nav.Dx(), ""))
-	}
-	detail := []string{sectionHead("selection", l.Detail.Dx())}
-	switch {
-	case d.adding:
-		detail = append(detail,
-			palette.Muted.On("status: creating server"),
-			palette.Subtle.On("fill in the transport and endpoint details below"),
-			"",
-		)
-		detail = append(detail, d.addFormLines()...)
-	case len(d.servers) > 0 && d.cursor < len(d.servers):
-		srv := d.servers[d.cursor]
-		endpoint := srv.BaseURL
-		if srv.Transport == "stdio" {
-			endpoint = srv.Command
-		}
-		detail = append(detail,
-			headerLine(srv.Name, l.Detail.Dx(), palette.Primary.On),
-			palette.Subtle.On("status: ")+palette.Muted.On(srv.Transport),
-			palette.Subtle.On("source: ")+palette.Muted.On(endpoint),
-			palette.Subtle.On("actions: ")+palette.Muted.On("enter edit · x delete · s startup toggle"),
-		)
-	default:
-		detail = append(detail,
-			palette.Muted.On("status: no server selected"),
-			palette.Subtle.On("press n to add your first MCP server"),
-		)
-	}
-	for i, line := range detail {
-		if i >= l.Detail.Dy() {
-			break
-		}
-		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, l.Detail.Dx(), 1), ansi.Truncate(line, l.Detail.Dx(), ""))
-	}
-	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+d.footerHint()), "")
 }

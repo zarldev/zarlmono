@@ -33,7 +33,7 @@ const MaxParamsLen = 2048
 // Injector is the write-side of an inject queue: a single Append
 // call that hands the runner a string to surface as a user message
 // on the next iteration. zarlcode's queueState satisfies this
-// implicitly; zarlai's session-inject path can satisfy it too.
+// implicitly.
 //
 // The int return value (typically the post-Append queue length) is
 // not consumed by NotifierFor — it's there so existing queueState

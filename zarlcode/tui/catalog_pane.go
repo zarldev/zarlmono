@@ -36,8 +36,7 @@ type catalogRow struct {
 // management (new / edit-in-$EDITOR / delete). The on-disk markdown files are
 // the source of truth; the pane reloads from them after every change.
 type catalogPane struct {
-	noun     string // "agent" / "skill" — for the empty state + help line
-	kind     catalogKind
+	tab      int // 0=agents, 1=skills, 2=hooks — see catalogTabs
 	wsRoot   string
 	rows     []catalogRow
 	loadErr  string // first discovery error, surfaced dim under the list
@@ -52,22 +51,34 @@ type catalogPane struct {
 	revision uint64
 }
 
-func newAgentsPane(s *engine.Settings) *catalogPane {
-	p := &catalogPane{noun: "agent", kind: kindAgent, wsRoot: wsRootOf(s)}
+// catalogTabs is the ordered sub-tab list for the combined catalog pane.
+var catalogTabs = []string{"agents", "skills", "hooks"}
+
+// newCatalogPane builds the combined agents/skills/hooks inventory pane. The
+// active sub-tab is switched with [ and ].
+func newCatalogPane(s *engine.Settings) *catalogPane {
+	p := &catalogPane{wsRoot: wsRootOf(s)}
 	p.reload(s)
 	return p
 }
 
-func newSkillsPane(s *engine.Settings) *catalogPane {
-	p := &catalogPane{noun: "skill", kind: kindSkill, wsRoot: wsRootOf(s)}
-	p.reload(s)
-	return p
+func (p *catalogPane) activeKind() catalogKind { return catalogKind(p.tab) }
+
+func (p *catalogPane) activeNoun() string {
+	switch p.activeKind() {
+	case kindAgent:
+		return "agent"
+	case kindSkill:
+		return "skill"
+	default:
+		return "hook"
+	}
 }
 
-func newHooksPane(s *engine.Settings) *catalogPane {
-	p := &catalogPane{noun: "hook", kind: kindHook, wsRoot: wsRootOf(s)}
-	p.reload(s)
-	return p
+func (p *catalogPane) switchTab(delta int) {
+	p.tab = (p.tab + delta + len(catalogTabs)) % len(catalogTabs)
+	p.reload(nil)
+	p.expanded = false
 }
 
 // reload re-reads the on-disk inventory and rebuilds the rows, preserving the
@@ -79,7 +90,7 @@ func (p *catalogPane) reload(s *engine.Settings) {
 	p.rows = p.rows[:0]
 	p.revision++
 	var errs []error
-	switch p.kind {
+	switch p.activeKind() {
 	case kindAgent:
 		agents, e := catalog.LoadAgents(p.wsRoot)
 		errs = e
@@ -211,6 +222,10 @@ func (p *catalogPane) handleKey(msg tea.KeyPressMsg) action {
 	case "r":
 		p.reload(nil)
 		p.setStatus("reloaded")
+	case "[":
+		p.switchTab(-1)
+	case "]":
+		p.switchTab(+1)
 	}
 	return actionNone{}
 }
@@ -248,7 +263,7 @@ func (p *catalogPane) submitNew() action {
 	}
 	var path string
 	var err error
-	switch p.kind {
+	switch p.activeKind() {
 	case kindAgent:
 		path, err = catalog.ScaffoldAgent(name)
 	case kindSkill:
@@ -284,6 +299,20 @@ func (p *catalogPane) deleteCur() action {
 	return actionNone{}
 }
 
+// tabBar renders the agents/skills/hooks sub-tab row shown above the
+// inventory list.
+func (p *catalogPane) tabBar() []string {
+	parts := make([]string, len(catalogTabs))
+	for i, name := range catalogTabs {
+		if i == p.tab {
+			parts[i] = palette.Primary.On("[ " + name + " ]")
+		} else {
+			parts[i] = palette.Subtle.On(name)
+		}
+	}
+	return []string{strings.Join(parts, "  "), ""}
+}
+
 // detailLines renders the inventory: one row per entry (cursor-marked, meta
 // right-aligned), with the focused row's source + body inserted beneath when
 // expanded. An empty inventory shows a dim placeholder; a load error trails.
@@ -295,10 +324,9 @@ func (p *catalogPane) detailLines(width, height int) []string {
 		return p.nameFormLines()
 	}
 	if len(p.rows) == 0 {
-		out := []string{
-			palette.Subtle.On("(no " + p.noun + "s discovered)"),
-			palette.Muted.On("press n to create one."),
-		}
+		out := append(p.tabBar(),
+			palette.Subtle.On("(no "+p.activeNoun()+"s discovered)"),
+			palette.Muted.On("press n to create one."))
 		if p.loadErr != "" {
 			out = append(out, palette.Warning.On("⚠ "+p.loadErr))
 		}
@@ -307,18 +335,23 @@ func (p *catalogPane) detailLines(width, height int) []string {
 
 	// Pick the first visible row. A small list (the common case) starts at the
 	// top unchanged; an overflowing list windows around the cursor; an expanded
-	// row anchors near the top so its body fills the space below.
+	// row anchors near the top so its body fills the space below. The tab bar
+	// consumes two header lines, so the row window is height-2.
+	rowBudget := height - 2
+	if rowBudget < 1 {
+		rowBudget = 1
+	}
 	var start int
 	switch {
-	case height < 1 || len(p.rows) <= height:
+	case height < 1 || len(p.rows) <= rowBudget:
 		// fits (or no budget) — render from the top
 	case p.expanded:
 		start = min(p.cursor, len(p.rows)-1)
 	default:
-		start, _ = windowAroundCursor(p.cursor, len(p.rows), height)
+		start, _ = windowAroundCursor(p.cursor, len(p.rows), rowBudget)
 	}
 
-	var out []string
+	out := p.tabBar()
 	for i := start; i < len(p.rows); i++ {
 		r := p.rows[i]
 		sel := i == p.cursor
@@ -376,11 +409,11 @@ func (p *catalogPane) nameFormLines() []string {
 	val := string(p.nameEd.value[:p.nameEd.cursor]) +
 		palette.Primary.On("▏") + string(p.nameEd.value[p.nameEd.cursor:])
 	return []string{
-		palette.Assistant.On("new " + p.noun),
+		palette.Assistant.On("new " + p.activeNoun()),
 		"",
 		palette.Subtle.On(pad("name", 8)) + val,
 		"",
-		palette.Muted.On("creates ~/.zarlcode/config/" + p.noun + "s/<name>.md, then opens $EDITOR"),
+		palette.Muted.On("creates ~/.zarlcode/config/" + p.activeNoun() + "s/<name>.md, then opens $EDITOR"),
 	}
 }
 

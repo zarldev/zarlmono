@@ -1,7 +1,7 @@
 // Package runnertest provides shared test fakes for code that uses
 // zkit/agent/runner: a scriptable Client, a recording EventSink, a
 // minimal Tool stub, and chunk constructors. Lifted out of runner's
-// own test package so downstream consumers (zarlai, third-party
+// own test package so downstream consumers (third-party
 // agent shells) don't have to reinvent them.
 //
 // Typical use:

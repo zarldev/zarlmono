@@ -2,7 +2,7 @@
 
 The canonical agent loop — `think → call tools → observe → repeat` —
 as a transport-agnostic, drop-anywhere package. The same code drives
-both a TUI (`zarlcode/tui`) and HTTP/SSE backends (`zarlai`).
+the zarlcode TUI (`zarlcode/tui`).
 
 ## Six concerns, nothing else
 

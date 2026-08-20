@@ -64,6 +64,7 @@ type RunState struct {
 	// timeline title while a turn streams. turnOutBytes remains a visible-output
 	// counter for future UI use, but not for tok/s.
 	turnStartedAt        time.Time
+	iterationStartedAt   time.Time
 	turnOutBytes         int
 	turnCompletionTokens int
 
@@ -235,6 +236,7 @@ func (s *RunState) reset() {
 	s.nestedActive = make(map[string]bool)
 	s.maxDepth = 0
 	s.turnStartedAt = time.Now()
+	s.iterationStartedAt = s.turnStartedAt
 	s.turnOutBytes = 0
 	s.turnCompletionTokens = 0
 	if s.startedAt.IsZero() {
@@ -268,6 +270,7 @@ func (s *RunState) liveTokPerSec() float64 {
 func (s *RunState) foldIteration(u, delta *llm.Usage) {
 	defer s.bumpRevision()
 	s.iterations++
+	s.iterationStartedAt = time.Now()
 	if u != nil {
 		if u.PromptTokens > 0 {
 			s.liveCtx = u.PromptTokens

@@ -456,6 +456,37 @@ func (s *Settings) SearxngURL(ctx context.Context) string {
 	return DefaultSearxngURL
 }
 
+// SearchKeyProviderBrave is the api_keys provider tag under which the Brave
+// Search API key for the web_search tool is stored.
+const SearchKeyProviderBrave = "brave_search"
+
+// SearchProvider resolves the web_search backend: "brave" or "searxng"
+// (default). Unknown values fall back to searxng so a stale setting never
+// drops the tool.
+func (s *Settings) SearchProvider(ctx context.Context) string {
+	switch strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeySearchProvider, "searxng"))) {
+	case "brave":
+		return "brave"
+	default:
+		return "searxng"
+	}
+}
+
+// SearchKey resolves the web_search API key for the named provider from the
+// api_keys vault (effective scope). Empty means no key configured; key errors
+// (locked vault, missing row) degrade to empty so config reads never block
+// startup.
+func (s *Settings) SearchKey(ctx context.Context, provider string) string {
+	if s == nil || s.Svc == nil {
+		return ""
+	}
+	key, err := s.Svc.GetKey(ctx, prefs.ScopeEffective, provider)
+	if err != nil {
+		return ""
+	}
+	return key
+}
+
 // ChromeBinPath returns the configured Chrome/Chromium binary path for the
 // web_fetch tool's chromedp browser fallback (effective scope). Empty means
 // chromedp auto-detects via the standard platform search paths.
@@ -547,6 +578,38 @@ func (s *Settings) ContextWindow(ctx context.Context, spec ProviderSpec) int {
 		return 0
 	}
 	return s.Registry.ResolveContextWindow(ctx, spec.Name, spec.BaseURL, spec.Model)
+}
+
+// ValidateCodexModel checks an OAuth Codex model against the account's live
+// catalogue. If a persisted model disappeared, it selects and persists the
+// first supported model so subsequent launches do not repeat the failure.
+// Other providers and catalogue probe failures leave the selection unchanged.
+func (s *Settings) ValidateCodexModel(ctx context.Context, spec ProviderSpec) (ProviderSpec, bool, error) {
+	if s == nil || s.Svc == nil {
+		return spec, false, nil
+	}
+	id, _ := llm.ParseLLMProvider(spec.Name)
+	if id != backends.NameOpenAICodex {
+		return spec, false, nil
+	}
+	models, err := openaicodex.FetchModels(ctx, codex.NewTokenSource(s.Svc), spec.BaseURL)
+	if err != nil {
+		return spec, false, err
+	}
+	for _, model := range models {
+		if strings.EqualFold(model.ID, spec.Model) {
+			return spec, false, nil
+		}
+	}
+	if len(models) == 0 {
+		return spec, false, errors.New("codex account returned no supported models")
+	}
+	spec.Model = models[0].ID
+	selection := prefs.ModelSelection{Provider: spec.Name, Model: spec.Model}
+	if err := s.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
+		return spec, false, fmt.Errorf("persist supported Codex model: %w", err)
+	}
+	return spec, true, nil
 }
 
 // Theme resolves the configured theme name, or def when unset.

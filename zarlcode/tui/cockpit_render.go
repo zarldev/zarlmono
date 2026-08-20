@@ -167,9 +167,6 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 		out = append(out, "", sectionHead("compaction", width))
 		out = append(out, s.compactionLines()...)
 	}
-	if s.lastTotal > 0 || s.lastIn > 0 {
-		out = append(out, "", sectionHead("throughput", width), s.throughputLine(width))
-	}
 	return out
 }
 
@@ -434,6 +431,12 @@ func (m *UI) cockpitStatusLine() string {
 		glyph, label = palette.Success.On(runActivityGlyph(m.frame, true)), palette.Success.On("running")
 	}
 	parts := []string{glyph + " " + label}
+	if s.Running && !s.turnStartedAt.IsZero() {
+		parts = append(parts, palette.Subtle.On("turn "+compactElapsed(time.Since(s.turnStartedAt))))
+		if !s.iterationStartedAt.IsZero() {
+			parts = append(parts, palette.Subtle.On("iteration "+compactElapsed(time.Since(s.iterationStartedAt))))
+		}
+	}
 	if s.iterations > 0 {
 		parts = append(parts, palette.Subtle.On(itoa(s.iterations)+" iter"))
 	}
@@ -448,6 +451,13 @@ func (m *UI) cockpitStatusLine() string {
 		parts = append(parts, palette.Secondary.On("d"+itoa(s.maxDepth)))
 	}
 	return strings.Join(parts, palette.Muted.On(" · "))
+}
+
+func compactElapsed(d time.Duration) string {
+	if d < time.Second {
+		return "0s"
+	}
+	return d.Round(time.Second).String()
 }
 
 // contextSummary is the headline pressure row: percent-full (pressure

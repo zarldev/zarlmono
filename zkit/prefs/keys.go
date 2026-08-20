@@ -79,14 +79,18 @@ const (
 	// clusters. On by default; turn off to shrink the tool surface for a lean
 	// local-model setup (MCP tools, web_search/web_fetch, background-process
 	// tools + bash background mode respectively).
-	KeyEnableMCP           = "enable_mcp"
-	KeyEnableWeb           = "enable_web"
-	KeyEnableBackground    = "enable_background"
-	KeyProgrammaticTools   = "programmatic_tools"
-	KeyProgramParallel     = "program_parallel_calls"
-	KeyPprofAddr           = "pprof_addr"
-	KeyTraceFile           = "trace_file"
-	KeySearxngURL          = "search_searxng_url"
+	KeyEnableMCP         = "enable_mcp"
+	KeyEnableWeb         = "enable_web"
+	KeyEnableBackground  = "enable_background"
+	KeyProgrammaticTools = "programmatic_tools"
+	KeyProgramParallel   = "program_parallel_calls"
+	KeyPprofAddr         = "pprof_addr"
+	KeyTraceFile         = "trace_file"
+	KeySearxngURL        = "search_searxng_url"
+	// KeySearchProvider selects the web_search backend ("searxng" default, or
+	// "brave"). Unknown values fall back to searxng so a stale setting never
+	// drops the tool.
+	KeySearchProvider      = "search_provider"
 	KeyEditor              = "editor"
 	KeyReserveTokens       = "reserve_tokens"
 	KeyMaxIterations       = "max_iterations"
@@ -104,9 +108,6 @@ const (
 	KeyUpgradeRestart = "upgrade_restart"
 	KeyUpgradeDryRun  = "upgrade_dry_run"
 	KeyUpgradeBinPath = "upgrade_bin_path"
-	// KeyKeybindings stores the user's TUI keybinding overrides as a
-	// JSON-encoded map[string][]string under the global scope.
-	KeyKeybindings = "keybindings"
 
 	// KeyChromeBinPath is the absolute path to a Chrome or Chromium
 	// binary used by the web_fetch tool's chromedp browser fallback.

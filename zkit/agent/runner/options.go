@@ -107,6 +107,17 @@ func WithResultTruncator(t Truncator) options.Option[Runner] {
 	}
 }
 
+// WithToolOutputSink installs a sink that receives each tool result's full,
+// untruncated output before the truncator trims it. Use it to persist a
+// tool-history store. A nil sink is ignored.
+func WithToolOutputSink(s ToolOutputSink) options.Option[Runner] {
+	return func(r *Runner) {
+		if s != nil {
+			r.toolOutputSink = s
+		}
+	}
+}
+
 // WithToolConcurrency caps how many tool calls in a single LLM
 // tool-call batch the runner dispatches in parallel. n <= 1 disables
 // parallelism entirely (sequential dispatch, the safe default).

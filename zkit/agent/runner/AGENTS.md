@@ -4,7 +4,7 @@ Notes for editors working in this package. The README documents *what's* here; t
 
 ## Why this package exists at all
 
-The runner is a transport-agnostic agent loop — the canonical "think → call tools → observe → repeat" — that powers both the TUI (`zarlcode/tui`) and HTTP/SSE backends (`zarlai`). The bar for a shared package is real reuse of the same code in multiple consumers, and the absence of TUI- or HTTP-shaped concepts in this package's contract is the design constraint that makes sharing possible.
+The runner is a transport-agnostic agent loop — the canonical "think → call tools → observe → repeat" — that powers the zarlcode TUI (`zarlcode/tui`). The bar for a shared package is real reuse of the same code in multiple consumers, and the absence of TUI- or HTTP-shaped concepts in this package's contract is the design constraint that makes sharing possible.
 
 ## The interface rule
 
@@ -88,7 +88,7 @@ result, _ := r.Run(ctx, runner.TaskSpec{Prompt: "..."})
 
 **Interactive TUI** (`zarlcode/tui`): a sink translates runner events into UI messages; a steerer accepts queued user lines; the prompt source re-renders from skills + workspace each turn. See `zarlcode/tui/live.go` and `zarlcode/tui/teasink/`.
 
-**HTTP/SSE backend** (zarlai-shaped): a sink translates runner events into SSE writes; one runner per request, or a long-lived runner with per-request `TaskSpec`s. Construction state is read-only after `New`, so concurrent Run calls don't corrupt each other — but watch shared plumbing (below).
+**HTTP/SSE backend**: a sink translates runner events into SSE writes; one runner per request, or a long-lived runner with per-request `TaskSpec`s. Construction state is read-only after `New`, so concurrent Run calls don't corrupt each other — but watch shared plumbing (below).
 
 ## Concurrency under concurrent Runs
 

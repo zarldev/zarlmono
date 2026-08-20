@@ -33,3 +33,14 @@ func TestTimelineGroupsSubAgentsUnderOneAgentsSection(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentsGroupAlignsWithAssistantActivity(t *testing.T) {
+	tl := newTimeline()
+	tl.startTurn("root", 0)
+	tl.startSubAgent("child", 1, "reviewer", "review changes")
+
+	lines := tl.agents.render(80)
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], nestPad+"[") {
+		t.Fatalf("agents header = %q, want assistant-activity indent %q", lines, nestPad)
+	}
+}

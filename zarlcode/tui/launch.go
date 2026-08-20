@@ -24,6 +24,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/filesystem"
 	"github.com/zarldev/zarlmono/zkit/prefs"
@@ -215,10 +216,16 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 
 	UseTheme(selectThemeByName(settings.Theme(ctx, envOr("ZARLCODE_THEME", "catppuccin-mocha"))))
 
-	// Resolve the ACTIVE provider's compaction budget. Local backends
-	// report it at runtime; hosted providers usually use a static table;
-	// Codex OAuth asks /codex/models with the vault token for its auto-compact cap.
-	ctxWindow := settings.ContextWindow(ctx, spec)
+	// Use static provider metadata immediately. Interactive launches defer network
+	// probes (local server props and Codex account limits) until Bubble Tea can
+	// render; headless resolves the exact window before its first turn.
+	ctxWindow := settings.Registry.ContextWindow(spec.Name, spec.Model)
+	if p.Headless {
+		ctxWindow = settings.ContextWindow(ctx, spec)
+	}
+	if ctxWindow <= 0 {
+		ctxWindow = engine.LiveContextWindow
+	}
 
 	m := New()
 	m.ctx = ctx
@@ -229,6 +236,20 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	m.SetProviderContext(fallback, spec)
 	m.appliedReasoning, m.appliedWindow = activeProviderPolicy(settings, spec.Name) // baseline for maybeRepoint
 
+	// Persist full, untruncated tool results to state.db for the ctrl+h
+	// history viewer. Session identity resolves lazily at record time because
+	// resume/new-session identity may not be set until later.
+	toolSink := &engine.ToolOutputSink{
+		Store:     settings.Store,
+		SessionID: func() string { return m.session.ID },
+	}
+
+	// Tee background-process exit output into the same store. The manager is
+	// constructed before the sink exists, so wire it here.
+	pm.SetOutputSink(func(id code.ProcessID, command string, exitCode int, stdout, stderr []string) {
+		toolSink.RecordProcess(ctx, id.String(), command, exitCode, stdout, stderr)
+	})
+
 	live := engine.NewLiveRunner(
 		prov,
 		ws,
@@ -236,6 +257,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		engine.WithPromptProfile(p.PromptProfile),
 		engine.WithLiveSink(sink),
 		engine.WithSettings(settings),
+		engine.WithToolOutputSink(toolSink),
 		engine.WithProcessManager(pm),
 		engine.WithSandbox(sb),
 		engine.WithToolEnvironment(toolEnv),
@@ -253,12 +275,18 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	// queued into the same live-turn steerer as user-entered mid-run input.
 	mcpHost := tools.NewRegistry()
 	mcpReg := dynamic.NewMCPRegistry(mcpHost, agentmcp.NotifierFor(live.QueueInjector()))
-	connectConfiguredMCPServers(ctx, settings, mcpReg)
+	m.startupReady = p.Headless
+	if !p.Headless {
+		m.startupCmd = finishStartupCmd(ctx, settings, mcpReg, spec)
+	}
 
 	live.AttachMCP(mcpReg, mcpHost)
 	live.SetProviderSpec(prov, spec)
 	live.SetContextWindow(ctxWindow)
-	live.SetSearxngURL(settings.SearxngURL(ctx)) // enable web_search (SearXNG)
+	// web_search: pick the configured backend and build its tool here, at the
+	// composition root. SearXNG (self-host) needs a URL; Brave needs an API key
+	// from the encrypted credential store.
+	live.SetWebSearch(configuredWebSearch(ctx, settings))
 	lim := settings.Limits(ctx)
 	live.SetLimits(lim.ReserveTokens, lim.MaxIterations, lim.SpawnMaxIterations, lim.SpawnMaxDepth)
 	live.SetVerifyLoop(settings.VerifyLoop(ctx)) // headless verified re-drive (verify_tests / verify_attempts)
@@ -282,6 +310,16 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		prov:     prov,
 		spec:     spec,
 	}, nil
+}
+
+func configuredWebSearch(ctx context.Context, settings *engine.Settings) tools.Tool {
+	if settings == nil {
+		return nil
+	}
+	if settings.SearchProvider(ctx) == "brave" {
+		return search.NewBrave(settings.SearchKey(ctx, engine.SearchKeyProviderBrave))
+	}
+	return search.NewSearxng(settings.SearxngURL(ctx))
 }
 
 // Run drives the application. --headless runs one task to completion and
@@ -364,6 +402,36 @@ func envOr(key, def string) string {
 // persistent settings config through the connect tool, so a settings-defined
 // server is live before the first turn. Failures are logged, never fatal —
 // one bad server config must not block launch.
+type startupReadyMsg struct {
+	window       int
+	provider     llm.Provider
+	spec         engine.ProviderSpec
+	modelChanged bool
+}
+
+func finishStartupCmd(ctx context.Context, settings *engine.Settings, mcpReg *dynamic.MCPRegistry, spec engine.ProviderSpec) tea.Cmd {
+	return func() tea.Msg {
+		connectConfiguredMCPServers(ctx, settings, mcpReg)
+		validated, changed, err := settings.ValidateCodexModel(ctx, spec)
+		if err != nil {
+			slog.WarnContext(ctx, "validate Codex model", "err", err)
+			validated = spec
+		}
+		var provider llm.Provider
+		if changed {
+			provider, err = engine.BuildProvider(ctx, settings.Registry, settings.Svc, validated)
+			if err != nil {
+				slog.WarnContext(ctx, "rebuild validated Codex provider", "err", err)
+				validated, changed = spec, false
+			}
+		}
+		return startupReadyMsg{
+			window: settings.ContextWindow(ctx, validated), provider: provider,
+			spec: validated, modelChanged: changed,
+		}
+	}
+}
+
 func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings, mcpReg *dynamic.MCPRegistry) {
 	if settings == nil || settings.Store == nil || mcpReg == nil {
 		return

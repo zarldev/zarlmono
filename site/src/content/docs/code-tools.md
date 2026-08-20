@@ -94,6 +94,8 @@ the same registry:
 - **`web_fetch`** (`zkit/ai/tools/fetch`) — HTTP GET with automatic
   chromedp fallback for JavaScript-heavy pages. SSRF protection via
   transport-level IP dial guard. Capped output (200k chars).
-- **`web_search`** (`zkit/ai/tools/search`) — queries a local
-  SearXNG instance. Returns labelled or JSON output. Default 10
-  results, hard cap 25.
+- **`web_search`** (`zkit/ai/tools/search`) — uses one stable tool
+  contract with selectable SearXNG and Brave Search API backends. Both return
+  the same labelled or JSON output. Default 10 results, hard cap 25. SearXNG
+  remains the self-hosted default; Brave avoids scraper throttling through its
+  independent licensed index.

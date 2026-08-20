@@ -51,7 +51,7 @@ func newHandler(writer io.Writer, format OutputFormat, opts handlerOptions) (slo
 	case formatText:
 		return slog.NewTextHandler(writer, slogOpts), nil
 	case formatConsole:
-		return tint.NewHandler(writer, &tint.Options{
+		return tint.NewTextHandler(writer, &tint.Options{
 			Level:      opts.level,
 			AddSource:  opts.addSource,
 			TimeFormat: opts.timeFormat,

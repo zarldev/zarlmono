@@ -67,22 +67,18 @@ on the runner itself:
 
 ## The applications
 
-zarlmono is a monorepo; zkit exists because three applications
+zarlmono is a monorepo; zkit exists because two real consumers
 demanded the same substrate and refused to let it drift:
 
 - **[zarlcode](https://github.com/zarldev/zarlmono/tree/main/zarlcode)** —
   the terminal coding agent. The TUI over everything documented on
   this site: runner, guardrails, compaction, sandboxed shell,
   sub-agents, SQLite sessions.
-- **[zarlai](https://github.com/zarldev/zarlmono/tree/main/zarlai)** —
-  a local, multimodal assistant: speech in/out, vision, face
-  recognition, home automation tools, autonomous background tasks —
-  running the same runner loop against local inference.
 - **[swebench-eval](https://github.com/zarldev/zarlmono/tree/main/swebench-eval)** —
   the SWE-bench evaluation driver. Builds its agent through the same
   shared assembly as the TUI, which is the point: the agent you eval
   is the agent you ship.
 
-Two very different products and an eval harness pulling on the same
+A coding agent and an eval harness pulling on the same
 packages is the forcing function that keeps the interfaces small and
 honest.

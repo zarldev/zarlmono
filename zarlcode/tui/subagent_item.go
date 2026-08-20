@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // subAgentItem folds a spawned sub-agent's entire run into a collapsible
@@ -22,6 +23,8 @@ type subAgentItem struct {
 	children  []item
 	expanded  bool
 	closed    bool
+	startedAt time.Time
+	endedAt   time.Time
 	layout    childBlockCache
 	notify    func()
 
@@ -41,6 +44,7 @@ func newSubAgentItem(depth int, agentName, prompt, taskID string) *subAgentItem 
 		prompt:    firstLine(prompt),
 		taskID:    taskID,
 		toolIdx:   make(map[string]toolRef),
+		startedAt: time.Now(),
 	}
 }
 
@@ -197,6 +201,7 @@ func (sa *subAgentItem) closeGroups() {
 	sa.curTools = nil
 	sa.curEdits = nil
 	sa.closed = true
+	sa.endedAt = time.Now()
 	sa.bump()
 }
 

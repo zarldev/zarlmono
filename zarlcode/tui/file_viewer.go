@@ -2,7 +2,7 @@ package tui
 
 import (
 	"bytes"
-	"cmp"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -15,7 +15,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -45,6 +44,16 @@ type fileViewer struct {
 	height         int
 	width          int
 
+	entriesSeq     uint64
+	previewSeq     uint64
+	entriesLoading bool
+	previewLoading bool
+	entriesErr     string
+	previewPath    string
+	initialPath    string
+	entriesCancel  context.CancelFunc
+	previewCancel  context.CancelFunc
+
 	mode   fileViewerMode
 	skills []catalog.Skill
 	agents []catalog.Agent
@@ -70,6 +79,8 @@ const (
 	fileViewerMaxPreviewLines = 2000
 	fileViewerMaxLineRunes    = 4096
 	fileViewerDirPreviewLimit = 20
+	fileViewerMaxImageBytes   = 16 * 1024 * 1024
+	fileViewerMaxImagePixels  = 40_000_000
 )
 
 type fileViewerDirPreview struct {
@@ -103,21 +114,18 @@ func newFileViewer(workspaceDir string) *fileViewer {
 	skills, _ := catalog.LoadSkills(workspaceDir)
 	agents, _ := catalog.LoadAgents(workspaceDir)
 	hooks, _ := catalog.LoadHooks(workspaceDir)
-	v := &fileViewer{
+	return &fileViewer{
 		workspaceDir: workspaceDir,
 		currentDir:   workspaceDir,
 		skills:       skills,
 		agents:       agents,
 		hooks:        hooks,
 	}
-	v.loadEntries()
-	v.tryPreview()
-	return v
 }
 
 func newFileViewerAt(workspaceDir, path string) *fileViewer {
 	v := newFileViewer(workspaceDir)
-	v.openPath(path)
+	v.initialPath = path
 	return v
 }
 
@@ -132,21 +140,33 @@ func (v *fileViewer) handleKey(msg tea.KeyPressMsg) action {
 
 	case "tab":
 		v.mode = (v.mode + 1) % fileViewerModeCount
-		v.resetForMode()
+		return v.resetForMode()
 	case "shift+tab":
 		v.mode = (v.mode + fileViewerModeCount - 1) % fileViewerModeCount
-		v.resetForMode()
+		return v.resetForMode()
 
 	case "up", "k":
 		if v.cursor > 0 {
 			v.cursor--
-			v.tryPreview()
+			if v.mode == fileViewerFiles {
+				if a, ok := v.requestSelectedPreview(); ok {
+					return a
+				}
+			} else {
+				v.tryPreview()
+			}
 		}
 
 	case "down", "j":
 		if v.cursor < v.itemCount()-1 {
 			v.cursor++
-			v.tryPreview()
+			if v.mode == fileViewerFiles {
+				if a, ok := v.requestSelectedPreview(); ok {
+					return a
+				}
+			} else {
+				v.tryPreview()
+			}
 		}
 
 	case "enter":
@@ -155,7 +175,7 @@ func (v *fileViewer) handleKey(msg tea.KeyPressMsg) action {
 			if v.cursor >= 0 && v.cursor < len(v.entries) {
 				e := v.entries[v.cursor]
 				if e.IsDir() {
-					v.navigateInto(e.Name())
+					return v.navigateInto(e.Name())
 				}
 			}
 		case fileViewerSkills:
@@ -201,7 +221,7 @@ func (v *fileViewer) handleKey(msg tea.KeyPressMsg) action {
 
 	case "backspace", "left":
 		if v.mode == fileViewerFiles {
-			v.navigateUp()
+			return v.navigateUp()
 		}
 
 	case "pgup":
@@ -216,7 +236,13 @@ func (v *fileViewer) handleKey(msg tea.KeyPressMsg) action {
 	case "home", "g":
 		if v.cursor > 0 {
 			v.cursor = 0
-			v.tryPreview()
+			if v.mode == fileViewerFiles {
+				if a, ok := v.requestSelectedPreview(); ok {
+					return a
+				}
+			} else {
+				v.tryPreview()
+			}
 		} else {
 			v.scroll = 0
 		}
@@ -224,7 +250,13 @@ func (v *fileViewer) handleKey(msg tea.KeyPressMsg) action {
 	case "end":
 		if n := v.itemCount(); n > 0 {
 			v.cursor = n - 1
-			v.tryPreview()
+			if v.mode == fileViewerFiles {
+				if a, ok := v.requestSelectedPreview(); ok {
+					return a
+				}
+			} else {
+				v.tryPreview()
+			}
 		}
 	}
 	return actionNone{}
@@ -241,16 +273,15 @@ func (v *fileViewer) selectedFilePath() (string, bool) {
 	return filepath.Join(v.currentDir, e.Name()), true
 }
 
-func (v *fileViewer) resetForMode() {
+func (v *fileViewer) resetForMode() action {
 	v.cursor = 0
 	v.scroll = 0
-	v.viewingFile = ""
-	v.fileContent = ""
-	v.dirPreview = fileViewerDirPreview{}
+	v.clearPreview()
 	if v.mode == fileViewerFiles {
-		v.loadEntries()
+		return v.requestEntries(v.currentDir)
 	}
 	v.tryPreview()
+	return actionNone{}
 }
 
 func (v *fileViewer) itemCount() int {
@@ -317,113 +348,74 @@ func (v *fileViewer) selectedCatalogPreview() (string, []string, string, bool) {
 	return "", nil, "", false
 }
 
-func (v *fileViewer) refreshEditedPath(path string) {
+func (v *fileViewer) refreshEditedPath(path string) action {
 	if strings.TrimSpace(path) == "" {
-		return
+		return actionNone{}
 	}
-	if filepath.Clean(path) == filepath.Clean(v.viewingFile) {
-		v.viewingFile = ""
-		v.fileContent = ""
-	}
-	v.openPath(path)
+	return v.openPath(path)
 }
 
 // ─── navigation ────────────────────────────────────────────────────────────
 
-func (v *fileViewer) navigateInto(name string) {
-	next := filepath.Join(v.currentDir, name)
-	info, err := os.Stat(next)
-	if err != nil || !info.IsDir() {
-		return
+func (v *fileViewer) clearPreview() {
+	if v.previewCancel != nil {
+		v.previewCancel()
+		v.previewCancel = nil
 	}
-	v.currentDir = next
-	v.cursor = 0
-	v.scroll = 0
+	v.previewSeq++ // invalidate any in-flight preview
+	v.previewLoading = false
+	v.previewPath = ""
 	v.viewingFile = ""
 	v.fileContent = ""
-	v.loadEntries()
-	v.tryPreview()
+	v.imagePreview = nil
+	v.dirPreview = fileViewerDirPreview{}
+	v.scroll = 0
 }
 
-func (v *fileViewer) navigateUp() {
+func (v *fileViewer) requestEntries(dir string) actionFileViewerEntries {
+	if v.entriesCancel != nil {
+		v.entriesCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	v.entriesCancel = cancel
+	v.entriesSeq++
+	v.previewSeq++ // directory change invalidates previews too
+	v.entriesLoading = true
+	v.entriesErr = ""
+	v.entries = nil
+	v.clearPreview()
+	return actionFileViewerEntries{viewer: v, requestID: v.entriesSeq, dir: dir, ctx: ctx}
+}
+
+func (v *fileViewer) requestResolvedPath(path string) actionFileViewerEntries {
+	a := v.requestEntries(v.currentDir)
+	a.path, a.resolvePath = path, true
+	v.initialPath = ""
+	return a
+}
+
+func (v *fileViewer) navigateInto(name string) action {
+	next := filepath.Join(v.currentDir, name)
+	v.cursor = 0
+	return v.requestEntries(next)
+}
+
+func (v *fileViewer) navigateUp() action {
 	parent := filepath.Dir(v.currentDir)
 	// Don't escape the workspace root.
 	rel, err := filepath.Rel(v.workspaceDir, parent)
 	if err != nil || strings.HasPrefix(rel, "..") {
-		return
+		return actionNone{}
 	}
-	v.currentDir = parent
 	v.cursor = 0
-	v.scroll = 0
-	v.viewingFile = ""
-	v.fileContent = ""
-	v.loadEntries()
-	v.tryPreview()
+	return v.requestEntries(parent)
 }
 
-func (v *fileViewer) loadEntries() {
-	entries, err := os.ReadDir(v.currentDir)
-	if err != nil {
-		v.entries = nil
-		return
-	}
-	// Sort: directories first, then files, each alphabetically.
-	slices.SortFunc(entries, func(a, b os.DirEntry) int {
-		if a.IsDir() != b.IsDir() {
-			if a.IsDir() {
-				return -1
-			}
-			return 1
-		}
-		return cmp.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
-	})
-	v.entries = entries
-	if v.cursor >= len(v.entries) {
-		v.cursor = max(0, len(v.entries)-1)
-	}
-}
-
-func (v *fileViewer) openPath(path string) {
+func (v *fileViewer) openPath(path string) action {
 	if strings.TrimSpace(path) == "" {
-		return
+		return actionNone{}
 	}
-	fullPath := path
-	if !filepath.IsAbs(fullPath) {
-		fullPath = filepath.Join(v.workspaceDir, path)
-	}
-	fullPath = filepath.Clean(fullPath)
-	rel, err := filepath.Rel(v.workspaceDir, fullPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return
-	}
-	info, err := os.Stat(fullPath)
-	if err != nil {
-		return
-	}
-	if info.IsDir() {
-		v.currentDir = fullPath
-		v.cursor = 0
-		v.scroll = 0
-		v.viewingFile = ""
-		v.fileContent = ""
-		v.loadEntries()
-		v.tryPreview()
-		return
-	}
-	v.currentDir = filepath.Dir(fullPath)
-	v.cursor = 0
-	v.scroll = 0
-	v.viewingFile = ""
-	v.fileContent = ""
-	v.loadEntries()
-	base := filepath.Base(fullPath)
-	for i, e := range v.entries {
-		if !e.IsDir() && e.Name() == base {
-			v.cursor = i
-			break
-		}
-	}
-	v.tryPreview()
+	return v.requestResolvedPath(path)
 }
 
 // ─── preview ───────────────────────────────────────────────────────────────
@@ -431,7 +423,7 @@ func (v *fileViewer) openPath(path string) {
 func (v *fileViewer) tryPreview() {
 	switch v.mode {
 	case fileViewerFiles:
-		v.tryPreviewFile()
+		// File previews are requested by the root as asynchronous commands.
 	case fileViewerSkills:
 		v.tryPreviewSkill()
 	case fileViewerAgents:
@@ -441,53 +433,36 @@ func (v *fileViewer) tryPreview() {
 	}
 }
 
-func (v *fileViewer) tryPreviewFile() {
-	if v.cursor < 0 || v.cursor >= len(v.entries) {
-		return
+func (v *fileViewer) requestSelectedPreview() (actionFileViewerPreview, bool) {
+	if v.mode != fileViewerFiles || v.cursor < 0 || v.cursor >= len(v.entries) {
+		v.clearPreview()
+		return actionFileViewerPreview{}, false
 	}
 	e := v.entries[v.cursor]
-	if e.IsDir() {
-		v.viewingFile = ""
-		v.fileContent = ""
-		v.imagePreview = nil
-		v.scroll = 0
-		v.loadDirPreview(filepath.Join(v.currentDir, e.Name()))
-		return
+	path := filepath.Join(v.currentDir, e.Name())
+	if v.previewCancel != nil {
+		v.previewCancel()
 	}
-	fullPath := filepath.Join(v.currentDir, e.Name())
-	if fullPath == v.viewingFile {
-		return // already loaded
-	}
-	v.viewingFile = fullPath
-	v.scroll = 0
-	data, truncated, size, err := readFileViewerPreview(fullPath)
-	if err != nil {
-		v.imagePreview = nil
-		v.fileContent = fmt.Sprintf("could not read: %v", err)
-		return
-	}
-	if preview, ok := loadFileViewerImagePreview(fullPath, data, size); ok {
-		v.imagePreview = preview
-		v.fileContent = ""
-		return
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	v.previewCancel = cancel
+	v.previewSeq++
+	v.previewLoading = true
+	v.previewPath = path
+	v.viewingFile = ""
+	v.fileContent = ""
 	v.imagePreview = nil
-	if fileViewerLooksBinary(data) {
-		v.fileContent = fmt.Sprintf("binary file preview skipped (%s)", humanBytes(size))
-		return
+	v.dirPreview = fileViewerDirPreview{}
+	v.scroll = 0
+	return actionFileViewerPreview{viewer: v, requestID: v.previewSeq, path: path, directory: e.IsDir(), ctx: ctx}, true
+}
+
+func (v *fileViewer) close() {
+	if v.entriesCancel != nil {
+		v.entriesCancel()
 	}
-	content, longLineTruncated := truncateFileViewerLongLines(string(data))
-	content, lineTruncated := truncateFileViewerLines(content)
-	if truncated {
-		content += fmt.Sprintf("\n\n… preview truncated after %s (file is %s)", humanBytes(fileViewerMaxPreviewBytes), humanBytes(size))
+	if v.previewCancel != nil {
+		v.previewCancel()
 	}
-	if longLineTruncated {
-		content += fmt.Sprintf("\n\n… long lines truncated after %d characters", fileViewerMaxLineRunes)
-	}
-	if lineTruncated {
-		content += fmt.Sprintf("\n\n… preview truncated after %d lines", fileViewerMaxPreviewLines)
-	}
-	v.fileContent = content
 }
 
 func (v *fileViewer) tryPreviewSkill() {
@@ -568,41 +543,6 @@ func (v *fileViewer) tryPreviewHook() {
 	v.fileContent = content
 }
 
-func (v *fileViewer) loadDirPreview(dirPath string) {
-	if dirPath == v.dirPreview.path {
-		return
-	}
-	v.dirPreview = fileViewerDirPreview{path: dirPath}
-	f, err := os.Open(dirPath)
-	if err != nil {
-		v.dirPreview.err = err.Error()
-		return
-	}
-	defer f.Close()
-	entries, err := f.ReadDir(fileViewerDirPreviewLimit + 1)
-	if err != nil && !errors.Is(err, io.EOF) {
-		v.dirPreview.err = err.Error()
-		return
-	}
-	if len(entries) > fileViewerDirPreviewLimit {
-		v.dirPreview.truncated = true
-		entries = entries[:fileViewerDirPreviewLimit]
-	}
-	slices.SortFunc(entries, func(a, b os.DirEntry) int {
-		if a.IsDir() != b.IsDir() {
-			if a.IsDir() {
-				return -1
-			}
-			return 1
-		}
-		return cmp.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
-	})
-	v.dirPreview.entries = make([]fileViewerPreviewEntry, 0, len(entries))
-	for _, e := range entries {
-		v.dirPreview.entries = append(v.dirPreview.entries, fileViewerPreviewEntry{name: e.Name(), isDir: e.IsDir()})
-	}
-}
-
 func loadFileViewerImagePreview(path string, sample []byte, size int64) (*fileViewerImagePreview, bool) {
 	format := fileViewerImageFormat(sample, path)
 	if format == "" {
@@ -613,6 +553,17 @@ func loadFileViewerImagePreview(path string, sample []byte, size int64) (*fileVi
 		return &fileViewerImagePreview{path: path, format: format, size: size}, true
 	}
 	defer f.Close()
+	if size > fileViewerMaxImageBytes {
+		return &fileViewerImagePreview{path: path, format: format, size: size}, true
+	}
+	config, _, configErr := image.DecodeConfig(f)
+	if configErr != nil || config.Width <= 0 || config.Height <= 0 ||
+		int64(config.Width)*int64(config.Height) > fileViewerMaxImagePixels {
+		return &fileViewerImagePreview{path: path, format: format, size: size}, true
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return &fileViewerImagePreview{path: path, format: format, size: size}, true
+	}
 
 	var (
 		img           image.Image
@@ -621,7 +572,7 @@ func loadFileViewerImagePreview(path string, sample []byte, size int64) (*fileVi
 	)
 	if fileViewerTerminalGraphicsEnabled() {
 		var readErr error
-		data, readErr = io.ReadAll(f)
+		data, readErr = io.ReadAll(io.LimitReader(f, fileViewerMaxImageBytes+1))
 		if readErr != nil {
 			return &fileViewerImagePreview{path: path, format: format, size: size}, true
 		}
@@ -652,6 +603,22 @@ func loadFileViewerImagePreview(path string, sample []byte, size int64) (*fileVi
 		data:   append([]byte(nil), data...),
 		image:  img,
 	}, true
+}
+
+func fileViewerPathWithinWorkspace(workspace, path string) error {
+	root, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("path is outside workspace")
+	}
+	return nil
 }
 
 func fileViewerImageFormat(data []byte, path string) string {

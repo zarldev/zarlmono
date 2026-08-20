@@ -105,12 +105,12 @@ func TestRecorder_CapturesModificationDiff(t *testing.T) {
 		"write": func(_ context.Context, c tools.ToolCall) (*tools.ToolResult, error) {
 			rel, _ := c.Arguments["path"].(string)
 			return &tools.ToolResult{
-					Success: true,
-				}, os.WriteFile(
-					filepath.Join(dir, rel),
-					[]byte("alpha\nBETA\ngamma\ndelta\n"),
-					0o644,
-				)
+				Success: true,
+			}, os.WriteFile(
+				filepath.Join(dir, rel),
+				[]byte("alpha\nBETA\ngamma\ndelta\n"),
+				0o644,
+			)
 		},
 	}}
 	rec := diffrecorder.New(src, dir, diffrecorder.NewClassifier(), sink.record)

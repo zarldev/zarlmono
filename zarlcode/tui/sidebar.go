@@ -36,14 +36,14 @@ func (m *UI) drawSidebar(scr uv.Screen, r uv.Rectangle) {
 		// stripping escapes. They span the full pane width to avoid the normal
 		// one-column content gutters rendering as "│ ├─... │".
 		if strings.HasPrefix(ansi.Strip(ln), "├") {
-			drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1+i, w, 1), sidebarSectionRule(ln, w))
+			drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1+i, w, 1), paneSectionRule(ln, w))
 		} else {
 			drawLine(scr, uv.Rect(r.Min.X+1+sidePad, r.Min.Y+1+i, innerW, 1), ln)
 		}
 	}
 }
 
-func sidebarSectionRule(line string, width int) string {
+func paneSectionRule(line string, width int) string {
 	if width < 1 {
 		return ""
 	}
@@ -53,6 +53,13 @@ func sidebarSectionRule(line string, width int) string {
 	}
 	fill := max(width-lineW-1, 0)
 	return line + palette.Border.On(strings.Repeat("─", fill)+"┤")
+}
+
+// drawSectionRule paints a section-head line as a full-width rule joining the
+// pane's left separator (r.Min.X-1) and right border (r.Max.X).
+func drawSectionRule(scr uv.Screen, r uv.Rectangle, y int, line string) {
+	width := r.Dx() + 2
+	drawLine(scr, uv.Rect(r.Min.X-1, y, width, 1), paneSectionRule(line, width))
 }
 
 func (m *UI) stateSidebarLines(innerW, innerH int) []string {

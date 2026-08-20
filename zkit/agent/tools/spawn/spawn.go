@@ -5,8 +5,8 @@
 // Lives in its own package (rather than inside zkit/agent/runner)
 // because nothing in the runner's loop needs spawn — it's a tool the
 // runner happens to expose if the consumer registers one. Consumers
-// that don't want sub-agents (zarlai's stateless one-shot endpoints,
-// say) simply don't register the tool.
+// that don't want sub-agents
+// simply don't register the tool.
 //
 // Recursion ceiling is owned by the tool instance, not the runner —
 // each consumer chooses how many levels deep their agent can go.

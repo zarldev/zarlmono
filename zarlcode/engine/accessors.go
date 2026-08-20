@@ -5,6 +5,7 @@ import (
 	"iter"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -14,13 +15,13 @@ type RunTarget struct {
 	Provider     llm.Provider
 	Spec         ProviderSpec
 	Model        string
-	Window       int    // context window in tokens; sizes the compactor
-	Reserve      int    // compactor reserve tokens; 0 = liveReserveTokens default
-	MaxIter      int    // agent-loop cap per turn; 0 = built-in default
-	SpawnMaxIter int    // sub-agent loop cap per agent_spawn; 0 = inherit MaxIter
-	SpawnDepth   int    // sub-agent recursion ceiling; 0 = spawning disabled
-	SearxngURL   string // web_search endpoint; empty leaves the tool unregistered
-	Plan         bool   // PLAN mode: read-only tool surface + planning prompt
+	Window       int        // context window in tokens; sizes the compactor
+	Reserve      int        // compactor reserve tokens; 0 = liveReserveTokens default
+	MaxIter      int        // agent-loop cap per turn; 0 = built-in default
+	SpawnMaxIter int        // sub-agent loop cap per agent_spawn; 0 = inherit MaxIter
+	SpawnDepth   int        // sub-agent recursion ceiling; 0 = spawning disabled
+	WebSearch    tools.Tool // web_search tool; nil leaves it unregistered
+	Plan         bool       // PLAN mode: read-only tool surface + planning prompt
 }
 
 // TargetUpdate is an atomic runtime transition for provider policy.

@@ -7,8 +7,8 @@ import (
 )
 
 // RateLimitError carries retry-after/reset information from provider 429
-// (or similar rate-limit) responses. Consumers (runner, TUI, zarlai HTTP
-// handler) can type-assert the error from RunResult.Err with errors.As to
+// (or similar rate-limit) responses. Consumers (runner, TUI)
+// can type-assert the error from RunResult.Err with errors.As to
 // render countdowns, back-pressure warnings, or billing notices.
 type RateLimitError struct {
 	Message    string

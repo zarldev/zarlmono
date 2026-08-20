@@ -113,6 +113,20 @@ func TestFileViewerPreviewRejectsNonRegularFiles(t *testing.T) {
 	}
 }
 
+func loadFileViewerForTest(t *testing.T, root string) *fileViewer {
+	t.Helper()
+	m := New()
+	v := newFileViewer(root)
+	m.overlay.push(v)
+	if cmd := m.fileViewerInitialCmd(v); cmd != nil {
+		_, next := m.Update(cmd())
+		if next != nil {
+			_, _ = m.Update(next())
+		}
+	}
+	return v
+}
+
 func TestFileViewerSkipsBinaryPreview(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "blob.bin")
@@ -120,7 +134,7 @@ func TestFileViewerSkipsBinaryPreview(t *testing.T) {
 		t.Fatalf("write binary file: %v", err)
 	}
 
-	v := newFileViewer(root)
+	v := loadFileViewerForTest(t, root)
 	if !strings.Contains(v.fileContent, "binary file preview skipped") {
 		t.Fatalf("file content = %q, want binary preview skip notice", v.fileContent)
 	}
@@ -146,7 +160,7 @@ func TestFileViewerPreviewsImages(t *testing.T) {
 		t.Fatalf("close image: %v", err)
 	}
 
-	v := newFileViewer(root)
+	v := loadFileViewerForTest(t, root)
 	if v.imagePreview == nil {
 		t.Fatalf("image preview was not loaded; fileContent=%q", v.fileContent)
 	}
@@ -184,7 +198,7 @@ func TestFileViewerAsciiFallbackDoesNotPrepareGraphicsPayload(t *testing.T) {
 		t.Fatalf("close image: %v", err)
 	}
 
-	v := newFileViewer(root)
+	v := loadFileViewerForTest(t, root)
 	if v.imagePreview == nil || v.imagePreview.image == nil {
 		t.Fatalf("ascii fallback should still decode a preview image")
 	}
@@ -244,7 +258,7 @@ func TestFileViewerDirectoryPreviewIsBounded(t *testing.T) {
 		}
 	}
 
-	v := newFileViewer(root)
+	v := loadFileViewerForTest(t, root)
 	if v.dirPreview.path != dir {
 		t.Fatalf("dir preview path = %q, want %q", v.dirPreview.path, dir)
 	}
@@ -263,7 +277,7 @@ func TestFileViewerEditKeyReturnsSelectedFileAction(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	v := newFileViewer(root)
+	v := loadFileViewerForTest(t, root)
 	a := v.handleKey(tea.KeyPressMsg{Code: 'e', Text: "e"})
 	edit, ok := a.(actionEditFile)
 	if !ok {
@@ -280,7 +294,7 @@ func TestFileViewerEditKeyIgnoresDirectories(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	v := newFileViewer(root)
+	v := loadFileViewerForTest(t, root)
 	if a := v.handleKey(tea.KeyPressMsg{Code: 'e', Text: "e"}); a != (actionNone{}) {
 		t.Fatalf("action = %T, want actionNone", a)
 	}
@@ -319,15 +333,37 @@ func TestFileViewerRefreshEditedPathReloadsPreview(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	v := newFileViewer(root)
+	v := loadFileViewerForTest(t, root)
 	if !strings.Contains(v.fileContent, "before") {
 		t.Fatalf("initial preview = %q, want before", v.fileContent)
 	}
 	if err := os.WriteFile(path, []byte("after"), 0o644); err != nil {
 		t.Fatalf("rewrite file: %v", err)
 	}
-	v.refreshEditedPath(path)
+	a := v.refreshEditedPath(path)
+	if entries, ok := a.(actionFileViewerEntries); ok {
+		m := New()
+		m.overlay.push(v)
+		_, next := m.Update(fileViewerEntriesCmd(entries)())
+		if next != nil {
+			_, _ = m.Update(next())
+		}
+	}
 	if !strings.Contains(v.fileContent, "after") {
 		t.Fatalf("refreshed preview = %q, want after", v.fileContent)
+	}
+}
+
+func TestFileViewerRejectsSymlinkOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "outside")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	v := newFileViewer(root)
+	msg := fileViewerEntriesCmd(v.requestResolvedPath(link))().(fileViewerEntriesLoadedMsg)
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "outside workspace") {
+		t.Fatalf("error = %v, want outside workspace", msg.err)
 	}
 }

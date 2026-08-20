@@ -8,7 +8,7 @@ import (
 
 // Store is the persistence the registry needs for DB-backed custom
 // providers and their per-provider settings. Each consumer supplies its
-// own implementation (zarlcode: sqlite-backed; zarlai: its own store).
+// own implementation (zarlcode: sqlite-backed).
 // Built-in providers never touch the Store — they come from
 // BuiltinDefinitions. A nil Store is valid: the registry then serves
 // built-ins only and the mutating methods report ErrNoStore.

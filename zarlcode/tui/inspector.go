@@ -30,16 +30,12 @@ type inspectorTab int
 const (
 	inspectorTabTools inspectorTab = iota
 	inspectorTabPrompt
-	inspectorTabGuardrails
+	inspectorTabRuntime
 	inspectorTabProcesses
 	inspectorTabMCP
-	inspectorTabEvents
-	inspectorTabSkills
-	inspectorTabAgents
-	inspectorTabHooks
 )
 
-var inspectorTabNames = []string{"tools", "prompt", "guardrails", "processes", "mcp", "events", "skills", "agents", "hooks"}
+var inspectorTabNames = []string{"tools", "prompt", "runtime", "processes", "mcp"}
 
 // InspectorSnapshot holds a read-only view of the runner's current state, built
 // on demand without starting a run or mutating persistent registries.
@@ -225,20 +221,14 @@ func (d *inspector) contentLines(width int) []string {
 	switch inspectorTab(d.cursor) {
 	case inspectorTabPrompt:
 		return d.promptLines(width)
-	case inspectorTabGuardrails:
-		return d.guardrailsLines()
+	case inspectorTabTools:
+		return d.toolLines(width)
+	case inspectorTabRuntime:
+		return d.runtimeLines()
 	case inspectorTabProcesses:
 		return d.processLines(width)
 	case inspectorTabMCP:
 		return d.mcpLines()
-	case inspectorTabEvents:
-		return d.eventLines()
-	case inspectorTabSkills:
-		return d.skillsLines(width)
-	case inspectorTabAgents:
-		return d.agentsLines(width)
-	case inspectorTabHooks:
-		return d.hooksLines(width)
 	default:
 		return d.toolLines(width)
 	}
@@ -388,22 +378,6 @@ func promptStackSummaryLines(stack prompts.Stack) []string {
 	return lines
 }
 
-func promptStackFragment(stack prompts.Stack, kind prompts.FragmentKind, name string) (prompts.Fragment, bool) {
-	for _, f := range stack.Fragments {
-		if f.Kind == kind && f.Name == name {
-			return f, true
-		}
-	}
-	return prompts.Fragment{}, false
-}
-
-func contributionLabel(contributes bool) string {
-	if contributes {
-		return "contributes now"
-	}
-	return "catalogued; loaded on demand"
-}
-
 func (d *inspector) errorLines() []string {
 	if len(d.snapshot.Errors) == 0 {
 		return nil
@@ -433,7 +407,7 @@ func (d *inspector) guardrailsLines() []string {
 		palette.Muted.On(text),
 	}
 	// Command hooks ride the same chain (appended after the production set);
-	// summarise the armed counts here, details on the hooks tab.
+	// summarise the armed counts here; the full hook catalog lives in Settings.
 	if pre, post := hookEventCounts(d.snapshot.Hooks); pre+post > 0 {
 		lines = append(lines, palette.Muted.On(fmt.Sprintf("hooks: %d pre_tool, %d post_tool", pre, post)))
 	}
@@ -526,72 +500,13 @@ func (d *inspector) eventLines() []string {
 	return lines
 }
 
-func (d *inspector) skillsLines(width int) []string {
-	skills := d.snapshot.Skills
-	if len(skills) == 0 {
-		return []string{palette.Muted.On(" no skills loaded")}
-	}
-	lines := []string{
-		headerLine(fmt.Sprintf("skills · %d loaded", len(skills)), width, palette.PlanMode.On),
-		"",
-	}
-	for _, s := range skills {
-		lines = append(lines, fmt.Sprintf("  %s %s", palette.PlanMode.On("#"), palette.Info.On(s.Name)))
-		lines = append(lines, fmt.Sprintf("    %s", palette.Muted.On(s.Description)))
-		lines = append(lines, fmt.Sprintf("    %s", palette.Subtle.On(s.Source)))
-		if f, ok := promptStackFragment(d.snapshot.PromptStack, prompts.FragmentSkill, s.Name); ok {
-			lines = append(lines, fmt.Sprintf("    %s", palette.Subtle.On(fmt.Sprintf("prompt fragment: %d words · %d bytes · %s", f.Words, f.Bytes, contributionLabel(f.Contributes)))))
-		}
-		lines = append(lines, "")
-	}
-	return lines
-}
-
-func (d *inspector) agentsLines(width int) []string {
-	agents := d.snapshot.Agents
-	if len(agents) == 0 {
-		return []string{palette.Muted.On(" no agents loaded")}
-	}
-	lines := []string{
-		headerLine(fmt.Sprintf("agents · %d loaded", len(agents)), width, palette.Info.On),
-		"",
-	}
-	for _, a := range agents {
-		lines = append(lines, fmt.Sprintf("  %s %s", palette.Info.On("@"), palette.Primary.On(a.Name)))
-		lines = append(lines, fmt.Sprintf("    %s", palette.Muted.On(a.Description)))
-		if a.Provider != "" || a.Model != "" {
-			lines = append(lines, fmt.Sprintf("    provider=%s model=%s", palette.Subtle.On(a.Provider), palette.Subtle.On(a.Model)))
-		}
-		lines = append(lines, fmt.Sprintf("    %s", palette.Subtle.On(a.Source)))
-		lines = append(lines, "")
-	}
-	return lines
-}
-
-func (d *inspector) hooksLines(width int) []string {
-	hooks := d.snapshot.Hooks
-	if len(hooks) == 0 {
-		return []string{palette.Muted.On(" no hooks loaded")}
-	}
-	lines := []string{
-		headerLine(fmt.Sprintf("hooks · %d armed", len(hooks)), width, palette.Warning.On),
-		"",
-	}
-	for _, h := range hooks {
-		lines = append(lines, fmt.Sprintf("  %s %s", palette.Warning.On("!"), palette.Primary.On(h.Name)))
-		lines = append(lines, fmt.Sprintf("    %s", palette.Muted.On(h.Description)))
-		trigger := string(h.Event)
-		if h.Matcher != "" {
-			trigger += " · matcher=" + h.Matcher
-		}
-		if h.Blocking {
-			trigger += " · blocking"
-		}
-		trigger += " · timeout=" + h.Timeout.String()
-		lines = append(lines, fmt.Sprintf("    %s", palette.Subtle.On(trigger)))
-		lines = append(lines, fmt.Sprintf("    %s", palette.Subtle.On(h.Source)))
-		lines = append(lines, "")
-	}
+// runtimeLines combines the passive runtime diagnostics — guardrails and the
+// session event log — into one tab. Processes keeps its own tab because it
+// carries an interactive selection cursor (up/down + x to kill).
+func (d *inspector) runtimeLines() []string {
+	lines := d.guardrailsLines()
+	lines = append(lines, "")
+	lines = append(lines, d.eventLines()...)
 	return lines
 }
 

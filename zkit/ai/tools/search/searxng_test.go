@@ -13,33 +13,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 )
 
-// fakeSearxng returns an httptest.Server that responds to /search
-// with the given body + status. The handler captures the inbound
-// query so tests can assert URL composition.
-func fakeSearxng(t *testing.T, status int, body string, gotQuery *string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/search" {
-			t.Errorf("unexpected path %q", r.URL.Path)
-		}
-		if gotQuery != nil {
-			*gotQuery = r.URL.Query().Get("q")
-		}
-		if got := r.URL.Query().Get("format"); got != "json" {
-			t.Errorf("format = %q, want json", got)
-		}
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// runTyped invokes the SearxngTool with a typed SearxngArgs struct.
-// It JSON-round-trips the struct into a ToolParameters map so the
-// call exercises the same DecodeArgs path the LLM runtime uses,
-// while letting tests stay readable with field literals.
-func runTyped(t *testing.T, tool *search.SearxngTool, args search.SearxngArgs) *tools.ToolResult {
+// runTyped invokes a web_search tool with a typed search.Args struct. It
+// JSON-round-trips the struct into a ToolParameters map so the call exercises
+// the same DecodeArgs path the LLM runtime uses, while letting tests stay
+// readable with field literals.
+func runTyped(t *testing.T, tool tools.Tool, args search.Args) *tools.ToolResult {
 	t.Helper()
 	raw, err := json.Marshal(args)
 	if err != nil {
@@ -60,20 +38,42 @@ func runTyped(t *testing.T, tool *search.SearxngTool, args search.SearxngArgs) *
 	return res
 }
 
-// searxText renders the model-facing string for a result — the same text
-// the runner flattens SearxngResult to via fmt.Stringer.
-func searxText(t *testing.T, res *tools.ToolResult) string {
+// resultText renders the model-facing string for a result — the same text the
+// runner flattens search.Result to via fmt.Stringer.
+func resultText(t *testing.T, res *tools.ToolResult) string {
 	t.Helper()
-	r, ok := res.Data.(search.SearxngResult)
+	r, ok := res.Data.(search.Result)
 	if !ok {
-		t.Fatalf("Data is %T, want search.SearxngResult", res.Data)
+		t.Fatalf("Data is %T, want search.Result", res.Data)
 	}
 	return r.String()
 }
 
-func TestSearxngTool_DefinitionShape(t *testing.T) {
+// fakeSearxng returns an httptest.Server that responds to /search with the
+// given body + status. The handler captures the inbound query so tests can
+// assert URL composition.
+func fakeSearxng(t *testing.T, status int, body string, gotQuery *string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/search" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		if gotQuery != nil {
+			*gotQuery = r.URL.Query().Get("q")
+		}
+		if got := r.URL.Query().Get("format"); got != "json" {
+			t.Errorf("format = %q, want json", got)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestSearxng_DefinitionShape(t *testing.T) {
 	t.Parallel()
-	tool := search.New("http://localhost:9999")
+	tool := search.NewSearxng("http://localhost:9999")
 	spec := tool.Definition()
 	if spec.Name != search.ToolName {
 		t.Errorf("Name = %q, want %q", spec.Name, search.ToolName)
@@ -91,7 +91,7 @@ func TestSearxngTool_DefinitionShape(t *testing.T) {
 	}
 }
 
-func TestSearxngTool_HappyPath(t *testing.T) {
+func TestSearxng_HappyPath(t *testing.T) {
 	t.Parallel()
 	body := `{
 		"query": "qwen mtp",
@@ -104,9 +104,9 @@ func TestSearxngTool_HappyPath(t *testing.T) {
 	}`
 	var gotQuery string
 	srv := fakeSearxng(t, http.StatusOK, body, &gotQuery)
-	tool := search.New(srv.URL)
+	tool := search.NewSearxng(srv.URL)
 
-	res := runTyped(t, tool, search.SearxngArgs{Query: "qwen mtp", Output: tools.OutputJSON})
+	res := runTyped(t, tool, search.Args{Query: "qwen mtp", Output: tools.OutputJSON})
 	if !res.Success {
 		t.Fatalf("expected success, got error %q", res.Error)
 	}
@@ -114,7 +114,7 @@ func TestSearxngTool_HappyPath(t *testing.T) {
 		t.Errorf("upstream q = %q, want %q", gotQuery, "qwen mtp")
 	}
 	var out map[string]any
-	if err := json.Unmarshal([]byte(searxText(t, res)), &out); err != nil {
+	if err := json.Unmarshal([]byte(resultText(t, res)), &out); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
 	results, _ := out["results"].([]any)
@@ -127,7 +127,7 @@ func TestSearxngTool_HappyPath(t *testing.T) {
 	}
 }
 
-func TestSearxngTool_MaxResultsClamp(t *testing.T) {
+func TestSearxng_MaxResultsClamp(t *testing.T) {
 	t.Parallel()
 	// Build a 30-result body and verify the tool returns at most
 	// HardMaxResults regardless of what the caller asks for.
@@ -145,13 +145,8 @@ func TestSearxngTool_MaxResultsClamp(t *testing.T) {
 		"results":           results,
 	})
 	srv := fakeSearxng(t, http.StatusOK, string(bodyBytes), nil)
-	tool := search.New(srv.URL)
+	tool := search.NewSearxng(srv.URL)
 
-	// Float and string coercion were features of the pre-typed
-	// stringly-accessor path; under the typed contract the JSON
-	// decoder handles int natively and integer-valued floats land in
-	// int fields fine, but quoted-string numerics no longer coerce —
-	// the model is expected to emit a typed number.
 	cases := []struct {
 		name string
 		arg  int
@@ -165,12 +160,12 @@ func TestSearxngTool_MaxResultsClamp(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			res := runTyped(t, tool, search.SearxngArgs{Query: "x", MaxResults: c.arg, Output: tools.OutputJSON})
+			res := runTyped(t, tool, search.Args{Query: "x", MaxResults: c.arg, Output: tools.OutputJSON})
 			if !res.Success {
 				t.Fatalf("error: %s", res.Error)
 			}
 			var out map[string]any
-			_ = json.Unmarshal([]byte(searxText(t, res)), &out)
+			_ = json.Unmarshal([]byte(resultText(t, res)), &out)
 			got := len(out["results"].([]any))
 			if got != c.want {
 				t.Errorf("results=%d, want %d", got, c.want)
@@ -179,10 +174,10 @@ func TestSearxngTool_MaxResultsClamp(t *testing.T) {
 	}
 }
 
-func TestSearxngTool_MissingQuery(t *testing.T) {
+func TestSearxng_MissingQuery(t *testing.T) {
 	t.Parallel()
-	tool := search.New("http://localhost:9999")
-	res := runTyped(t, tool, search.SearxngArgs{})
+	tool := search.NewSearxng("http://localhost:9999")
+	res := runTyped(t, tool, search.Args{})
 	if res.Success {
 		t.Errorf("expected failure ToolResult")
 	}
@@ -191,10 +186,10 @@ func TestSearxngTool_MissingQuery(t *testing.T) {
 	}
 }
 
-func TestSearxngTool_EmptyBaseURL(t *testing.T) {
+func TestSearxng_EmptyBaseURL(t *testing.T) {
 	t.Parallel()
-	tool := search.New("")
-	res := runTyped(t, tool, search.SearxngArgs{Query: "x"})
+	tool := search.NewSearxng("")
+	res := runTyped(t, tool, search.Args{Query: "x"})
 	if res.Success {
 		t.Errorf("expected failure for unconfigured tool")
 	}
@@ -203,21 +198,21 @@ func TestSearxngTool_EmptyBaseURL(t *testing.T) {
 	}
 }
 
-func TestSearxngTool_Non200(t *testing.T) {
+func TestSearxng_Non200(t *testing.T) {
 	t.Parallel()
 	srv := fakeSearxng(t, http.StatusInternalServerError, `boom`, nil)
-	tool := search.New(srv.URL)
-	res := runTyped(t, tool, search.SearxngArgs{Query: "x"})
+	tool := search.NewSearxng(srv.URL)
+	res := runTyped(t, tool, search.Args{Query: "x"})
 	if res.Success {
 		t.Errorf("expected failure on 500")
 	}
 }
 
-func TestSearxngTool_MalformedJSON(t *testing.T) {
+func TestSearxng_MalformedJSON(t *testing.T) {
 	t.Parallel()
 	srv := fakeSearxng(t, http.StatusOK, "not json", nil)
-	tool := search.New(srv.URL)
-	res := runTyped(t, tool, search.SearxngArgs{Query: "x"})
+	tool := search.NewSearxng(srv.URL)
+	res := runTyped(t, tool, search.Args{Query: "x"})
 	if res.Success {
 		t.Errorf("expected failure on malformed json")
 	}
@@ -226,15 +221,15 @@ func TestSearxngTool_MalformedJSON(t *testing.T) {
 	}
 }
 
-func TestSearxngTool_ContextCancellation(t *testing.T) {
+func TestSearxng_ContextCancellation(t *testing.T) {
 	t.Parallel()
-	// Slow server that blocks forever — context cancellation must
-	// unblock the request without hanging the test.
+	// Slow server that blocks forever — context cancellation must unblock the
+	// request without hanging the test.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	}))
 	t.Cleanup(srv.Close)
-	tool := search.New(srv.URL)
+	tool := search.NewSearxng(srv.URL)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // pre-cancel
@@ -258,9 +253,9 @@ func TestSearxngTool_ContextCancellation(t *testing.T) {
 // --- default (labelled) output ---------------------------------------
 
 // Canonical reference for the labelled web_search shape: header line
-// (results: N  query: X), blank-separated numbered triples (title /
-// URL / snippet), optional trailing suggestions line. If this drifts
-// to JSON the convention has slipped.
+// (results: N  query: X), blank-separated numbered triples (title / URL /
+// snippet), optional trailing suggestions line. If this drifts to JSON the
+// convention has slipped.
 func TestSearxng_DefaultOutputShape(t *testing.T) {
 	t.Parallel()
 	srv := fakeSearxng(t, http.StatusOK, `{
@@ -271,12 +266,12 @@ func TestSearxng_DefaultOutputShape(t *testing.T) {
 		],
 		"suggestions": ["errors.Is", "errors.As"]
 	}`, nil)
-	tool := search.New(srv.URL)
-	res := runTyped(t, tool, search.SearxngArgs{Query: "golang error wrapping"})
+	tool := search.NewSearxng(srv.URL)
+	res := runTyped(t, tool, search.Args{Query: "golang error wrapping"})
 	if res == nil || !res.Success {
 		t.Fatalf("Execute: %+v", res)
 	}
-	body := searxText(t, res)
+	body := resultText(t, res)
 	if strings.HasPrefix(body, "[") || strings.HasPrefix(body, "{") {
 		t.Errorf("output looks JSON-shaped (starts with bracket): %q", body)
 	}
@@ -290,9 +285,9 @@ func TestSearxng_DefaultOutputShape(t *testing.T) {
 	}
 }
 
-// Multi-line snippets get collapsed onto one row so the indentation
-// contract holds — a result with an embedded newline would otherwise
-// look like an extra result to the model.
+// Multi-line snippets get collapsed onto one row so the indentation contract
+// holds — a result with an embedded newline would otherwise look like an extra
+// result to the model.
 func TestSearxng_CollapsesMultilineSnippets(t *testing.T) {
 	t.Parallel()
 	srv := fakeSearxng(t, http.StatusOK, `{
@@ -301,9 +296,9 @@ func TestSearxng_CollapsesMultilineSnippets(t *testing.T) {
 			{"url":"https://x","title":"A\nB","content":"line one\nline two\nline three"}
 		]
 	}`, nil)
-	tool := search.New(srv.URL)
-	res := runTyped(t, tool, search.SearxngArgs{Query: "q"})
-	body := searxText(t, res)
+	tool := search.NewSearxng(srv.URL)
+	res := runTyped(t, tool, search.Args{Query: "q"})
+	body := resultText(t, res)
 	if !strings.Contains(body, "1. A B") {
 		t.Errorf("title not collapsed onto one line: %q", body)
 	}
@@ -315,8 +310,8 @@ func TestSearxng_CollapsesMultilineSnippets(t *testing.T) {
 	}
 }
 
-// Zero results → "(no results)" sentinel so the model can distinguish
-// it from an error. Suggestions still emitted so the model can retry.
+// Zero results → "(no results)" sentinel so the model can distinguish it from
+// an error. Suggestions still emitted so the model can retry.
 func TestSearxng_NoResultsSentinel(t *testing.T) {
 	t.Parallel()
 	srv := fakeSearxng(t, http.StatusOK, `{
@@ -324,12 +319,12 @@ func TestSearxng_NoResultsSentinel(t *testing.T) {
 		"results": [],
 		"suggestions": ["blefuscu correct spelling"]
 	}`, nil)
-	tool := search.New(srv.URL)
-	res := runTyped(t, tool, search.SearxngArgs{Query: "blefuscu"})
+	tool := search.NewSearxng(srv.URL)
+	res := runTyped(t, tool, search.Args{Query: "blefuscu"})
 	if !res.Success {
 		t.Fatalf("want success on zero results, got %+v", res)
 	}
-	body := searxText(t, res)
+	body := resultText(t, res)
 	if !strings.Contains(body, "results: 0") {
 		t.Errorf("count header missing: %q", body)
 	}
@@ -341,13 +336,13 @@ func TestSearxng_NoResultsSentinel(t *testing.T) {
 	}
 }
 
-// 5xx is classified as transient — the runner uses this to decide
-// whether to retry vs surface the error to the model.
+// 5xx is classified as transient — the runner uses this to decide whether to
+// retry vs surface the error to the model.
 func TestSearxng_FiveHundredIsTransient(t *testing.T) {
 	t.Parallel()
 	srv := fakeSearxng(t, http.StatusBadGateway, "", nil)
-	tool := search.New(srv.URL)
-	res := runTyped(t, tool, search.SearxngArgs{Query: "q"})
+	tool := search.NewSearxng(srv.URL)
+	res := runTyped(t, tool, search.Args{Query: "q"})
 	if res.Success {
 		t.Fatalf("5xx: want failure, got %+v", res)
 	}

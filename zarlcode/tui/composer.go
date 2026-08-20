@@ -194,6 +194,12 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "ctrl+o":
 		m.overlay.push(newInspector(BuildInspectorSnapshot(m.session, m.live, nil)))
 		return nil, true
+	case "ctrl+r":
+		m.overlay.push(newTranscriptReader(m.timeline))
+		return nil, true
+	case "ctrl+a":
+		m.overlay.push(newAgentActivityScreen(m.timeline))
+		return nil, true
 	}
 	return nil, false
 }
@@ -201,12 +207,18 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "ctrl+f":
-		m.overlay.push(newFileViewer(m.session.WorkspaceDir))
-		return nil, true
+		viewer := newFileViewer(m.session.WorkspaceDir)
+		m.overlay.push(viewer)
+		return m.fileViewerInitialCmd(viewer), true
 	case "ctrl+e":
 		return m.openModelQuickPick(), true
 	case "ctrl+g":
 		m.overlay.push(m.newHelpDialog())
+		return nil, true
+	case "ctrl+h":
+		if m.settings != nil {
+			m.overlay.push(newToolHistory(m.settings.Store, m.session.ID))
+		}
 		return nil, true
 	case "ctrl+t":
 		m.overlay.push(newThemePicker())
@@ -261,8 +273,9 @@ func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *UI) handleDashboardShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "ctrl+f":
-		m.overlay.push(newFileViewer(m.session.WorkspaceDir))
-		return nil, true
+		viewer := newFileViewer(m.session.WorkspaceDir)
+		m.overlay.push(viewer)
+		return m.fileViewerInitialCmd(viewer), true
 	case "ctrl+e":
 		return m.openModelQuickPick(), true
 	}
@@ -375,6 +388,10 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.composer.right()
 	default:
 		if msg.Text != "" {
+			if msg.Text == "@" && m.session.WorkspaceDir != "" {
+				m.overlay.push(newFileMentionPicker(m.session.WorkspaceDir))
+				return nil
+			}
 			m.composer.insert(msg.Text)
 			m.resetInputHistoryBrowse()
 		}
@@ -504,6 +521,12 @@ func (m *UI) submit(text string) tea.Cmd {
 	if m.live != nil {
 		attachments := m.attachmentParts()
 		m.pendingAttachments = nil
+		if !m.startupReady {
+			m.startupPrompt = text
+			m.startupAttachments = attachments
+			m.session.SetToast("finishing startup before the first turn…")
+			return m.toastExpiryCmd()
+		}
 		return RunFnWithAttachments(m.appContext(), m.live, text, attachments)
 	}
 	if m.runFn != nil {

@@ -16,8 +16,6 @@ This is a Go multi-module workspace:
   `zkit/agent/coderunner` so the two cannot drift.
 - [`examples/`](examples/) — six runnable examples (own module), each
   demonstrating one pattern; most run without an LLM via `-scripted`.
-- [`zarlai/`](zarlai/) — the assistant application (own module, own
-  [CONTRIBUTING](zarlai/CONTRIBUTING.md)).
 
 [zarldev.github.io/zarlmono](https://zarldev.github.io/zarlmono) is the
 user-facing documentation (source in [`site/`](site/) — Astro

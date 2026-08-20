@@ -17,7 +17,7 @@ import (
 // Trimming policy is injected via Truncator. Consumers that want a
 // debug-friendly footer pointing at a spilled-to-disk full transcript
 // install SpillingTruncator (the zarlcode pattern); consumers that
-// can't write temp files (zarlai serving HTTP requests) install
+// can't write temp files install
 // DefaultTruncator and accept that the head is unrecoverable from
 // the conversation alone.
 

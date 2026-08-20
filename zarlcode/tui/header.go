@@ -46,7 +46,7 @@ func (m *UI) statusHint() string {
 	if hint := slashStatusHint(m.composer.text()); hint != "" {
 		return hint
 	}
-	return m.attachmentSummary() + "enter submit  ·  shift+enter newline  ·  tab browse  ·  shift+tab plan mode  ·  " + stopKey + "  ·  ctrl+g keys"
+	return m.attachmentSummary() + "enter submit  ·  shift+enter newline  ·  @ file  ·  tab browse  ·  shift+tab plan mode  ·  " + stopKey + "  ·  ctrl+g keys"
 }
 
 // drawBar paints a single reverse-video bar across r, padded to the full

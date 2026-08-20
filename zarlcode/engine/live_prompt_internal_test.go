@@ -78,7 +78,7 @@ func TestStandardPromptProfileRemainsRollback(t *testing.T) {
 func assertRuntimeAndInspectorPromptMatch(t *testing.T, live *LiveRunner, plan bool, wants ...string) {
 	t.Helper()
 	ctx := t.Context()
-	src, reg, err := live.source(t.Context(), "")
+	src, reg, err := live.source(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}

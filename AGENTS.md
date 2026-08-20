@@ -4,13 +4,12 @@ Compact, repo-wide context only. Module/package detail belongs in nested `AGENTS
 
 ## Monorepo boundaries
 
-`go.work` joins six Go modules: `.` (tooling only), `examples/`, `swebench-eval/`, `zarlai/`, `zarlcode/`, and `zkit/`.
+`go.work` joins five Go modules: `.` (tooling only), `examples/`, `swebench-eval/`, `zarlcode/`, and `zkit/`.
 
 | Path | Purpose |
 |---|---|
 | `zkit/` | Shared runner, tools, providers, guardrails, compaction, MCP, options, and foundation packages. |
 | `zarlcode/` | Terminal coding-agent TUI/CLI built on `zkit`. |
-| `zarlai/` | Local multimodal/smart-home assistant; separate CGO/system-dependency workflow. |
 | `swebench-eval/` | SWE-bench evaluation driver. |
 | `examples/` | Runnable harness examples. |
 
@@ -26,7 +25,7 @@ go tool task lint    # strict root golangci-lint configuration
 go tool task race    # zkit race suite
 ```
 
-Root check/lint cover `examples`, `zkit`, `zarlcode`, and `swebench-eval`; `zarlai` has its own delegated workflow documented in `zarlai/AGENTS.md`.
+Root check/lint cover `examples`, `zkit`, `zarlcode`, and `swebench-eval`.
 
 ## Universal Go and repository invariants
 

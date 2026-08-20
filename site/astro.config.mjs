@@ -85,7 +85,6 @@ export default defineConfig({
 					items: [
 						{ label: 'zarlcode', slug: 'zarlcode' },
 						{ label: 'zarlcode interface', slug: 'zarlcode-interface' },
-						{ label: 'zarlai', slug: 'zarlai' },
 						{ label: 'swebench-eval', slug: 'swebench-eval' },
 					],
 				},
