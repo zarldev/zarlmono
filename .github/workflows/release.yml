@@ -74,7 +74,7 @@ jobs:
           ( cd dist && sha256sum "${archive}" > "${archive}.sha256" )
           echo "packaged dist/${archive}"
       - name: upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zarlcode-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -102,7 +102,7 @@ jobs:
           cache: true
 
       - name: download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
