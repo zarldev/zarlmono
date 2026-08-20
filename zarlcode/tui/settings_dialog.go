@@ -179,6 +179,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly."},
 				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, def: "8",
 					desc: "max agent_spawn calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap."},
+				{label: "program parallel calls", key: prefs.KeyProgramParallel, kind: rowText, numeric: true, def: "0",
+					desc: "max nested program-tool calls call_many runs concurrently. 0 keeps the built-in default (8)."},
 			}},
 			{name: "safety", rows: []settingsRow{
 				{label: "plan first", section: "Guardrails", key: prefs.KeyPlanFirst, kind: rowEnum, def: "off", opts: []string{"off", "on"},

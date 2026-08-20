@@ -104,9 +104,6 @@ const (
 	KeyUpgradeRestart = "upgrade_restart"
 	KeyUpgradeDryRun  = "upgrade_dry_run"
 	KeyUpgradeBinPath = "upgrade_bin_path"
-	// KeyKeybindings stores the user's TUI keybinding overrides as a
-	// JSON-encoded map[string][]string under the global scope.
-	KeyKeybindings = "keybindings"
 
 	// KeyChromeBinPath is the absolute path to a Chrome or Chromium
 	// binary used by the web_fetch tool's chromedp browser fallback.
