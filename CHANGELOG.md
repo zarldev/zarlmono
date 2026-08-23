@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.12.0] — 2026-08-23
+`zarlcode/v0.12.0`
+
+### Changed
+
+- Standardized agent configuration on canonical functional options.
+- Configured spawn iteration budgets now take precedence over model-supplied values.
+
+## [zkit/v0.12.0] — 2026-08-23
+`zkit/v0.12.0`
+
+### Changed
+
+- Centralized `zapp` default initialization and removed redundant defensive checks.
+- Standardized agent functional options on `options.Option[T]`.
+- Configured spawn iteration budgets now take precedence over model-supplied values.
+
 ## [zarlcode/v0.11.0] — 2026-08-21
 `zarlcode/v0.11.0`
 
