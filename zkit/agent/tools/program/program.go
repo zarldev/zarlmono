@@ -83,9 +83,7 @@ func NewSource(inner tools.Source, opts ...options.Option[Source]) (*Source, err
 	}
 	s := &Source{inner: inner, policy: denyAllPolicy, limits: defaultLimits()}
 	for _, opt := range opts {
-		if opt != nil {
-			opt(s)
-		}
+		opt(s)
 	}
 	if s.policy == nil {
 		s.policy = denyAllPolicy

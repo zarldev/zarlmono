@@ -100,6 +100,28 @@ func TestApplyPlanner_EmptyAgent_PlannerReroutes(t *testing.T) {
 	}
 }
 
+func TestSpawnMaxIterations_ConfiguredBudgetWins(t *testing.T) {
+	t.Parallel()
+	tool := New(nil, WithSpawnMaxIterations(20))
+
+	for _, modelSpec := range []int{0, 5, 20, 50} {
+		if got := tool.spawnMaxIterations(modelSpec); got != 20 {
+			t.Errorf("spawnMaxIterations(%d) = %d, want configured budget 20", modelSpec, got)
+		}
+	}
+}
+
+func TestSpawnMaxIterations_UnconfiguredPreservesModelValue(t *testing.T) {
+	t.Parallel()
+	tool := New(nil)
+
+	for _, modelSpec := range []int{0, 5, 50} {
+		if got := tool.spawnMaxIterations(modelSpec); got != modelSpec {
+			t.Errorf("spawnMaxIterations(%d) = %d, want %d", modelSpec, got, modelSpec)
+		}
+	}
+}
+
 func TestApplyPlanner_UnknownAgent_PlannerReroutes(t *testing.T) {
 	// Model emitted a name that's not in the registered set —
 	// classic confabulation case. Planner picks a valid one.

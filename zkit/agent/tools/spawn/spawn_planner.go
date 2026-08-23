@@ -10,6 +10,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 const (
@@ -44,8 +45,7 @@ type LLMSpawnPlanner struct {
 	maxTokens int
 }
 
-// LLMSpawnPlannerOption configures an [LLMSpawnPlanner].
-type LLMSpawnPlannerOption func(*LLMSpawnPlanner)
+type LLMSpawnPlannerOption = options.Option[LLMSpawnPlanner]
 
 // WithPlannerMaxTokens overrides the per-plan token cap. Non-positive values
 // leave the default unchanged.

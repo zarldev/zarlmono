@@ -88,16 +88,8 @@ type App[T any] struct {
 
 // New creates an App for program using sensible defaults.
 func New[T any](program Program[T], opts ...options.Option[App[T]]) *App[T] {
-	app := &App[T]{
-		name:               defaultName,
-		program:            program,
-		closers:            make(map[string]io.Closer),
-		shutdownTimeout:    defaultShutdownTimeout,
-		signals:            []os.Signal{syscall.SIGINT, syscall.SIGTERM},
-		createFailureCode:  ExitFailure,
-		cleanupFailureCode: ExitFailure,
-		panicCode:          ExitPanic,
-	}
+	app := &App[T]{program: program}
+	app.normaliseDefaults()
 
 	if program != nil {
 		if name := strings.TrimSpace(program.Name()); name != "" {
@@ -106,12 +98,9 @@ func New[T any](program Program[T], opts ...options.Option[App[T]]) *App[T] {
 	}
 
 	for _, opt := range opts {
-		if opt != nil {
-			opt(app)
-		}
+		opt(app)
 	}
 
-	app.normalizeDefaults()
 	return app
 }
 
@@ -196,9 +185,6 @@ func (a *App[T]) AddCloser(name string, closer io.Closer) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.closers == nil {
-		a.closers = make(map[string]io.Closer)
-	}
 	if a.closing {
 		return ErrClosed
 	}
@@ -242,27 +228,14 @@ func (a *App[T]) handlePanic(recovered any) {
 	a.panicHandler(a.Name(), recovered)
 }
 
-func (a *App[T]) normalizeDefaults() {
-	if strings.TrimSpace(a.name) == "" {
-		a.name = defaultName
-	} else {
-		a.name = strings.TrimSpace(a.name)
-	}
-	if a.closers == nil {
-		a.closers = make(map[string]io.Closer)
-	}
-	if a.shutdownTimeout <= 0 {
-		a.shutdownTimeout = defaultShutdownTimeout
-	}
-	if a.createFailureCode == ExitOK {
-		a.createFailureCode = ExitFailure
-	}
-	if a.cleanupFailureCode == ExitOK {
-		a.cleanupFailureCode = ExitFailure
-	}
-	if a.panicCode == ExitOK {
-		a.panicCode = ExitPanic
-	}
+func (a *App[T]) normaliseDefaults() {
+	a.name = defaultName
+	a.closers = make(map[string]io.Closer)
+	a.shutdownTimeout = defaultShutdownTimeout
+	a.signals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+	a.createFailureCode = ExitFailure
+	a.cleanupFailureCode = ExitFailure
+	a.panicCode = ExitPanic
 }
 
 type closerEntry struct {
@@ -271,12 +244,8 @@ type closerEntry struct {
 }
 
 func (a *App[T]) closeWithTimeout() error {
-	ctx := context.Background()
-	if a.shutdownTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, a.shutdownTimeout)
-		defer cancel()
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
+	defer cancel()
 	return a.Close(ctx)
 }
 
@@ -293,7 +262,7 @@ func (a *App[T]) drainClosers() []closerEntry {
 	for i := len(a.order) - 1; i >= 0; i-- {
 		name := a.order[i]
 		closer, ok := a.closers[name]
-		if !ok || closer == nil {
+		if !ok {
 			continue
 		}
 		entries = append(entries, closerEntry{name: name, closer: closer})

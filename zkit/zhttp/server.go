@@ -40,9 +40,7 @@ func DefaultServerConfig() ServerConfig {
 func NewServer(addr string, handler http.Handler, opts ...options.Option[ServerConfig]) *http.Server {
 	cfg := DefaultServerConfig()
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
-		}
+		opt(&cfg)
 	}
 	return &http.Server{
 		Addr:              addr,

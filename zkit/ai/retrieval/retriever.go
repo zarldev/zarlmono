@@ -48,9 +48,7 @@ type VectorRetriever struct {
 func (r VectorRetriever) Retrieve(ctx context.Context, query string, opts ...RetrieveOption) ([]Document, error) {
 	settings := RetrieveOptions{Limit: r.Limit}
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&settings)
-		}
+		opt(&settings)
 	}
 	vectors, err := r.Embedder.Embed(ctx, []string{query})
 	if err != nil {

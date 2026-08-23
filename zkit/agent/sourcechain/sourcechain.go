@@ -8,6 +8,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // Wrapper transforms one tool source into another.
@@ -22,17 +23,14 @@ type Pipeline struct {
 	depthFilter  Wrapper
 }
 
-// PipelineOption configures a Pipeline slot.
-type PipelineOption func(*Pipeline)
+type PipelineOption = options.Option[Pipeline]
 
 // NewPipeline returns a pipeline with the supplied wrapper slots. Unset slots
 // are identity/pass-through.
 func NewPipeline(opts ...PipelineOption) Pipeline {
 	var p Pipeline
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&p)
-		}
+		opt(&p)
 	}
 	return p
 }
@@ -76,8 +74,7 @@ type config struct {
 	extra []guardrails.Guardrail
 }
 
-// Option configures guardrail arming.
-type Option func(*config)
+type Option = options.Option[config]
 
 // WithExtraGuardrails appends truly-extra guardrails after the production set.
 func WithExtraGuardrails(extra ...guardrails.Guardrail) Option {
@@ -88,9 +85,7 @@ func WithExtraGuardrails(extra ...guardrails.Guardrail) Option {
 func New(wrapped tools.Source, deps guardrails.Deps, opts ...Option) (*Chain, error) {
 	var cfg config
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
-		}
+		opt(&cfg)
 	}
 
 	guards := []guardrails.Guardrail{guardrails.NewSchemaGuardrail(wrapped)}
