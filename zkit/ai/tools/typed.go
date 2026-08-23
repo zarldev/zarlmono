@@ -61,9 +61,7 @@ type typedTool[Args any, Result any] struct {
 func NewTyped[Args any, Result any](spec ToolSpec, handler TypedHandler[Args, Result], opts ...TypedOption[Result]) Tool {
 	options := typedOptions[Result]{}
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&options)
-		}
+		opt(&options)
 	}
 	return typedTool[Args, Result]{spec: spec, handler: handler, options: options}
 }

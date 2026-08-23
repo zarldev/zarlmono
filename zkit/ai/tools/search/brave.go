@@ -41,9 +41,7 @@ func NewBrave(apiKey string, opts ...options.Option[braveBackend]) tools.Tool {
 		client:  zhttp.NewClient(zhttp.WithTimeout(requestTimeout)),
 	}
 	for _, opt := range opts {
-		if opt != nil {
-			opt(b)
-		}
+		opt(b)
 	}
 	return tools.NewTyped(specFor(braveDescription), b.search)
 }

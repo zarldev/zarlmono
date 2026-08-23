@@ -30,9 +30,7 @@ type PipelineOption func(*Pipeline)
 func NewPipeline(opts ...PipelineOption) Pipeline {
 	var p Pipeline
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&p)
-		}
+		opt(&p)
 	}
 	return p
 }
@@ -88,9 +86,7 @@ func WithExtraGuardrails(extra ...guardrails.Guardrail) Option {
 func New(wrapped tools.Source, deps guardrails.Deps, opts ...Option) (*Chain, error) {
 	var cfg config
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
-		}
+		opt(&cfg)
 	}
 
 	guards := []guardrails.Guardrail{guardrails.NewSchemaGuardrail(wrapped)}
