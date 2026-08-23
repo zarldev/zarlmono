@@ -8,6 +8,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // Default thresholds. Kept as constants so the constructor stays a
@@ -161,8 +162,7 @@ type DecomposeGuardrail struct {
 	buckets map[taskscope.ID]*decomposeBucket
 }
 
-// DecomposeGuardrailOption configures a [DecomposeGuardrail].
-type DecomposeGuardrailOption func(*DecomposeGuardrail)
+type DecomposeGuardrailOption = options.Option[DecomposeGuardrail]
 
 // WithDecomposeJudge selects the optional advisory shaper. Nil keeps the
 // deterministic advisory path.

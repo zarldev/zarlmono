@@ -2,10 +2,10 @@ package pursue
 
 import (
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
-// RequestOption configures a Request. See WithGoal and WithWatcher.
-type RequestOption func(*requestConfig)
+type RequestOption = options.Option[requestConfig]
 
 type requestConfig struct {
 	goal    Goal

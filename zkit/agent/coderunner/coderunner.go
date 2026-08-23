@@ -132,8 +132,7 @@ type toolsConfig struct {
 	unrestrictedReads bool
 }
 
-// ToolsOption tunes RegisterStandardTools.
-type ToolsOption func(*toolsConfig)
+type ToolsOption = options.Option[toolsConfig]
 
 // WithToolSandbox confines shell commands behind sb (kernel-level
 // filesystem allow-list and optional network denial — see

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // LLMVerdictJudge is the production implementation of VerdictJudge.
@@ -30,8 +31,7 @@ type LLMVerdictJudge struct {
 	maxTokens int
 }
 
-// LLMVerdictJudgeOption configures an [LLMVerdictJudge].
-type LLMVerdictJudgeOption func(*LLMVerdictJudge)
+type LLMVerdictJudgeOption = options.Option[LLMVerdictJudge]
 
 // WithVerdictMaxTokens overrides the per-verdict token cap. Non-positive
 // values leave the default unchanged.

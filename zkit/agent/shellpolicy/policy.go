@@ -1,6 +1,10 @@
 package shellpolicy
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/zarldev/zarlmono/zkit/options"
+)
 
 // PolicyEngine converts a ParsedIR into a Decision. Decisions are driven
 // by the IR's RiskFlags plus the engine's profile flags (see relaxed);
@@ -25,8 +29,7 @@ type PolicyEngine struct {
 	relaxed bool
 }
 
-// Option configures a PolicyEngine at construction.
-type Option func(*PolicyEngine)
+type Option = options.Option[PolicyEngine]
 
 // WithRelaxed selects the relaxed profile: the ergonomic `cd` and output
 // redirect blocks step aside. Pass when the kernel sandbox is OFF. See
