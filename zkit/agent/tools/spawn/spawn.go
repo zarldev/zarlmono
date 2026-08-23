@@ -146,11 +146,10 @@ func WithMaxDepth(n int) options.Option[Tool] {
 	}
 }
 
-// WithSpawnMaxIterations sets a ceiling on child iterations. When the
-// model doesn't specify max_iterations (or sets it to 0), the tool
-// uses this value. When the model specifies a positive value, it's
-// clamped to this ceiling — the model cannot exceed the configured
-// sub-agent budget. Zero (the default) means "inherit from the runner".
+// WithSpawnMaxIterations sets the host-controlled child iteration budget. When
+// configured, this value is used for every child regardless of a model-supplied
+// max_iterations value, so the model cannot accidentally shorten sub-agent work.
+// Zero (the default) leaves iteration selection to the runner/tool argument.
 func WithSpawnMaxIterations(n int) options.Option[Tool] {
 	return func(t *Tool) {
 		if n >= 0 {
@@ -530,18 +529,13 @@ func pluralS(n int) string {
 }
 
 // spawnMaxIterations resolves the effective max iterations for a child task.
-// When the tool has a configured ceiling (spawnMaxIter > 0):
-//   - model-specified 0 or negative → use the ceiling
-//   - model-specified positive → clamp to the ceiling
-//
-// When the tool has no ceiling (spawnMaxIter == 0):
-//   - model-specified 0 → leave 0 (runner inherits its own default)
-//   - model-specified positive → pass through (model chooses)
+// A configured host budget always wins: treating a model-specified value as a
+// lower cap lets the model accidentally cut focused sub-agent work short (for
+// example, repeatedly choosing 5 despite a configured budget of 20). Without a
+// configured budget, preserve the model value; zero lets the runner use its
+// own default.
 func (t *Tool) spawnMaxIterations(modelSpec int) int {
-	if t.spawnMaxIter <= 0 {
-		return modelSpec
-	}
-	if modelSpec <= 0 || modelSpec > t.spawnMaxIter {
+	if t.spawnMaxIter > 0 {
 		return t.spawnMaxIter
 	}
 	return modelSpec
