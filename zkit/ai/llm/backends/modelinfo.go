@@ -130,6 +130,28 @@ func (r *ProviderRegistry) ResolveCost(ctx context.Context, name, model string) 
 	return costForAdapter(def.AdapterType, model)
 }
 
+// ResolveCostCached resolves pricing from explicit overrides, the process-local
+// models.dev snapshot, then static tables. It never performs I/O and is safe on
+// render paths.
+func (r *ProviderRegistry) ResolveCostCached(name, model string) (float64, float64, bool) {
+	if r.IsLocal(name) {
+		return 0, 0, false
+	}
+	def, err := r.Parse(name)
+	if err != nil {
+		return 0, 0, false
+	}
+	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
+		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
+	}
+	if r.modelsDevSource != nil {
+		if entry, ok := r.modelsDevSource.LookupCached(name, model); ok && (entry.InputCostPerMTok > 0 || entry.OutputCostPerMTok > 0) {
+			return entry.InputCostPerMTok / 1000, entry.OutputCostPerMTok / 1000, true
+		}
+	}
+	return costForAdapter(def.AdapterType, model)
+}
+
 // ResolveCapabilities consults models.dev before falling back to the
 // static per-package table. Unknown providers/models return the zero
 // value. Unlike ResolveCost, local providers are not short-circuited:
@@ -157,6 +179,28 @@ func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model 
 	}
 	// Streaming and system support are near-universal for hosted providers
 	// and not tracked by models.dev.
+	caps.SupportsStreaming = true
+	caps.SupportsSystem = true
+	return caps
+}
+
+// ResolveCapabilitiesCached merges static capabilities with the process-local
+// models.dev snapshot. It never performs I/O and is safe on render paths.
+func (r *ProviderRegistry) ResolveCapabilitiesCached(name, model string) llm.ModelCapabilities {
+	def, err := r.Parse(name)
+	if err != nil {
+		return llm.ModelCapabilities{}
+	}
+	caps := capabilitiesForAdapter(def.AdapterType, model)
+	if r.modelsDevSource != nil {
+		entry, ok := r.modelsDevSource.LookupCached(name, model)
+		if !ok {
+			entry.Intrinsic, ok = r.modelsDevSource.LookupIntrinsicCached(model)
+		}
+		if ok {
+			mergeCapabilities(&caps, entry.Intrinsic)
+		}
+	}
 	caps.SupportsStreaming = true
 	caps.SupportsSystem = true
 	return caps

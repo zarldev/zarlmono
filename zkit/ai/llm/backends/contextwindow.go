@@ -36,6 +36,30 @@ func (r *ProviderRegistry) ContextWindow(name, model string) int {
 	return contextWindowForAdapter(def.AdapterType, model)
 }
 
+// ResolveContextWindowCached resolves a hosted model's window from explicit
+// configuration, the process-local models.dev snapshot, then static tables. It
+// never probes local servers, reads disk, or performs network I/O.
+func (r *ProviderRegistry) ResolveContextWindowCached(name, model string) int {
+	def, err := r.Parse(name)
+	if err == nil && def.ContextWindow > 0 {
+		return def.ContextWindow
+	}
+	if r.modelsDevSource != nil {
+		if entry, ok := r.modelsDevSource.LookupCached(name, model); ok && entry.ContextWindow > 0 {
+			return entry.ContextWindow
+		}
+	}
+	if window := r.ContextWindow(name, model); window > 0 {
+		return window
+	}
+	if r.modelsDevSource != nil {
+		if intrinsic, ok := r.modelsDevSource.LookupIntrinsicCached(model); ok && intrinsic.ContextWindow > 0 {
+			return intrinsic.ContextWindow
+		}
+	}
+	return 0
+}
+
 // ResolveContextWindow returns the usable context window (tokens) for a
 // (provider, model), the way each provider actually reports it:
 //

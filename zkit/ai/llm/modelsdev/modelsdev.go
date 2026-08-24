@@ -120,6 +120,25 @@ func (s *Source) Lookup(ctx context.Context, providerKey, model string) (Entry, 
 	return e, ok
 }
 
+// LookupCached returns an entry from the process-local snapshot only. It never
+// reads the backing cache or performs network I/O, so it is safe on render and
+// other latency-sensitive paths. ok is false until [Source.Warm] or a regular
+// lookup has populated the snapshot.
+func (s *Source) LookupCached(providerKey, model string) (Entry, bool) {
+	s.mu.RLock()
+	snap, ok := s.snapshot, s.hasSnap
+	s.mu.RUnlock()
+	if !ok {
+		return Entry{}, false
+	}
+	models, ok := snap.Entries[providerAlias(providerKey)]
+	if !ok {
+		return Entry{}, false
+	}
+	entry, ok := models[model]
+	return entry, ok
+}
+
 // LookupIntrinsic returns provider-independent metadata for a model name. It
 // is used when an endpoint serves a model owned by another provider. Exact
 // provider lookup remains authoritative for pricing; this method returns no
@@ -127,6 +146,30 @@ func (s *Source) Lookup(ctx context.Context, providerKey, model string) (Entry, 
 // capabilities.
 func (s *Source) LookupIntrinsic(ctx context.Context, model string) (Intrinsic, bool) {
 	snap, ok, _ := s.ensureSnapshot(ctx)
+	if !ok {
+		return Intrinsic{}, false
+	}
+	full := normalizeModelID(model)
+	if full == "" {
+		return Intrinsic{}, false
+	}
+	if entry, ok := intrinsicConsensus(snap, full, false); ok {
+		return entry, true
+	}
+	base := modelBaseName(full)
+	if base == full {
+		return Intrinsic{}, false
+	}
+	return intrinsicConsensus(snap, base, true)
+}
+
+// LookupIntrinsicCached is the process-local, non-blocking counterpart to
+// [Source.LookupIntrinsic]. It never reads the backing cache or performs
+// network I/O.
+func (s *Source) LookupIntrinsicCached(model string) (Intrinsic, bool) {
+	s.mu.RLock()
+	snap, ok := s.snapshot, s.hasSnap
+	s.mu.RUnlock()
 	if !ok {
 		return Intrinsic{}, false
 	}

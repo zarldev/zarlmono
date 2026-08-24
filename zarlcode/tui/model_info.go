@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,12 +10,11 @@ import (
 )
 
 type modelInfoResolver struct {
-	ctx context.Context
-	s   *engine.Settings
+	s *engine.Settings
 }
 
 func newModelInfoResolver(s *engine.Settings) *modelInfoResolver {
-	return &modelInfoResolver{ctx: context.Background(), s: s}
+	return &modelInfoResolver{s: s}
 }
 
 func (r *modelInfoResolver) summary(provider, model string) string {
@@ -24,22 +22,15 @@ func (r *modelInfoResolver) summary(provider, model string) string {
 		return ""
 	}
 	ctx := ""
-	if cw := r.contextWindow(provider, model); cw > 0 {
+	if cw := r.s.Registry.ResolveContextWindowCached(provider, model); cw > 0 {
 		ctx = fmtTokens(cw)
 	}
-	caps := strings.Join(modelCapabilitiesBadges(r.s.Registry.ResolveCapabilities(r.ctx, provider, model)), ",")
+	caps := strings.Join(modelCapabilitiesBadges(r.s.Registry.ResolveCapabilitiesCached(provider, model)), ",")
 	cost := ""
-	if in, out, ok := r.s.Registry.ResolveCost(r.ctx, provider, model); ok {
+	if in, out, ok := r.s.Registry.ResolveCostCached(provider, model); ok {
 		cost = fmtCostPerM(in, out)
 	}
 	return palette.Muted.On(fmt.Sprintf("%6s  %-18s  %15s", ctx, caps, cost))
-}
-
-func (r *modelInfoResolver) contextWindow(provider, model string) int {
-	if r.s.Registry.IsLocal(provider) {
-		return r.s.Registry.ContextWindow(provider, model)
-	}
-	return r.s.Registry.ResolveContextWindow(r.ctx, provider, "", model)
 }
 
 func fmtTokens(n int) string {

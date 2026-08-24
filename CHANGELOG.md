@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.13.0] — 2026-08-24
+`zarlcode/v0.13.0`
+
+### Fixed
+
+- Model selection remains responsive by rendering models.dev context, capability, and pricing metadata exclusively from the warmed in-memory snapshot, with static metadata as the cold-start fallback.
+
+## [zkit/v0.14.0] — 2026-08-24
+`zkit/v0.14.0`
+
+### Added
+
+- Added non-blocking, in-memory-only models.dev lookups and cached provider metadata resolvers for latency-sensitive render paths.
+
 ## [zkit/v0.13.0] — 2026-08-24
 `zkit/v0.13.0`
 
