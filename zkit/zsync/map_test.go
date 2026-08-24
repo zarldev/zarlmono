@@ -262,6 +262,30 @@ func TestMap_Clear(t *testing.T) {
 	}
 }
 
+func TestMap_Snapshot(t *testing.T) {
+	m := zsync.NewMap[string, int]()
+	m.Set("one", 1)
+	m.Set("two", 2)
+
+	snapshot := m.Snapshot()
+	snapshot["one"] = 10
+	delete(snapshot, "two")
+
+	if value, err := m.Get("one"); err != nil || value != 1 {
+		t.Errorf("Get(one) = (%d, %v), want (1, nil)", value, err)
+	}
+	if value, err := m.Get("two"); err != nil || value != 2 {
+		t.Errorf("Get(two) = (%d, %v), want (2, nil)", value, err)
+	}
+}
+
+func TestMap_SnapshotZeroValue(t *testing.T) {
+	var m zsync.Map[string, int]
+	if got := m.Snapshot(); len(got) != 0 {
+		t.Errorf("Snapshot() = %v, want empty map", got)
+	}
+}
+
 func TestMap_LoadOrStore(t *testing.T) {
 	m := zsync.NewMap[string, int]()
 
