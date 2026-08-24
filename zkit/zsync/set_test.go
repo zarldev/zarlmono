@@ -10,6 +10,20 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zsync"
 )
 
+func TestNewSet(t *testing.T) {
+	values := []string{"accepted", "created", "accepted"}
+	set := zsync.NewSet(values...)
+
+	if got := set.Len(); got != 2 {
+		t.Fatalf("Len() = %d, want 2", got)
+	}
+	for _, value := range []string{"accepted", "created"} {
+		if !set.Contains(value) {
+			t.Errorf("Contains(%q) = false, want true", value)
+		}
+	}
+}
+
 func TestSet_Add(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -50,6 +64,20 @@ func TestSet_Add(t *testing.T) {
 				t.Errorf("Len() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSet_AddAll(t *testing.T) {
+	set := zsync.NewSet("existing")
+	set.AddAll("first", "second", "first")
+
+	if got := set.Len(); got != 3 {
+		t.Fatalf("Len() = %d, want 3", got)
+	}
+	for _, value := range []string{"existing", "first", "second"} {
+		if !set.Contains(value) {
+			t.Errorf("Contains(%q) = false, want true", value)
+		}
 	}
 }
 
@@ -209,6 +237,15 @@ func TestSet_Remove(t *testing.T) {
 				t.Errorf("Len() after remove = %v, want %v", s.Len(), tt.length)
 			}
 		})
+	}
+}
+
+func TestSet_RemoveAll(t *testing.T) {
+	set := zsync.NewSet("first", "second", "third")
+	set.RemoveAll("first", "third", "missing")
+
+	if got := set.Values(); !slices.Equal(got, []string{"second"}) {
+		t.Errorf("Values() = %v, want [second]", got)
 	}
 }
 

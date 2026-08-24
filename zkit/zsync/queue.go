@@ -19,9 +19,9 @@ type Queue[T any] struct {
 
 var _ io.Closer = (*Queue[any])(nil)
 
-// NewQueue creates a new thread-safe FIFO queue.
-func NewQueue[T any]() *Queue[T] {
-	q := &Queue[T]{}
+// NewQueue creates a new thread-safe FIFO queue containing items.
+func NewQueue[T any](items ...T) *Queue[T] {
+	q := &Queue[T]{items: append([]T(nil), items...)}
 	q.cond = sync.NewCond(&q.mu)
 	return q
 }
@@ -36,6 +36,21 @@ func (q *Queue[T]) Push(item T) error {
 	}
 	q.items = append(q.items, item)
 	q.cond.Signal()
+	return nil
+}
+
+// PushMany atomically adds items to the back of the queue. It returns
+// ErrQueueClosed without adding any items after Close.
+func (q *Queue[T]) PushMany(items ...T) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return ErrQueueClosed
+	}
+	q.items = append(q.items, items...)
+	if len(items) > 0 {
+		q.cond.Broadcast()
+	}
 	return nil
 }
 
@@ -131,6 +146,13 @@ func (q *Queue[T]) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.items)
+}
+
+// Snapshot returns a copy of the queued items in FIFO order.
+func (q *Queue[T]) Snapshot() []T {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return append([]T(nil), q.items...)
 }
 
 // Close marks the queue closed and wakes every waiter. Push fails

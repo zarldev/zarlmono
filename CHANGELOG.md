@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zkit/v0.13.0] — 2026-08-24
+`zkit/v0.13.0`
+
+### Added
+
+- Added variadic initial values to `zsync.NewSet` and `zsync.NewQueue`.
+- Added independent snapshots for `zsync.Map` and `zsync.Queue`.
+- Added atomic batch updates with `Set.AddAll`, `Set.RemoveAll`, and `Queue.PushMany`.
+
 ## [zarlcode/v0.12.0] — 2026-08-23
 `zarlcode/v0.12.0`
 

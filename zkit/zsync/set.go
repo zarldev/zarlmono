@@ -10,14 +10,30 @@ type Set[T comparable] struct {
 	m *Map[T, struct{}]
 }
 
-// NewSet creates a new thread-safe set.
-func NewSet[T comparable]() *Set[T] {
-	return &Set[T]{m: NewMap[T, struct{}]()}
+// NewSet creates a new thread-safe set containing values.
+func NewSet[T comparable](values ...T) *Set[T] {
+	set := &Set[T]{m: NewMap[T, struct{}]()}
+	for _, value := range values {
+		set.Add(value)
+	}
+	return set
 }
 
 // Add inserts a value. No-op if already present.
 func (s *Set[T]) Add(value T) {
 	s.m.Set(value, struct{}{})
+}
+
+// AddAll inserts values atomically. Existing values are unchanged.
+func (s *Set[T]) AddAll(values ...T) {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	if s.m.data == nil {
+		s.m.data = make(map[T]struct{}, len(values))
+	}
+	for _, value := range values {
+		s.m.data[value] = struct{}{}
+	}
 }
 
 // AddIfAbsent inserts value when it is not already present.
@@ -36,6 +52,15 @@ func (s *Set[T]) Contains(value T) bool {
 // Remove deletes a value. Returns true if it existed.
 func (s *Set[T]) Remove(value T) bool {
 	return s.m.Delete(value)
+}
+
+// RemoveAll removes values atomically.
+func (s *Set[T]) RemoveAll(values ...T) {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	for _, value := range values {
+		delete(s.m.data, value)
+	}
 }
 
 // Len returns the current member count.

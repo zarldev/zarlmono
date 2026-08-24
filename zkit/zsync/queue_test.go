@@ -3,6 +3,7 @@ package zsync_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -10,6 +11,22 @@ import (
 
 	"github.com/zarldev/zarlmono/zkit/zsync"
 )
+
+func TestNewQueue(t *testing.T) {
+	items := []string{"first", "second"}
+	queue := zsync.NewQueue(items...)
+	items[0] = "changed"
+
+	for _, want := range []string{"first", "second"} {
+		got, err := queue.TryPop()
+		if err != nil {
+			t.Fatalf("TryPop() error = %v", err)
+		}
+		if got != want {
+			t.Errorf("TryPop() = %q, want %q", got, want)
+		}
+	}
+}
 
 func TestQueue_Push(t *testing.T) {
 	tests := []struct {
@@ -66,6 +83,80 @@ func TestQueue_Push(t *testing.T) {
 				t.Errorf("Len() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestQueue_PushMany(t *testing.T) {
+	t.Run("preserves order", func(t *testing.T) {
+		queue := zsync.NewQueue("existing")
+		if err := queue.PushMany("first", "second"); err != nil {
+			t.Fatalf("PushMany() error = %v", err)
+		}
+		if got := queue.Snapshot(); !slices.Equal(got, []string{"existing", "first", "second"}) {
+			t.Errorf("Snapshot() = %v, want [existing first second]", got)
+		}
+	})
+
+	t.Run("closed queue is unchanged", func(t *testing.T) {
+		queue := zsync.NewQueue("existing")
+		if err := queue.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		if err := queue.PushMany("first", "second"); !errors.Is(err, zsync.ErrQueueClosed) {
+			t.Errorf("PushMany() error = %v, want %v", err, zsync.ErrQueueClosed)
+		}
+		if got := queue.Snapshot(); !slices.Equal(got, []string{"existing"}) {
+			t.Errorf("Snapshot() = %v, want [existing]", got)
+		}
+	})
+}
+
+func TestQueue_PushManyWakesWaiters(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		queue := zsync.NewQueue[string]()
+		results := make(chan string, 2)
+		for range 2 {
+			go func() {
+				item, err := queue.Pop()
+				if err != nil {
+					t.Errorf("Pop() error = %v", err)
+					return
+				}
+				results <- item
+			}()
+		}
+		synctest.Wait()
+
+		if err := queue.PushMany("first", "second"); err != nil {
+			t.Fatalf("PushMany() error = %v", err)
+		}
+		synctest.Wait()
+
+		got := []string{<-results, <-results}
+		slices.Sort(got)
+		if !slices.Equal(got, []string{"first", "second"}) {
+			t.Errorf("popped items = %v, want [first second]", got)
+		}
+	})
+}
+
+func TestQueue_Snapshot(t *testing.T) {
+	queue := zsync.NewQueue("first", "second")
+	snapshot := queue.Snapshot()
+	snapshot[0] = "changed"
+
+	if got := queue.Snapshot(); !slices.Equal(got, []string{"first", "second"}) {
+		t.Errorf("Snapshot() = %v, want [first second]", got)
+	}
+}
+
+func TestQueue_SnapshotAfterClose(t *testing.T) {
+	queue := zsync.NewQueue("first", "second")
+	if err := queue.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := queue.Snapshot(); !slices.Equal(got, []string{"first", "second"}) {
+		t.Errorf("Snapshot() = %v, want [first second]", got)
 	}
 }
 

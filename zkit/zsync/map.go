@@ -94,6 +94,17 @@ func (m *Map[K, V]) Keys() []K {
 	return keys
 }
 
+// Snapshot returns a copy of the current entries.
+func (m *Map[K, V]) Snapshot() map[K]V {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	snapshot := make(map[K]V, len(m.data))
+	for key, value := range m.data {
+		snapshot[key] = value
+	}
+	return snapshot
+}
+
 // Clear removes all entries.
 func (m *Map[K, V]) Clear() {
 	m.mu.Lock()
