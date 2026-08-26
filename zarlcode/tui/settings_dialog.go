@@ -175,6 +175,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "seconds to wait with no output from the model before cancelling the iteration. raise it for slow local models/connections; non-positive falls back to 90."},
 				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, def: "20",
 					desc: "cap on sub-agent iterations per agent_spawn call. unset inherits the parent max."},
+				{label: "spawn await timeout", key: prefs.KeySpawnAwaitTimeout, kind: rowText, numeric: true, def: "30",
+					desc: "seconds agent_await waits before returning a RUNNING snapshot without cancelling the sub-agent."},
 				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, def: "(unset)",
 					desc: "how deep agent_spawn may recurse. unset uses the built-in default."},
 				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, def: "0",

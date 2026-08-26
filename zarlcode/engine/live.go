@@ -688,6 +688,13 @@ func (l *LiveRunner) guardrailDepsFor(ctx context.Context, headless bool) guardr
 	deps := coderunner.StandardGuardrailDeps(l.ws.Root(), testEdit)
 	deps.SkillLookup = l.catalog
 	deps.DecomposeJudge = l.decomposeJudge(ctx)
+	deps.DecomposeIgnoredTools = append(deps.DecomposeIgnoredTools,
+		spawn.ToolNameAgentSpawn,
+		spawn.ToolNameAgentAwait,
+		spawn.ToolNameAgentStatus,
+		spawn.ToolNameAgentStop,
+		spawn.ToolNameListAgentTasks,
+	)
 	// plan_first gate: refuse the first workspace-changing call until update_plan
 	// has run. Off unless the user opts in (weak/local-model profile). PlanTool
 	// matches what sourceWithDeps registers against the live plan store.
@@ -919,7 +926,14 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, d
 		if err != nil {
 			return nil, nil, fmt.Errorf("program tool source: %w", err)
 		}
-		guarded = programSource
+		// Program is synthetic and was added after the ordinary source was
+		// guarded. Guard only its outer boundary with a fresh chain; direct tools
+		// keep using the original chain, while nested program calls re-enter it.
+		programBoundary, err := sourcechain.New(programSource, deps)
+		if err != nil {
+			return nil, nil, fmt.Errorf("program boundary guardrails: %w", err)
+		}
+		guarded = newToolBoundarySource(programSource, programBoundary.Source, programtools.ToolName)
 	}
 	return guarded, reg, nil
 }

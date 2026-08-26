@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [zarlcode/v0.14.0] — 2026-08-26
+`zarlcode/v0.14.0`
+
+### Added
+
+- Added a configurable `spawn_await_timeout` setting for bounded sub-agent waits.
+
+### Fixed
+
+- Named agents now honor the host-configured spawn iteration budget instead of silently stopping at a lower profile value.
+- Agent lifecycle tools recover an omitted task receipt when the target is unambiguous and bounded waits return a running snapshot without cancelling work.
+- The synthetic `program` boundary now traverses production guardrails while nested calls remain guarded exactly once.
+
+## [zkit/v0.15.0] — 2026-08-26
+`zkit/v0.15.0`
+
+### Changed
+
+- Decompose guardrails can exclude managed control-plane wrappers from retry and delegation accounting.
+
+### Fixed
+
+- Agent await distinguishes polling timeouts from parent cancellation and deadlines, resolves completion races, and reports explicit cancellation successfully.
+- Program validates Starlark before execution and gives corrective guidance for invalid escape sequences.
+- Agent lifecycle task selection and typed failure handling now remain consistent across await, status, stop, and list operations.
+
 ## [zarlcode/v0.13.0] — 2026-08-24
 `zarlcode/v0.13.0`
 

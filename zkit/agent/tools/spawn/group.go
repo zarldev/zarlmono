@@ -175,6 +175,18 @@ func (g *Group) Await(ctx context.Context, taskID TaskID) (TaskSnapshot, error) 
 	}
 }
 
+// Peek returns the current immutable task view without marking a terminal
+// result observed. It is used by bounded waits that time out while work runs.
+func (g *Group) Peek(taskID TaskID) (TaskSnapshot, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	t, ok := g.tasks[taskID]
+	if !ok {
+		return TaskSnapshot{}, fmt.Errorf("%w: %q", ErrTaskNotFound, taskID)
+	}
+	return t.snapshot, nil
+}
+
 // Snapshot returns the current immutable task view. A terminal result is marked
 // observed because its summary is being delivered to the caller.
 func (g *Group) Snapshot(taskID TaskID) (TaskSnapshot, error) {
@@ -282,12 +294,36 @@ func taskData(s TaskSnapshot) map[string]any {
 	return data
 }
 
-func taskID(args tools.ToolParameters) (TaskID, error) {
-	id := TaskID(args.String("task_id", ""))
-	if id == "" {
-		return "", tools.Validation("agent task", "task_id is required")
+func resolveTaskID(group *Group, args tools.ToolParameters, preferRunning bool) (TaskID, error) {
+	if id := TaskID(args.String("task_id", "")); id != "" {
+		return id, nil
 	}
-	return id, nil
+	if group == nil {
+		return "", tools.Fatal("agent task", errors.New("task group is not configured"))
+	}
+	tasks := group.List()
+	if len(tasks) == 1 && (!preferRunning || tasks[0].State == AgentTaskStates.RUNNING) {
+		return tasks[0].ID, nil
+	}
+	if preferRunning {
+		var running TaskID
+		for _, task := range tasks {
+			if task.State != AgentTaskStates.RUNNING {
+				continue
+			}
+			if running != "" {
+				return "", tools.Validation("agent task", "task_id is required because multiple tasks are running; call list_agent_tasks to recover it")
+			}
+			running = task.ID
+		}
+		if running != "" {
+			return running, nil
+		}
+	}
+	if len(tasks) == 0 {
+		return "", tools.Validation("agent task", "task_id is required; no agent tasks exist")
+	}
+	return "", tools.Validation("agent task", "task_id is required because multiple tasks exist; call list_agent_tasks to recover it")
 }
 
 func taskResult(call tools.ToolCall, snapshot TaskSnapshot) *tools.ToolResult {

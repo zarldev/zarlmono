@@ -96,6 +96,7 @@ const (
 	KeyMaxIterations       = "max_iterations"
 	KeySpawnMaxIterations  = "spawn_max_iterations"
 	KeySpawnMaxDepth       = "spawn_max_depth"
+	KeySpawnAwaitTimeout   = "spawn_await_timeout"
 	KeyCodexEffort         = "codex_reasoning_effort" // Background-process limits for the bash process manager.
 	KeyMaxAliveProcesses   = "max_alive_processes"
 	KeyProcessOutputBuffer = "process_output_buffer"

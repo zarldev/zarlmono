@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"strings"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/options"
 	"go.starlark.net/starlark"
+	"go.starlark.net/syntax"
 )
 
 // ToolName is the LLM-visible programmatic tool name.
@@ -182,6 +184,10 @@ func (t programTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		return failure(call.ID, errObj, metadata.SetError(errObj).SetExecutionTime(time.Since(started))), nil
 	}
 
+	if parseErr := validateScript(args.Script); parseErr != nil {
+		metadata.SetError(parseErr)
+		return failure(call.ID, parseErr, metadata.SetExecutionTime(time.Since(started))), nil
+	}
 	runner := newRunner(ctx, t.source, call.ID, started)
 	output, stats, runErr := runner.run(args.Script)
 	metadata["nested_events"] = true
@@ -200,6 +206,18 @@ func (t programTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		Metadata:   metadata,
 		ExecutedAt: time.Now(),
 	}, nil
+}
+
+func validateScript(script string) *tools.Error {
+	_, err := syntax.LegacyFileOptions().Parse("program.star", script, 0)
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	if strings.Contains(message, "invalid escape sequence") {
+		message += `; Starlark strings only accept supported escapes—use a raw string such as r"..." for regex patterns, or double the backslash in a quoted string`
+	}
+	return tools.Validation(op, message)
 }
 
 func failure(id tools.ToolCallID, errObj *tools.Error, metadata tools.ToolMetadata) *tools.ToolResult {

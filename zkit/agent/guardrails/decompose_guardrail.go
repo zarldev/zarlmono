@@ -158,6 +158,12 @@ type DecomposeGuardrail struct {
 	// read it without synchronization.
 	judge VerdictJudge
 
+	// ignoredTools are control/composite surfaces whose failures should remain
+	// their own actionable errors. Their nested or managed work is guarded at
+	// the underlying dispatch boundary, so counting the wrapper here would
+	// double-count failures and produce nonsensical delegation advice.
+	ignoredTools map[tools.ToolName]struct{}
+
 	mu      sync.Mutex
 	buckets map[taskscope.ID]*decomposeBucket
 }
@@ -169,6 +175,22 @@ type DecomposeGuardrailOption = options.Option[DecomposeGuardrail]
 func WithDecomposeJudge(j VerdictJudge) DecomposeGuardrailOption {
 	return func(g *DecomposeGuardrail) {
 		g.judge = j
+	}
+}
+
+// WithDecomposeIgnoredTools excludes control/composite tool names from failure
+// tracking. The tools still run through every other guardrail; only decompose's
+// retry/delegation ladder steps aside.
+func WithDecomposeIgnoredTools(names ...tools.ToolName) DecomposeGuardrailOption {
+	return func(g *DecomposeGuardrail) {
+		if g.ignoredTools == nil {
+			g.ignoredTools = make(map[tools.ToolName]struct{}, len(names))
+		}
+		for _, name := range names {
+			if name != "" {
+				g.ignoredTools[name] = struct{}{}
+			}
+		}
 	}
 }
 
@@ -213,6 +235,9 @@ func (g *DecomposeGuardrail) Name() string { return "decompose" }
 // stick. It reads under the bucket lock for the same reason Inspect
 // does: parallel dispatches within one task share the bucket.
 func (g *DecomposeGuardrail) Before(ctx context.Context, call tools.ToolCall) error {
+	if g.ignored(call.ToolName) {
+		return nil
+	}
 	bucket := g.bucketFor(taskscope.IDFrom(ctx))
 	sig := tools.CallSignature(call)
 
@@ -251,6 +276,9 @@ func (g *DecomposeGuardrail) Inspect(
 	result *tools.ToolResult,
 	execErr error,
 ) error {
+	if g.ignored(call.ToolName) {
+		return nil
+	}
 	if !isFailure(result, execErr) {
 		return nil
 	}
@@ -485,4 +513,9 @@ func (g *DecomposeGuardrail) ForgetTask(id taskscope.ID) {
 	g.mu.Lock()
 	delete(g.buckets, id)
 	g.mu.Unlock()
+}
+
+func (g *DecomposeGuardrail) ignored(name tools.ToolName) bool {
+	_, ok := g.ignoredTools[name]
+	return ok
 }

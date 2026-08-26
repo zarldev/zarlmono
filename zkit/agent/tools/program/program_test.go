@@ -283,3 +283,21 @@ func TestConstructorValidation(t *testing.T) {
 		t.Fatal("invalid limits succeeded")
 	}
 }
+
+func TestProgramInvalidEscapeSuggestsRawString(t *testing.T) {
+	inner := &fakeSource{}
+	src, err := program.NewSource(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := src.Execute(context.Background(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit("\(")`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || res.Err == nil {
+		t.Fatalf("result = %#v, want validation failure", res)
+	}
+	if !strings.Contains(res.Error, "invalid escape sequence") || !strings.Contains(res.Error, "raw string") {
+		t.Fatalf("error = %q, want corrective raw-string guidance", res.Error)
+	}
+}

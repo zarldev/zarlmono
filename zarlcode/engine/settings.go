@@ -696,6 +696,7 @@ type Limits struct {
 	MaxIterations      int // cap on the agent loop per turn
 	SpawnMaxIterations int // cap on sub-agent loop per agent_spawn call; 0 = inherit parent
 	SpawnMaxDepth      int // sub-agent recursion ceiling; 0 = spawning disabled
+	SpawnAwaitTimeout  int // seconds one agent_await blocks; non-positive uses the tool default
 }
 
 // Limits resolves the run-budget settings (effective scope).
@@ -705,6 +706,7 @@ func (s *Settings) Limits(ctx context.Context) Limits {
 		MaxIterations:      s.intSetting(ctx, prefs.KeyMaxIterations, 0),
 		SpawnMaxIterations: s.intSetting(ctx, prefs.KeySpawnMaxIterations, 0),
 		SpawnMaxDepth:      s.intSetting(ctx, prefs.KeySpawnMaxDepth, 0),
+		SpawnAwaitTimeout:  s.intSetting(ctx, prefs.KeySpawnAwaitTimeout, 30),
 	}
 }
 

@@ -20,6 +20,12 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 	if reg == nil || parent == nil || group == nil || maxDepth == 0 {
 		return
 	}
+	awaitTimeout := 30 * time.Second
+	if l.settings != nil {
+		if seconds := l.settings.Limits(ctx).SpawnAwaitTimeout; seconds > 0 {
+			awaitTimeout = time.Duration(seconds) * time.Second
+		}
+	}
 	var planner spawn.SpawnPlanner
 	var candidates []spawn.AgentCandidate
 	var plannerProv llm.Provider
@@ -49,7 +55,7 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 	)
 	for _, tool := range []tools.Tool{
 		spawn.NewAsync(base, group, coordinator),
-		spawn.NewAwait(group),
+		spawn.NewAwait(group, spawn.WithAwaitTimeout(awaitTimeout)),
 		spawn.NewStatus(group),
 		spawn.NewStop(group),
 		spawn.NewList(group),
@@ -105,14 +111,7 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	if prov == nil {
 		return nil, fmt.Errorf("agent %q has no provider", agent.Name)
 	}
-	if spawnMaxIter > 0 {
-		maxIter = spawnMaxIter
-	} else if maxIter <= 0 {
-		maxIter = 20
-	}
-	if agent.MaxIterations > 0 {
-		maxIter = agent.MaxIterations
-	}
+	maxIter = resolveSpawnMaxIterations(spawnMaxIter, agent.MaxIterations, maxIter)
 	if reserve <= 0 {
 		reserve = liveReserveTokens
 	}
@@ -156,4 +155,17 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	r := runner.New(runner.ClientFromProvider(prov), opts...)
 	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth, spawnMaxIter)
 	return r, nil
+}
+
+func resolveSpawnMaxIterations(host, profile, fallback int) int {
+	if host > 0 {
+		return host
+	}
+	if profile > 0 {
+		return profile
+	}
+	if fallback > 0 {
+		return fallback
+	}
+	return 20
 }

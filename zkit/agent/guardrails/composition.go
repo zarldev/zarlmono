@@ -34,6 +34,11 @@ type Deps struct {
 	// Optional override. Nil keeps the decompose guardrail's deterministic path.
 	DecomposeJudge VerdictJudge
 
+	// DecomposeIgnoredTools are control/composite surfaces whose own failures
+	// should not enter the retry/delegation ladder. Nested work still traverses
+	// the guarded source independently.
+	DecomposeIgnoredTools []tools.ToolName
+
 	// PlanFirst arms the plan-first gate: the first workspace-changing call in
 	// a task is refused until the planning tool has run. Off by default; the
 	// local-model profile turns it on to stop weak models diving into edits
@@ -83,6 +88,9 @@ func PostSchemaGuardrails(deps Deps) []Guardrail {
 	decomposeOpts := make([]DecomposeGuardrailOption, 0, 1)
 	if deps.DecomposeJudge != nil {
 		decomposeOpts = append(decomposeOpts, WithDecomposeJudge(deps.DecomposeJudge))
+	}
+	if len(deps.DecomposeIgnoredTools) > 0 {
+		decomposeOpts = append(decomposeOpts, WithDecomposeIgnoredTools(deps.DecomposeIgnoredTools...))
 	}
 	decompose := NewDecomposeGuardrail(0, decomposeOpts...)
 

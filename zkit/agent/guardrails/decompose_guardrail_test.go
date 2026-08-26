@@ -8,6 +8,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -45,6 +46,21 @@ func TestDecomposeGuardrail_FirstTwoFailuresPassThrough(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		if err := g.Inspect(t.Context(), call, failingResult("tool failed"), nil); err != nil {
 			t.Errorf("failure %d: want pass-through, got %v", i, err)
+		}
+	}
+}
+
+func TestDecomposeIgnoredWrapperDoesNotConsumeFailureBudget(t *testing.T) {
+	guard := guardrails.NewDecomposeGuardrail(1, guardrails.WithDecomposeIgnoredTools("agent_await"))
+	ctx := taskscope.WithID(t.Context(), "task")
+	call := tools.ToolCall{ID: "1", ToolName: "agent_await", Arguments: tools.ToolParameters{"task_id": "missing"}}
+	failed := tools.Failure(call.ID, tools.Validation("agent_await", "missing"))
+	for range 5 {
+		if decision := guard.Before(ctx, call); decision != nil {
+			t.Fatalf("Before ignored wrapper = %#v", decision)
+		}
+		if decision := guard.Inspect(ctx, call, failed, nil); decision != nil {
+			t.Fatalf("Inspect ignored wrapper = %#v", decision)
 		}
 	}
 }
