@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -73,6 +75,34 @@ func TestPlanDialogKeyBehavior(t *testing.T) {
 	}
 }
 
+func TestPlanDialogLiveUsesSharedRegionsAndScrolls(t *testing.T) {
+	steps := make([]code.PlanStep, 18)
+	for i := range steps {
+		steps[i] = code.PlanStep{Text: "step " + strconv.Itoa(i+1), Status: code.StepStatuses.PENDING}
+	}
+	d := newPlanDialog(&code.Plan{Steps: steps}, t.TempDir())
+	buf := uv.NewScreenBuffer(80, 10)
+	d.drawLive(buf, buf.Bounds())
+	first := ansi.Strip(buf.Render())
+
+	for _, want := range []string{"[planning pane]", "[ live ]", "18 steps", "of", "tab saved plans", "updates live"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("live plan missing %q:\n%s", want, first)
+		}
+	}
+	if strings.Count(first, "[planning pane]") != 1 {
+		t.Fatalf("live plan should render one framed title:\n%s", first)
+	}
+
+	d.handleKey(skey(tea.KeyEnd))
+	buf = uv.NewScreenBuffer(80, 10)
+	d.drawLive(buf, buf.Bounds())
+	last := ansi.Strip(buf.Render())
+	if d.liveScroll == 0 || !strings.Contains(last, "step 18") {
+		t.Fatalf("live plan end did not reveal final step (scroll=%d):\n%s", d.liveScroll, last)
+	}
+}
+
 func TestPlanDialogSavedViewChrome(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, code.PlansDir)
@@ -92,6 +122,49 @@ func TestPlanDialogSavedViewChrome(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("saved plan view missing %q:\n%s", want, out)
 		}
+	}
+	lines := strings.Split(out, "\n")
+	if strings.HasPrefix(lines[0], "┌") || strings.HasPrefix(lines[len(lines)-1], "└") {
+		t.Fatalf("saved plans should not use an outer box:\n%s", out)
+	}
+	if !strings.Contains(lines[0], "[ saved ]") || strings.Contains(lines[0], "ctrl+p close") {
+		t.Fatalf("saved plans header should identify the active view without duplicate close help: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "─") || !strings.Contains(lines[2], "│") {
+		t.Fatalf("saved plans missing utility divider or nav/detail split:\n%s", strings.Join(lines[:3], "\n"))
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("saved plans contextual footer missing close action: %q", lines[len(lines)-1])
+	}
+}
+
+func TestPlanDialogSavedViewRendersSelectedPlanAtSharedMinimum(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, code.PlansDir)
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 8; i++ {
+		name := fmt.Sprintf("plan-%d.md", i)
+		if err := os.WriteFile(filepath.Join(plansDir, name), []byte("# Plan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := newPlanDialog(&code.Plan{}, dir)
+	d.view = planViewSaved
+	d.cursor = len(d.entries) - 1
+	d.tryPreview()
+	selected := d.entries[d.cursor].name
+	buf := uv.NewScreenBuffer(42, 7)
+	d.drawSaved(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "[ saved ]") || !strings.Contains(out, selected) {
+		t.Fatalf("narrow saved plans lost active view or selected plan:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("narrow saved plans missing close action: %q", lines[len(lines)-1])
 	}
 }
 

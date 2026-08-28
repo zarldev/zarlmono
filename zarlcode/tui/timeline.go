@@ -178,7 +178,10 @@ type userItem struct {
 }
 
 func (u *userItem) render(width int) []string {
-	return renderPlain(width, u.text, withRail(userRail()))
+	anchor, rail := turnOwnerPrefixes("you", palette.User.On)
+	lines := []string{anchor}
+	lines = append(lines, renderPlain(width, u.text, withFirstPrefix(rail, rail))...)
+	return append(lines, palette.User.On("└─"))
 }
 func (u *userItem) finished() bool { return true }
 
@@ -189,55 +192,51 @@ type queuedUserItem struct {
 }
 
 func (q *queuedUserItem) render(width int) []string {
-	if q.injected {
-		return renderPlain(width, q.text, withRail(userRail()))
+	anchor, rail := turnOwnerPrefixes("you", palette.User.On)
+	if !q.injected {
+		anchor += palette.Muted.On("  ◷ queued")
 	}
-	prefix := palette.Muted.On("◷ queued ") + userRail()
-	return renderPlain(width, q.text, withRail(prefix))
+	lines := []string{anchor}
+	lines = append(lines, renderPlain(width, q.text, withFirstPrefix(rail, rail))...)
+	if q.injected {
+		lines = append(lines, palette.User.On("└─"))
+	}
+	return lines
 }
 func (q *queuedUserItem) finished() bool { return q.injected }
 
 type assistantItem struct {
 	versioned
-	depth            int
-	content          string // accumulated visible answer (the turn headline)
-	status           string // live placeholder shown while content == "" (e.g. "working…")
-	done             bool
-	md               streamingMarkdown
-	compactionNotice string // summary attached when compaction fires for this turn
+	depth       int
+	content     string // accumulated visible answer (the turn headline)
+	status      string // live placeholder shown while content == "" (e.g. "working…")
+	done        bool
+	md          streamingMarkdown
+	hasActivity bool // supporting activity follows the response body
 }
 
 func (a *assistantItem) render(width int) []string {
-	rail := assistantRail()
 	if a.content == "" {
 		status := a.status
 		if status == "" {
 			status = "working…"
 		}
-		return renderContentBlock(width, contentBlock{kind: contentStatus, text: palette.Muted.On(status), rail: rail, depth: a.depth})
+		anchor, rail := turnOwnerPrefixes("zarl", palette.Assistant.On)
+		anchor += palette.Muted.On("  " + status)
+		return []string{anchor, rail}
 	}
-	lines := renderContentBlock(width, contentBlock{kind: contentMarkdown, text: a.content, rail: rail, depth: a.depth, markdown: &a.md})
-	if a.compactionNotice != "" {
-		lines = append(lines, renderContentBlock(width, contentBlock{
-			kind:  contentStatus,
-			text:  palette.Muted.On(a.compactionNotice),
-			rail:  rail,
-			depth: a.depth,
-		})...)
+	anchor, rail := turnOwnerPrefixes("zarl", palette.Assistant.On)
+	lines := []string{anchor}
+	lines = append(lines, renderContentBlock(width, contentBlock{
+		kind: contentMarkdown, text: a.content, depth: a.depth, markdown: &a.md,
+		firstPrefix: rail, continuationPrefix: rail,
+	})...)
+	if a.hasActivity {
+		lines = append(lines, palette.Assistant.On("├─"))
 	}
 	return lines
 }
 func (a *assistantItem) finished() bool { return a.done }
-
-// Transcript rails use the theme's native accents rather than the broader
-// semantic role colours. The role slots intentionally stay stable across
-// themes (user ~= warm, assistant ~= cool) for graphs and markdown styling, but
-// that made the conversation gutter feel samey and sometimes clash with a
-// theme's identity. Rails are decorative structure, so they follow the selected
-// theme: user on secondary, assistant on primary.
-func userRail() string { return palette.Secondary.On("▌") + " " }
-
-func assistantRail() string { return palette.Primary.On("▌") + " " }
 
 type toolState int
 
@@ -312,6 +311,9 @@ func (t *toolItem) render(width int) []string {
 		icon = palette.Error.On("✗")
 	}
 	head := icon + " " + t.name
+	if t.state == toolRunning {
+		head += " " + palette.Warning.On("running")
+	}
 	if t.state == toolFailed && t.failKind != tools.Kinds.UNKNOWN {
 		head += " " + kindBadge(t.failKind)
 	}
@@ -570,18 +572,6 @@ func (tl *timeline) addNotice(text string) {
 	tl.pushItem(&noticeItem{depth: 0, text: text})
 }
 
-func (tl *timeline) attachCompaction(taskID, text string) {
-	if taskID == "manual-compact" {
-		tl.pushItem(newCompactionItem(text))
-		return
-	}
-	if turn := tl.turns[taskID]; turn != nil && turn.resp != nil {
-		turn.resp.compactionNotice = text
-		turn.resp.bump()
-		tl.invalidateItem(turn.resp)
-	}
-}
-
 // startSubAgent creates a collapsible subAgentItem and registers it as the
 // active sub-agent for taskID. All subsequent Depth>0 events for this task
 // route into this item instead of the flat timeline.
@@ -624,6 +614,7 @@ func (tl *timeline) addLoadedSkill(taskID, name string) {
 	if ot == nil || ot.skills == nil {
 		return
 	}
+	tl.markTurnActivity(ot)
 	ot.skills.add(name)
 	tl.invalidateItem(ot.skills)
 }
@@ -637,11 +628,20 @@ func (tl *timeline) addLoadedSkill(taskID, name string) {
 func (tl *timeline) startTurn(taskID string, depth int) *openTurn {
 	resp := &assistantItem{depth: depth}
 	tl.pushItem(resp)
-	sk := &skillsItem{nested: true}
-	tl.pushItem(sk)
-	ot := &openTurn{resp: resp, skills: sk}
+	skills := &skillsItem{nested: true}
+	tl.pushItem(skills)
+	ot := &openTurn{resp: resp, skills: skills}
 	tl.turns[taskID] = ot
 	return ot
+}
+
+func (tl *timeline) markTurnActivity(ot *openTurn) {
+	if ot == nil || ot.resp == nil || ot.resp.hasActivity {
+		return
+	}
+	ot.resp.hasActivity = true
+	ot.resp.bump()
+	tl.invalidateItem(ot.resp)
 }
 
 func (tl *timeline) ensureTurn(taskID string, depth int) *openTurn {
@@ -678,6 +678,7 @@ func (tl *timeline) appendThinking(taskID string, depth int, delta string) {
 		return
 	}
 	ot := tl.ensureTurn(taskID, depth)
+	tl.markTurnActivity(ot)
 	if ot.think == nil {
 		ot.think = &thinkingItem{depth: depth, nested: true}
 		tl.pushItem(ot.think)
@@ -739,6 +740,9 @@ func (tl *timeline) startToolWithParent(taskID string, depth int, toolID, name, 
 		ot.resp.status = "running " + name
 		ot.resp.bump()
 		tl.invalidateItem(ot.resp)
+	}
+	if ot := tl.turns[taskID]; ot != nil {
+		tl.markTurnActivity(ot)
 	}
 	g := tl.ensureToolGroup(depth)
 	// Collapsed by default — the transcript stays a scannable list of one-line
@@ -913,9 +917,13 @@ func (tl *timeline) renderTail(width, height int) []string {
 	return out
 }
 
-// nestPad indents turn activity (thinking, tool/edit groups) so it tucks
-// under the response headline rather than sitting flush-left.
-const nestPad = "  "
+var nestPad = palette.Assistant.On("│ ")
+
+func turnOwnerPrefixes(label string, style func(string) string) (string, string) {
+	anchor := bracketed(style(label))
+	rail := style("│ ")
+	return anchor, rail
+}
 
 // itemNested reports whether an item is turn activity (rendered tight,
 // grouped under a response) rather than a turn-boundary item that gets a
@@ -941,17 +949,18 @@ func itemNested(it item) bool {
 // raise it without hunting for the magic number.
 const scrollbarWidth = 1
 
-// drawTimeline paints the timeline's tail into r (inside a labelled box).
+// drawTimeline paints the timeline beneath a persistent status bar. The main
+// transcript stays open on the left, right, and bottom so its content reads as
+// the primary surface rather than another boxed pane.
 func (m *UI) drawTimeline(scr uv.Screen, r uv.Rectangle) {
-	drawFrame(scr, r, frameStyle{Border: palette.Border})
-	// The timeline title owns the global app/mode/model context; the old
-	// standalone top header line was removed to avoid two adjacent status rows.
-	m.drawPaneTitleStatus(scr, r, false)
+	m.drawTimelineTopBar(scr, r)
 	w, h := r.Dx(), r.Dy()
-	if w < 4 || h < 3 {
+	if w < 4 || h < 4 {
 		return
 	}
-	innerW, innerH := w-2-scrollbarWidth, h-2
+	// Reserve only the final column for the scrollbar. The transcript itself
+	// starts at the pane edge; ownership anchors provide its visual gutter.
+	innerW, innerH := w-scrollbarWidth, h-2
 	if innerW < 1 {
 		innerW = 1
 	}
@@ -959,35 +968,102 @@ func (m *UI) drawTimeline(scr uv.Screen, r uv.Rectangle) {
 	// emoji render aligned. Without it, emoji widths are unpredictable and
 	// bleed across panes — strip them so the cell grid stays sound.
 	keepEmoji := m.widthMethod == ansi.GraphemeWidth
-	lines := m.timeline.renderViewport(innerW, innerH)
+	contentW := transcriptContentWidth(innerW)
+	lines := m.timeline.renderViewport(contentW, innerH)
 	for i, ln := range lines {
 		if !keepEmoji {
 			ln = stripWide(ln)
 		}
-		drawLine(scr, uv.Rect(r.Min.X+1, r.Min.Y+1+i, innerW, 1), ln)
+		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+2+i, contentW, 1), ln)
 	}
 	// Paint the scrollbar gutter on the right edge.
 	m.drawTimelineScrollbar(scr, r, innerH, len(lines))
 }
 
+const maxTranscriptWidth = 110
+
+func transcriptContentWidth(available int) int {
+	if available < 1 {
+		return 1
+	}
+	return min(available, maxTranscriptWidth)
+}
+
+func (m *UI) drawTimelineTopBar(scr uv.Screen, r uv.Rectangle) {
+	if r.Dx() < 1 || r.Dy() < 1 {
+		return
+	}
+	left, model, viewport := m.transcriptHeaderSegments()
+	right := viewport
+	const separatorWidth = 3
+	modelWidth := r.Dx() - ansi.StringWidth(left) - 1 - ansi.StringWidth(viewport) - separatorWidth
+	if model != "" && modelWidth > 0 {
+		right = ansi.Truncate(model, modelWidth, "…") + palette.Subtle.On("  ·  ") + viewport
+	}
+	line := rowLayout(left, right, r.Dx())
+	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), line)
+	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1, r.Dx(), 1), palette.Border.On(strings.Repeat("─", r.Dx())))
+}
+
+func (m *UI) transcriptHeaderSegments() (string, string, string) {
+	// The transcript needs a quiet orientation mark, not a second title. The
+	// composer and terminal already establish product context, so retain identity
+	// as the compact ƶ mark and let operational state carry the row.
+	left := palette.Primary.On("ƶ")
+
+	run := "○ idle"
+	runTone := palette.Muted
+	if m.session.Run.Running {
+		run = runActivityGlyph(m.frame, true) + " running"
+		runTone = palette.Success
+		if tps := m.session.Run.liveTokPerSec(); tps > 0 {
+			run += "  ·  " + itoa(int(tps+0.5)) + " tok/s"
+		}
+	}
+	left += palette.Subtle.On("  ·  ") + runTone.On(run)
+	model := ""
+	if name := strings.ToLower(m.session.Model); name != "" {
+		model = palette.Muted.On(name)
+	}
+	viewport := palette.Info.On(m.timeline.viewportStateLabel())
+	return left, model, viewport
+}
+
+func (tl *timeline) viewportStateLabel() string {
+	if tl.selectionActive() {
+		return "visual"
+	}
+	_, _, total := tl.layoutIndex(tl.lwidth())
+	maxScroll := maxOffset(total, tl.viewHeight)
+	if !tl.browsing {
+		return "follow 100%"
+	}
+	percent := 100
+	if maxScroll > 0 {
+		percent = int(float64(tl.scrollTop) / float64(maxScroll) * 100)
+	}
+	return "browse " + itoa(percent) + "%"
+}
+
 // drawTimelineScrollbar paints a 1-col scrollbar gutter at the right edge
-// of the timeline pane. Track is Border-coloured, thumb is Primary when
-// browsing (scrolled off tail) else Subtle.
+// of the open timeline pane. It stays hidden when there is no scroll range, so
+// the gutter does not read as a replacement right border. Track is Border-
+// coloured and the thumb is Primary in both follow and browse modes.
 func (m *UI) drawTimelineScrollbar(scr uv.Screen, r uv.Rectangle, height int, _ int) {
 	if height <= 0 {
 		return
 	}
 	g := m.timeline.scrollbarGeom(height)
-	x := r.Max.X - 2 // inside the right border
+	if !g.Active {
+		return
+	}
+	x := r.Max.X - 1 // open transcript: scrollbar owns the final column
 
 	trackGlyph := palette.Border.On("│")
-	thumbGlyph := palette.Subtle.On("█")
-	if m.timeline.browsing {
-		thumbGlyph = palette.Primary.On("█")
-	}
+	thumbGlyph := palette.Primary.On("█")
 	for i := range height {
 		glyph := trackGlyph
-		if g.Active && i >= g.ThumbStart && i <= g.ThumbEnd {
+		if i >= g.ThumbStart && i <= g.ThumbEnd {
 			glyph = thumbGlyph
 		}
 		drawLine(scr, uv.Rect(x, r.Min.Y+1+i, 1, 1), glyph)
@@ -1010,16 +1086,14 @@ func (tl *timeline) scrollbarGeom(height int) scrollbarGeom {
 	if height <= 0 {
 		return scrollbarGeom{}
 	}
-	if !tl.browsing {
-		// Auto-follow: no thumb — we're always at the end and don't
-		// compute total lines in tail mode for performance.
-		return scrollbarGeom{}
-	}
-	// Browse mode: the layout total comes from layoutIndex (one walk over
-	// cached heights — the single source the rest of nav uses), and the thumb
-	// geometry from the shared helper so it matches every other pane.
+	// The owned layout index is incrementally cached, so follow mode can expose
+	// the real bottom-position thumb without flattening or re-rendering history.
 	_, _, total := tl.layoutIndex(tl.lwidth())
-	return paneScrollbarGeom(total, height, tl.scrollTop)
+	offset := tl.scrollTop
+	if !tl.browsing {
+		offset = maxOffset(total, height)
+	}
+	return paneScrollbarGeom(total, height, offset)
 }
 
 // --- text helpers ---

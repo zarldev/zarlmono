@@ -744,19 +744,16 @@ func humanBytes(n int64) string {
 
 func (v *fileViewer) draw(scr uv.Screen, area uv.Rectangle) {
 	w, h := area.Dx(), area.Dy()
-	if w < 40 || h < 8 {
-		return
-	}
 	v.width = w
 	v.height = h
 
-	l, ok := drawSplitPane(scr, area, "file viewer", fileViewerNavW)
+	l, ok := drawUtilitySplitPane(scr, area, fileViewerNavW)
 	if !ok {
 		return
 	}
 
 	left := overlayTopBar("workspace browser", fileViewerModeNames, int(v.mode), v.fileViewerSummary(), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+f close "), palette.Border)
+	drawOverlayContext(scr, l, left, palette.Border)
 
 	switch v.mode {
 	case fileViewerFiles:
@@ -1185,6 +1182,10 @@ func (v *fileViewer) drawHookNav(scr uv.Screen, l splitPaneLayout) {
 }
 
 func (v *fileViewer) drawFooter(scr uv.Screen, footer uv.Rectangle) {
+	if footer.Dx() < 60 {
+		drawPaneRow(scr, footer, palette.Subtle.On(" "+keyLegend(keyHint{"↑↓", "move"}, keyHint{"tab", "view"}, keyHint{"esc", "close"})), "")
+		return
+	}
 	switch v.mode {
 	case fileViewerSkills, fileViewerAgents, fileViewerHooks:
 		hints := []keyHint{{"↑↓/jk", "navigate"}, {"enter/e", "open source"}, {"tab", "switch view"}, {"pgup/pgdn", "scroll"}, {"esc", "close"}}

@@ -204,16 +204,14 @@ func (d *diffBrowser) selectedEntry() (diffBrowserEntry, bool) {
 }
 
 func (d *diffBrowser) draw(scr uv.Screen, area uv.Rectangle) {
-	if area.Dx() < 50 || area.Dy() < 8 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, d.titleLabel(), diffBrowserNavW)
+	l, ok := drawUtilitySplitPane(scr, area, diffBrowserNavW)
 	if !ok {
 		return
 	}
 	d.height = l.Detail.Dy()
 	d.clampCursor()
-	drawPaneRow(scr, l.Context, palette.Muted.On(" "+d.contextText()), palette.Subtle.On("enter back "))
+	left := overlayTopBar(d.titleLabel(), d.tabNames(), d.activeTab(), d.contextText(), l.Context.Dx())
+	drawOverlayContext(scr, l, left, palette.Border)
 	d.drawNav(scr, l.Nav)
 	d.drawDetail(scr, l.Detail)
 	d.drawFooter(scr, l.Footer)
@@ -238,18 +236,11 @@ func (d *diffBrowser) contextText() string {
 	return countLabel(len(d.entries()), "group", "groups")
 }
 
-func (d *diffBrowser) titleLabel() string { return "diff browser · " + d.modeLabel() }
+func (d *diffBrowser) titleLabel() string { return "diff browser" }
 
-func (d *diffBrowser) modeLabel() string {
-	switch d.mode {
-	case diffBrowserByFile:
-		return "by file"
-	case diffBrowserSession:
-		return "session patch"
-	default:
-		return "by turn"
-	}
-}
+func (d *diffBrowser) tabNames() []string { return []string{"by turn", "by file", "session patch"} }
+
+func (d *diffBrowser) activeTab() int { return int(d.mode) }
 
 func (d *diffBrowser) drawNav(scr uv.Screen, r uv.Rectangle) {
 	entries := d.entries()
@@ -300,13 +291,18 @@ func (d *diffBrowser) scrollLines(n int) {
 }
 
 func (d *diffBrowser) drawFooter(scr uv.Screen, r uv.Rectangle) {
+	if r.Dx() < 60 {
+		footer := keyLegend(keyHint{"↑↓", "group"}, keyHint{"tab", "mode"}, keyHint{"enter/esc", "back"})
+		drawPaneRow(scr, r, palette.Subtle.On(" "+footer), "")
+		return
+	}
 	footer := keyLegend(
 		keyHint{"↑↓/jk", "group"},
 		keyHint{"tab", "mode"},
 		keyHint{"pgup/pgdn", "scroll"},
 		keyHint{"r", "rollback"},
 		keyHint{"n/p", "next/prev"},
-		keyHint{"esc", "back"},
+		keyHint{"enter/esc", "back"},
 	)
 	drawPaneRow(scr, r, palette.Subtle.On(" "+footer), "")
 }

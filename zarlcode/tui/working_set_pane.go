@@ -259,11 +259,7 @@ func (p *workingSetPane) selectedDiff() *WorkingSetMutation {
 }
 
 func (p *workingSetPane) draw(scr uv.Screen, area uv.Rectangle) {
-	w, h := area.Dx(), area.Dy()
-	if w < 50 || h < 8 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, p.titleLabel(), workingSetNavW)
+	l, ok := drawUtilitySplitPane(scr, area, workingSetNavW)
 	if !ok {
 		return
 	}
@@ -271,7 +267,7 @@ func (p *workingSetPane) draw(scr uv.Screen, area uv.Rectangle) {
 	p.clampCursor()
 
 	left := overlayTopBar(p.titleLabel(), p.tabNames(), p.activeTab(), p.contextText(), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+w close "), palette.Border)
+	drawOverlayContext(scr, l, left, palette.Border)
 	p.drawNav(scr, p.drawSectionChrome(scr, l.Nav, p.navSummary()))
 	p.drawDetail(scr, p.drawSectionChrome(scr, l.Detail, p.viewSummary()))
 	p.drawFooter(scr, l.Footer)
@@ -592,6 +588,10 @@ func (p *workingSetPane) processDetailLines(width int) []string {
 }
 
 func (p *workingSetPane) drawFooter(scr uv.Screen, r uv.Rectangle) {
+	if r.Dx() < 60 {
+		drawPaneRow(scr, r, palette.Subtle.On(" "+keyLegend(keyHint{"↑↓", "move"}, keyHint{"tab", "view"}, keyHint{"esc", "close"})), "")
+		return
+	}
 	hints := []keyHint{{"↑↓/jk", "navigate"}, {"tab", "switch view"}, {"enter", "show diff"}, {"o", "open file"}, {"r", "rollback"}, {"pgup/pgdn", "scroll detail"}, {"esc", "close"}}
 	if p.view == workingSetViewProcesses {
 		hints = []keyHint{{"↑↓/jk", "navigate"}, {"x", "kill process"}, {"tab", "switch view"}, {"pgup/pgdn", "scroll detail"}, {"esc", "close"}}

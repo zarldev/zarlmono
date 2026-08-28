@@ -117,7 +117,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	case teasink.CompactionAppliedMsg:
 		m.session.applyCompactionApplied(e)
 		if e.Depth == 0 {
-			m.timeline.attachCompaction(e.TaskID, compactionNotice(e.MessagesBefore, e.MessagesAfter, e.BytesTrimmed, e.Engine))
+			notice := compactionNotice(e.MessagesBefore, e.MessagesAfter, e.BytesTrimmed, e.Engine)
+			m.session.SetToastTone(notice, toastInfo)
+			cmd = tea.Batch(cmd, m.toastExpiryCmd())
 		}
 
 	case teasink.SteerInjectedMsg:

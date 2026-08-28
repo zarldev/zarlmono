@@ -1,27 +1,29 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
-// The settings surface is a full-screen takeover using the shared pane frame,
-// with a single in-pane footer. Smoke-test that draw renders the chrome and
-// drops the old centered-box footer hint.
+// The settings surface is a full-screen takeover using the shared open utility
+// shell with one in-pane contextual footer.
 func TestSettingsDialog_DrawFullScreen(t *testing.T) {
 	s := newTestSettings(t)
 	d := newSettingsDialog(s)
 
 	buf := uv.NewScreenBuffer(120, 30)
 	d.draw(buf, buf.Bounds())
-	out := buf.Render()
+	lines := strings.Split(ansi.Strip(buf.Render()), "\n")
+	out := strings.Join(lines, "\n")
 
 	for _, want := range []string{"settings", "esc done", "providers", "appearance", "provider", "category"} {
 		if !strings.Contains(out, want) {
@@ -31,9 +33,72 @@ func TestSettingsDialog_DrawFullScreen(t *testing.T) {
 	if strings.Contains(out, "tab pane") {
 		t.Error("old centered-box footer hint 'tab pane' should be gone")
 	}
+	if strings.HasPrefix(lines[0], "┌") || strings.HasPrefix(lines[len(lines)-1], "└") {
+		t.Fatalf("settings should not use an outer box:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], "settings") || !strings.Contains(lines[0], d.cats[d.cat].name) {
+		t.Fatalf("settings header missing surface or active category: %q", lines[0])
+	}
+	if strings.Contains(lines[0], "appearance") || strings.Contains(lines[0], "esc done") {
+		t.Fatalf("settings header should not duplicate category nav or footer actions: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "─") || !strings.Contains(lines[2], "│") {
+		t.Fatalf("settings missing utility divider or nav/detail split:\n%s", strings.Join(lines[:3], "\n"))
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc done") {
+		t.Fatalf("settings contextual footer missing done action: %q", lines[len(lines)-1])
+	}
 
 	// A too-small area must bail without panicking.
 	d.draw(uv.NewScreenBuffer(10, 4), uv.Rect(0, 0, 10, 4))
+}
+
+func TestSettingsDialog_NarrowHeightKeepsActiveCategoryAndRowVisible(t *testing.T) {
+	d := newSettingsDialog(newTestSettings(t))
+	d.cat = len(d.cats) - 1
+	d.row = len(d.rows()) - 1
+	d.focusRows = true
+
+	buf := uv.NewScreenBuffer(42, 7)
+	d.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+
+	if !strings.Contains(out, "settings") || !strings.Contains(out, d.cats[d.cat].name) {
+		t.Fatalf("narrow settings missing header or active category:\n%s", out)
+	}
+	if !strings.Contains(out, d.curRow().label) {
+		t.Fatalf("narrow settings lost selected row %q:\n%s", d.curRow().label, out)
+	}
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[len(lines)-1], "esc done") {
+		t.Fatalf("narrow settings missing footer: %q", lines[len(lines)-1])
+	}
+}
+
+func TestSettingsDialog_ExposesUnnamedTaskTargets(t *testing.T) {
+	d := newSettingsDialog(newTestSettings(t))
+	for d.cats[d.cat].name != "limits" {
+		d.cat++
+	}
+
+	want := map[string]bool{
+		prefs.KeySpawnDefaultExploreProvider:   false,
+		prefs.KeySpawnDefaultExploreModel:      false,
+		prefs.KeySpawnDefaultVerifyProvider:    false,
+		prefs.KeySpawnDefaultVerifyModel:       false,
+		prefs.KeySpawnDefaultImplementProvider: false,
+		prefs.KeySpawnDefaultImplementModel:    false,
+	}
+	for _, row := range d.rows() {
+		if _, ok := want[row.key]; ok {
+			want[row.key] = true
+		}
+	}
+	for key, found := range want {
+		if !found {
+			t.Errorf("limits settings missing %q", key)
+		}
+	}
 }
 
 func uvScreen(w, h int) uv.ScreenBuffer { return uv.NewScreenBuffer(w, h) }
@@ -77,11 +142,39 @@ func TestSettingsDialog_TextEditPersistsAndPromotes(t *testing.T) {
 	if r := d.curRow(); !r.isSet || r.scope != prefs.ScopeWorkspace {
 		t.Fatalf("row after edit: set=%v scope=%v, want set/workspace", r.isSet, r.scope)
 	}
+	if hint := ansi.Strip(d.footerHint()); !strings.Contains(hint, "p make global") {
+		t.Errorf("workspace row footer missing move action: %q", hint)
+	}
 
 	// Promote workspace → global.
 	d.handleKey(tkey("p"))
 	if r := d.curRow(); r.scope != prefs.ScopeGlobal {
 		t.Errorf("after promote: scope=%v, want global", r.scope)
+	}
+	if !strings.Contains(d.status, "moved to global default") {
+		t.Errorf("promotion feedback = %q, want move semantics", d.status)
+	}
+	if hint := ansi.Strip(d.footerHint()); strings.Contains(hint, "make global") {
+		t.Errorf("global row footer should not offer promotion: %q", hint)
+	}
+}
+
+func TestSettingsDialog_ScopeLabelsExplainPrecedence(t *testing.T) {
+	if got := ansi.Strip(scopeBadge(prefs.ScopeWorkspace)); got != "workspace override" {
+		t.Fatalf("workspace scope badge = %q", got)
+	}
+	if got := ansi.Strip(scopeBadge(prefs.ScopeGlobal)); got != "global default" {
+		t.Fatalf("global scope badge = %q", got)
+	}
+
+	d := newSettingsDialog(newTestSettings(t))
+	d.handleKey(skey(tea.KeyTab))
+	if hint := ansi.Strip(d.footerHint()); strings.Contains(hint, "make global") {
+		t.Fatalf("unset row footer should not offer promotion: %q", hint)
+	}
+	help := ansi.Strip(strings.Join(d.helpLines(80), "\n"))
+	if !strings.Contains(help, "built-in default") || !strings.Contains(help, "effective source") {
+		t.Fatalf("settings help does not explain default and effective source:\n%s", help)
 	}
 }
 
@@ -106,6 +199,37 @@ func TestSettingsDialog_RejectsNonNumericLimit(t *testing.T) {
 
 	if r := d.curRow(); r.isSet {
 		t.Errorf("non-numeric reserve should not persist, but row isSet (value %q)", r.value)
+	}
+	if !d.editing {
+		t.Error("invalid numeric edit should remain open for correction")
+	}
+	if !strings.Contains(d.status, "non-negative integer") {
+		t.Errorf("numeric validation feedback = %q", d.status)
+	}
+}
+
+func TestSettingsDialog_RejectsNumericValueAboveRowMaximum(t *testing.T) {
+	s := newTestSettings(t)
+	d := newSettingsDialog(s)
+	for d.cats[d.cat].name != "limits" {
+		d.cat++
+	}
+	d.focusRows = true
+	for d.curRow().key != prefs.KeySpawnMaxConcurrent {
+		d.row++
+	}
+	d.handleKey(skey(tea.KeyEnter))
+	typeStr(d, "257")
+	d.handleKey(skey(tea.KeyEnter))
+
+	if !d.editing {
+		t.Error("out-of-range edit should remain open for correction")
+	}
+	if d.curRow().isSet {
+		t.Fatalf("out-of-range value persisted: %q", d.curRow().value)
+	}
+	if !strings.Contains(d.status, "maximum is 256") {
+		t.Fatalf("upper-bound feedback = %q", d.status)
 	}
 }
 
@@ -355,6 +479,32 @@ func TestSettingsDialog_CompactionModelUsesCompactProvider(t *testing.T) {
 	}
 }
 
+func TestSettingsDialog_ModelHintShowsDiscoveryStates(t *testing.T) {
+	d := newSettingsDialog(newTestSettings(t))
+	provider := d.currentProvider()
+
+	if got := ansi.Strip(d.modelHintFor(provider)); got != "not fetched" {
+		t.Fatalf("initial model hint = %q", got)
+	}
+	d.modelsLoading[provider] = true
+	if got := ansi.Strip(d.modelHintFor(provider)); got != "loading…" {
+		t.Fatalf("loading model hint = %q", got)
+	}
+	d.modelsLoading[provider] = false
+	d.onModelsLoaded(provider, nil, nil)
+	if got := ansi.Strip(d.modelHintFor(provider)); got != "no models · custom allowed" {
+		t.Fatalf("empty model hint = %q", got)
+	}
+	d.onModelsLoaded(provider, []string{"model-a", "model-b"}, nil)
+	if got := ansi.Strip(d.modelHintFor(provider)); got != "2 available" {
+		t.Fatalf("available model hint = %q", got)
+	}
+	d.onModelsLoaded(provider, nil, errors.New("offline"))
+	if got := ansi.Strip(d.modelHintFor(provider)); got != "fetch failed" {
+		t.Fatalf("failed model hint = %q", got)
+	}
+}
+
 // The Appearance pane is an inline theme gallery: focusing it and moving
 // previews live, and enter persists the highlighted theme.
 func TestSettingsDialog_ThemeGalleryAppliesAndPersists(t *testing.T) {
@@ -387,10 +537,23 @@ func TestSettingsDialog_ThemeGalleryAppliesAndPersists(t *testing.T) {
 	if palette.Name != picked {
 		t.Errorf("preview not applied live: palette=%q, want %q", palette.Name, picked)
 	}
+	help := ansi.Strip(strings.Join(d.helpLines(80), "\n"))
+	if !strings.Contains(help, "previewing "+picked) || !strings.Contains(help, "esc restores") {
+		t.Fatalf("theme preview help = %q", help)
+	}
+	if footer := ansi.Strip(d.footerHint()); !strings.Contains(footer, "esc revert") {
+		t.Fatalf("theme preview footer = %q", footer)
+	}
 
 	d.handleKey(skey(tea.KeyEnter)) // commit → persist
 	if got := s.Setting(t.Context(), prefs.KeyTheme, ""); got != picked {
 		t.Errorf("theme not persisted: got %q, want %q", got, picked)
+	}
+	if !strings.Contains(d.status, "theme kept: "+picked) {
+		t.Errorf("theme commit feedback = %q", d.status)
+	}
+	if help := ansi.Strip(strings.Join(d.helpLines(80), "\n")); !strings.Contains(help, "kept theme "+picked) {
+		t.Errorf("kept theme help = %q", help)
 	}
 }
 
@@ -418,6 +581,9 @@ func TestSettingsDialog_ThemeGalleryRevertsOnEsc(t *testing.T) {
 	d.handleKey(skey(tea.KeyEscape)) // leave without committing → revert
 	if palette.Name != origin {
 		t.Errorf("esc should revert preview to %q, got %q", origin, palette.Name)
+	}
+	if !strings.Contains(d.status, "theme preview reverted to "+origin) {
+		t.Errorf("theme revert feedback = %q", d.status)
 	}
 	if d.focusRows {
 		t.Error("esc should return focus to the nav")

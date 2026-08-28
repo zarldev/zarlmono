@@ -132,7 +132,7 @@ func TestGuardedSource_RejectionBecomesFailedResult(t *testing.T) {
 	}
 }
 
-func TestGuardedSource_FirstRejectionShortCircuits(t *testing.T) {
+func TestGuardedSource_FirstRejectionStillRunsLaterObservers(t *testing.T) {
 	inner := &fakeSource{result: &tools.ToolResult{Success: true, Data: "hello"}}
 	var secondRan bool
 	first := guardrails.GuardrailFunc{
@@ -150,9 +150,12 @@ func TestGuardedSource_FirstRejectionShortCircuits(t *testing.T) {
 	}
 	guarded := guardrails.NewGuardedSource(inner, first, second)
 
-	_, _ = guarded.Execute(t.Context(), makeCall("test", "c3"))
-	if secondRan {
-		t.Errorf("second guardrail ran after first rejected; want short-circuit")
+	got, _ := guarded.Execute(t.Context(), makeCall("test", "c3"))
+	if !secondRan {
+		t.Error("later post-call observer did not run after first rejection")
+	}
+	if got.Success || !strings.Contains(got.Error, `guardrail "first"`) {
+		t.Fatalf("result = %#v, want first rejection", got)
 	}
 }
 

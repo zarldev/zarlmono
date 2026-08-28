@@ -67,13 +67,31 @@ func (f CloseFunc) Close() error {
 	return f()
 }
 
+// ContextCloser releases a resource while honoring the caller's shutdown
+// deadline. Long-running cleanup should implement this contract rather than
+// hiding its own timeout inside an io.Closer.
+type ContextCloser interface {
+	Close(context.Context) error
+}
+
+// ContextCloseFunc adapts a context-aware cleanup function to [ContextCloser].
+type ContextCloseFunc func(context.Context) error
+
+// Close invokes f. A nil ContextCloseFunc is a no-op.
+func (f ContextCloseFunc) Close(ctx context.Context) error {
+	if f == nil {
+		return nil
+	}
+	return f(ctx)
+}
+
 // App wraps a Program with signal handling, panic recovery, and deterministic
 // resource cleanup.
 type App[T any] struct {
 	name    string
 	program Program[T]
 
-	closers map[string]io.Closer
+	closers map[string]registeredCloser
 	order   []string
 	closing bool
 	mu      sync.Mutex
@@ -192,7 +210,33 @@ func (a *App[T]) AddCloser(name string, closer io.Closer) error {
 		return fmt.Errorf("%w: %q", ErrDuplicateName, name)
 	}
 
-	a.closers[name] = closer
+	a.closers[name] = registeredCloser{closer: closer}
+	a.order = append(a.order, name)
+	return nil
+}
+
+// AddContextCloser registers a named context-aware resource for cleanup.
+func (a *App[T]) AddContextCloser(name string, closer ContextCloser) error {
+	if a == nil {
+		return ErrNilProgram
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrEmptyName
+	}
+	if closer == nil {
+		return ErrNilCloser
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return ErrClosed
+	}
+	if _, exists := a.closers[name]; exists {
+		return fmt.Errorf("%w: %q", ErrDuplicateName, name)
+	}
+	a.closers[name] = registeredCloser{contextCloser: closer}
 	a.order = append(a.order, name)
 	return nil
 }
@@ -212,7 +256,7 @@ func (a *App[T]) Close(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, fmt.Errorf("%s: close %q context: %w", a.Name(), entry.name, err))
 		}
-		if err := entry.closer.Close(); err != nil {
+		if err := entry.close(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("%s: close %q: %w", a.Name(), entry.name, err))
 		}
 	}
@@ -230,7 +274,7 @@ func (a *App[T]) handlePanic(recovered any) {
 
 func (a *App[T]) normaliseDefaults() {
 	a.name = defaultName
-	a.closers = make(map[string]io.Closer)
+	a.closers = make(map[string]registeredCloser)
 	a.shutdownTimeout = defaultShutdownTimeout
 	a.signals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 	a.createFailureCode = ExitFailure
@@ -238,9 +282,21 @@ func (a *App[T]) normaliseDefaults() {
 	a.panicCode = ExitPanic
 }
 
+type registeredCloser struct {
+	closer        io.Closer
+	contextCloser ContextCloser
+}
+
+func (c registeredCloser) close(ctx context.Context) error {
+	if c.contextCloser != nil {
+		return c.contextCloser.Close(ctx)
+	}
+	return c.closer.Close()
+}
+
 type closerEntry struct {
-	name   string
-	closer io.Closer
+	name string
+	registeredCloser
 }
 
 func (a *App[T]) closeWithTimeout() error {
@@ -265,7 +321,7 @@ func (a *App[T]) drainClosers() []closerEntry {
 		if !ok {
 			continue
 		}
-		entries = append(entries, closerEntry{name: name, closer: closer})
+		entries = append(entries, closerEntry{name: name, registeredCloser: closer})
 	}
 
 	clear(a.closers)

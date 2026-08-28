@@ -176,24 +176,20 @@ func (d *inspector) selectedProcess() (code.ProcessInfo, bool) {
 }
 
 func (d *inspector) draw(scr uv.Screen, area uv.Rectangle) {
-	if area.Dx() < 50 || area.Dy() < 8 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, "inspector", inspectorNavW)
+	l, ok := drawUtilitySplitPane(scr, area, inspectorNavW)
 	if !ok {
 		return
 	}
 	d.height = l.Detail.Dy()
 	left := overlayTopBar("inspector", inspectorTabNames, d.cursor, inspectorSummary(d.snapshot), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+o close "), palette.Border)
+	drawOverlayContext(scr, l, left, palette.Border)
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" tabs · next-turn diagnostics"))
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
-	for i, name := range inspectorTabNames {
-		screenY := l.Nav.Min.Y + 2 + i
-		if screenY >= l.Nav.Max.Y {
-			break
-		}
-		drawListRow(scr, uv.Rect(l.Nav.Min.X, screenY, l.Nav.Dx(), 1), name, i == d.cursor, true)
+	navY := l.Nav.Min.Y + min(2, l.Nav.Dy())
+	navH := max(0, l.Nav.Dy()-2)
+	start, end := windowAroundCursor(d.cursor, len(inspectorTabNames), navH)
+	for i := start; i < end; i++ {
+		drawListRow(scr, uv.Rect(l.Nav.Min.X, navY+i-start, l.Nav.Dx(), 1), inspectorTabNames[i], i == d.cursor, true)
 	}
 
 	detailY := l.Detail.Min.Y
@@ -511,12 +507,16 @@ func (d *inspector) runtimeLines() []string {
 }
 
 func (d *inspector) drawFooter(scr uv.Screen, r uv.Rectangle) {
+	if r.Dx() < 60 {
+		drawPaneRow(scr, r, palette.Subtle.On(" "+keyLegend(keyHint{"tab", "tab"}, keyHint{"pgup/dn", "page"}, keyHint{"esc", "close"})), "")
+		return
+	}
 	hints := []keyHint{{"↑↓/jk", "navigate"}, {"tab/←→", "switch tab"}, {"pgup/pgdn", "page"}}
 	if inspectorTab(d.cursor) == inspectorTabProcesses {
 		hints = []keyHint{{"↑↓/jk", "select process"}, {"x", "kill"}, {"tab/←→", "switch tab"}, {"pgup/pgdn", "page"}}
 	}
 	hints = append(hints, keyHint{"esc", "close"})
-	footer := keyLegend(hints...)
+	footer := compactFooterHints(hints...)
 	drawPaneRow(scr, r, palette.Subtle.On(" "+footer), "")
 }
 

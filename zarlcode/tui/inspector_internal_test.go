@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
@@ -41,6 +42,22 @@ func TestInspector_OpensWithCtrlI(t *testing.T) {
 	}
 }
 
+func TestInspector_NarrowHeightKeepsActiveTabAndFooterVisible(t *testing.T) {
+	ins := newInspector(InspectorSnapshot{})
+	ins.cursor = len(inspectorTabNames) - 1
+	buf := uv.NewScreenBuffer(42, 7)
+	ins.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "inspector") || !strings.Contains(out, inspectorTabNames[ins.cursor]) {
+		t.Fatalf("narrow inspector lost header or active tab:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("narrow inspector missing footer: %q", lines[len(lines)-1])
+	}
+}
+
 func TestInspector_ToolSurfaceAccounting(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +86,7 @@ func TestContextView_TabBarAndPromptSummary(t *testing.T) {
 	m.contextView.setTab(contextViewTabPrompt)
 
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"context view", "overview", "context", "prompt", "tools", "events", "preview"} {
+	for _, want := range []string{"overview", "context", "prompt", "tools", "events", "preview"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("context view missing %q:\n%s", want, out)
 		}

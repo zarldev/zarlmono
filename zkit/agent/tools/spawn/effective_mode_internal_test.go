@@ -13,11 +13,11 @@ func TestEffectiveModePrecedence(t *testing.T) {
 		want     SpawnMode
 	}{
 		{
-			name:     "explicit overrides profile upward",
+			name:     "explicit cannot escalate profile",
 			args:     Args{Mode: string(SpawnModeImplement)},
 			profile:  SpawnModeVerify,
 			explicit: true,
-			want:     SpawnModeImplement,
+			want:     SpawnModeVerify,
 		},
 		{
 			name:     "explicit overrides profile downward",

@@ -99,6 +99,7 @@ type UI struct {
 	// Bubble Tea can render the first frame. The command is owned and cancelled
 	// by the program context.
 	startupCmd         tea.Cmd
+	startupMCPCmd      tea.Cmd
 	startupReady       bool
 	startupPrompt      string
 	startupAttachments []llm.ContentPart
@@ -325,7 +326,7 @@ func New() *UI {
 // Init implements tea.Model. Non-critical startup work runs as Bubble Tea
 // commands so the first frame is not blocked by external services.
 func (m *UI) Init() tea.Cmd {
-	return tea.Batch(m.fetchPRCmd(), m.startupCmd)
+	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd)
 }
 
 // Update implements tea.Model. Resize recomputes the layout rects; esc stops
@@ -365,6 +366,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case liveTurnFinishedMsg:
+		m.session.reconcileTopLevelRun()
 		return m, m.saveSessionCmd()
 	case askpassPromptMsg:
 		m.overlay.push(newAskpassDialog(msg.Prompt, msg.Reply))
@@ -460,7 +462,12 @@ func (m *UI) recomputeLayout() {
 		m.layout = uiLayout{}
 		return
 	}
-	m.layout = computeLayoutWithEditorLines(m.width, m.height, m.composer.displayLineCount(m.width))
+	m.layout = computeLayoutWithEditorLinesAndSidebar(
+		m.width,
+		m.height,
+		m.composer.displayLineCount(m.width),
+		!m.session.StateSidebarHidden,
+	)
 }
 
 // View implements tea.Model. It allocates a screen buffer, paints the

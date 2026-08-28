@@ -49,9 +49,10 @@ type Session struct {
 	CreatedAt time.Time
 
 	// Runtime modes and telemetry.
-	PlanMode        bool // PLAN mode (shift+tab): read-only tools, planning prompt
-	CockpitExpanded bool // full-width dashboard (ctrl+l)
-	Run             RunState
+	PlanMode           bool // PLAN mode (shift+tab): read-only tools, planning prompt
+	CockpitExpanded    bool // full-width dashboard (ctrl+l)
+	StateSidebarHidden bool // temporary shell preference toggled with ctrl+b
+	Run                RunState
 
 	// User preferences loaded from the settings store.
 	ConfirmQuit bool

@@ -19,7 +19,7 @@ func TestSidebar_ShowsRunState(t *testing.T) {
 		teasink.ToolCompletedMsg{TaskID: "t1", ToolID: "c1", ToolName: "bash", Duration: time.Second},
 		teasink.IterationCompletedMsg{TaskID: "t1", Iter: 1, Usage: &llm.Usage{PromptTokens: 120, TotalTokens: 200}},
 	)
-	for _, want := range []string{"[state]", "context", "plan", "run", "cost", "tools", "running", "provider", "model", "window", "session", "1 calls"} {
+	for _, want := range []string{"context", "run", "cost", "tools", "running", "provider", "model", "window", "session", "1 calls"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("sidebar missing %q:\n%s", want, out)
 		}

@@ -3,6 +3,7 @@ package guardrails
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/zarldev/zarlmono/zkit/agent/shellpolicy"
@@ -69,10 +70,11 @@ func (g *PlanGuardrail) Before(ctx context.Context, call tools.ToolCall) error {
 	if taskscope.DepthFrom(ctx) > 0 {
 		return nil
 	}
-	if call.ToolName == code.ToolNameBash && readOnlyBashCall(call) {
+	changesWorkspace := call.ToolName == code.ToolNameBash
+	if changesWorkspace && readOnlyBashCall(call) {
 		return nil
 	}
-	if !g.changesWorkspace(ctx, call.ToolName) {
+	if !changesWorkspace && !g.changesWorkspace(ctx, call.ToolName) {
 		return nil
 	}
 	if g.isPlanned(taskscope.IDFrom(ctx)) {
@@ -98,7 +100,22 @@ func readOnlyBashCall(call tools.ToolCall) bool {
 	if err != nil {
 		return false
 	}
+	for _, command := range ir.Commands {
+		if opaqueShellCommand(command) {
+			return false
+		}
+	}
 	return !shellpolicy.NewPolicyEngine().DecideVerify(ir, targets).IsBlocked
+}
+
+func opaqueShellCommand(command string) bool {
+	switch strings.Fields(command)[0] {
+	case "bash", "sh", "zsh", "fish", "eval", "source", ".",
+		"python", "python3", "node", "ruby", "perl", "php", "lua":
+		return true
+	default:
+		return false
+	}
 }
 
 // Inspect records a successful plan-tool call as satisfying the gate for the

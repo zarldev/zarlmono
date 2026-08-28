@@ -2,10 +2,14 @@ package tui
 
 import (
 	"encoding/base64"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -61,6 +65,52 @@ func gotoProvider(d *providersDialog, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestProvidersDialogUsesOpenUtilityChrome(t *testing.T) {
+	d := &providersDialog{
+		defs:   []backends.ProviderDefinition{{Name: "example", Builtin: true}},
+		hasKey: map[string]bool{},
+		active: "example",
+	}
+	buf := uv.NewScreenBuffer(100, 24)
+	d.draw(buf, buf.Bounds())
+
+	lines := strings.Split(ansi.Strip(buf.Render()), "\n")
+	if !strings.Contains(lines[0], "providers") || !strings.Contains(lines[0], "active example") {
+		t.Fatalf("providers header missing context: %q", lines[0])
+	}
+	if strings.Contains(lines[0], "esc close") {
+		t.Fatalf("providers header should not duplicate close help: %q", lines[0])
+	}
+	if strings.HasPrefix(lines[0], "┌") || strings.HasPrefix(lines[len(lines)-1], "└") {
+		t.Fatalf("providers should not use an outer box:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[1], "─") || !strings.Contains(lines[2], "│") {
+		t.Fatalf("providers missing utility divider or nav/detail split:\n%s", strings.Join(lines[:3], "\n"))
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc back") {
+		t.Fatalf("providers contextual footer missing back action: %q", lines[len(lines)-1])
+	}
+}
+
+func TestProvidersDialogRendersSelectedProviderAtSharedMinimum(t *testing.T) {
+	defs := make([]backends.ProviderDefinition, 8)
+	for i := range defs {
+		defs[i] = backends.ProviderDefinition{Name: fmt.Sprintf("provider-%d", i+1), Builtin: true}
+	}
+	d := &providersDialog{defs: defs, hasKey: map[string]bool{}, active: defs[0].Name, cursor: len(defs) - 1}
+	buf := uv.NewScreenBuffer(42, 7)
+	d.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "providers") || !strings.Contains(out, defs[d.cursor].Name) {
+		t.Fatalf("narrow providers lost header or selected provider:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc back") {
+		t.Fatalf("narrow providers missing back action: %q", lines[len(lines)-1])
+	}
 }
 
 func TestProvidersDialog_AddCustomInline(t *testing.T) {

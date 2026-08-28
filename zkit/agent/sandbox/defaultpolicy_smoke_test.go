@@ -38,10 +38,10 @@ func TestDefaultPolicyToolchainSmoke(t *testing.T) {
 	script := `set -e
 git init -q .
 git add .
-git -c user.email=smoke@test -c user.name=smoke commit -qm smoke
-go build -o smoke-bin .
-./smoke-bin
-git log --oneline | head -1`
+	git -c commit.gpgsign=false -c user.email=smoke@test -c user.name=smoke commit -qm smoke
+	go build -o smoke-bin .
+	./smoke-bin
+	git log --oneline | head -1`
 	out, code := runSandboxed(t, sandbox.DefaultPolicy(ws), ws, script)
 	if code != 0 {
 		t.Fatalf("toolchain workflow broke under default policy (exit %d):\n%s", code, out)

@@ -96,26 +96,25 @@ const (
 )
 
 func (d *serviceDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	r := centerRect(area, min(serviceDialogW, area.Dx()), min(serviceDialogH, area.Dy()))
-	inner := drawFrame(scr, r, frameStyle{Label: "local web_search service", Border: palette.Border, LabelColor: palette.Primary})
-	if inner.Dx() < 4 || inner.Dy() < 1 {
+	lay, ok := drawDialogPane(scr, area, "local web_search service", serviceDialogW, serviceDialogH, palette.Border, palette.Primary)
+	if !ok {
 		return
 	}
-	content := d.lines(inner.Dx() - 2)
-	for i := range inner.Dy() {
-		line := ""
-		if i < len(content) {
-			line = content[i]
-		}
-		drawPaddedLine(scr, uv.Rect(inner.Min.X+1, inner.Min.Y+i, inner.Dx()-2, 1), line)
+	context := "SearXNG · optional local backend"
+	if d.busy != "" {
+		context += " · " + string(d.busy) + " running…"
 	}
+	drawLine(scr, lay.Context, context)
+	content := d.lines(lay.Body.Dx())
+	for i, line := range content[:min(len(content), lay.Body.Dy())] {
+		drawLine(scr, uv.Rect(lay.Body.Min.X, lay.Body.Min.Y+i, lay.Body.Dx(), 1), line)
+	}
+	drawLine(scr, lay.Footer, palette.Muted.On(keyLegend(keyHint{"↑↓", "move"}, keyHint{"enter", "run"}, keyHint{"esc", "close"})))
 }
 
 func (d *serviceDialog) lines(width int) []string {
 	st := d.status
 	lines := []string{
-		palette.Assistant.On("SearXNG") + palette.Muted.On(" — optional local backend for web_search"),
-		"",
 		"url        " + st.URL,
 		"files      " + st.Dir,
 		"installed  " + boolLabel(st.Installed),
@@ -149,7 +148,6 @@ func (d *serviceDialog) lines(width int) []string {
 			lines = append(lines, "  "+ln)
 		}
 	}
-	lines = append(lines, "", palette.Muted.On(keyLegend(keyHint{"↑↓", "move"}, keyHint{"enter", "run"}, keyHint{"esc", "back"})))
 	return lines
 }
 

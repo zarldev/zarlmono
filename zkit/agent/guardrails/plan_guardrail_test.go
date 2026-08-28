@@ -51,6 +51,22 @@ func TestPlanGuardrail_AllowsReadOnlyBashWithoutPlan(t *testing.T) {
 	}
 }
 
+func TestPlanGuardrail_BlocksUnknownBashWithoutPlan(t *testing.T) {
+	t.Parallel()
+	g := guardrails.NewPlanGuardrail(planIter(), planToolName)
+	ctx := taskscope.WithID(t.Context(), "task-1")
+	for _, command := range []string{
+		`python -c 'open("generated.go", "w").write("package generated")'`,
+		"sh ./generate.sh",
+		"eval $COMMAND",
+	} {
+		call := tools.ToolCall{ID: "c", ToolName: "bash", Arguments: tools.ToolParameters{"command": command}}
+		if err := g.Before(ctx, call); err == nil {
+			t.Errorf("unknown bash %q before plan: want rejection", command)
+		}
+	}
+}
+
 // The planning tool itself must always be callable — otherwise the gate
 // could never be satisfied.
 func TestPlanGuardrail_AllowsPlanToolWithoutPlan(t *testing.T) {

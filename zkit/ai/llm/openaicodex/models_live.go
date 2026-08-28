@@ -14,7 +14,10 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zhttp"
 )
 
-const modelsPath = "/codex/models"
+const (
+	modelsPath          = "/codex/models"
+	modelsClientVersion = "0.0.0"
+)
 
 var codexModelsClient = zhttp.NewClient()
 
@@ -57,7 +60,7 @@ func FetchModels(ctx context.Context, tokens TokenSource, baseURL string) ([]llm
 		return nil, fmt.Errorf("openaicodex: build models url: %w", err)
 	}
 	q := u.Query()
-	q.Set("client_version", "zarlcode")
+	q.Set("client_version", modelsClientVersion)
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)

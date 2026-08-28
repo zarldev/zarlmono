@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
@@ -39,10 +40,12 @@ type settingsDialog struct {
 	status    string    // last-action toast text
 	statusAt  time.Time // when status was set, so the footer toast ages out
 
-	// models caches per-provider model lists fetched asynchronously;
-	// modelsLoading marks a fetch in flight. Keyed by provider name.
+	// modelsLoaded distinguishes a completed empty result from not yet fetched;
+	// modelsErr keeps failures visible on the row after the footer toast ages out.
 	models        map[string][]string
+	modelsLoaded  map[string]bool
 	modelsLoading map[string]bool
+	modelsErr     map[string]error
 	// pendingFetch is a provider whose model list to fetch once a nested
 	// picker closes — set when the compaction provider changes (a picker
 	// closure can't return a fetch intent itself). Drained in handleAction.
@@ -81,6 +84,7 @@ const (
 	rowAction                        // enter opens a nested dialog (open())
 	rowModel                         // enter opens the per-provider model picker
 	rowKey                           // vault-stored credential; enter edits it (masked)
+	rowAgent                         // enter opens the discovered agent-profile picker
 )
 
 type settingsCat struct {
@@ -113,6 +117,7 @@ type settingsRow struct {
 	desc    string                        // one-line help shown in the detail panel
 	opts    []string                      // rowEnum options
 	numeric bool                          // validate as a non-negative integer before commit
+	max     int                           // numeric upper bound; zero means no explicit ceiling
 	open    func(*engine.Settings) dialog // rowAction: builds the nested dialog
 
 	value string
@@ -132,7 +137,9 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 		ctx:           ctx,
 		s:             s,
 		models:        map[string][]string{},
+		modelsLoaded:  map[string]bool{},
 		modelsLoading: map[string]bool{},
+		modelsErr:     map[string]error{},
 		providers:     newProvidersDialogWithContext(ctx, s),
 		gallery:       newThemeGalleryWithContext(ctx, s),
 		catalogPane:   newCatalogPane(s),
@@ -169,20 +176,54 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 					desc: "model for llm compaction, from the compaction provider's list. (active) reuses the active model."},
 			}},
 			{name: "limits", rows: []settingsRow{
-				{label: "max iterations", key: prefs.KeyMaxIterations, kind: rowText, numeric: true, def: "20",
-					desc: "cap on the agent loop per turn before it must finalize."},
+				{label: "enable sub-agents", section: "Sub-agents", key: prefs.KeySpawnEnabled, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+					desc: "register agent_spawn/await/status/stop/list for each turn. off removes delegation from the model's tool surface entirely."},
+				{label: "max iterations", key: prefs.KeyMaxIterations, kind: rowText, numeric: true, max: 1000, def: "20",
+					desc: "cap on the agent loop per turn before it must finalize. maximum 1000."},
 				{label: "response timeout", key: prefs.KeyResponseTimeout, kind: rowText, numeric: true, def: "90",
 					desc: "seconds to wait with no output from the model before cancelling the iteration. raise it for slow local models/connections; non-positive falls back to 90."},
-				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, def: "20",
-					desc: "cap on sub-agent iterations per agent_spawn call. unset inherits the parent max."},
+				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, max: 1000, def: "20",
+					desc: "cap on sub-agent iterations per agent_spawn call. unset inherits the parent max; maximum 1000."},
 				{label: "spawn await timeout", key: prefs.KeySpawnAwaitTimeout, kind: rowText, numeric: true, def: "30",
 					desc: "seconds agent_await waits before returning a RUNNING snapshot without cancelling the sub-agent."},
-				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, def: "(unset)",
-					desc: "how deep agent_spawn may recurse. unset uses the built-in default."},
-				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, def: "0",
-					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly."},
-				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, def: "8",
-					desc: "max agent_spawn calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap."},
+				{label: "spawn await max timeout", key: prefs.KeySpawnAwaitMaxTimeout, kind: rowText, numeric: true, def: "300",
+					desc: "maximum timeout_seconds an agent may request for one agent_await call. 0 disables the ceiling."},
+				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, max: 16, def: "(unset)",
+					desc: "how deep agent_spawn may recurse. unset uses the built-in default; maximum 16."},
+				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, max: 1000, def: "0",
+					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly; maximum 1000."},
+				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, max: 1000, def: "8",
+					desc: "max agent_spawn calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap; maximum 1000."},
+				{label: "default explore agent", section: "Sub-agents", key: prefs.KeySpawnDefaultExploreAgent, kind: rowAgent, def: agentParentSentinel,
+					desc: "named agent profile used when agent_spawn omits agent in explore mode. enter to choose a discovered profile."},
+				{label: "default verify agent", section: "Sub-agents", key: prefs.KeySpawnDefaultVerifyAgent, kind: rowAgent, def: agentParentSentinel,
+					desc: "named agent profile used when agent_spawn omits agent in verify mode. enter to choose a discovered profile."},
+				{label: "default implement agent", section: "Sub-agents", key: prefs.KeySpawnDefaultImplementAgent, kind: rowAgent, def: agentParentSentinel,
+					desc: "named agent profile used when agent_spawn omits agent in implement mode (including omitted mode). enter to choose a discovered profile."},
+				{label: "explore provider", key: prefs.KeySpawnDefaultExploreProvider, kind: rowEnum, def: "(active)",
+					desc: "provider for unnamed explore tasks when no default agent profile is selected. (active) reuses the parent provider."},
+				{label: "explore model", key: prefs.KeySpawnDefaultExploreModel, kind: rowModel, def: "(active)",
+					desc: "model for unnamed explore tasks, from the explore provider. ignored when a named agent profile is selected."},
+				{label: "verify provider", key: prefs.KeySpawnDefaultVerifyProvider, kind: rowEnum, def: "(active)",
+					desc: "provider for unnamed verify tasks when no default agent profile is selected. (active) reuses the parent provider."},
+				{label: "verify model", key: prefs.KeySpawnDefaultVerifyModel, kind: rowModel, def: "(active)",
+					desc: "model for unnamed verify tasks, from the verify provider. ignored when a named agent profile is selected."},
+				{label: "implement provider", key: prefs.KeySpawnDefaultImplementProvider, kind: rowEnum, def: "(active)",
+					desc: "provider for unnamed implement tasks when no default agent profile is selected. (active) reuses the parent provider."},
+				{label: "implement model", key: prefs.KeySpawnDefaultImplementModel, kind: rowModel, def: "(active)",
+					desc: "model for unnamed implement tasks, from the implement provider. ignored when a named agent profile is selected."},
+				{label: "explore iterations", section: "Sub-agents", key: prefs.KeySpawnExploreMaxIterations, kind: rowText, numeric: true, max: 1000, def: "(shared)",
+					desc: "per-explore child iteration cap. empty/0 inherits spawn max iterations; maximum 1000."},
+				{label: "verify iterations", section: "Sub-agents", key: prefs.KeySpawnVerifyMaxIterations, kind: rowText, numeric: true, max: 1000, def: "(shared)",
+					desc: "per-verify child iteration cap. empty/0 inherits spawn max iterations; maximum 1000."},
+				{label: "implement iterations", section: "Sub-agents", key: prefs.KeySpawnImplementMaxIterations, kind: rowText, numeric: true, max: 1000, def: "(shared)",
+					desc: "per-implement child iteration cap. empty/0 inherits spawn max iterations; maximum 1000."},
+				{label: "max concurrent", section: "Sub-agents", key: prefs.KeySpawnMaxConcurrent, kind: rowText, numeric: true, max: 256, def: "0",
+					desc: "simultaneously running sub-agents per turn. 0 is unbounded; spawn fanout still caps total calls. maximum 256."},
+				{label: "max runtime seconds", section: "Sub-agents", key: prefs.KeySpawnMaxRuntime, kind: rowText, numeric: true, max: 604800, def: "0",
+					desc: "maximum total lifetime for each child task. 0 is unbounded; timeout is reported as budget exhaustion. maximum 604800 (7 days)."},
+				{label: "fallback", section: "Sub-agents", key: prefs.KeySpawnFallback, kind: rowEnum, def: "planner", opts: []string{"planner", "parent", "error"},
+					desc: "unresolved routing: planner tries a registered profile then parent; parent skips planning; error refuses the spawn."},
 				{label: "program parallel calls", key: prefs.KeyProgramParallel, kind: rowText, numeric: true, def: "0",
 					desc: "max nested program-tool calls call_many runs concurrently. 0 keeps the built-in default (8)."},
 			}},
@@ -370,7 +411,11 @@ func (d *settingsDialog) handleGallery(msg tea.KeyPressMsg) action {
 		d.gallery.leave()
 		return actionClose{}
 	case "esc", "q", "tab":
+		reverted := d.gallery.isPreviewing()
 		d.gallery.leave()
+		if reverted {
+			d.setStatus("theme preview reverted to " + d.gallery.origin)
+		}
 		d.focusRows = false
 		return actionNone{}
 	}
@@ -378,7 +423,7 @@ func (d *settingsDialog) handleGallery(msg tea.KeyPressMsg) action {
 		d.gallery.enter() // first interaction — capture the revert point
 	}
 	if d.gallery.handleKey(msg) {
-		d.setStatus("theme → " + palette.Name)
+		d.setStatus("theme kept: " + palette.Name)
 		d.refresh(d.ctx)
 	}
 	return actionNone{}
@@ -410,18 +455,6 @@ func (d *settingsDialog) handleCatalog(p *catalogPane, msg tea.KeyPressMsg) acti
 // setStatus records a toast and timestamps it so the footer can age it out.
 func (d *settingsDialog) setStatus(s string) {
 	d.status, d.statusAt = s, time.Now()
-}
-
-func (d *settingsDialog) tabBar() string {
-	parts := make([]string, len(d.cats))
-	for i, c := range d.cats {
-		if i == d.cat {
-			parts[i] = palette.Primary.On("[ " + c.name + " ]")
-		} else {
-			parts[i] = palette.Subtle.On(c.name)
-		}
-	}
-	return strings.Join(parts, "  ")
 }
 
 func (d *settingsDialog) rows() []settingsRow { return d.cats[d.cat].rows }
@@ -526,6 +559,8 @@ func (d *settingsDialog) activate(dir int) action {
 		return d.activateEnum(dir)
 	case rowModel:
 		return d.activateModel()
+	case rowAgent:
+		return d.activateAgent()
 	}
 	return actionNone{}
 }
@@ -554,7 +589,10 @@ func (d *settingsDialog) activateEnum(dir int) action {
 		return actionPush{d: newListPicker("compaction engine", compactEngineOpts(), r.value, func(choice string) {
 			d.commit(prefs.KeyCompactEngine, choice)
 		})}
-	case prefs.KeyCompactProvider:
+	case prefs.KeyCompactProvider,
+		prefs.KeySpawnDefaultExploreProvider,
+		prefs.KeySpawnDefaultVerifyProvider,
+		prefs.KeySpawnDefaultImplementProvider:
 		items := append([]string{compactActiveSentinel}, providerNames(d.s)...)
 		sel := compactActiveSentinel
 		if r.value != "" {
@@ -562,13 +600,11 @@ func (d *settingsDialog) activateEnum(dir int) action {
 		}
 		return actionPush{d: newListPicker("compaction provider", items, sel, func(choice string) {
 			if choice == compactActiveSentinel {
-				d.commit(prefs.KeyCompactProvider, "") // reuse the active provider
+				d.commit(r.key, "") // reuse the active provider
 			} else {
-				d.commit(prefs.KeyCompactProvider, choice)
+				d.commit(r.key, choice)
 			}
-			// Queue a model fetch for the new compaction provider so its model
-			// picker is populated (a picker closure can't return a fetch).
-			if p := d.compactProvider(); p != "" {
+			if p := d.providerForRow(d.modelKeyForProvider(r.key)); p != "" {
 				if _, ok := d.models[p]; !ok && !d.modelsLoading[p] {
 					d.modelsLoading[p] = true
 					d.pendingFetch = p
@@ -616,6 +652,28 @@ func (d *settingsDialog) activateEnum(dir int) action {
 		}
 	}
 	return actionNone{}
+}
+
+const agentParentSentinel = "(parent/planner)"
+
+func (d *settingsDialog) activateAgent() action {
+	r := d.curRow()
+	agents, _ := catalog.LoadAgents(wsRootOf(d.s))
+	items := make([]string, 1, len(agents)+1)
+	items[0] = agentParentSentinel
+	for _, agent := range agents {
+		items = append(items, agent.Name)
+	}
+	sel := r.value
+	if sel == "" {
+		sel = agentParentSentinel
+	}
+	return actionPush{d: newListPicker("default agent", items, sel, func(choice string) {
+		if choice == agentParentSentinel {
+			choice = ""
+		}
+		d.commit(r.key, choice)
+	})}
 }
 
 // onProviderCycled runs after the provider enum changes: persist the provider
@@ -683,6 +741,39 @@ func (d *settingsDialog) judgeProvider() string {
 	return d.currentProvider()
 }
 
+func (d *settingsDialog) modelKeyForProvider(key string) string {
+	switch key {
+	case prefs.KeySpawnDefaultExploreProvider:
+		return prefs.KeySpawnDefaultExploreModel
+	case prefs.KeySpawnDefaultVerifyProvider:
+		return prefs.KeySpawnDefaultVerifyModel
+	case prefs.KeySpawnDefaultImplementProvider:
+		return prefs.KeySpawnDefaultImplementModel
+	default:
+		return prefs.KeyCompactModel
+	}
+}
+
+func (d *settingsDialog) spawnProvider(key string) string {
+	for _, c := range d.cats {
+		for _, r := range c.rows {
+			if r.key == key && r.isSet && r.value != "" {
+				return r.value
+			}
+		}
+	}
+	return d.currentProvider()
+}
+
+func isSpawnDefaultModel(key string) bool {
+	switch key {
+	case prefs.KeySpawnDefaultExploreModel, prefs.KeySpawnDefaultVerifyModel, prefs.KeySpawnDefaultImplementModel:
+		return true
+	default:
+		return false
+	}
+}
+
 // providerForRow is the provider a model row's picker + hint resolve against:
 // the compaction / judge model rows track their own provider rows, the main
 // model row the active one.
@@ -692,6 +783,12 @@ func (d *settingsDialog) providerForRow(key string) string {
 		return d.compactProvider()
 	case prefs.KeyJudgeModel:
 		return d.judgeProvider()
+	case prefs.KeySpawnDefaultExploreModel:
+		return d.spawnProvider(prefs.KeySpawnDefaultExploreProvider)
+	case prefs.KeySpawnDefaultVerifyModel:
+		return d.spawnProvider(prefs.KeySpawnDefaultVerifyProvider)
+	case prefs.KeySpawnDefaultImplementModel:
+		return d.spawnProvider(prefs.KeySpawnDefaultImplementProvider)
 	}
 	return d.currentProvider()
 }
@@ -751,6 +848,8 @@ func (d *settingsDialog) onModelsLoaded(provider string, models []string, err er
 		return
 	}
 	d.modelsLoading[provider] = false
+	d.modelsLoaded[provider] = true
+	d.modelsErr[provider] = err
 	if err != nil && len(models) == 0 {
 		d.setStatus("models: " + err.Error())
 		return
@@ -775,7 +874,7 @@ func (d *settingsDialog) activateModel() action {
 		return d.fetchFor(p) // populate for next time
 	}
 	items := make([]string, 0, len(opts)+2)
-	if key == prefs.KeyCompactModel || key == prefs.KeyJudgeModel {
+	if key == prefs.KeyCompactModel || key == prefs.KeyJudgeModel || isSpawnDefaultModel(key) {
 		items = append(items, compactActiveSentinel)
 	}
 	items = append(items, modelCustomSentinel)
@@ -804,12 +903,18 @@ func (d *settingsDialog) activateModel() action {
 // the badge column via joinBadges.
 func (d *settingsDialog) modelHintFor(provider string) string {
 	if d.modelsLoading[provider] {
-		return palette.Warning.On("fetching…")
+		return palette.Warning.On("loading…")
+	}
+	if d.modelsErr[provider] != nil {
+		return palette.Error.On("fetch failed")
+	}
+	if !d.modelsLoaded[provider] {
+		return palette.Muted.On("not fetched")
 	}
 	if n := len(d.models[provider]); n > 0 {
-		return palette.Subtle.On("(" + strconv.Itoa(n) + " models)")
+		return palette.Subtle.On(strconv.Itoa(n) + " available")
 	}
-	return ""
+	return palette.Muted.On("no models · custom allowed")
 }
 
 func (d *settingsDialog) cycleEnum(dir int) {
@@ -873,10 +978,14 @@ func (d *settingsDialog) handleEdit(msg tea.KeyPressMsg) action {
 			d.editing = false
 			return actionNone{}
 		}
-		if d.curRow().numeric && val != "" {
-			if n, err := strconv.Atoi(val); err != nil || n < 0 {
-				d.setStatus(d.curRow().label + ": want a non-negative integer")
-				d.editing = false
+		if row := d.curRow(); row.numeric && val != "" {
+			n, err := strconv.Atoi(val)
+			switch {
+			case err != nil || n < 0:
+				d.setStatus(row.label + ": enter a non-negative integer")
+				return actionNone{}
+			case row.max > 0 && n > row.max:
+				d.setStatus(fmt.Sprintf("%s: maximum is %d", row.label, row.max))
 				return actionNone{}
 			}
 		}
@@ -991,15 +1100,19 @@ func (d *settingsDialog) promote() {
 		d.setStatus("credentials are stored globally")
 		return
 	}
-	if !r.isSet || r.scope != prefs.ScopeWorkspace {
-		d.setStatus("nothing to promote (already global / unset)")
+	if !r.isSet {
+		d.setStatus("using built-in default; no workspace override to move")
+		return
+	}
+	if r.scope != prefs.ScopeWorkspace {
+		d.setStatus("already using the global default")
 		return
 	}
 	ctx := d.ctx
 	if err := d.s.Svc.PromoteSetting(ctx, r.key); err != nil {
 		d.setStatus("promote: " + err.Error())
 	} else {
-		d.setStatus(r.key + " promoted to global")
+		d.setStatus(r.label + " moved to global default")
 	}
 	d.refresh(ctx)
 }

@@ -32,6 +32,9 @@ func TestSessionapplyConversationStartedRootOwnsRunAndPromptState(t *testing.T) 
 	if !s.Run.Running {
 		t.Fatal("Run.Running = false, want true")
 	}
+	if s.Run.activeTopLevel != "task-1" {
+		t.Fatalf("activeTopLevel = %q, want task-1", s.Run.activeTopLevel)
+	}
 	if s.Run.window != 1234 {
 		t.Fatalf("Run.window = %d, want preserved across reset", s.Run.window)
 	}
@@ -136,6 +139,35 @@ func TestSession_ConversationEndedErrorSubagentDoesNotSetRootToast(t *testing.T)
 	}
 	if !s.Run.Running {
 		t.Fatal("Run.Running = false, want parent run unchanged")
+	}
+}
+
+func TestSession_ConversationEndedMismatchedRootDoesNotStopActiveRun(t *testing.T) {
+	s := NewSession("~", t.TempDir(), "")
+	s.applyConversationStarted(teasink.ConversationStartedMsg{TaskID: "active", Depth: 0}, time.Now())
+
+	s.applyConversationEnded(teasink.ConversationEndedMsg{
+		TaskID: "stale",
+		Depth:  0,
+		Reason: runner.TerminalCompleted,
+	}, time.Now())
+
+	if !s.Run.Running || s.Run.activeTopLevel != "active" {
+		t.Fatalf("mismatched terminal changed active run: running=%t task=%q", s.Run.Running, s.Run.activeTopLevel)
+	}
+}
+
+func TestSession_ReconcileTopLevelRunIsIdempotent(t *testing.T) {
+	s := NewSession("~", t.TempDir(), "")
+	s.applyConversationStarted(teasink.ConversationStartedMsg{TaskID: "active", Depth: 0}, time.Now())
+	if !s.reconcileTopLevelRun() {
+		t.Fatal("first reconciliation should clear active run")
+	}
+	if s.Run.Running || s.Run.activeTopLevel != "" {
+		t.Fatalf("reconciled run = running:%t task:%q", s.Run.Running, s.Run.activeTopLevel)
+	}
+	if s.reconcileTopLevelRun() {
+		t.Fatal("second reconciliation should be a no-op")
 	}
 }
 

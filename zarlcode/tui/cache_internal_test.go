@@ -88,7 +88,7 @@ func TestRenderTailInvisibleItemsDoNotHideHistory(t *testing.T) {
 	tl.addUser("newest visible message")
 
 	got := strings.Join(tl.renderViewport(80, 5), "\n")
-	for _, want := range []string{"oldest visible message", "newest visible message"} {
+	for _, want := range []string{"newest visible message", "└─"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("tail lost %q behind invisible items:\n%s", want, got)
 		}

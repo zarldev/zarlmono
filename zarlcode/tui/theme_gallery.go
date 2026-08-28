@@ -71,6 +71,17 @@ func (g *themeGallery) leave() {
 	g.focused = false
 }
 
+func (g *themeGallery) selectedName() string {
+	if g.cursor < 0 || g.cursor >= len(g.names) {
+		return ""
+	}
+	return g.names[g.cursor]
+}
+
+func (g *themeGallery) isPreviewing() bool {
+	return g.focused && g.selectedName() != "" && g.selectedName() != g.origin
+}
+
 func (g *themeGallery) preview() {
 	if g.cursor < 0 || g.cursor >= len(g.names) {
 		return

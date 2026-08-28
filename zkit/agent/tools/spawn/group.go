@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // TaskID identifies an asynchronously running sub-agent task. It is identical
@@ -24,6 +27,10 @@ var (
 	ErrTaskNotFound = errors.New("agent task not found")
 	// ErrGroupClosed reports an attempt to start work after shutdown began.
 	ErrGroupClosed = errors.New("agent task group is closed")
+	// ErrTaskIDExists reports an attempted duplicate task receipt in one Group.
+	ErrTaskIDExists = errors.New("agent task id already exists")
+	// ErrMaxConcurrent reports admission refusal while the group is at capacity.
+	ErrMaxConcurrent = errors.New("maximum concurrent sub-agents reached")
 )
 
 // TaskResult is the immutable terminal result retained by Group.
@@ -32,6 +39,7 @@ type TaskResult struct {
 	Iterations int
 	Reason     runner.TerminalReason
 	Error      string
+	TimedOut   bool
 }
 
 // TaskSnapshot is an immutable view of a sub-agent task.
@@ -66,16 +74,56 @@ type task struct {
 // Group owns asynchronous sub-agent tasks. Its owner must call Close before
 // releasing the runners used by its tasks.
 type Group struct {
-	mu     sync.RWMutex
-	closed bool
-	tasks  map[TaskID]*task
-	order  []TaskID
-	wg     sync.WaitGroup
+	mu            sync.RWMutex
+	closed        bool
+	tasks         map[TaskID]*task
+	order         []TaskID
+	wg            sync.WaitGroup
+	maxConcurrent int
+	running       int
+	maxObserved   int
+	maxRuntime    time.Duration
+	joinOnce      sync.Once
+	joined        chan struct{}
 }
 
-// NewGroup creates an empty, usable task group. It starts no goroutines.
-func NewGroup() *Group {
-	return &Group{tasks: make(map[TaskID]*task)}
+func NewGroup(opts ...options.Option[Group]) *Group {
+	g := &Group{tasks: make(map[TaskID]*task), maxObserved: 32, joined: make(chan struct{})}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
+}
+
+// WithMaxConcurrent caps simultaneously running children in a group. Zero or
+// negative values leave concurrency unbounded.
+func WithMaxConcurrent(n int) options.Option[Group] {
+	return func(g *Group) {
+		if n > 0 {
+			g.maxConcurrent = n
+		}
+	}
+}
+
+// WithMaxObserved caps retained terminal tasks whose summaries have already
+// been delivered. The oldest observed terminals are evicted first. Running and
+// unobserved terminal tasks are never evicted. Zero disables this cap.
+func WithMaxObserved(n int) options.Option[Group] {
+	return func(g *Group) {
+		if n >= 0 {
+			g.maxObserved = n
+		}
+	}
+}
+
+// WithMaxRuntime bounds each child task's total lifetime. A non-positive value
+// leaves runtime unbounded; Group.Close still owns cancellation and joining.
+func WithMaxRuntime(timeout time.Duration) options.Option[Group] {
+	return func(g *Group) {
+		if timeout > 0 {
+			g.maxRuntime = timeout
+		}
+	}
 }
 
 // Start records inv as RUNNING before starting its owned goroutine.
@@ -94,13 +142,23 @@ func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error)
 		return TaskSnapshot{}, ErrGroupClosed
 	}
 	if _, exists := g.tasks[id]; exists {
-		return TaskSnapshot{}, fmt.Errorf("agent task id %q already exists", id)
+		return TaskSnapshot{}, fmt.Errorf("%w: %q", ErrTaskIDExists, id)
+	}
+	if g.maxConcurrent > 0 && g.running >= g.maxConcurrent {
+		return TaskSnapshot{}, fmt.Errorf("%w (%d); await or stop a running task before spawning another", ErrMaxConcurrent, g.maxConcurrent)
 	}
 
 	// The dispatch context ends when agent_spawn returns. Group owns the child
 	// from this point until Close, so preserve values while taking cancellation
 	// ownership explicitly.
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	baseCtx := context.WithoutCancel(ctx)
+	var runCtx context.Context
+	var cancel context.CancelFunc
+	if g.maxRuntime > 0 {
+		runCtx, cancel = context.WithTimeout(baseCtx, g.maxRuntime)
+	} else {
+		runCtx, cancel = context.WithCancel(baseCtx)
+	}
 	t := &task{
 		snapshot: TaskSnapshot{
 			ID:          id,
@@ -114,6 +172,7 @@ func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error)
 	}
 	g.tasks[id] = t
 	g.order = append(g.order, id)
+	g.running++
 	g.wg.Add(1)
 	go g.run(t, runCtx, inv)
 	return t.snapshot, nil
@@ -122,7 +181,8 @@ func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error)
 func (g *Group) run(t *task, ctx context.Context, inv invocation) {
 	defer g.wg.Done()
 	defer inv.lease.Release()
-	res := inv.target.Run(ctx, inv.spec)
+	defer t.cancel()
+	res := runChild(ctx, inv)
 
 	summary := strings.TrimSpace(res.FinalContent)
 	if summary == "" {
@@ -143,12 +203,17 @@ func (g *Group) run(t *task, ctx context.Context, inv invocation) {
 	case runner.TerminalCancelled:
 		state = AgentTaskStates.CANCELLED
 	}
-	result := TaskResult{Summary: summary, Iterations: res.Iterations, Reason: res.Reason}
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	if timedOut {
+		state = AgentTaskStates.FAILED
+	}
+	result := TaskResult{Summary: summary, Iterations: res.Iterations, Reason: res.Reason, TimedOut: timedOut}
 	if res.Err != nil {
 		result.Error = res.Err.Error()
 	}
 
 	g.mu.Lock()
+	g.running--
 	if t.snapshot.State == AgentTaskStates.RUNNING {
 		t.snapshot.State = state
 		t.snapshot.Result = result
@@ -156,6 +221,31 @@ func (g *Group) run(t *task, ctx context.Context, inv invocation) {
 		close(t.done)
 	}
 	g.mu.Unlock()
+}
+
+func runChild(ctx context.Context, inv invocation) runner.TaskResult {
+	var result runner.TaskResult
+	var recovered any
+	var stack []byte
+	func() {
+		defer func() {
+			if recovered = recover(); recovered != nil {
+				stack = debug.Stack()
+			}
+		}()
+		result = inv.target.Run(ctx, inv.spec)
+	}()
+	if recovered == nil {
+		return result
+	}
+	err := fmt.Errorf("sub-agent panic: %v", recovered)
+	slog.ErrorContext(context.WithoutCancel(ctx), "spawn: child runner panicked",
+		"task_id", inv.spec.ID,
+		"agent", inv.agent,
+		"err", err,
+		"stack", string(stack),
+	)
+	return runner.TaskResult{ID: inv.spec.ID, Reason: runner.TerminalError, Err: err}
 }
 
 // Await waits for taskID to reach a terminal state. Cancelling ctx interrupts
@@ -169,7 +259,7 @@ func (g *Group) Await(ctx context.Context, taskID TaskID) (TaskSnapshot, error) 
 	}
 	select {
 	case <-t.done:
-		return g.observe(taskID)
+		return g.observeTask(t, taskID)
 	case <-ctx.Done():
 		return TaskSnapshot{}, ctx.Err()
 	}
@@ -190,20 +280,50 @@ func (g *Group) Peek(taskID TaskID) (TaskSnapshot, error) {
 // Snapshot returns the current immutable task view. A terminal result is marked
 // observed because its summary is being delivered to the caller.
 func (g *Group) Snapshot(taskID TaskID) (TaskSnapshot, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.mu.RLock()
 	t, ok := g.tasks[taskID]
+	g.mu.RUnlock()
 	if !ok {
 		return TaskSnapshot{}, fmt.Errorf("%w: %q", ErrTaskNotFound, taskID)
 	}
+	return g.observeTask(t, taskID)
+}
+
+func (g *Group) observeTask(t *task, taskID TaskID) (TaskSnapshot, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if t.snapshot.State != AgentTaskStates.RUNNING {
 		t.snapshot.Observed = true
+		g.pruneObservedLocked(taskID)
 	}
 	return t.snapshot, nil
 }
 
-func (g *Group) observe(taskID TaskID) (TaskSnapshot, error) {
-	return g.Snapshot(taskID)
+func (g *Group) pruneObservedLocked(preserve TaskID) {
+	if g.maxObserved == 0 {
+		return
+	}
+	observed := 0
+	for _, id := range g.order {
+		if t := g.tasks[id]; t != nil && t.snapshot.Observed {
+			observed++
+		}
+	}
+	remove := observed - g.maxObserved
+	if remove <= 0 {
+		return
+	}
+	kept := g.order[:0]
+	for _, id := range g.order {
+		t := g.tasks[id]
+		if remove > 0 && id != preserve && t != nil && t.snapshot.Observed {
+			delete(g.tasks, id)
+			remove--
+			continue
+		}
+		kept = append(kept, id)
+	}
+	g.order = kept
 }
 
 // List returns all retained task snapshots in stable start order. Listing does
@@ -260,13 +380,14 @@ func (g *Group) Close(ctx context.Context) error {
 		cancel()
 	}
 
-	done := make(chan struct{})
-	go func() {
-		g.wg.Wait()
-		close(done)
-	}()
+	g.joinOnce.Do(func() {
+		go func() {
+			g.wg.Wait()
+			close(g.joined)
+		}()
+	})
 	select {
-	case <-done:
+	case <-g.joined:
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("close agent task group: %w", ctx.Err())
@@ -287,6 +408,7 @@ func taskData(s TaskSnapshot) map[string]any {
 		data["summary"] = s.Result.Summary
 		data["iterations"] = s.Result.Iterations
 		data["reason"] = string(s.Result.Reason)
+		data["timed_out"] = s.Result.TimedOut
 		if s.Result.Error != "" {
 			data["error"] = s.Result.Error
 		}
@@ -332,10 +454,33 @@ func taskResult(call tools.ToolCall, snapshot TaskSnapshot) *tools.ToolResult {
 	}
 	result := &tools.ToolResult{ToolCallID: call.ID, Success: snapshot.State == AgentTaskStates.COMPLETED, Data: taskData(snapshot), ExecutedAt: time.Now()}
 	if !result.Success {
-		result.Err = tools.Budget("agent task", fmt.Sprintf("sub-agent ended with reason=%s after %d iteration%s. Summary:\n%s", snapshot.Result.Reason, snapshot.Result.Iterations, pluralS(snapshot.Result.Iterations), snapshot.Result.Summary))
+		result.Err = terminalToolError("agent task", snapshot.Result.Reason, snapshot.Result.Iterations, snapshot.Result.Summary, snapshot.Result.Error, snapshot.Result.TimedOut)
 		result.Error = result.Err.Error()
 	}
 	return result
+}
+
+func terminalToolError(op string, reason runner.TerminalReason, iterations int, summary, detail string, timedOut bool) *tools.Error {
+	message := fmt.Sprintf("sub-agent ended with reason=%s after %d iteration%s. Summary:\n%s", reason, iterations, pluralS(iterations), summary)
+	if timedOut {
+		return tools.Budget(op, message+"\nThe configured maximum child runtime was exhausted.")
+	}
+	switch reason {
+	case runner.TerminalMaxIterations:
+		return tools.Budget(op, message)
+	case runner.TerminalCancelled:
+		if detail != "" {
+			message += "\nCancellation: " + detail
+		}
+		return tools.Transient(op, errors.New(message))
+	case runner.TerminalError:
+		if detail != "" {
+			message += "\nError: " + detail
+		}
+		return tools.Fatal(op, errors.New(message))
+	default:
+		return tools.Fatal(op, errors.New(message))
+	}
 }
 
 func prepare(ctx context.Context, call tools.ToolCall, t *Tool) (invocation, *tools.ToolResult) {
@@ -347,19 +492,33 @@ func prepare(ctx context.Context, call tools.ToolCall, t *Tool) (invocation, *to
 	if depth >= t.maxDepth {
 		return invocation{}, tools.Failure(call.ID, tools.Budget("agent_spawn", fmt.Sprintf("max recursion depth %d reached — flatten the work or stop calling tools", t.maxDepth)))
 	}
+	args.Prompt = strings.TrimSpace(args.Prompt)
 	if args.Prompt == "" {
 		return invocation{}, tools.Failure(call.ID, tools.Validation("agent_spawn", "prompt is required"))
+	}
+	if args.MaxIterations < 0 {
+		return invocation{}, tools.Failure(call.ID, tools.Validation("agent_spawn", "max_iterations must be non-negative"))
 	}
 	explicitMode := argsModeExplicit(call.Arguments)
 	if explicitMode && strings.TrimSpace(args.Mode) != "" && !normalizeMode(args.Mode).Valid() {
 		return invocation{}, tools.Failure(call.ID, tools.Validation("agent_spawn", fmt.Sprintf("mode %q is invalid; use explore, verify, or implement", args.Mode)))
 	}
-	plannerNote := t.applyPlanner(ctx, &args)
+	t.applyDefaultAgent(&args)
+	plannerNote := ""
+	if t.fallback == FallbackPlanner {
+		plannerNote = t.applyPlanner(ctx, &args)
+	}
+	if err := t.strictRoutingError(args); err != nil {
+		return invocation{}, tools.Failure(call.ID, err)
+	}
 	profileMode := SpawnMode("")
 	if candidate, ok := findAgentCandidate(t.plannerAgents, args.Agent); ok {
 		profileMode = candidate.Mode
 	}
 	target, agentLoaded, fallbackNotice := t.resolveTarget(args)
+	if t.fallback == FallbackError && !agentLoaded && strings.TrimSpace(args.Agent) != "" {
+		return invocation{}, tools.Failure(call.ID, tools.Validation("agent_spawn", fmt.Sprintf("agent %q could not be loaded and fallback=error", strings.TrimSpace(args.Agent))))
+	}
 	if target == nil {
 		return invocation{}, tools.Failure(call.ID, tools.Fatal("agent_spawn", errors.New("parent runner is nil")))
 	}
@@ -373,7 +532,7 @@ func prepare(ctx context.Context, call tools.ToolCall, t *Tool) (invocation, *to
 			runCtx = runner.WithToolGate(runCtx, func(spec tools.ToolSpec) bool { return t.modePolicy(mode, spec) })
 		}
 	}
-	return invocation{target: target, ctx: runCtx, spec: runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: childPromptWithMode(args.Prompt, mode), MaxIterations: t.spawnMaxIterations(args.MaxIterations), Depth: depth + 1, ParentToolCallID: call.ID.String(), AgentName: func() string {
+	return invocation{target: target, ctx: runCtx, spec: runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: childPromptWithMode(args.Prompt, mode), MaxIterations: t.spawnMaxIterations(mode, args.MaxIterations), Depth: depth + 1, ParentToolCallID: call.ID.String(), AgentName: func() string {
 		if agentLoaded {
 			return args.Agent
 		}

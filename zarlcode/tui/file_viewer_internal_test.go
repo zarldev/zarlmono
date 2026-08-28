@@ -39,6 +39,34 @@ func TestFileViewer_RenderedContentUsesCodeBlockRenderer(t *testing.T) {
 	}
 }
 
+func TestFileViewer_RendersSelectedEntryAtSharedMinimum(t *testing.T) {
+	root := t.TempDir()
+	for i := 1; i <= 8; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("file-%d.txt", i)), []byte("content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v := newFileViewer(root)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.entries = entries
+	v.cursor = len(v.entries) - 1
+	selected := v.entries[v.cursor].Name()
+	buf := uv.NewScreenBuffer(42, 7)
+	v.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "workspace browser") || !strings.Contains(out, selected) {
+		t.Fatalf("narrow file viewer lost header or selected entry:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("narrow file viewer missing close action: %q", lines[len(lines)-1])
+	}
+}
+
 func TestInferSyntaxFromHint(t *testing.T) {
 	cases := []struct {
 		hint string

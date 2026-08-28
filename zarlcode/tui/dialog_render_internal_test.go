@@ -26,9 +26,22 @@ func TestThemePicker_RendersFramedBox(t *testing.T) {
 	// Title + compact summary + footer, plus the selected theme ("nord") which
 	// must stay visible even when scrolled, and the full footer ("close") which
 	// the box now widens to fit.
-	for _, want := range []string{"themes", "32/", "nord", "navigate", "select", "close"} {
+	for _, want := range []string{"themes", fmt.Sprintf("%d/", p.cursor+1), "nord", "navigate", "select", "close"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("theme picker render missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestThemePickerRendersAtNarrowWidth(t *testing.T) {
+	p := newThemePicker()
+	buf := uv.NewScreenBuffer(24, 10)
+	p.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+
+	for _, want := range []string{"[themes]", p.names[p.cursor], "esc close"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("narrow theme picker missing %q:\n%s", want, out)
 		}
 	}
 }
@@ -68,6 +81,19 @@ func TestModelQuickPick_CyclesCodexReasoningEffort(t *testing.T) {
 	p.handleKey(tkey("]"))
 	if got != "" || p.effort != "" {
 		t.Fatalf("second cycle effort = %q callback = %q, want auto/empty", p.effort, got)
+	}
+}
+
+func TestModelQuickPickRendersAtNarrowWidth(t *testing.T) {
+	p := newModelQuickPick([]string{"anthropic"}, map[string][]string{"anthropic": {"claude-test"}}, "anthropic", "claude-test", nil, nil)
+	buf := uv.NewScreenBuffer(24, 10)
+	p.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+
+	for _, want := range []string{"[model]", "claude-test", "esc close"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("narrow model picker missing %q:\n%s", want, out)
+		}
 	}
 }
 

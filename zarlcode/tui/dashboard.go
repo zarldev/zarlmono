@@ -26,22 +26,18 @@ const (
 // the extra sparkline grid and per-turn history table that don't fit the
 // 48-col sidebar. Degrades to a single column on narrower terminals.
 func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
-	drawFrame(scr, r, frameStyle{Label: "context view", Border: palette.Border, LabelColor: palette.Primary})
-	innerW, innerH := r.Dx()-4, r.Dy()-2
+	innerW, innerH := r.Dx()-2, r.Dy()-1
 	if innerW < cockpitMinWidth || innerH < 4 {
 		return
 	}
-	x0, y0 := r.Min.X+2, r.Min.Y+1
+	x0, y0 := r.Min.X+1, r.Min.Y
 
 	tabRow := m.contextViewTabBar(innerW)
 	drawLine(scr, uv.Rect(x0, y0, innerW, 1), tabRow)
-	if tabHelp := m.contextViewTabHelp(innerW); tabHelp != "" {
-		drawLine(scr, uv.Rect(x0, y0+1, innerW, 1), tabHelp)
-	}
-	drawLine(scr, uv.Rect(x0, y0+2, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
+	drawLine(scr, uv.Rect(x0, y0+1, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
 
-	contentY := y0 + 3
-	contentH := max(innerH-4, 1)
+	contentY := y0 + 2
+	contentH := max(innerH-2, 1)
 	cw := innerW
 	contentLines := m.activeContextViewLines(cw)
 	maxScroll := max(len(contentLines)-contentH, 0)
@@ -65,14 +61,6 @@ func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
 		drawLine(scr, uv.Rect(x0, contentY+i-scroll, cw, 1), ansi.Truncate(contentLines[i], cw, ""))
 	}
 	drawPaneScrollbar(scr, r.Max.X-2, contentY, contentH, len(contentLines), scroll)
-	drawLine(scr, uv.Rect(x0, r.Max.Y-3, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
-	footer := keyLegend(
-		keyHint{"tab/←→", "switch tab"},
-		keyHint{"↑↓/jk", "scroll"},
-		keyHint{"pgup/pgdn", "page"},
-		keyHint{"esc", "close"},
-	)
-	drawPaneRow(scr, uv.Rect(x0, r.Max.Y-2, innerW, 1), palette.Subtle.On(" "+footer), "")
 }
 
 func dashboardColumnCount(innerW int) int {
@@ -193,11 +181,6 @@ func (m *UI) contextViewTabBar(width int) string {
 		}
 	}
 	return ansi.Truncate(strings.Join(parts, "  "), width, "")
-}
-
-func (m *UI) contextViewTabHelp(width int) string {
-	summary := "live context surface · summary-first prompt · grouped tools/events"
-	return palette.Muted.On(ansi.Truncate(summary, width, ""))
 }
 
 // dashboardColumns lays the cockpit sections into cols columns of width colW.

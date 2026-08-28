@@ -129,3 +129,52 @@ func TestAutoCompact(t *testing.T) {
 		t.Fatal("auto should re-enable auto-compaction")
 	}
 }
+
+func TestSpawnEnabled(t *testing.T) {
+	s := newJudgeTestSettings(t)
+	ctx := t.Context()
+	if s.SpawnEnabled(ctx) {
+		t.Fatal("sub-agents should be disabled by default")
+	}
+	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeySpawnEnabled, "on"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !s.SpawnEnabled(ctx) {
+		t.Fatal("sub-agents should be enabled after setting on")
+	}
+	if got := s.Limits(ctx).SpawnMaxDepth; got != 1 {
+		t.Fatalf("default spawn depth = %d, want 1 when enabled", got)
+	}
+}
+
+func TestSpawnModes(t *testing.T) {
+	s := newJudgeTestSettings(t)
+	ctx := t.Context()
+	sets := map[string]string{
+		prefs.KeySpawnDefaultExploreAgent:    "researcher",
+		prefs.KeySpawnDefaultExploreProvider: "anthropic",
+		prefs.KeySpawnDefaultExploreModel:    "claude-fast",
+		prefs.KeySpawnExploreMaxIterations:   "4",
+		prefs.KeySpawnDefaultVerifyModel:     "judge-small",
+	}
+	for key, value := range sets {
+		if err := s.Svc.SetSetting(ctx, prefs.ScopeWorkspace, key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+
+	got := s.SpawnModes(ctx)
+	if got.Explore != (SpawnModeConfig{
+		DefaultAgent:  "researcher",
+		DefaultTarget: ProviderSpec{Name: "anthropic", Model: "claude-fast"},
+		MaxIterations: 4,
+	}) {
+		t.Fatalf("explore config = %+v", got.Explore)
+	}
+	if got.Verify.DefaultTarget != (ProviderSpec{Model: "judge-small"}) {
+		t.Fatalf("verify config = %+v", got.Verify)
+	}
+	if got.Implement != (SpawnModeConfig{}) {
+		t.Fatalf("implement config = %+v, want inherited", got.Implement)
+	}
+}

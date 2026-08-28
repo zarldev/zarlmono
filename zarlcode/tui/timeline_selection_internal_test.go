@@ -37,7 +37,7 @@ func TestTimelineSelection_BackwardRangeAndCancel(t *testing.T) {
 	tl.addUser("first")
 	tl.addUser("second")
 	tl.addUser("third")
-	tl.renderViewport(80, 5)
+	tl.renderViewport(80, 8)
 
 	tl.enterBrowse()
 	if !tl.browsing {
@@ -49,7 +49,8 @@ func TestTimelineSelection_BackwardRangeAndCancel(t *testing.T) {
 	if !tl.startSelection() {
 		t.Fatal("startSelection returned false")
 	}
-	tl.moveSelectionTop()
+	tl.selection.anchor = tl.totalLines(tl.lwidth()) - 1 // select through the turn body, not only its owner row
+	tl.selection.head = 0
 
 	got := tl.selectedText()
 	if !strings.Contains(got, "first") || !strings.Contains(got, "third") {

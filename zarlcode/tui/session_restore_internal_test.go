@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -109,6 +112,26 @@ func TestResumeTargetDialog_CurrentTargetKeepsCurrentProvider(t *testing.T) {
 	}
 	if got := m.session.ActiveProviderSpec(); got.Name != "openai" || got.Model != "gpt-4o-mini" {
 		t.Fatalf("active provider changed: %+v", got)
+	}
+}
+
+func TestResumeTargetDialogUsesSharedActionRegions(t *testing.T) {
+	saved := &savedSession{sessionSummary: sessionSummary{Provider: "anthropic", Model: "claude-sonnet-4-5"}}
+	d := newResumeTargetDialog(saved, "openai", "gpt-4o-mini")
+	buf := uv.NewScreenBuffer(100, 20)
+	d.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+
+	for _, want := range []string{
+		"[resume]", "choose model target", "anthropic / claude-sonnet-4-5", "openai / gpt-4o-mini",
+		"s / enter use saved", "c use current", "any other cancel",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("resume target dialog missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "[resume]") != 1 {
+		t.Fatalf("resume target should render one framed title:\n%s", out)
 	}
 }
 

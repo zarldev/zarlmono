@@ -1,5 +1,7 @@
 package tui
 
+import "strings"
+
 // thinkingItem is the reasoning block for an assistant turn. Reasoning
 // deltas arrive on the runner's out-of-band Thinking channel
 // (appendThinking) and accumulate here across iterations — one block
@@ -36,9 +38,9 @@ func (t *thinkingItem) render(width int) []string {
 		lines = []string{palette.Subtle.On("[") + palette.Primary.On("+") + palette.Subtle.On("]") + palette.Muted.On(" thinking")}
 	} else {
 		lines = append(lines, palette.Subtle.On("[")+palette.Primary.On("-")+palette.Subtle.On("]")+palette.Muted.On(" thinking"))
-		lines = append(lines, renderContentBlock(width-2-t.depth*2, contentBlock{
+		lines = append(lines, renderContentBlock(width, contentBlock{
 			kind:       contentMarkdown,
-			text:       t.text,
+			text:       normalizeThinkingMarkdown(t.text),
 			bodyPrefix: "  ",
 			tone:       toneMuted,
 			stripANSI:  true,
@@ -48,6 +50,13 @@ func (t *thinkingItem) render(width int) []string {
 		lines = prefixLines(lines, nestPad)
 	}
 	return indentLines(lines, t.depth)
+}
+
+// normalizeThinkingMarkdown repairs the common boundary produced when one
+// bold reasoning heading closes immediately before the next one opens. Left
+// untouched, the four adjacent markers leak into the transcript as "****".
+func normalizeThinkingMarkdown(text string) string {
+	return strings.ReplaceAll(text, "****", "**\n\n**")
 }
 
 // openTurn tracks one in-progress assistant turn for a task: the

@@ -43,5 +43,5 @@ func (m *UI) applyCompactNowFinished(msg compactNowFinishedMsg) {
 		m.session.SetToast("nothing to compact")
 		return
 	}
-	m.session.SetToast(fmt.Sprintf("compacted %d→%d messages", msg.Before, msg.After))
+	m.session.SetToastTone(compactionNotice(msg.Before, msg.After, msg.BytesTrimmed, msg.Engine), toastInfo)
 }

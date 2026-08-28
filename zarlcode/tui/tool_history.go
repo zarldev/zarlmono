@@ -108,23 +108,21 @@ func (h *toolHistory) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (h *toolHistory) draw(scr uv.Screen, area uv.Rectangle) {
-	if area.Dx() < 50 || area.Dy() < 8 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, "tool history", toolHistoryNavW)
+	l, ok := drawUtilitySplitPane(scr, area, toolHistoryNavW)
 	if !ok {
 		return
 	}
 	left := overlayTopBar("tool history", nil, 0, fmt.Sprintf("%d calls", len(h.summaries)), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+h close "), palette.Border)
+	drawOverlayContext(scr, l, left, palette.Border)
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" calls · newest first"))
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
 
-	for i, r := range h.summaries {
-		screenY := l.Nav.Min.Y + 2 + i
-		if screenY >= l.Nav.Max.Y {
-			break
-		}
+	navY := l.Nav.Min.Y + min(2, l.Nav.Dy())
+	navH := max(0, l.Nav.Dy()-2)
+	start, end := windowAroundCursor(h.cursor, len(h.summaries), navH)
+	for i := start; i < end; i++ {
+		r := h.summaries[i]
+		screenY := navY + i - start
 		label := fmt.Sprintf("%-14s %s", r.ToolName, r.CreatedAt.Format("15:04:05"))
 		drawListRow(scr, uv.Rect(l.Nav.Min.X, screenY, l.Nav.Dx(), 1), label, i == h.cursor, true)
 	}
@@ -166,6 +164,6 @@ func (h *toolHistory) detailLines(width int) []string {
 }
 
 func (h *toolHistory) drawFooter(scr uv.Screen, r uv.Rectangle) {
-	hints := []keyHint{{"↑↓/jk", "select call"}, {"pgup/pgdn", "page"}, {"esc", "close"}}
+	hints := []keyHint{{"↑↓/jk", "select"}, {"pgup/pgdn", "page"}, {"esc", "close"}}
 	drawPaneRow(scr, r, palette.Subtle.On(" "+keyLegend(hints...)), "")
 }

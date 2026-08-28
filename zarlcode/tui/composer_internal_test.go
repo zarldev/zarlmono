@@ -44,6 +44,58 @@ func TestComposer_TypingShowsInEditor(t *testing.T) {
 	}
 }
 
+func TestComposer_RemainsEditableWhileTranscriptIsBrowsed(t *testing.T) {
+	m := New()
+	m.width, m.height = 120, 30
+	m.timeline.addUser("older")
+	m.timeline.addUser("newer")
+	m.timeline.viewHeight = 8
+	m.timeline.enterBrowse()
+	if !m.timeline.browsing {
+		t.Fatal("timeline did not enter browse mode")
+	}
+	initialSelection := m.timeline.sel
+
+	for _, text := range []string{"j", " ", "draft"} {
+		m.handleKey(tea.KeyPressMsg{Text: text, Code: []rune(text)[0]})
+	}
+	if got := m.composer.text(); got != "j draft" {
+		t.Fatalf("composer text while browsing = %q, want %q", got, "j draft")
+	}
+	if !m.timeline.browsing {
+		t.Fatal("typing should preserve the browsed transcript position")
+	}
+	if m.timeline.sel != initialSelection {
+		t.Fatalf("printable browse mnemonic moved transcript selection: got %d want %d", m.timeline.sel, initialSelection)
+	}
+
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.timeline.sel >= initialSelection {
+		t.Fatalf("dedicated navigation key did not move transcript: got %d initial %d", m.timeline.sel, initialSelection)
+	}
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if got := m.composer.text(); got != "j draf" {
+		t.Fatalf("backspace while browsing = %q, want %q", got, "j draf")
+	}
+}
+
+func TestBrowseModeRetainsShellShortcuts(t *testing.T) {
+	m := New()
+	m.timeline.addUser("message")
+	m.timeline.enterBrowse()
+
+	m.handleKey(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'w'})
+	if !m.overlay.active() {
+		t.Fatal("ctrl+w should open working set while browsing")
+	}
+	m.overlay.pop()
+
+	m.handleKey(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'g'})
+	if !m.overlay.active() {
+		t.Fatal("ctrl+g should open contextual help while browsing")
+	}
+}
+
 func TestComposer_MultilineAndPaste(t *testing.T) {
 	m := New()
 	step := func(msg tea.Msg) { mm, _ := m.Update(msg); m = mm.(*UI) }
@@ -267,6 +319,30 @@ func TestComposer_ContextViewScrollKeys(t *testing.T) {
 	m.handleKey(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
 	if m.session.CockpitExpanded {
 		t.Fatal("ctrl+l should close the context view when focused")
+	}
+}
+
+func TestComposer_TogglesStateSidebar(t *testing.T) {
+	m := New()
+	m.width, m.height = 220, 40
+	m.recomputeLayout()
+	if m.layout.sidebar.Empty() {
+		t.Fatal("wide layout should initially show state sidebar")
+	}
+
+	m.handleKey(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
+	m.recomputeLayout()
+	if !m.session.StateSidebarHidden || !m.layout.sidebar.Empty() {
+		t.Fatalf("ctrl+b should hide state sidebar: hidden=%v rect=%v", m.session.StateSidebarHidden, m.layout.sidebar)
+	}
+	if m.layout.main.Dx() != m.width {
+		t.Fatalf("hidden sidebar should return width to transcript: main=%d screen=%d", m.layout.main.Dx(), m.width)
+	}
+
+	m.handleKey(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
+	m.recomputeLayout()
+	if m.session.StateSidebarHidden || m.layout.sidebar.Empty() {
+		t.Fatalf("second ctrl+b should restore state sidebar: hidden=%v rect=%v", m.session.StateSidebarHidden, m.layout.sidebar)
 	}
 }
 

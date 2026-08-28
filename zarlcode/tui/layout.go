@@ -29,10 +29,10 @@ const (
 // sidebarMinWidth. Negative/zero middle heights on tiny terminals yield
 // empty rects, which Draw skips and ultraviolet clips.
 func computeLayout(w, h int) uiLayout {
-	return computeLayoutWithEditorLines(w, h, 1)
+	return computeLayoutWithEditorLinesAndSidebar(w, h, 1, true)
 }
 
-func computeLayoutWithEditorLines(w, h int, editorLines int) uiLayout {
+func computeLayoutWithEditorLinesAndSidebar(w, h, editorLines int, showSidebar bool) uiLayout {
 	if w <= 0 || h <= 0 {
 		return uiLayout{}
 	}
@@ -47,7 +47,7 @@ func computeLayoutWithEditorLines(w, h int, editorLines int) uiLayout {
 	midTop := headerHeight
 	midH := max(h-midTop-bottom, 0)
 
-	if w >= sidebarMinWidth && midH > 0 {
+	if showSidebar && w >= sidebarMinWidth && midH > 0 {
 		l.main = uv.Rect(0, midTop, w-sidebarWidth, midH)
 		l.sidebar = uv.Rect(w-sidebarWidth, midTop, sidebarWidth, midH)
 	} else {

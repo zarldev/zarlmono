@@ -30,6 +30,9 @@ zarlcode uses one group per top-level turn. Named and recursive child runners sh
 Every model tool call needs exactly one paired result before the next completion. `agent_spawn` therefore returns a receipt under the original call ID; it never emits the child summary later under that call.
 
 The summary is delivered through `agent_await`, terminal `agent_status`, or `agent_stop`. Parent completion is guarded while any child is running or any terminal summary remains unobserved.
+Observed terminal tasks are retained only as bounded recent history (32 by default); the oldest observed results are evicted first. Running tasks and terminal summaries that have not yet been delivered are never evicted, so completion guardrails and recovery remain reliable.
+`WithMaxRuntime` optionally bounds each child's total lifetime. Runtime exhaustion is reported distinctly in task data and classified as a budget failure; zero leaves runtime unbounded.
+`list_agent_tasks` is metadata-only and never consumes completion evidence; terminal summaries and errors are omitted. Use terminal `agent_status` or `agent_await` to deliver and mark one result observed.
 
 ## Lifecycle
 
@@ -54,5 +57,7 @@ Explore and verify children hold a shared workspace READ lease for their lifetim
 ## Named agents
 
 `WithAgentResolver` maps names returned by `list_agents` to alternate runners. Unknown names soft-fall back to the parent runner with a visible notice. The optional grammar-constrained planner chooses only from registered candidates.
+`WithDefaultAgent` can map each work mode to one of those named profiles when the caller omits `agent`; an explicit `agent` always wins.
+Per-mode iteration budgets override the shared child budget. `WithMaxConcurrent` bounds simultaneously running children in a group, while `WithFallbackPolicy` selects planner recovery, direct parent fallback, or strict refusal.
 
 See [`AGENTS.md`](AGENTS.md) for package invariants and editor guidance.

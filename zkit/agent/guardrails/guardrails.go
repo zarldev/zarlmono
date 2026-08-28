@@ -129,14 +129,18 @@ func (g *GuardedSource) Execute(ctx context.Context, call tools.ToolCall) (*tool
 		}
 	}
 	result, err := g.inner.Execute(ctx, call)
+	var rejection *tools.ToolResult
 	for _, guard := range g.guards {
 		post, ok := guard.(PostCall)
 		if !ok {
 			continue
 		}
-		if gerr := post.Inspect(ctx, call, result, err); gerr != nil {
-			return failedFromGuard(call, guard.Name(), gerr), nil
+		if gerr := post.Inspect(ctx, call, result, err); gerr != nil && rejection == nil {
+			rejection = failedFromGuard(call, guard.Name(), gerr)
 		}
+	}
+	if rejection != nil {
+		return rejection, nil
 	}
 	return result, err
 }

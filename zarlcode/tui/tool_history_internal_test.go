@@ -11,7 +11,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
-func seedToolHistory(t *testing.T, store *db.Store, sessionID string) {
+func seedToolHistory(t *testing.T, store *db.Store) {
+	const sessionID = "sess-1"
 	t.Helper()
 	if err := store.SaveSession(t.Context(), db.SessionRecord{ID: sessionID, Workspace: "ws"}); err != nil {
 		t.Fatalf("save session: %v", err)
@@ -30,7 +31,7 @@ func seedToolHistory(t *testing.T, store *db.Store, sessionID string) {
 
 func TestToolHistory_ListsNewestFirst(t *testing.T) {
 	s := newTestSettings(t)
-	seedToolHistory(t, s.Store, "sess-1")
+	seedToolHistory(t, s.Store)
 
 	h := newToolHistory(s.Store, "sess-1")
 	if len(h.summaries) != 2 {
@@ -46,7 +47,7 @@ func TestToolHistory_ListsNewestFirst(t *testing.T) {
 
 func TestToolHistory_ShowsFullOutput(t *testing.T) {
 	s := newTestSettings(t)
-	seedToolHistory(t, s.Store, "sess-1")
+	seedToolHistory(t, s.Store)
 
 	h := newToolHistory(s.Store, "sess-1")
 	buf := uv.NewScreenBuffer(120, 30)
@@ -60,9 +61,29 @@ func TestToolHistory_ShowsFullOutput(t *testing.T) {
 	}
 }
 
+func TestToolHistory_NarrowHeightKeepsSelectedCallAndFooterVisible(t *testing.T) {
+	s := newTestSettings(t)
+	seedToolHistory(t, s.Store)
+	h := newToolHistory(s.Store, "sess-1")
+	h.cursor = len(h.summaries) - 1
+	h.loadAt(h.cursor)
+
+	buf := uv.NewScreenBuffer(42, 7)
+	h.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "tool history") || !strings.Contains(out, h.summaries[h.cursor].ToolName) {
+		t.Fatalf("narrow tool history lost header or selected call:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("narrow tool history missing footer: %q", lines[len(lines)-1])
+	}
+}
+
 func TestToolHistory_Navigates(t *testing.T) {
 	s := newTestSettings(t)
-	seedToolHistory(t, s.Store, "sess-1")
+	seedToolHistory(t, s.Store)
 
 	h := newToolHistory(s.Store, "sess-1")
 	h.handleKey(tkey("j")) // down → older (call-1)

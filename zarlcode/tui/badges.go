@@ -27,14 +27,14 @@ func joinBadges(parts ...string) string {
 	return strings.Join(out, palette.Subtle.On(" · "))
 }
 
-// scopeBadge colours the precedence source a row resolved from: a workspace
-// pin stands out (Info), a global default recedes (Subtle).
+// override stands out (Info), while an inherited global default recedes
+// (Subtle). The labels describe precedence rather than exposing storage terms.
 func scopeBadge(sc prefs.Scope) string {
 	switch sc {
 	case prefs.ScopeWorkspace:
-		return palette.Info.On(sc.String())
+		return palette.Info.On("workspace override")
 	case prefs.ScopeGlobal:
-		return palette.Subtle.On(sc.String())
+		return palette.Subtle.On("global default")
 	default:
 		return palette.Muted.On(sc.String())
 	}

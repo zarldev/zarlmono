@@ -85,6 +85,22 @@ func TestIntroCtrlQUsesConversationDialog(t *testing.T) {
 	}
 }
 
+func TestIntroShiftTabSwitchesFocusWithoutTogglingPlan(t *testing.T) {
+	m := New()
+	m.intro = newIntroPane("", []sessionSummary{{ID: "s1"}}, "", "")
+	if m.intro.focus != introFocusPrompt {
+		t.Fatal("intro should start on prompt")
+	}
+
+	m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	if m.intro.focus != introFocusSessions {
+		t.Fatalf("shift+tab focus = %v, want sessions", m.intro.focus)
+	}
+	if m.session.PlanMode {
+		t.Fatal("startup shift+tab should not toggle plan mode")
+	}
+}
+
 func TestIntroPromptRowsStayAlignedAfterTyping(t *testing.T) {
 	p := newIntroPane("/tmp/ws", nil, "", "")
 	p.insert("hello")

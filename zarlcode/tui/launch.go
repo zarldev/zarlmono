@@ -33,7 +33,10 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zlog"
 )
 
-const startupMCPConnectTimeout = 15 * time.Second
+const (
+	startupMCPConnectTimeout = 15 * time.Second
+	startupMetadataTimeout   = 3 * time.Second
+)
 
 // Zarlcode is the running application: workspace, settings, the live runner,
 // and the bubbletea model. It's the typed instance carried by the zapp
@@ -164,10 +167,12 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		} else {
 			slog.InfoContext(ctx, "sandbox: shell confinement disabled in settings")
 		}
-	} else if s, err := sandbox.New(sbPolicy); err != nil {
+	} else if normal, err := sandbox.New(sbPolicy); err != nil {
 		slog.WarnContext(ctx, "sandbox: shell confinement unavailable, running unconfined", "err", err)
+	} else if verify, err := sandbox.New(sandbox.VerifyPolicy(sbPolicy, ws.Root())); err != nil {
+		slog.WarnContext(ctx, "sandbox: verify confinement unavailable, running unconfined", "err", err)
 	} else {
-		sb = s
+		sb = sandbox.NewWorkModeSandbox(normal, verify)
 	}
 
 	// Background-process manager for bash(background=true) + the
@@ -181,9 +186,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		code.WithProcessSandbox(sb),
 		code.WithProcessEnv(toolEnv),
 	)
-	_ = app.AddCloser("processes", closerFunc(func() error {
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
+	_ = app.AddContextCloser("processes", zapp.ContextCloseFunc(func(shutdownCtx context.Context) error {
 		pm.Close(shutdownCtx)
 		return nil
 	}))
@@ -262,11 +265,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		engine.WithSandbox(sb),
 		engine.WithToolEnvironment(toolEnv),
 	)
-	_ = app.AddCloser("live", closerFunc(func() error {
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		return live.Close(shutdownCtx)
-	}))
+	_ = app.AddContextCloser("live", zapp.ContextCloseFunc(live.Close))
 
 	// MCP: a persistent registry holding live external-server connections.
 	// Connected servers' tools land on mcpHost and are merged into each turn's
@@ -275,9 +274,13 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	// queued into the same live-turn steerer as user-entered mid-run input.
 	mcpHost := tools.NewRegistry()
 	mcpReg := dynamic.NewMCPRegistry(mcpHost, agentmcp.NotifierFor(live.QueueInjector()))
-	m.startupReady = p.Headless
+	// Advisory startup discovery may update the target later, but it must not
+	// gate prompt submission. LiveRunner target transitions are atomic, so a
+	// turn already in flight keeps its snapshot and the update applies next turn.
+	m.startupReady = true
 	if !p.Headless {
-		m.startupCmd = finishStartupCmd(ctx, settings, mcpReg, spec)
+		m.startupCmd = finishStartupMetadataCmd(ctx, settings, spec)
+		m.startupMCPCmd = connectConfiguredMCPServersCmd(ctx, settings, mcpReg)
 	}
 
 	live.AttachMCP(mcpReg, mcpHost)
@@ -409,26 +412,37 @@ type startupReadyMsg struct {
 	modelChanged bool
 }
 
-func finishStartupCmd(ctx context.Context, settings *engine.Settings, mcpReg *dynamic.MCPRegistry, spec engine.ProviderSpec) tea.Cmd {
+func finishStartupMetadataCmd(ctx context.Context, settings *engine.Settings, spec engine.ProviderSpec) tea.Cmd {
 	return func() tea.Msg {
-		connectConfiguredMCPServers(ctx, settings, mcpReg)
-		validated, changed, err := settings.ValidateCodexModel(ctx, spec)
+		// Startup metadata is advisory and must never hold the first submitted
+		// turn behind a slow model catalogue or local-provider probe. The static
+		// window selected during Create remains the fallback.
+		metadataCtx, cancel := context.WithTimeout(ctx, startupMetadataTimeout)
+		defer cancel()
+		validated, changed, err := settings.ValidateCodexModel(metadataCtx, spec)
 		if err != nil {
 			slog.WarnContext(ctx, "validate Codex model", "err", err)
 			validated = spec
 		}
 		var provider llm.Provider
 		if changed {
-			provider, err = engine.BuildProvider(ctx, settings.Registry, settings.Svc, validated)
+			provider, err = engine.BuildProvider(metadataCtx, settings.Registry, settings.Svc, validated)
 			if err != nil {
 				slog.WarnContext(ctx, "rebuild validated Codex provider", "err", err)
 				validated, changed = spec, false
 			}
 		}
 		return startupReadyMsg{
-			window: settings.ContextWindow(ctx, validated), provider: provider,
+			window: settings.ContextWindow(metadataCtx, validated), provider: provider,
 			spec: validated, modelChanged: changed,
 		}
+	}
+}
+
+func connectConfiguredMCPServersCmd(ctx context.Context, settings *engine.Settings, mcpReg *dynamic.MCPRegistry) tea.Cmd {
+	return func() tea.Msg {
+		connectConfiguredMCPServers(ctx, settings, mcpReg)
+		return nil
 	}
 }
 

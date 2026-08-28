@@ -33,7 +33,7 @@ type sessionEffect struct {
 func (s *Session) applyTurnSetupFailed(e turnSetupFailedMsg) setupFailedEffect {
 	s.logEvent("run setup failed", e.Error)
 	s.SetErrorToast("setup: " + e.Error)
-	s.Run.Running = false
+	s.reconcileTopLevelRun()
 	return setupFailedEffect{PromptToRender: trimPromptForNotice(e.Prompt), ToastChanged: true}
 }
 
@@ -48,6 +48,7 @@ func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now
 		s.checkpoints().StartTurn(e.TaskID, ordinal, now)
 		s.Run.reset()
 		s.Run.Running = true
+		s.Run.activeTopLevel = e.TaskID
 	case e.Depth > 0:
 		if e.Depth > s.Run.maxDepth {
 			s.Run.maxDepth = e.Depth
@@ -177,6 +178,10 @@ func (s *Session) applySteerInjected(e teasink.SteerInjectedMsg) {
 func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now time.Time) sessionEffect {
 	s.LastParentToolCallID = e.ParentToolCallID
 	s.logEvent("run ended", fmt.Sprintf("reason=%s iter=%d dur=%v", e.Reason, e.Iterations, e.Duration.Round(time.Millisecond)))
+	if e.Depth == 0 && s.Run.activeTopLevel != "" && s.Run.activeTopLevel != e.TaskID {
+		s.logEvent("run end ignored", "active="+s.Run.activeTopLevel+" ended="+e.TaskID)
+		return sessionEffect{}
+	}
 	if e.Depth == 0 {
 		s.workingSet().CompleteTurn(e.TaskID)
 		s.checkpoints().CompleteTurn(e.TaskID, now)
@@ -191,16 +196,30 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 			msg = formatRateLimit(e.RateLimit)
 		}
 		s.SetErrorToast(msg)
-		s.Run.Running = false
+		s.reconcileTopLevelRun()
 		return sessionEffect{ToastChanged: true, Notice: palette.Error.On("✗ provider error: ") + msg}
 	}
 
 	if e.Depth == 0 {
 		s.Run.foldTurnComplete(e.TotalUsage, e.Duration, e.Iterations)
+		s.Run.activeTopLevel = ""
 	} else {
 		s.Run.foldSubAgentUsage(e.TotalUsage)
 	}
 	return sessionEffect{}
+}
+
+// reconcileTopLevelRun idempotently clears UI-visible live state. The command
+// completion path calls this as a safety net when a terminal sink event is
+// missing; normal terminal events have already cleared it through folding.
+func (s *Session) reconcileTopLevelRun() bool {
+	if !s.Run.Running && s.Run.activeTopLevel == "" {
+		return false
+	}
+	s.Run.Running = false
+	s.Run.activeTopLevel = ""
+	s.Run.bumpRevision()
+	return true
 }
 
 type providerErrorEnvelope struct {

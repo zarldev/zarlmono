@@ -155,6 +155,7 @@ and joined during shutdown. Workspace leases allow concurrent read-only children
 while preventing conflicting shared-tree writes. Long sessions compact older history
 when context gets tight. Skills and agent profiles let a workspace carry its own
 operating notes without baking them into the binary.
+In **Settings → limits → Sub-agents**, first enable delegation to expose `agent_spawn` and its lifecycle tools to the model. Profile pickers then route unnamed explore, verify, and implement tasks to discovered agents, allowing cheap exploration and stronger implementation models. The same section has per-mode iteration budgets, a simultaneous-child cap, and unresolved-routing policy (`planner`, `parent`, or `error`). Explicit `agent` arguments still win.
 
 Dynamic tool authoring also exists, but it is opt-in rather than part of the
 default TUI surface.

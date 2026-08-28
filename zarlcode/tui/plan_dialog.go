@@ -50,8 +50,10 @@ type planDialog struct {
 	previewName    string    // path of the file currently previewed
 	previewContent string    // cached markdown content
 	previewModTime time.Time // modtime of the cached preview; same path may change on disk
-	scroll         int       // preview scroll offset
+	scroll         int       // saved preview scroll offset
 	height         int
+	liveScroll     int // live-plan body scroll offset
+	liveViewport   int
 }
 
 func newPlanDialog(plan *code.Plan, workspace string) *planDialog {
@@ -123,6 +125,26 @@ func (d *planDialog) handleKey(msg tea.KeyPressMsg) action {
 		return actionNone{}
 	}
 
+	if d.view == planViewLive {
+		lines := d.liveLines(planWrapWidth)
+		maxScroll := max(0, len(lines)-max(1, d.liveViewport))
+		switch msg.String() {
+		case "up", "k":
+			d.liveScroll = max(0, d.liveScroll-1)
+		case "down", "j":
+			d.liveScroll = min(maxScroll, d.liveScroll+1)
+		case "pgup":
+			d.liveScroll = max(0, d.liveScroll-max(1, d.liveViewport-1))
+		case "pgdown":
+			d.liveScroll = min(maxScroll, d.liveScroll+max(1, d.liveViewport-1))
+		case "home", "g":
+			d.liveScroll = 0
+		case "end", "G":
+			d.liveScroll = maxScroll
+		}
+		return actionNone{}
+	}
+
 	if d.view == planViewSaved {
 		switch msg.String() {
 		case "up", "k":
@@ -161,15 +183,39 @@ func (d *planDialog) draw(scr uv.Screen, area uv.Rectangle) {
 // ─── live tab ───────────────────────────────────────────────────────────
 
 func (d *planDialog) drawLive(scr uv.Screen, area uv.Rectangle) {
+	wrap := planWrapForArea(area)
+	lines := d.liveLines(wrap)
+	width := min(planWrapWidth+8, max(planMinBodyWidth+4, area.Dx()))
+	height := min(max(8, len(lines)+4), area.Dy())
+	lay, ok := drawDialogPane(scr, area, "planning pane", width, height, palette.PlanMode, palette.PlanMode)
+	if !ok {
+		return
+	}
+	d.liveViewport = lay.Body.Dy()
+	maxScroll := max(0, len(lines)-d.liveViewport)
+	d.liveScroll = min(max(d.liveScroll, 0), maxScroll)
+	summary := d.planSummary()
+	if maxScroll > 0 {
+		stepCount := 0
+		if d.plan != nil {
+			stepCount = len(d.plan.Steps)
+		}
+		summary = fmt.Sprintf("%d steps · %s", stepCount, helpScrollPosition(d.liveScroll, d.liveViewport, len(lines)))
+	}
+	context := overlayTopBar("plan", []string{"live", "saved"}, int(planViewLive), summary, lay.Context.Dx())
+	drawLine(scr, lay.Context, context)
+	for i, line := range lines[d.liveScroll:min(len(lines), d.liveScroll+d.liveViewport)] {
+		drawLine(scr, uv.Rect(lay.Body.Min.X, lay.Body.Min.Y+i, lay.Body.Dx(), 1), ansi.Truncate(line, lay.Body.Dx(), "…"))
+	}
+	drawLine(scr, lay.Footer, palette.Muted.On(planFooterLine()))
+}
+
+func (d *planDialog) liveLines(width int) []string {
 	var p code.Plan
 	if d.plan != nil {
 		p = *d.plan
 	}
-	wrap := planWrapForArea(area)
-	lines := append([]string{
-		overlayTopBar("plan", []string{"live", "saved"}, int(planViewLive), d.planSummary(), wrap),
-	}, planLines(p, wrap)...)
-	drawPlanDialogBox(scr, area, "planning pane", lines)
+	return planLines(p, width)
 }
 
 // ─── saved tab (full-screen split pane) ─────────────────────────────────
@@ -195,17 +241,13 @@ func (d *planDialog) tryPreview() {
 }
 
 func (d *planDialog) drawSaved(scr uv.Screen, area uv.Rectangle) {
-	w, h := area.Dx(), area.Dy()
-	if w < 40 || h < 8 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, "plans", fileViewerNavW)
+	l, ok := drawUtilitySplitPane(scr, area, fileViewerNavW)
 	if !ok {
 		return
 	}
 	d.height = l.Body.Dy()
 	left := overlayTopBar("plan", []string{"live", "saved"}, int(d.view), d.savedSummary(), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+p close "), palette.Border)
+	drawOverlayContext(scr, l, left, palette.Border)
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" saved plans · newest first"))
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
 	navY := l.Nav.Min.Y + 2
@@ -226,6 +268,11 @@ func (d *planDialog) drawSaved(scr uv.Screen, area uv.Rectangle) {
 		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), 1), headerLine("saved plan preview", l.Detail.Dx(), palette.Primary.On))
 		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+1, l.Detail.Dx(), 1), palette.Muted.On(" status: unavailable"))
 		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+2, l.Detail.Dx(), 1), palette.Subtle.On(" choose a saved plan to preview its markdown"))
+	}
+	if l.Footer.Dx() < 60 {
+		footer := keyLegend(keyHint{"↑↓", "move"}, keyHint{"tab", "live"}, keyHint{"esc", "close"})
+		drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
+		return
 	}
 	footer := compactFooterHints(
 		keyHint{"↑↓/jk", "navigate"},
@@ -281,8 +328,6 @@ func planLines(p code.Plan, width int) []string {
 			palette.PlanMode.On("no structured plan yet"),
 			palette.Subtle.On("switch to PLAN with shift+tab, then ask for a plan"),
 			palette.Muted.On("the agent fills this pane via update_plan"),
-			"",
-			planFooterLine(),
 		}
 	}
 	var out []string
@@ -312,7 +357,6 @@ func planLines(p code.Plan, width int) []string {
 			style: palette.Subtle.On,
 		})...)
 	}
-	out = append(out, "", planFooterLine())
 	return out
 }
 
@@ -343,13 +387,6 @@ func planProgressLine(done, total, width int) string {
 
 func planFooterLine() string {
 	return keyLegend(keyHint{"ctrl+p", "close"}, keyHint{"esc", "close"}, keyHint{"q", "close"}, keyHint{"tab", "saved plans"}, keyHint{label: "updates live"})
-}
-
-// drawPlanDialogBox renders the live plan as a centered PlanMode-tinted box,
-// auto-sized to its content with a minimum body width. It is the shared
-// drawDialogBox core with the plan's colours and width floor.
-func drawPlanDialogBox(scr uv.Screen, area uv.Rectangle, title string, lines []string) {
-	drawDialogBoxColored(scr, area, title, lines, planMinBodyWidth, palette.PlanMode, palette.PlanMode)
 }
 
 // planStepDecor maps a step status to its marker glyph + colour styler.

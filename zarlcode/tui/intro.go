@@ -369,23 +369,10 @@ func (p *introPane) sessionLines() []string {
 func (p *introPane) footer() string {
 	key := func(k string) string { return palette.Subtle.On(k) }
 	mut := func(s string) string { return palette.Muted.On(s) }
-	// Navigation hint is always present (either styled or as same-width
-	// spaces) so the footer line width stays constant between focus states.
-	// Without this the entire centered info block shifts horizontally when
-	// tabbing between prompt and sessions.
-	nav := key("↑↓") + mut(" pick")
-	if p.focus != introFocusSessions {
-		nav = strings.Repeat(" ", ansi.StringWidth(nav))
+	if p.focus == introFocusSessions {
+		return key("↑↓") + mut(" pick") + mut("    ") + key("enter") + mut(" resume") + mut("    ") + key("tab") + mut(" prompt")
 	}
-	parts := append([]string{nav},
-		key("tab")+mut(" focus"),
-		key("ctrl+p")+mut(" plan pane"),
-		key("ctrl+s")+mut(" settings"),
-		key("ctrl+t")+mut(" theme"),
-		key("ctrl+g")+mut(" keys"),
-		key("ctrl+c")+mut(" quit"),
-	)
-	return strings.Join(parts, mut("    "))
+	return key("enter") + mut(" start") + mut("    ") + key("tab") + mut(" sessions") + mut("    ") + key("ctrl+g") + mut(" keys")
 }
 
 func truncateRunes(s string, n int) string {

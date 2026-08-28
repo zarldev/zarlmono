@@ -15,28 +15,20 @@ func renderStatus(t *testing.T, m *UI, w int) string {
 	return ansi.Strip(buf.Render())
 }
 
-func TestStatusHintReflectsMode(t *testing.T) {
+func TestStatusRowShowsOnlyContextualState(t *testing.T) {
 	m := New()
-
-	// Default (chat): browse + plan-mode affordances, no stop key.
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "tab browse") || !strings.Contains(got, "shift+tab plan mode") || strings.Contains(got, "esc stop") {
-		t.Errorf("default hint wrong:\n%q", got)
+	if got := renderStatus(t, m, 120); !strings.Contains(got, "build mode") || strings.Contains(got, "ctrl+") {
+		t.Fatalf("idle status should show durable workflow mode without shortcut wallpaper, got %q", got)
 	}
-	// Live turn offers esc-stop.
+
 	m.session.Run.Running = true
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "esc stop") {
-		t.Errorf("running hint should offer 'esc stop':\n%q", got)
+	if got := renderStatus(t, m, 120); !strings.Contains(got, "build mode") || strings.Contains(got, "running") || strings.Contains(got, "ctrl+") {
+		t.Errorf("footer should keep durable mode and leave live state to the transcript:\n%q", got)
 	}
 	m.session.Run.Running = false
-	// Plan mode offers shift+tab build.
 	m.session.PlanMode = true
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "shift+tab build") {
-		t.Errorf("plan hint should offer 'shift+tab build':\n%q", got)
-	}
-	m.session.PlanMode = false
-	m.session.SetCockpitExpanded(true)
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "scroll") && !strings.Contains(got, "plan mode") {
-		t.Errorf("status hint should offer either cockpit scroll keys or compose shortcuts when collapsed:\n%q", got)
+	if got := renderStatus(t, m, 120); !strings.Contains(got, "plan mode") || strings.Contains(got, "shift+tab") {
+		t.Errorf("plan status should be concise and contextual:\n%q", got)
 	}
 }
 
@@ -63,5 +55,24 @@ func TestStatusToastNotDroppedWhenTooWide(t *testing.T) {
 	plain := renderStatus(t, m, 20)
 	if !strings.Contains(plain, "a long") {
 		t.Errorf("an over-wide toast should still render (truncated), not be dropped, got:\n%q", plain)
+	}
+}
+
+func TestStatusToastCollisionHasDeterministicPriority(t *testing.T) {
+	m := New()
+	m.session.SetErrorToast("provider unavailable")
+	plain := renderStatus(t, m, 20)
+	if !strings.Contains(plain, "provider") || strings.Contains(plain, "build mode") {
+		t.Fatalf("narrow error toast should replace durable mode, got %q", plain)
+	}
+}
+
+func TestStatusSlashSuggestionSuppressesNonExceptionalToast(t *testing.T) {
+	m := New()
+	m.composer.setText("/")
+	m.session.SetSuccessToast("saved")
+	plain := renderStatus(t, m, 80)
+	if !strings.Contains(plain, "slash commands") || strings.Contains(plain, "saved") {
+		t.Fatalf("slash discovery should own the contextual row over info toast, got %q", plain)
 	}
 }

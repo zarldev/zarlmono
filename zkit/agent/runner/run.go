@@ -97,6 +97,11 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 	if spec.ID == "" {
 		spec.ID = taskscope.ID(uuid.NewString())
 	}
+	if !r.claimTaskID(spec.ID) {
+		r.publishSetupFailed(ctx, spec, start, ErrTaskIDActive)
+		return TaskResult{ID: spec.ID, Reason: TerminalError, Err: ErrTaskIDActive}
+	}
+	defer r.releaseTaskID(spec.ID)
 	if spec.MaxIterations < 0 {
 		// Publish the paired Started/Ended bookend like every other terminal
 		// path — a consumer that reacts only to the event stream (zarlcode's
@@ -696,6 +701,22 @@ func (w *cappedBytesWriter) Write(p []byte) (int, error) {
 	}
 	w.buf = append(w.buf, p[:remaining]...)
 	return len(p), errCapReached
+}
+
+func (r *Runner) claimTaskID(id taskscope.ID) bool {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	if _, exists := r.activeIDs[id]; exists {
+		return false
+	}
+	r.activeIDs[id] = struct{}{}
+	return true
+}
+
+func (r *Runner) releaseTaskID(id taskscope.ID) {
+	r.activeMu.Lock()
+	delete(r.activeIDs, id)
+	r.activeMu.Unlock()
 }
 
 func (w *cappedBytesWriter) string() string { return string(w.buf) }

@@ -481,6 +481,10 @@ func TestFetchContextWindowUsesBackendAutoCompactLimit(t *testing.T) {
 			http.Error(w, "missing account header", http.StatusUnauthorized)
 			return
 		}
+		if got := r.URL.Query().Get("client_version"); got != "0.0.0" {
+			http.Error(w, "client_version = "+got, http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5","context_window":272000,"auto_compact_token_limit":204000,"effective_context_window_percent":95}]}`)
 	}))

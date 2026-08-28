@@ -4,7 +4,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	lg "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -15,8 +14,8 @@ const mainToastTTL = 4 * time.Second
 // mainToastMsg wakes the Update loop so an idle status-bar toast can clear.
 type mainToastMsg struct{}
 
-// statusPane is the bottom hint bar: key hints on the left, transient toast
-// on the right. Read-only — no keyboard event handling.
+// statusPane is the contextual bottom state row. It stays quiet when there is
+// nothing requiring attention; complete shortcut discovery belongs in help.
 type statusPane struct {
 	session *Session
 	input   func() string
@@ -32,22 +31,34 @@ func (s *statusPane) Draw(scr uv.Screen, area uv.Rectangle) {
 		return
 	}
 	hint := s.statusHint()
-	bar := lg.NewStyle().
-		Background(lgColor(palette.Highlight)).
-		Foreground(lgColor(palette.Subtle)).
-		Width(area.Dx()).
-		Render(hint)
-	drawLine(scr, area, bar)
-
-	// Toast overlay at the right edge. Right-align it when it fits; when it's
-	// wider than the bar, pin it to the left and let drawLine truncate —
-	// a clipped notification beats a silently dropped one.
 	toast := s.statusToast()
-	if toast != "" {
-		tw := ansi.StringWidth(toast)
-		x := max(area.Min.X+area.Dx()-tw, area.Min.X)
-		drawLine(scr, uv.Rect(x, area.Min.Y, area.Min.X+area.Dx()-x, 1), toast)
+	slashActive := s.input != nil && slashStatusHint(s.input()) != ""
+	if slashActive && s.session.ToastTone != toastError && s.session.ToastTone != toastWarn {
+		toast = ""
 	}
+
+	content := uv.Rect(area.Min.X+1, area.Min.Y, max(area.Dx()-1, 0), 1)
+	if content.Dx() == 0 {
+		return
+	}
+	if toast == "" {
+		drawLine(scr, content, hint)
+		return
+	}
+
+	// Keep both durable context and transient feedback when they fit. On a
+	// collision the toast owns the row: exceptional/transient feedback is more
+	// actionable than the durable mode label, and explicit arbitration avoids
+	// the old right-aligned overlay corrupting the left segment.
+	toastWidth := ansi.StringWidth(toast)
+	hintWidth := ansi.StringWidth(hint)
+	if hintWidth+2+toastWidth <= content.Dx() {
+		drawLine(scr, content, hint)
+		x := content.Max.X - toastWidth
+		drawLine(scr, uv.Rect(x, content.Min.Y, toastWidth, 1), toast)
+		return
+	}
+	drawLine(scr, content, toast)
 }
 
 // Update implements Pane. Status bar is read-only.
@@ -56,19 +67,16 @@ func (s *statusPane) Update(msg tea.Msg) tea.Cmd { return nil }
 // toastExpiryCmd schedules a wake-up to clear an active toast.
 
 func (s *statusPane) statusHint() string {
-	stopKey := "ctrl+c quit  ·  ctrl+q ctx"
 	if s.input != nil {
 		if hint := slashStatusHint(s.input()); hint != "" {
 			return hint
 		}
 	}
-	if s.session.Run.Running {
-		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q ctx"
-	}
+	mode := palette.Primary.On("build mode")
 	if s.session.PlanMode {
-		return " enter submit  ·  shift+enter newline  ·  shift+tab build  ·  " + stopKey + "  ·  ctrl+g keys"
+		mode = palette.PlanMode.On("plan mode")
 	}
-	return " enter submit  ·  shift+enter newline  ·  tab browse  ·  shift+tab plan mode  ·  " + stopKey + "  ·  ctrl+g keys"
+	return mode
 }
 
 func (s *statusPane) statusToast() string {

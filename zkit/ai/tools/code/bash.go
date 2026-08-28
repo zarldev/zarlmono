@@ -282,7 +282,7 @@ func (t *BashTool) executeBackground(
 	cmdStr, autoFlipReason string,
 ) (*tools.ToolResult, error) {
 	if t.procMgr != nil {
-		return t.executeBackgroundManaged(call, cmdStr, autoFlipReason)
+		return t.executeBackgroundManaged(ctx, call, cmdStr, autoFlipReason)
 	}
 	return t.executeBackgroundLog(ctx, call, cmdStr, autoFlipReason)
 }
@@ -292,10 +292,11 @@ func (t *BashTool) executeBackground(
 // buffers + tracks lifecycle), returns a process_id the agent can
 // thread into bash_output / stop_process / list_processes.
 func (t *BashTool) executeBackgroundManaged(
+	ctx context.Context,
 	call tools.ToolCall,
 	cmdStr, autoFlipReason string,
 ) (*tools.ToolResult, error) {
-	id, err := t.procMgr.StartProcess(cmdStr)
+	id, err := t.procMgr.StartProcessContext(ctx, cmdStr)
 	if err != nil {
 		return tools.Failure(call.ID, tools.Fatal("bash", fmt.Errorf("background start: %w", err))), nil
 	}
@@ -413,7 +414,7 @@ func (t *BashTool) newCmd(ctx context.Context, cmdStr string) (*exec.Cmd, func()
 	cmd.Stdin = stdin
 	cleanup := func() { _ = stdin.Close() }
 	if t.sandbox != nil {
-		if err := t.sandbox.Sandbox(cmd); err != nil {
+		if err := sandboxCommand(ctx, t.sandbox, cmd); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("bash: sandbox: %w", err)
 		}

@@ -1,9 +1,11 @@
 package spawn_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
@@ -55,6 +57,32 @@ func TestExecute_RefusesEmptyPrompt(t *testing.T) {
 	}
 }
 
+func TestExecute_RefusesWhitespacePrompt(t *testing.T) {
+	t.Parallel()
+	tool := spawn.New(nil)
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
+		ID: "c1", Arguments: tools.ToolParameters{"prompt": " \t\n "},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Success || res.Err == nil || res.Err.Kind != tools.Kinds.VALIDATION {
+		t.Fatalf("result = %#v, want validation failure", res)
+	}
+}
+
+func TestExecute_RejectsNegativeMaxIterations(t *testing.T) {
+	t.Parallel()
+	tool := spawn.New(nil)
+	result, err := tool.Execute(t.Context(), tools.ToolCall{ID: "c1", Arguments: tools.ToolParameters{"prompt": "work", "max_iterations": -1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.VALIDATION || !strings.Contains(result.Error, "non-negative") {
+		t.Fatalf("result = %#v, want max_iterations validation", result)
+	}
+}
+
 func TestExecute_AtZeroMaxDepthRefusesAlways(t *testing.T) {
 	t.Parallel()
 	tool := spawn.New(nil, spawn.WithMaxDepth(0))
@@ -88,6 +116,66 @@ func TestExecute_RefusesNilParentRunner(t *testing.T) {
 	}
 	if !strings.Contains(res.Error, "parent runner is nil") {
 		t.Errorf("Error = %q, want it to mention nil parent runner", res.Error)
+	}
+}
+
+func TestExecute_FallbackErrorRefusesParentRouting(t *testing.T) {
+	t.Parallel()
+	tool := spawn.New(nil, spawn.WithFallbackPolicy(spawn.FallbackError))
+	res, err := tool.Execute(t.Context(), tools.ToolCall{
+		ID: "c1", Arguments: tools.ToolParameters{"prompt": "do a thing", "mode": "explore"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || !strings.Contains(res.Error, "fallback=error") {
+		t.Fatalf("result = %#v, want fallback policy failure", res)
+	}
+}
+
+func TestExecute_FallbackErrorRejectsUnknownAgentBeforeResolver(t *testing.T) {
+	t.Parallel()
+	resolverCalls := 0
+	tool := spawn.New(nil,
+		spawn.WithFallbackPolicy(spawn.FallbackError),
+		spawn.WithSpawnPlannerCandidates(nil, []spawn.AgentCandidate{{Name: "known"}}),
+		spawn.WithAgentResolver(func(string) (*runner.Runner, error) {
+			resolverCalls++
+			return nil, errors.New("resolver side effect")
+		}),
+	)
+	result, err := tool.Execute(t.Context(), tools.ToolCall{ID: "c1", Arguments: tools.ToolParameters{"prompt": "work", "agent": "unknown"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.VALIDATION {
+		t.Fatalf("result = %#v, want validation failure", result)
+	}
+	if resolverCalls != 0 {
+		t.Fatalf("resolver calls = %d, want zero for known-unknown strict route", resolverCalls)
+	}
+}
+
+func TestExecute_FallbackErrorAttemptsRegisteredAgentOnce(t *testing.T) {
+	t.Parallel()
+	resolverCalls := 0
+	tool := spawn.New(nil,
+		spawn.WithFallbackPolicy(spawn.FallbackError),
+		spawn.WithSpawnPlannerCandidates(nil, []spawn.AgentCandidate{{Name: "known"}}),
+		spawn.WithAgentResolver(func(string) (*runner.Runner, error) {
+			resolverCalls++
+			return nil, errors.New("profile unavailable")
+		}),
+	)
+	result, err := tool.Execute(t.Context(), tools.ToolCall{ID: "c1", Arguments: tools.ToolParameters{"prompt": "work", "agent": "known"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || !strings.Contains(result.Error, "could not be loaded") {
+		t.Fatalf("result = %#v, want strict load failure", result)
+	}
+	if resolverCalls != 1 {
+		t.Fatalf("resolver calls = %d, want one", resolverCalls)
 	}
 }
 

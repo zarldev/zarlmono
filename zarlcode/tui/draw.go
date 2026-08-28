@@ -124,6 +124,42 @@ func drawSplitPaneColored(scr uv.Screen, area uv.Rectangle, label string, navW i
 	}, true
 }
 
+// drawUtilitySplitPane lays out a full-screen utility surface without wrapping
+// it in a second box. A top utility row, one divider, a single nav/detail split,
+// and a contextual footer provide the shared hierarchy.
+func drawUtilitySplitPane(scr uv.Screen, area uv.Rectangle, navW int) (splitPaneLayout, bool) {
+	w, h := area.Dx(), area.Dy()
+	if w < 12 || h < 5 {
+		return splitPaneLayout{}, false
+	}
+	if navW > w/3 {
+		navW = w / 3
+	}
+	if navW < 4 || w-navW-1 < 4 {
+		return splitPaneLayout{}, false
+	}
+	contextY := area.Min.Y
+	topRuleY := contextY + 1
+	bodyY := topRuleY + 1
+	footerY := area.Max.Y - 1
+	bodyH := footerY - bodyY
+	if bodyH < 1 {
+		return splitPaneLayout{}, false
+	}
+	drawLine(scr, uv.Rect(area.Min.X, topRuleY, w, 1), palette.Border.On(strings.Repeat("─", w)))
+	for y := bodyY; y < footerY; y++ {
+		drawLine(scr, uv.Rect(area.Min.X+navW, y, 1, 1), palette.Border.On("│"))
+	}
+	return splitPaneLayout{
+		Inner:   area,
+		Context: uv.Rect(area.Min.X, contextY, w, 1),
+		Body:    uv.Rect(area.Min.X, bodyY, w, bodyH),
+		Nav:     uv.Rect(area.Min.X, bodyY, navW, bodyH),
+		Detail:  uv.Rect(area.Min.X+navW+1, bodyY, w-navW-1, bodyH),
+		Footer:  uv.Rect(area.Min.X, footerY, w, 1),
+	}, true
+}
+
 // dialogPaneLayout is the single-column centered-dialog analog of
 // splitPaneLayout: a top context row (tabs / summary), a body region (the
 // scrollable list or editor), and a bottom footer row (key hints). All three
@@ -220,8 +256,8 @@ func compactFooterHints(hints ...keyHint) string {
 
 // drawOverlayContext paints the top strip plus a separating rule for a
 // full-screen overlay using the shared reference design.
-func drawOverlayContext(scr uv.Screen, l splitPaneLayout, left, right string, border theme.Color) {
-	drawPaneRow(scr, l.Context, left, right)
+func drawOverlayContext(scr uv.Screen, l splitPaneLayout, left string, border theme.Color) {
+	drawPaneRow(scr, l.Context, left, "")
 	drawLine(scr, uv.Rect(l.Context.Min.X, l.Context.Min.Y+1, l.Context.Dx(), 1), border.On(strings.Repeat("─", l.Context.Dx())))
 }
 

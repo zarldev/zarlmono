@@ -48,6 +48,27 @@ func TestWorkingSetPane_RollbackRestoresSelectedFile(t *testing.T) {
 	}
 }
 
+func TestRollbackDialogUsesSharedActionRegions(t *testing.T) {
+	plan := RollbackPlan{
+		TurnID: "turn-1",
+		Path:   "file.txt",
+		Files:  []RollbackFilePlan{{Path: "file.txt", Action: "restore"}},
+	}
+	d := newRollbackDialog(plan, nil)
+	buf := uvScreen(100, 20)
+	d.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+
+	for _, want := range []string{"[rollback]", "confirm", "Rollback turn turn-1 · file.txt?", "y / enter rollback", "esc / q cancel"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rollback dialog missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "[rollback]") != 1 {
+		t.Fatalf("rollback should render one framed title:\n%s", out)
+	}
+}
+
 func TestWorkingSetPane_RollbackConflictIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")

@@ -20,13 +20,13 @@ func TestLayout_WideShowsAllPanes(t *testing.T) {
 	out := render(t, 220, 50)
 	// The sidebar titles itself with its live status ("[state] [⠄ idle]"), so look
 	// for "state" + "idle" rather than an old multi-pane label.
-	for _, pane := range []string{"state", "idle", "editor"} {
+	for _, pane := range []string{"context", "idle", "build mode"} {
 		if !strings.Contains(out, pane) {
 			t.Errorf("ultrawide layout is missing the %q pane:\n%s", pane, out)
 		}
 	}
-	if !strings.Contains(out, "ctrl+c quit") {
-		t.Errorf("status bar missing from ultrawide layout:\n%s", out)
+	if strings.Contains(out, "ctrl+c quit") {
+		t.Errorf("idle contextual row should not show persistent shortcuts:\n%s", out)
 	}
 }
 
@@ -35,13 +35,13 @@ func TestLayout_NarrowCollapsesSidebar(t *testing.T) {
 	if strings.Contains(out, "state") {
 		t.Errorf("narrow layout should collapse the state sidebar, got:\n%s", out)
 	}
-	for _, pane := range []string{"idle", "editor"} {
+	for _, pane := range []string{"idle", "build mode"} {
 		if !strings.Contains(out, pane) {
 			t.Errorf("narrow layout is missing the %q pane:\n%s", pane, out)
 		}
 	}
-	if !strings.Contains(out, "ctrl+c quit") {
-		t.Errorf("status bar missing from narrow layout:\n%s", out)
+	if strings.Contains(out, "ctrl+c quit") {
+		t.Errorf("idle contextual row should not show persistent shortcuts:\n%s", out)
 	}
 }
 

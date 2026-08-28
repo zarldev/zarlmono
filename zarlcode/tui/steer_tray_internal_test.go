@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
@@ -27,10 +28,27 @@ func TestSteerTrayRendersQueuedMessages(t *testing.T) {
 
 	stepUI(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'y'})
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"execution tray", "hello", "world", "2 queued · 5 controls", "prefer minimal di"} {
+	for _, want := range []string{"live controls", "hello", "world", "2 queued · 5 controls", "prefer minimal di"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("steer tray missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestSteerTrayRendersAtSharedUtilityMinimum(t *testing.T) {
+	live := newQueueTestLive(t)
+	live.QueueAppend("narrow message")
+	tray := newSteerTray(live)
+	buf := uv.NewScreenBuffer(42, 7)
+	tray.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "live controls") || !strings.Contains(out, "narrow m") {
+		t.Fatalf("narrow live controls lost header or selected message:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("narrow live controls missing footer: %q", lines[len(lines)-1])
 	}
 }
 
@@ -74,6 +92,22 @@ func TestSteerTrayEnterEditsSelectedQueuedMessage(t *testing.T) {
 	snapshot := live.QueueSnapshot()
 	if len(snapshot) != 2 || snapshot[1].Message.Content != "edited second" {
 		t.Fatalf("after edit: %+v", snapshot)
+	}
+}
+
+func TestQueueEditorUsesSharedActionRegions(t *testing.T) {
+	ed := newQueueEditor(newQueueTestLive(t), 1, "change course")
+	buf := uv.NewScreenBuffer(100, 20)
+	ed.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+
+	for _, want := range []string{"[queue editor]", "edit queued message", "change course", "enter save", "esc cancel"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("queue editor missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "[queue editor]") != 1 {
+		t.Fatalf("queue editor should render one framed title:\n%s", out)
 	}
 }
 

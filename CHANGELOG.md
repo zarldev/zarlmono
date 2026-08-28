@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [zarlcode/v0.15.0] — 2026-08-28
+`zarlcode/v0.15.0`
+
+### Added
+
+- Added opt-in sub-agent delegation settings, bounded iteration/depth/fan-out/concurrency/runtime controls, asynchronous spawn lifecycle tools, agent activity, and task ownership tracking.
+- Added plan-aware delegation, responsive working-set/process views, local service controls, sudo askpass handling, and persistent provider/model discovery states.
+
+### Changed
+
+- Reworked the terminal UI around open full-screen utility surfaces, standardized context/body/footer modal regions, scrollable Help and Plan panes, clearer settings scope/editing/theme states, and compact narrow-terminal navigation.
+- Unified transcript, composer, dashboard, sidebar, status, picker, provider, file, diff, inspector, history, and plan visual grammar with explicit semantic state labels.
+
+### Fixed
+
+- Recovered sub-agent panics into terminal task results, hardened shutdown ownership, bounded metadata/model lookups, enforced workspace sandbox modes, and made numeric resource validation actionable.
+- Preserved selection, active context, and close/back actions across utility surfaces and pickers at constrained terminal sizes.
+
+## [zkit/v0.16.0] — 2026-08-28
+`zkit/v0.16.0`
+
+### Added
+
+- Added explicit spawn enablement, lifecycle ownership, asynchronous start/list/await/cancel support, per-profile iteration limits, fan-out/concurrency/runtime budgets, and panic-safe child execution.
+- Added sandbox work modes, task-ID propagation/ownership checks, coordinated application cleanup, and model metadata timeout controls.
+
+### Changed
+
+- Delegation now composes guardrails, profiles, recursion, planner routing, task scopes, and runtime budgets through one owned task group with deterministic shutdown.
+
+### Fixed
+
+- Prevented leaked child tasks and goroutines during cancellation, shutdown, panic, and terminal races; strengthened await/list snapshots and ownership validation.
+- Made the Linux default-policy smoke test independent of user Git signing configuration.
+
 ## [zarlcode/v0.14.0] — 2026-08-26
 `zarlcode/v0.14.0`
 

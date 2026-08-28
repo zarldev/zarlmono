@@ -1038,7 +1038,13 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	}
 	src = newOperationalSource(src, l.operational)
 	evidence := newCompletionEvidence()
-	group := spawn.NewGroup()
+	spawnConcurrent := 0
+	spawnRuntime := time.Duration(0)
+	if l.settings != nil {
+		spawnConcurrent = l.settings.SpawnMaxConcurrent(ctx)
+		spawnRuntime = l.settings.SpawnMaxRuntime(ctx)
+	}
+	group := spawn.NewGroup(spawn.WithMaxConcurrent(spawnConcurrent), spawn.WithMaxRuntime(spawnRuntime))
 	coordinator := tools.NewWorkspaceCoordinator()
 	src = coderunner.CoordinateWorkspace(src, coordinator)
 	visible = NewModeFilteredSource(newEvidenceSource(src, evidence), l.isPlan)

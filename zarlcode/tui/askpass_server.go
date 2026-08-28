@@ -25,6 +25,13 @@ type askpassServer struct {
 
 	mu   sync.RWMutex
 	send func(tea.Msg)
+
+	serveDone chan struct{}
+	handlers  sync.WaitGroup
+	connMu    sync.Mutex
+	conns     map[net.Conn]struct{}
+	closeOnce sync.Once
+	closeErr  error
 }
 
 type askpassPromptMsg struct {
@@ -61,7 +68,11 @@ func newAskpassServer(ctx context.Context, root string) (*askpassServer, error) 
 		return nil, fmt.Errorf("askpass helper: %w", err)
 	}
 	childCtx, cancel := context.WithCancel(ctx)
-	s := &askpassServer{ctx: childCtx, cancel: cancel, ln: ln, sock: sock, script: script}
+	s := &askpassServer{
+		ctx: childCtx, cancel: cancel, ln: ln, sock: sock, script: script,
+		serveDone: make(chan struct{}),
+		conns:     make(map[net.Conn]struct{}),
+	}
 	go s.serve()
 	return s, nil
 }
@@ -86,13 +97,26 @@ func (s *askpassServer) Close() error {
 	if s == nil {
 		return nil
 	}
-	s.cancel()
-	err := s.ln.Close()
-	_ = os.Remove(s.sock)
-	return err
+	s.closeOnce.Do(func() {
+		s.cancel()
+		if err := s.ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			s.closeErr = err
+		}
+		<-s.serveDone
+		s.closeConnections()
+		s.handlers.Wait()
+		if err := os.Remove(s.sock); err != nil && !errors.Is(err, os.ErrNotExist) && s.closeErr == nil {
+			s.closeErr = err
+		}
+		if err := os.Remove(s.script); err != nil && !errors.Is(err, os.ErrNotExist) && s.closeErr == nil {
+			s.closeErr = err
+		}
+	})
+	return s.closeErr
 }
 
 func (s *askpassServer) serve() {
+	defer close(s.serveDone)
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
@@ -101,12 +125,32 @@ func (s *askpassServer) serve() {
 			}
 			continue
 		}
-		go s.handle(conn)
+		s.connMu.Lock()
+		s.conns[conn] = struct{}{}
+		s.connMu.Unlock()
+		s.handlers.Add(1)
+		go func() {
+			defer s.handlers.Done()
+			s.handle(conn)
+		}()
+	}
+}
+
+func (s *askpassServer) closeConnections() {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	for conn := range s.conns {
+		_ = conn.Close()
 	}
 }
 
 func (s *askpassServer) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		s.connMu.Lock()
+		delete(s.conns, conn)
+		s.connMu.Unlock()
+		_ = conn.Close()
+	}()
 	var req askpass.Request
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		_ = json.NewEncoder(conn).Encode(askpass.Response{Error: "invalid askpass request"})

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
@@ -20,6 +21,47 @@ func TestWorkingSetPane_RendersEmptyState(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("working set empty state missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestWorkingSetPane_UsesOpenUtilityChrome(t *testing.T) {
+	m := New()
+	stepUI(t, m, tea.WindowSizeMsg{Width: 120, Height: 32})
+	stepUI(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'w'})
+
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if len(lines) < 4 {
+		t.Fatalf("working set rendered %d rows, want utility surface", len(lines))
+	}
+	if strings.HasPrefix(lines[0], "┌") || strings.HasPrefix(lines[len(lines)-1], "└") {
+		t.Fatalf("working set should not use an outer box:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], "working set") || strings.Contains(lines[0], "ctrl+w close") {
+		t.Fatalf("working set header should identify the surface without duplicate close help: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "─") || !strings.Contains(lines[2], "│") {
+		t.Fatalf("working set missing utility divider or nav/detail split:\n%s", strings.Join(lines[:3], "\n"))
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("working set contextual footer missing close action: %q", lines[len(lines)-1])
+	}
+}
+
+func TestWorkingSetPane_RendersAtSharedUtilityMinimum(t *testing.T) {
+	m := New()
+	m.session.WorkingSet.StartTurn("turn-1")
+	m.session.WorkingSet.RecordDiff("narrow.go", "@@\n+line")
+	p := newWorkingSetPane(m.session, nil, "")
+	buf := uv.NewScreenBuffer(42, 7)
+	p.draw(buf, buf.Bounds())
+	out := ansi.Strip(buf.Render())
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "working set") || !strings.Contains(out, "narrow.go") {
+		t.Fatalf("narrow working set lost header or selected file:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "esc close") {
+		t.Fatalf("narrow working set missing close action: %q", lines[len(lines)-1])
 	}
 }
 
@@ -99,7 +141,7 @@ func TestWorkingSetPane_EnterOpensDiffBrowser(t *testing.T) {
 	stepUI(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"diff browser · by file", "foo.go", "+new", "pgup/pgdn"} {
+	for _, want := range []string{"diff browser", "[ by file ]", "foo.go", "+new", "pgup/pgdn"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("diff browser missing %q:\n%s", want, out)
 		}

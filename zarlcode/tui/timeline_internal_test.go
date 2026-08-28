@@ -13,6 +13,20 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
+func TestToolItemRunningStateHasTextLabel(t *testing.T) {
+	item := &toolItem{name: "grep", state: toolRunning}
+	out := ansi.Strip(strings.Join(item.render(80), "\n"))
+	if !strings.Contains(out, "◌ grep running") {
+		t.Fatalf("running tool state should not depend on color alone: %q", out)
+	}
+
+	item.state = toolOK
+	out = ansi.Strip(strings.Join(item.render(80), "\n"))
+	if strings.Contains(out, "running") || !strings.Contains(out, "✓ grep") {
+		t.Fatalf("completed tool state = %q", out)
+	}
+}
+
 func TestTimeline_FoldsRun(t *testing.T) {
 	out := drive(t,
 		teasink.ConversationStartedMsg{TaskID: "t1", Prompt: "fix the parser bug"},

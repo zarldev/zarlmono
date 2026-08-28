@@ -20,30 +20,30 @@ const (
 // suppresses the panes + global status bar behind it (one footer, not two).
 func (d *settingsDialog) fullScreen() bool { return true }
 
-// draw paints the settings as a full-screen pane using the shared pane frame:
-// a context strip, nav-rail │ detail body framed by horizontal rules, and a
-// single footer (context keymap left, transient status toast right).
+// draw paints settings as an open full-screen utility: one identity row and
+// divider, a category nav/detail split, and one contextual footer with transient
+// save feedback. Persistence and focus behavior remain owned by settingsDialog.
 func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	if area.Dx() < settingsNavW+26 || area.Dy() < 8 {
-		return // too small to lay out
-	}
-	l, ok := drawSplitPane(scr, area, "settings", settingsNavW)
+	l, ok := drawUtilitySplitPane(scr, area, settingsNavW)
 	if !ok {
 		return // too small to lay out
 	}
 	bodyH := l.Body.Dy()
 	detailW := min(l.Detail.Dx(), settingsDetailMax)
 
-	// Context strip.
-	titleKeys := keyLegend(keyHint{"esc", "done"}, keyHint{"ctrl+s", "save"})
-	drawPaneRow(scr, l.Context, palette.Muted.On(" "+d.tabBar()), titleKeys+" ")
+	// Surface identity. Category navigation stays in the nav rail rather than
+	// being duplicated as a second tab strip in the header.
+	header := overlayTopBar("settings", nil, 0, d.cats[d.cat].name, l.Context.Dx())
+	drawOverlayContext(scr, l, header, palette.Border)
 
 	// Nav rail.
-	for i, c := range d.cats {
+	catStart, catEnd := windowAroundCursor(d.cat, len(d.cats), bodyH)
+	for i, c := range d.cats[catStart:catEnd] {
+		catIndex := catStart + i
 		if i >= bodyH {
 			break
 		}
-		selected := i == d.cat
+		selected := catIndex == d.cat
 		label := palette.Subtle.On(c.name)
 		if selected && !d.focusRows {
 			label = palette.Primary.On(c.name)
@@ -67,12 +67,20 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		lines = d.mcp.detailLines(detailW)
 	default:
 		var section string
+		selectedLine := 0
 		for i, row := range d.rows() {
 			if row.section != "" && row.section != section {
 				lines = append(lines, sectionHead(row.section, detailW))
 				section = row.section
 			}
+			if i == d.row {
+				selectedLine = len(lines)
+			}
 			lines = append(lines, d.renderRow(row, d.focusRows && i == d.row, detailW))
+		}
+		if len(lines) > bodyH {
+			start, end := windowAroundCursor(selectedLine, len(lines), bodyH)
+			lines = lines[start:end]
 		}
 	}
 	for i, ln := range lines {
@@ -102,8 +110,6 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	drawPaneRow(scr, l.Footer, " "+d.footerHint(), d.toast()+" ")
 }
 
-// titleContext is the workspace + scope note in the title strip.
-
 // helpLines is the description + default + resolved-source block for the
 // detail panel. Row categories describe the selected setting; the inline
 // panels (providers / gallery) get a one-line orientation.
@@ -113,8 +119,12 @@ func (d *settingsDialog) helpLines(width int) []string {
 	case cat.providers:
 		return []string{palette.Subtle.On("manage providers — api keys, oauth sign-in, custom openai-compatible backends.")}
 	case cat.gallery:
-		_, scope := d.themeSource()
-		return []string{palette.Subtle.On("theme") + palette.Muted.On(" · resolved from "+scope)}
+		name, scope := d.themeSource()
+		if d.gallery != nil && d.gallery.isPreviewing() {
+			return []string{palette.Warning.On("previewing "+d.gallery.selectedName()) +
+				palette.Muted.On(" · enter keeps it · esc restores "+d.gallery.origin)}
+		}
+		return []string{palette.Subtle.On("kept theme ") + palette.Muted.On(name+" · "+scope)}
 	case cat.catalog:
 		return []string{palette.Subtle.On("discovered agents / skills / hooks (read-only) — [ and ] switch between them.")}
 	case cat.mcp:
@@ -130,8 +140,8 @@ func (d *settingsDialog) helpLines(width int) []string {
 	}
 	out := []string{palette.Border.On(head)}
 	out = append(out, renderPlain(width, r.desc, withStyle(palette.Muted.On))...)
-	out = append(out, palette.Subtle.On("default ")+palette.Muted.On(r.def)+
-		palette.Subtle.On("  ·  ")+d.rowSourceLabel(r))
+	out = append(out, palette.Subtle.On("built-in default ")+palette.Muted.On(r.def)+
+		palette.Subtle.On("  ·  effective source ")+d.rowSourceLabel(r))
 	return out
 }
 
@@ -140,7 +150,7 @@ func (d *settingsDialog) rowSourceLabel(r *settingsRow) string {
 	if r.isSet {
 		return scopeBadge(r.scope)
 	}
-	return palette.Subtle.On("default")
+	return palette.Subtle.On("built-in default")
 }
 
 // themeSource returns the persisted theme name + the scope it resolved from.
@@ -162,7 +172,7 @@ func (d *settingsDialog) footerHint() string {
 	case d.cats[d.cat].providers && d.focusRows:
 		return d.providers.footerHint()
 	case d.cats[d.cat].gallery && d.focusRows:
-		return keyLegend(keyHint{"↑↓←→", "preview"}, keyHint{"enter", "keep"}, keyHint{"esc", "back"})
+		return keyLegend(keyHint{"↑↓←→", "preview"}, keyHint{"enter", "keep"}, keyHint{"esc", "revert"})
 	case d.cats[d.cat].catalog && d.focusRows:
 		return d.catalogPane.footerHint()
 	case d.cats[d.cat].mcp && d.focusRows:
@@ -174,9 +184,19 @@ func (d *settingsDialog) footerHint() string {
 	case rowAction:
 		return keyLegend(keyHint{"enter", "open"}, keyHint{"↑↓", "move"}, keyHint{"←", "nav"}, keyHint{"esc", "done"})
 	case rowEnum, rowModel:
-		return keyLegend(keyHint{"enter", "choose"}, keyHint{"p", "promote"}, keyHint{"↑↓", "move"}, keyHint{"←", "nav"}, keyHint{"esc", "done"})
+		hints := []keyHint{{"enter", "choose"}}
+		if d.curRow().isSet && d.curRow().scope == prefs.ScopeWorkspace {
+			hints = append(hints, keyHint{"p", "make global"})
+		}
+		hints = append(hints, keyHint{"↑↓", "move"}, keyHint{"←", "nav"}, keyHint{"esc", "done"})
+		return keyLegend(hints...)
 	default:
-		return keyLegend(keyHint{"enter", "edit"}, keyHint{"p", "promote"}, keyHint{"↑↓", "move"}, keyHint{"←", "nav"}, keyHint{"esc", "done"})
+		hints := []keyHint{{"enter", "edit"}}
+		if d.curRow().isSet && d.curRow().scope == prefs.ScopeWorkspace {
+			hints = append(hints, keyHint{"p", "make global"})
+		}
+		hints = append(hints, keyHint{"↑↓", "move"}, keyHint{"←", "nav"}, keyHint{"esc", "done"})
+		return keyLegend(hints...)
 	}
 }
 

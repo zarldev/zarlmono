@@ -269,6 +269,13 @@ var ErrProcessNotFound = errors.New("processmgr: process not found")
 // match the synchronous bash tool's semantics — same env, same
 // shell, same setsid isolation.
 func (m *ProcessManager) StartProcess(command string) (ProcessID, error) {
+	return m.StartProcessContext(context.Background(), command)
+}
+
+// StartProcessContext is StartProcess with call-scoped sandbox policy. The
+// context is consulted while preparing confinement but does not own the
+// detached process lifetime; ProcessManager.Close/Kill remain the owners.
+func (m *ProcessManager) StartProcessContext(ctx context.Context, command string) (ProcessID, error) {
 	if command == "" {
 		return "", errors.New("processmgr: empty command")
 	}
@@ -305,7 +312,7 @@ func (m *ProcessManager) StartProcess(command string) (ProcessID, error) {
 	}
 	applyCmdEnv(cmd, m.env)
 	if m.sandbox != nil {
-		if err := m.sandbox.Sandbox(cmd); err != nil {
+		if err := sandboxCommand(ctx, m.sandbox, cmd); err != nil {
 			releaseReservation()
 			return "", fmt.Errorf("processmgr: sandbox: %w", err)
 		}

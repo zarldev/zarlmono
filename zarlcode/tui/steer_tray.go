@@ -222,16 +222,12 @@ func (t *steerTray) detailLines(rows []steerTrayRow, width int) []string {
 func (t *steerTray) draw(scr uv.Screen, area uv.Rectangle) {
 	rows := t.rows()
 	t.clampCursor(rows)
-	w, h := area.Dx(), area.Dy()
-	if w < 60 || h < 12 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, "execution tray", 42)
+	l, ok := drawUtilitySplitPane(scr, area, 42)
 	if !ok {
 		return
 	}
 	left := overlayTopBar("live controls", []string{"queue", "controls"}, 0, t.queueSummary(rows), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("ctrl+y close "), palette.Border)
+	drawOverlayContext(scr, l, left, palette.Border)
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), ansi.Truncate(palette.Muted.On(" "+t.navSummary(rows)), l.Nav.Dx(), ""))
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
 	navY := l.Nav.Min.Y + 2
@@ -265,14 +261,18 @@ func (t *steerTray) draw(scr uv.Screen, area uv.Rectangle) {
 		}
 		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, l.Detail.Dx(), 1), ansi.Truncate(ln, l.Detail.Dx(), ""))
 	}
-	footer := compactFooterHints(
-		keyHint{"↑↓/jk", "navigate"},
-		keyHint{"enter", "edit/send"},
-		keyHint{"e", "edit msg"},
-		keyHint{"d", "delete msg"},
-		keyHint{"c", "clear queue"},
-		keyHint{"esc", "close"},
-	)
+	footerHints := []keyHint{
+		{"↑↓/jk", "navigate"},
+		{"enter", "edit/send"},
+		{"e", "edit msg"},
+		{"d", "delete msg"},
+		{"c", "clear queue"},
+		{"esc", "close"},
+	}
+	if l.Footer.Dx() < 60 {
+		footerHints = []keyHint{{"↑↓", "move"}, {"enter", "use"}, {"esc", "close"}}
+	}
+	footer := compactFooterHints(footerHints...)
 	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
 }
 
@@ -308,12 +308,12 @@ func (e *queueEditor) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (e *queueEditor) draw(scr uv.Screen, area uv.Rectangle) {
-	lines := []string{
-		palette.Primary.On("edit queued message"),
-		fmt.Sprintf(" %s", ansi.Truncate(e.text, 60, "...")),
-		"",
-		palette.Subtle.On("enter") + palette.Muted.On(" save"),
-		palette.Subtle.On("esc") + palette.Muted.On(" cancel"),
+	text := ansi.Truncate(e.text, 68, "…")
+	if text == "" {
+		text = palette.Subtle.On("(empty)")
+	} else {
+		text += palette.Primary.On("▏")
 	}
-	drawDialogBox(scr, area, "queue editor", lines)
+	drawActionDialog(scr, area, "queue editor", "edit queued message", []string{text},
+		keyLegend(keyHint{"enter", "save"}, keyHint{"esc", "cancel"}), 76)
 }

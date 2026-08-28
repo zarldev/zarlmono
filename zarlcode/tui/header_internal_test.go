@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
@@ -22,14 +23,35 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 	m.composer.insert("/")
 	out := ansi.Strip(m.View().Content)
 	title := strings.SplitN(out, "\n", 2)[0]
-	if !strings.HasPrefix(title, "┌") {
-		t.Fatalf("top row should be the timeline border title, not a standalone header:\n%s", title)
+	if !strings.Contains(title, "follow") {
+		t.Fatalf("top row should expose transcript follow state:\n%s", title)
 	}
-	// The timeline title carries the lowercase app/mode tokens and the model.
-	// Workspace, branch, and session timing belong in the state sidebar.
-	for _, want := range []string{"[" + appDisplayName + "]", "[chat]", "[qwen3]"} {
+	// The composer already communicates workflow mode, so the header retains only
+	// product, model, execution, and viewport state.
+	for _, want := range []string{"ƶ", "qwen3", "idle", "follow"} {
 		if !strings.Contains(title, want) {
-			t.Errorf("timeline title missing %q:\n%s", want, title)
+			t.Errorf("timeline header missing %q:\n%s", want, title)
+		}
+	}
+	if strings.Contains(title, "CHAT") {
+		t.Errorf("default chat mode should not add header noise:\n%s", title)
+	}
+	if !strings.HasPrefix(title, "ƶ") {
+		t.Errorf("orientation mark should be flush left, got %q", title)
+	}
+	identity := strings.Index(title, "ƶ")
+	run := strings.Index(title, "idle")
+	model := strings.Index(title, "qwen3")
+	viewport := strings.Index(title, "follow")
+	if identity < 0 || run <= identity || model <= run || viewport <= model {
+		t.Errorf("header grouping should be identity/run then model/viewport, got %q", title)
+	}
+	if strings.Contains(title, appDisplayName) {
+		t.Errorf("header should not repeat the full product title, got %q", title)
+	}
+	for _, mode := range []string{"CHAT", "BUILD", "PLAN"} {
+		if strings.Contains(title, mode) {
+			t.Errorf("composer-owned mode %q should not appear in header:\n%s", mode, title)
 		}
 	}
 	for _, unwanted := range []string{"~/proj", "main", "session"} {
@@ -40,17 +62,32 @@ func TestTimelineTitleStatus_Render(t *testing.T) {
 	if !strings.Contains(out, "slash commands") || !strings.Contains(out, "/clear") || !strings.Contains(out, "/help") {
 		t.Fatalf("status should show slash commands while composing '/':\n%s", out)
 	}
-	m.composer.setText("")
-	out = ansi.Strip(m.View().Content)
-	for _, want := range []string{"enter submit", "shift+enter", "ctrl+c quit", "ctrl+q ctx", "ctrl+g"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status missing %q:\n%s", want, out)
-		}
-	}
 	for _, unwanted := range []string{"ctrl+p", "ctrl+s", "ctrl+t", "ctrl+l"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("status should not include %q:\n%s", unwanted, out)
 		}
+	}
+}
+
+func TestTimelineHeaderPreservesViewportAtNarrowWidths(t *testing.T) {
+	m := New()
+	m.session.Model = "an-extremely-long-model-name-that-is-decorative"
+	m.session.Run.Running = true
+	m.timeline.viewHeight = 2
+	for i := range 8 {
+		m.timeline.addUser("message " + itoa(i))
+	}
+	m.timeline.enterBrowse()
+	m.timeline.scrollTop = 0
+
+	buf := uv.NewScreenBuffer(36, 2)
+	m.drawTimelineTopBar(buf, buf.Bounds())
+	line := strings.Split(ansi.Strip(buf.Render()), "\n")[0]
+	if !strings.Contains(line, "browse 0%") {
+		t.Fatalf("narrow header dropped viewport state: %q", line)
+	}
+	if strings.Contains(line, "an-extremely-long") {
+		t.Fatalf("narrow header should truncate decorative model before viewport: %q", line)
 	}
 }
 

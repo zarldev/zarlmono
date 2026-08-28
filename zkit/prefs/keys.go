@@ -70,6 +70,36 @@ const (
 	// before the fanout guardrail refuses further ones. Default 8; 0 removes the
 	// cap (lets a task fan out sub-agents unbounded).
 	KeySpawnFanoutCap = "spawn_fanout_cap"
+	// KeySpawnEnabled controls whether sub-agent tools are registered at all.
+	// Off by default so delegation remains an explicit capability grant.
+	KeySpawnEnabled = "spawn_enabled"
+	// KeySpawnDefault*Agent select named agent profiles for unnamed sub-agent
+	// tasks in each work mode. Empty keeps the existing planner/parent fallback.
+	KeySpawnDefaultExploreAgent   = "spawn_default_explore_agent"
+	KeySpawnDefaultVerifyAgent    = "spawn_default_verify_agent"
+	KeySpawnDefaultImplementAgent = "spawn_default_implement_agent"
+	// KeySpawnDefault*Provider/Model select an alternate target for unnamed tasks
+	// when the corresponding default agent is empty. Named/explicit agents win.
+	KeySpawnDefaultExploreProvider   = "spawn_default_explore_provider"
+	KeySpawnDefaultExploreModel      = "spawn_default_explore_model"
+	KeySpawnDefaultVerifyProvider    = "spawn_default_verify_provider"
+	KeySpawnDefaultVerifyModel       = "spawn_default_verify_model"
+	KeySpawnDefaultImplementProvider = "spawn_default_implement_provider"
+	KeySpawnDefaultImplementModel    = "spawn_default_implement_model"
+	KeySpawnExploreMaxIterations     = "spawn_explore_max_iterations"
+	KeySpawnVerifyMaxIterations      = "spawn_verify_max_iterations"
+	KeySpawnImplementMaxIterations   = "spawn_implement_max_iterations"
+	// KeySpawnMaxConcurrent caps simultaneously running children in one turn.
+	// Zero leaves concurrency unbounded; the fanout cap still bounds total calls.
+	KeySpawnMaxConcurrent = "spawn_max_concurrent"
+	// KeySpawnFallback controls unresolved unnamed/unknown agent routing:
+	// planner (default), parent, or error.
+	KeySpawnFallback = "spawn_fallback"
+	// KeySpawnMaxRuntime bounds each child task's total lifetime in seconds.
+	// Zero leaves child runtime unbounded.
+	KeySpawnMaxRuntime = "spawn_max_runtime"
+	// KeySpawnAwaitMaxTimeout caps model-requested agent_await waits in seconds.
+	KeySpawnAwaitMaxTimeout = "spawn_await_max_timeout"
 	// KeyResponseTimeout overrides the stream-idle stall watchdog in whole
 	// seconds: how long the runner waits with no chunk from the model before
 	// cancelling the iteration. Default 90. Raise it for a slow local model or

@@ -277,7 +277,7 @@ func (p *modelQuickPick) handleFallbackKey(msg tea.KeyPressMsg) action {
 
 func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 	w, h := area.Dx(), area.Dy()
-	if w < 30 || h < 8 {
+	if h < 8 {
 		return
 	}
 	boxW := modelQuickPickMinWidth
@@ -352,7 +352,12 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 	if p.activeProvider() == backends.NameOpenAICodex.String() {
 		hints = append(hints, keyHint{"[]", "reasoning"})
 	}
-	hints = append(hints, keyHint{"esc", "close"})
+	if innerW < 40 {
+		hints = []keyHint{{"esc", "close"}, {"↑↓", "move"}, {"tab", "provider"}}
+	}
+	if innerW >= 40 {
+		hints = append(hints, keyHint{"esc", "close"})
+	}
 	hint := keyLegend(hints...)
 	drawPaddedLine(scr, uv.Rect(innerX, lay.Footer.Min.Y, innerW, 1), hint)
 }

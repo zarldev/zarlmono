@@ -63,9 +63,8 @@ func (c *composer) submit() string {
 
 func (c *composer) displayLines(width int) []string {
 	innerW := width - 2
-	// Reserve the 2-column prompt prefix ("› " / "  ") that every wrapped
-	// line is rendered with below, so a filled line isn't clipped when the
-	// prefix is prepended and the whole thing is padded back to innerW.
+	// Reserve the compact prompt glyph prefix ("› ") so a filled line is not
+	// clipped after the styled prefix is prepended.
 	wrapW := max(innerW-2, 1)
 
 	// Build a plain-text display string with an unstyled cursor marker, wrap it,
@@ -86,9 +85,12 @@ func (c *composer) displayLineCount(width int) int {
 func (c *composer) draw(scr uv.Screen, r uv.Rectangle, planMode bool) {
 	// In PLAN mode the frame, label, and prompt glyph take the theme's
 	// PlanMode tint so the read-only mode is unmistakable.
-	border, accent, label := palette.Border, palette.Primary, "editor"
+	border, accent, label := palette.BorderFocus, palette.Primary, ""
+	if border == "" {
+		border = palette.Primary
+	}
 	if planMode {
-		border, accent, label = palette.PlanMode, palette.PlanMode, "plan"
+		border, accent = palette.PlanMode, palette.PlanMode
 	}
 	drawBoxColored(scr, r, label, border, accent)
 	w, h := r.Dx(), r.Dy()
@@ -168,6 +170,11 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *UI) handleIntroKey(msg tea.KeyPressMsg) tea.Cmd {
+	// Startup owns tab/shift+tab for prompt/session focus. Handle those before
+	// shell-wide shortcuts so shift+tab cannot accidentally toggle plan mode.
+	if msg.String() == "tab" || msg.String() == "shift+tab" {
+		return m.intro.handleKey(m, msg)
+	}
 	if cmd, ok := m.handleCommonShortcut(msg); ok {
 		return cmd
 	}
@@ -194,6 +201,14 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "ctrl+o":
 		m.overlay.push(newInspector(BuildInspectorSnapshot(m.session, m.live, nil)))
 		return nil, true
+	case "ctrl+b":
+		m.session.StateSidebarHidden = !m.session.StateSidebarHidden
+		state := "shown"
+		if m.session.StateSidebarHidden {
+			state = "hidden"
+		}
+		m.session.SetToast("state bar " + state)
+		return m.toastExpiryCmd(), true
 	case "ctrl+r":
 		m.overlay.push(newTranscriptReader(m.timeline))
 		return nil, true
@@ -202,6 +217,13 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	return nil, false
+}
+
+func (m *UI) handleShellShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	if cmd, ok := m.handleGlobalShortcut(msg); ok {
+		return cmd, true
+	}
+	return m.handleCommonShortcut(msg)
 }
 
 func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
@@ -239,7 +261,7 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 }
 
 func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
-	if cmd, ok := m.handleDashboardShortcut(msg); ok {
+	if cmd, ok := m.handleShellShortcut(msg); ok {
 		return cmd
 	}
 	switch msg.String() {
@@ -270,33 +292,33 @@ func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-func (m *UI) handleDashboardShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
-	switch msg.String() {
-	case "ctrl+f":
-		viewer := newFileViewer(m.session.WorkspaceDir)
-		m.overlay.push(viewer)
-		return m.fileViewerInitialCmd(viewer), true
-	case "ctrl+e":
-		return m.openModelQuickPick(), true
-	}
-	return nil, false
-}
-
 func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.timeline.selectionActive() {
 		return m.handleSelectionKey(msg)
 	}
-	if cmd, ok := m.handleDashboardShortcut(msg); ok {
+	// Browsing freezes the transcript viewport, not the composer. Printable input
+	// takes precedence over vim-style browse mnemonics; dedicated navigation keys
+	// continue to move through the transcript.
+	if msg.Text != "" {
+		return m.handleComposerKey(msg)
+	}
+	if m.composer.text() != "" {
+		switch msg.String() {
+		case "enter", "backspace", "left", "right":
+			return m.handleComposerKey(msg)
+		}
+	}
+	if cmd, ok := m.handleShellShortcut(msg); ok {
 		return cmd
 	}
 	switch msg.String() {
-	case "esc", "i":
+	case "esc":
 		m.timeline.exitBrowse()
-	case "up", "k":
+	case "up":
 		m.timeline.cursorUp()
-	case "down", "j":
+	case "down":
 		m.timeline.cursorDown()
-	case "g", "home":
+	case "home":
 		m.timeline.cursorTop()
 	case "end":
 		m.timeline.cursorBottom()
@@ -304,12 +326,7 @@ func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.timeline.pageUp()
 	case "pgdown":
 		m.timeline.pageDown()
-	case "v":
-		if !m.timeline.startSelection() {
-			m.session.SetToast("nothing to select")
-			return m.toastExpiryCmd()
-		}
-	case "enter", "space", " ":
+	case "enter":
 		m.timeline.toggleSelected()
 	}
 	return nil

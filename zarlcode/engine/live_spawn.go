@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,17 +15,33 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int) {
 	if reg == nil || parent == nil || group == nil || maxDepth == 0 {
 		return
 	}
+	if l.settings != nil && !l.settings.SpawnEnabled(ctx) {
+		return
+	}
 	awaitTimeout := 30 * time.Second
+	awaitMaxTimeout := 5 * time.Minute
 	if l.settings != nil {
 		if seconds := l.settings.Limits(ctx).SpawnAwaitTimeout; seconds > 0 {
 			awaitTimeout = time.Duration(seconds) * time.Second
 		}
+		if seconds := l.settings.Limits(ctx).SpawnAwaitMaxTimeout; seconds > 0 {
+			awaitMaxTimeout = time.Duration(seconds) * time.Second
+		} else {
+			awaitMaxTimeout = 0
+		}
+	}
+	modes := SpawnModesConfig{}
+	fallback := spawn.FallbackPlanner
+	if l.settings != nil {
+		modes = l.settings.SpawnModes(ctx)
+		fallback = spawn.FallbackPolicy(l.settings.SpawnFallback(ctx))
 	}
 	var planner spawn.SpawnPlanner
 	var candidates []spawn.AgentCandidate
@@ -46,22 +63,50 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 			planner = spawn.NewLLMSpawnPlanner(plannerProv)
 		}
 	}
+	exploreTarget := l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Explore)
+	verifyTarget := l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Verify)
+	implementTarget := l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Implement)
 	base := spawn.New(parent,
 		spawn.WithMaxDepth(maxDepth),
 		spawn.WithAgentResolver(func(name string) (*runner.Runner, error) { return l.resolveAgentRunner(ctx, group, coordinator, name) }),
 		spawn.WithSpawnPlannerCandidates(planner, candidates),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
 		spawn.WithModeToolPolicy(coderunner.SpawnModePolicy()),
+		spawn.WithDefaultAgent(spawn.SpawnModeExplore, modes.Explore.DefaultAgent),
+		spawn.WithDefaultAgent(spawn.SpawnModeVerify, modes.Verify.DefaultAgent),
+		spawn.WithDefaultAgent(spawn.SpawnModeImplement, modes.Implement.DefaultAgent),
+		spawn.WithDefaultTarget(spawn.SpawnModeExplore, exploreTarget),
+		spawn.WithDefaultTarget(spawn.SpawnModeVerify, verifyTarget),
+		spawn.WithDefaultTarget(spawn.SpawnModeImplement, implementTarget),
+		spawn.WithModeMaxIterations(spawn.SpawnModeExplore, modes.Explore.MaxIterations),
+		spawn.WithModeMaxIterations(spawn.SpawnModeVerify, modes.Verify.MaxIterations),
+		spawn.WithModeMaxIterations(spawn.SpawnModeImplement, modes.Implement.MaxIterations),
+		spawn.WithFallbackPolicy(fallback),
 	)
 	for _, tool := range []tools.Tool{
 		spawn.NewAsync(base, group, coordinator),
-		spawn.NewAwait(group, spawn.WithAwaitTimeout(awaitTimeout)),
+		spawn.NewAwait(group, spawn.WithAwaitTimeout(awaitTimeout), spawn.WithAwaitMaxTimeout(awaitMaxTimeout)),
 		spawn.NewStatus(group),
 		spawn.NewStop(group),
 		spawn.NewList(group),
 	} {
 		_ = reg.Register(tool)
 	}
+}
+
+func (l *LiveRunner) buildDefaultSpawnTarget(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, mode SpawnModeConfig) *runner.Runner {
+	if mode.DefaultAgent != "" || mode.DefaultTarget.Name == "" && mode.DefaultTarget.Model == "" {
+		return nil
+	}
+	target, err := l.buildAgentRunner(ctx, group, coordinator, catalog.Agent{
+		Provider: mode.DefaultTarget.Name,
+		Model:    mode.DefaultTarget.Model,
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "spawn: default mode target unavailable", "provider", mode.DefaultTarget.Name, "model", mode.DefaultTarget.Model, "err", err)
+		return nil
+	}
+	return target
 }
 
 func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, name string) (*runner.Runner, error) {
@@ -132,7 +177,7 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 		StreamIdle:    streamIdle,
 	})
 	opts = append(opts,
-		runner.WithPrompt(l.agentPromptFunc(agent, func() tools.Source { return visible })),
+		spawnRunnerPromptOption(l, agent, func() tools.Source { return visible }),
 		runner.WithCompactor(coderunner.StandardCompactor(
 			// Empty wsRoot: a sub-agent handover reseeds its own context but
 			// does not write a file (sub-agents run unattended and would spam
@@ -155,6 +200,13 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	r := runner.New(runner.ClientFromProvider(prov), opts...)
 	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth, spawnMaxIter)
 	return r, nil
+}
+
+func spawnRunnerPromptOption(l *LiveRunner, agent catalog.Agent, src func() tools.Source) options.Option[runner.Runner] {
+	if agent.Name == "" {
+		return runner.WithPrompt(l.promptFunc(src))
+	}
+	return runner.WithPrompt(l.agentPromptFunc(agent, src))
 }
 
 func resolveSpawnMaxIterations(host, profile, fallback int) int {

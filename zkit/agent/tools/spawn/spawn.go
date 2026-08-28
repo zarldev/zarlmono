@@ -81,14 +81,18 @@ const plannerProbeTimeout = 5 * time.Second
 // value. When unset (0), the child inherits the parent runner's
 // configured default.
 type Tool struct {
-	parent        *runner.Runner
-	maxDepth      int
-	spawnMaxIter  int
-	resolveAgent  AgentResolver
-	planner       SpawnPlanner
-	plannerAgents []AgentCandidate
-	probeOnce     sync.Once
-	modePolicy    func(SpawnMode, tools.ToolSpec) bool
+	parent         *runner.Runner
+	maxDepth       int
+	spawnMaxIter   int
+	resolveAgent   AgentResolver
+	planner        SpawnPlanner
+	plannerAgents  []AgentCandidate
+	probeOnce      sync.Once
+	modePolicy     func(SpawnMode, tools.ToolSpec) bool
+	defaultAgents  map[SpawnMode]string
+	modeMaxIter    map[SpawnMode]int
+	defaultTargets map[SpawnMode]*runner.Runner
+	fallback       FallbackPolicy
 }
 
 // AgentResolver returns the runner to use for a named sub-agent.
@@ -127,6 +131,7 @@ func New(parent *runner.Runner, opts ...options.Option[Tool]) *Tool {
 	t := &Tool{
 		parent:   parent,
 		maxDepth: defaultMaxDepth,
+		fallback: FallbackPlanner,
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -166,6 +171,87 @@ func WithSpawnMaxIterations(n int) options.Option[Tool] {
 func WithAgentResolver(resolve AgentResolver) options.Option[Tool] {
 	return func(t *Tool) {
 		t.resolveAgent = resolve
+	}
+}
+
+// WithDefaultAgent selects a named agent profile when agent_spawn omits agent
+// for the given work mode. Explicit agent arguments always win. Empty names and
+// invalid modes are ignored; without a configured default the planner/parent
+// fallback remains unchanged.
+func WithDefaultAgent(mode SpawnMode, name string) options.Option[Tool] {
+	return func(t *Tool) {
+		mode = normalizeMode(string(mode))
+		name = strings.TrimSpace(name)
+		if !mode.Valid() || name == "" {
+			return
+		}
+		if t.defaultAgents == nil {
+			t.defaultAgents = make(map[SpawnMode]string)
+		}
+		t.defaultAgents[mode] = name
+	}
+}
+
+func (t *Tool) applyDefaultAgent(args *Args) {
+	if args == nil || strings.TrimSpace(args.Agent) != "" {
+		return
+	}
+	mode := normalizeMode(args.Mode)
+	if !mode.Valid() {
+		mode = SpawnModeImplement
+	}
+	args.Agent = t.defaultAgents[mode]
+}
+
+// WithDefaultTarget selects a runner for unnamed tasks in one work mode. A
+// named agent, whether explicit or host-defaulted, always takes precedence.
+func WithDefaultTarget(mode SpawnMode, target *runner.Runner) options.Option[Tool] {
+	return func(t *Tool) {
+		mode = normalizeMode(string(mode))
+		if !mode.Valid() || target == nil {
+			return
+		}
+		if t.defaultTargets == nil {
+			t.defaultTargets = make(map[SpawnMode]*runner.Runner)
+		}
+		t.defaultTargets[mode] = target
+	}
+}
+
+// WithModeMaxIterations sets a host-controlled iteration budget for one mode.
+// A positive mode budget overrides the shared spawn budget for that mode.
+func WithModeMaxIterations(mode SpawnMode, n int) options.Option[Tool] {
+	return func(t *Tool) {
+		mode = normalizeMode(string(mode))
+		if !mode.Valid() || n <= 0 {
+			return
+		}
+		if t.modeMaxIter == nil {
+			t.modeMaxIter = make(map[SpawnMode]int)
+		}
+		t.modeMaxIter[mode] = n
+	}
+}
+
+// FallbackPolicy controls routing when no named agent resolves cleanly.
+type FallbackPolicy string
+
+const (
+	// FallbackPlanner lets the planner recover missing/unknown names, then uses parent.
+	FallbackPlanner FallbackPolicy = "planner"
+	// FallbackParent skips planner recovery and immediately uses the parent runner.
+	FallbackParent FallbackPolicy = "parent"
+	// FallbackError refuses unresolved routing instead of silently using the parent.
+	FallbackError FallbackPolicy = "error"
+)
+
+// WithFallbackPolicy configures unresolved named-agent routing.
+func WithFallbackPolicy(policy FallbackPolicy) options.Option[Tool] {
+	return func(t *Tool) {
+		switch policy {
+		case FallbackPlanner, FallbackParent, FallbackError:
+			t.fallback = policy
+		}
 	}
 }
 
@@ -338,7 +424,7 @@ type Args struct {
 	Prompt        string `json:"prompt" doc:"The task for the sub-agent. Be specific — the sub-agent has none of your context."`
 	Agent         string `json:"agent,omitempty" doc:"Optional named agent to dispatch to (must be one returned by list_agents). Empty/omitted = use the parent's provider/model/prompt."`
 	Mode          string `json:"mode,omitempty" doc:"Optional work mode: 'explore' (read-only investigation — the host blocks file edits and shell), 'verify' (run tests/builds, no file edits), or 'implement' (full tool surface, the default). When the host enforces it, an explore sub-agent literally cannot write or edit files."`
-	MaxIterations int    `json:"max_iterations,omitempty" doc:"Optional iteration cap. Prefer omitting (0) — the host applies the configured sub-agent limit automatically."`
+	MaxIterations int    `json:"max_iterations,omitempty" doc:"Optional non-negative iteration cap. Prefer omitting (0) — the host applies the configured sub-agent limit automatically."`
 }
 
 // Definition advertises agent_spawn: prompt is required; agent, mode, and
@@ -368,14 +454,19 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 		return tools.Failure(call.ID, tools.Budget("agent_spawn",
 			fmt.Sprintf("max recursion depth %d reached — flatten the work or stop calling tools", t.maxDepth))), nil
 	}
+	args.Prompt = strings.TrimSpace(args.Prompt)
 	if args.Prompt == "" {
 		return tools.Failure(call.ID, tools.Validation("agent_spawn", "prompt is required")), nil
+	}
+	if args.MaxIterations < 0 {
+		return tools.Failure(call.ID, tools.Validation("agent_spawn", "max_iterations must be non-negative")), nil
 	}
 	explicitMode := argsModeExplicit(call.Arguments)
 	if explicitMode && strings.TrimSpace(args.Mode) != "" && !normalizeMode(args.Mode).Valid() {
 		return tools.Failure(call.ID, tools.Validation("agent_spawn",
 			fmt.Sprintf("mode %q is invalid; use explore, verify, or implement", args.Mode))), nil
 	}
+	t.applyDefaultAgent(&args)
 
 	// Optional planner rescue: when the agent omitted the name or
 	// picked one not in the registered set, ask a grammar-constrained
@@ -385,7 +476,13 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	// planner errored, returned invalid output) the original args
 	// flow through unchanged — today's soft-fallback path catches it
 	// later.
-	plannerNote := t.applyPlanner(ctx, &args)
+	plannerNote := ""
+	if t.fallback == FallbackPlanner {
+		plannerNote = t.applyPlanner(ctx, &args)
+	}
+	if err := t.strictRoutingError(args); err != nil {
+		return tools.Failure(call.ID, err), nil
+	}
 
 	// Pick the runner the child should execute on (parent, or a named
 	// agent via the resolver — see resolveTarget for the soft-fallback).
@@ -394,6 +491,9 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 		profileMode = candidate.Mode
 	}
 	target, agentLoaded, fallbackNotice := t.resolveTarget(args)
+	if t.fallback == FallbackError && !agentLoaded && strings.TrimSpace(args.Agent) != "" {
+		return tools.Failure(call.ID, tools.Validation("agent_spawn", fmt.Sprintf("agent %q could not be loaded and fallback=error", strings.TrimSpace(args.Agent)))), nil
+	}
 	if target == nil {
 		return tools.Failure(call.ID, tools.Fatal("agent_spawn", errors.New("parent runner is nil"))), nil
 	}
@@ -402,7 +502,7 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	childSpec := runner.TaskSpec{
 		ID:               taskscope.ID(uuid.NewString()),
 		Prompt:           childPromptWithMode(args.Prompt, mode),
-		MaxIterations:    t.spawnMaxIterations(args.MaxIterations),
+		MaxIterations:    t.spawnMaxIterations(mode, args.MaxIterations),
 		Depth:            depth + 1,
 		ParentToolCallID: call.ID.String(),
 	}
@@ -432,15 +532,18 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 	return shapeResult(call, res, args.Agent, agentLoaded, plannerNote, fallbackNotice), nil
 }
 
-// resolveTarget picks the runner the child should execute on. An empty
-// agent name (or no resolver wired) → the parent. A named agent → the
-// consumer-side resolver; a missing resolver or an unknown agent name
-// SOFT-FALLS-BACK to the parent with a one-line notice (empty on the happy
-// path) for the summary. Hard-erroring used to send the model down a "no
-// agents defined → I'll do this manually myself" detour where it read every
-// file in the workspace one at a time — the spawn was the whole point.
+// resolveTarget uses a mode-specific default runner for unnamed tasks when
+// configured, otherwise the parent. Named agents use the consumer resolver;
+// missing or unknown names soft-fall back to the parent with a notice.
 func (t *Tool) resolveTarget(args Args) (*runner.Runner, bool, string) {
 	if args.Agent == "" {
+		mode := normalizeMode(args.Mode)
+		if !mode.Valid() {
+			mode = SpawnModeImplement
+		}
+		if target := t.defaultTargets[mode]; target != nil {
+			return target, false, ""
+		}
 		return t.parent, false, ""
 	}
 	if t.resolveAgent == nil {
@@ -458,6 +561,29 @@ func (t *Tool) resolveTarget(args Args) (*runner.Runner, bool, string) {
 			args.Agent, err)
 	}
 	return r, true, ""
+}
+
+func (t *Tool) strictRoutingError(args Args) *tools.Error {
+	if t.fallback != FallbackError {
+		return nil
+	}
+	name := strings.TrimSpace(args.Agent)
+	if name != "" {
+		if len(t.plannerAgents) > 0 {
+			if _, registered := findAgentCandidate(t.plannerAgents, name); !registered {
+				return tools.Validation("agent_spawn", fmt.Sprintf("agent %q is not registered and fallback=error", name))
+			}
+		}
+		return nil
+	}
+	mode := normalizeMode(args.Mode)
+	if !mode.Valid() {
+		mode = SpawnModeImplement
+	}
+	if t.defaultTargets[mode] == nil {
+		return tools.Validation("agent_spawn", "no default agent or target is configured for this mode and fallback=error")
+	}
+	return nil
 }
 
 // shapeResult builds the tool result from the child's terminal TaskResult.
@@ -495,11 +621,17 @@ func shapeResult(call tools.ToolCall, res runner.TaskResult, agentName string, a
 		ExecutedAt: time.Now(),
 	}
 	if !success {
-		result.Err = tools.Budget("agent_spawn", fmt.Sprintf("sub-agent ended with reason=%s after %d iteration%s. Summary:\n%s",
-			res.Reason, res.Iterations, pluralS(res.Iterations), summary))
+		result.Err = terminalToolError("agent_spawn", res.Reason, res.Iterations, summary, errorString(res.Err), false)
 		result.Error = result.Err.Error()
 	}
 	return result
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 const childSummaryContract = `
@@ -534,7 +666,10 @@ func pluralS(n int) string {
 // example, repeatedly choosing 5 despite a configured budget of 20). Without a
 // configured budget, preserve the model value; zero lets the runner use its
 // own default.
-func (t *Tool) spawnMaxIterations(modelSpec int) int {
+func (t *Tool) spawnMaxIterations(mode SpawnMode, modelSpec int) int {
+	if n := t.modeMaxIter[mode]; n > 0 {
+		return n
+	}
 	if t.spawnMaxIter > 0 {
 		return t.spawnMaxIter
 	}
@@ -617,12 +752,9 @@ func (t *Tool) applyPlanner(ctx context.Context, args *Args) string {
 		target, plan.Mode, plan.Rationale)
 }
 
-func (t *Tool) effectiveMode(args Args, profileMode SpawnMode, explicit bool) SpawnMode {
+func (t *Tool) effectiveMode(args Args, profileMode SpawnMode, _ bool) SpawnMode {
 	argMode := normalizeMode(args.Mode)
 	profileMode = normalizeMode(string(profileMode))
-	if explicit && argMode.Valid() {
-		return argMode
-	}
 	if profileMode.Valid() && argMode.Valid() {
 		return stricterMode(profileMode, argMode)
 	}

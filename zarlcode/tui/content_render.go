@@ -903,7 +903,6 @@ func renderPlanContent(width int, b contentBlock) []string {
 
 type contentOption func(*contentBlock)
 
-func withRail(r string) contentOption               { return func(b *contentBlock) { b.rail = r } }
 func withBodyPrefix(p string) contentOption         { return func(b *contentBlock) { b.bodyPrefix = p } }
 func withDepth(d int) contentOption                 { return func(b *contentBlock) { b.depth = d } }
 func withMaxLines(n int) contentOption              { return func(b *contentBlock) { b.maxLines = n } }

@@ -3,8 +3,13 @@ package spawn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
 // fakeSpawnPlanner is the in-package stand-in for SpawnPlanner that
@@ -105,7 +110,7 @@ func TestSpawnMaxIterations_ConfiguredBudgetWins(t *testing.T) {
 	tool := New(nil, WithSpawnMaxIterations(20))
 
 	for _, modelSpec := range []int{0, 5, 20, 50} {
-		if got := tool.spawnMaxIterations(modelSpec); got != 20 {
+		if got := tool.spawnMaxIterations(SpawnModeImplement, modelSpec); got != 20 {
 			t.Errorf("spawnMaxIterations(%d) = %d, want configured budget 20", modelSpec, got)
 		}
 	}
@@ -116,9 +121,88 @@ func TestSpawnMaxIterations_UnconfiguredPreservesModelValue(t *testing.T) {
 	tool := New(nil)
 
 	for _, modelSpec := range []int{0, 5, 50} {
-		if got := tool.spawnMaxIterations(modelSpec); got != modelSpec {
+		if got := tool.spawnMaxIterations(SpawnModeImplement, modelSpec); got != modelSpec {
 			t.Errorf("spawnMaxIterations(%d) = %d, want %d", modelSpec, got, modelSpec)
 		}
+	}
+}
+
+func TestApplyDefaultAgent_SelectsByMode(t *testing.T) {
+	t.Parallel()
+	tool := New(nil,
+		WithDefaultAgent(SpawnModeExplore, "fast-explorer"),
+		WithDefaultAgent(SpawnModeVerify, "test-runner"),
+		WithDefaultAgent(SpawnModeImplement, "strong-coder"),
+	)
+
+	for _, tc := range []struct {
+		name string
+		args Args
+		want string
+	}{
+		{name: "explore", args: Args{Mode: "explore"}, want: "fast-explorer"},
+		{name: "verify normalized", args: Args{Mode: " VERIFY "}, want: "test-runner"},
+		{name: "implement", args: Args{Mode: "implement"}, want: "strong-coder"},
+		{name: "omitted mode is implement", args: Args{}, want: "strong-coder"},
+		{name: "explicit agent wins", args: Args{Agent: "specialist", Mode: "explore"}, want: "specialist"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			args := tc.args
+			tool.applyDefaultAgent(&args)
+			if args.Agent != tc.want {
+				t.Fatalf("agent = %q, want %q", args.Agent, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyDefaultAgent_UnconfiguredKeepsParentFallback(t *testing.T) {
+	t.Parallel()
+	args := Args{Mode: "explore"}
+	New(nil).applyDefaultAgent(&args)
+	if args.Agent != "" {
+		t.Fatalf("agent = %q, want empty", args.Agent)
+	}
+}
+
+func TestResolveTarget_DefaultTargetAndAgentPrecedence(t *testing.T) {
+	t.Parallel()
+	parent := &runner.Runner{}
+	explore := &runner.Runner{}
+	named := &runner.Runner{}
+	tool := New(parent,
+		WithDefaultTarget(SpawnModeExplore, explore),
+		WithAgentResolver(func(name string) (*runner.Runner, error) {
+			if name == "specialist" {
+				return named, nil
+			}
+			return nil, errors.New("unknown")
+		}),
+	)
+
+	if got, loaded, notice := tool.resolveTarget(Args{Mode: "explore"}); got != explore || loaded || notice != "" {
+		t.Fatalf("unnamed explore target = (%p, %t, %q), want configured target", got, loaded, notice)
+	}
+	if got, _, _ := tool.resolveTarget(Args{}); got != parent {
+		t.Fatalf("unnamed implement target = %p, want parent %p", got, parent)
+	}
+	if got, loaded, notice := tool.resolveTarget(Args{Agent: "specialist", Mode: "explore"}); got != named || !loaded || notice != "" {
+		t.Fatalf("named target = (%p, %t, %q), want named runner", got, loaded, notice)
+	}
+}
+
+func TestModeMaxIterationsOverridesSharedBudget(t *testing.T) {
+	t.Parallel()
+	tool := New(nil,
+		WithSpawnMaxIterations(20),
+		WithModeMaxIterations(SpawnModeExplore, 4),
+	)
+	if got := tool.spawnMaxIterations(SpawnModeExplore, 50); got != 4 {
+		t.Fatalf("explore iterations = %d, want 4", got)
+	}
+	if got := tool.spawnMaxIterations(SpawnModeImplement, 50); got != 20 {
+		t.Fatalf("implement iterations = %d, want shared 20", got)
 	}
 }
 
@@ -176,6 +260,22 @@ func TestApplyPlanner_InvalidPlanAgentFallsThrough(t *testing.T) {
 	}
 }
 
+func TestFallbackParentSkipsPlanner(t *testing.T) {
+	t.Parallel()
+	planner := &fakeSpawnPlanner{plan: SpawnPlan{Agent: "researcher", Mode: SpawnModeExplore}}
+	tool := New(nil,
+		WithSpawnPlannerCandidates(planner, []AgentCandidate{{Name: "researcher"}}),
+		WithFallbackPolicy(FallbackParent),
+	)
+	args := Args{Prompt: "inspect"}
+	if tool.fallback == FallbackPlanner {
+		_ = tool.applyPlanner(t.Context(), &args)
+	}
+	if planner.calls != 0 || args.Agent != "" {
+		t.Fatalf("planner calls=%d agent=%q, want skipped", planner.calls, args.Agent)
+	}
+}
+
 func TestApplyPlanner_InvalidModeFallsThrough(t *testing.T) {
 	plan := &fakeSpawnPlanner{plan: SpawnPlan{
 		Agent: "researcher",
@@ -222,5 +322,84 @@ func TestSpawnMode_Valid(t *testing.T) {
 		if m.Valid() {
 			t.Errorf("SpawnMode(%q).Valid() = true, want false", m)
 		}
+	}
+}
+
+func TestSpawnAdmissionErrorClassification(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		kind tools.Kind
+	}{
+		{name: "concurrency is budget", err: fmt.Errorf("%w (1)", ErrMaxConcurrent), kind: tools.Kinds.BUDGET},
+		{name: "duplicate is validation", err: fmt.Errorf("%w: id", ErrTaskIDExists), kind: tools.Kinds.VALIDATION},
+		{name: "closed owner is fatal", err: ErrGroupClosed, kind: tools.Kinds.FATAL},
+		{name: "internal admission is fatal", err: errors.New("target nil"), kind: tools.Kinds.FATAL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := spawnAdmissionError(tc.err); got.Kind != tc.kind {
+				t.Fatalf("kind = %s, want %s", got.Kind, tc.kind)
+			}
+		})
+	}
+}
+
+func TestGroupCloseUsesSingleRetryableJoin(t *testing.T) {
+	t.Parallel()
+	group := NewGroup()
+	group.wg.Add(1)
+
+	shortCtx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	if err := group.Close(shortCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first Close error = %v, want deadline exceeded", err)
+	}
+	firstJoined := group.joined
+	if err := group.Close(shortCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second bounded Close error = %v, want deadline exceeded", err)
+	}
+	if group.joined != firstJoined {
+		t.Fatal("Close replaced the owned join signal")
+	}
+
+	group.wg.Done()
+	if err := group.Close(t.Context()); err != nil {
+		t.Fatalf("final Close: %v", err)
+	}
+}
+
+func TestWorkspaceAdmissionErrorClassification(t *testing.T) {
+	t.Parallel()
+	conflict := fmt.Errorf("%w: writer holds workspace", tools.ErrWorkspaceConflict)
+	if got := workspaceAdmissionError(conflict); got.Kind != tools.Kinds.BUDGET {
+		t.Fatalf("conflict kind = %s, want budget", got.Kind)
+	}
+	invalid := errors.New("workspace owner is empty")
+	got := workspaceAdmissionError(invalid)
+	if got.Kind != tools.Kinds.FATAL || !strings.Contains(got.Error(), "coordinate workspace") {
+		t.Fatalf("invalid acquisition = %#v, want wrapped fatal", got)
+	}
+}
+
+func TestTaskOperationErrorClassification(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		kind tools.Kind
+	}{
+		{name: "not found", err: fmt.Errorf("%w: missing", ErrTaskNotFound), kind: tools.Kinds.VALIDATION},
+		{name: "cancelled", err: context.Canceled, kind: tools.Kinds.TRANSIENT},
+		{name: "deadline", err: context.DeadlineExceeded, kind: tools.Kinds.TRANSIENT},
+		{name: "internal", err: errors.New("broken task state"), kind: tools.Kinds.FATAL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := taskOperationError("agent task", tc.err); got.Kind != tc.kind {
+				t.Fatalf("kind = %s, want %s", got.Kind, tc.kind)
+			}
+		})
 	}
 }

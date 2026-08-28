@@ -54,11 +54,12 @@ type toolStat struct {
 // from a teasink message, never derived at the call site.
 type RunState struct {
 	// --- live run (reset each top-level turn) ---
-	Running      bool
-	iterations   int
-	tools        int // completed tool calls this turn
-	toolsRunning int
-	maxDepth     int // deepest active sub-agent this turn
+	Running        bool
+	activeTopLevel string
+	iterations     int
+	tools          int // completed tool calls this turn
+	toolsRunning   int
+	maxDepth       int // deepest active sub-agent this turn
 
 	// turnStartedAt / turnCompletionTokens drive the live tok/s shown on the
 	// timeline title while a turn streams. turnOutBytes remains a visible-output
@@ -230,6 +231,7 @@ func (s *RunState) reset() {
 	defer s.bumpRevision()
 	s.Running = false
 	s.iterations = 0
+	s.activeTopLevel = ""
 	s.tools = 0
 	s.toolsRunning = 0
 	s.nestedRunning = 0

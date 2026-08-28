@@ -249,6 +249,9 @@ func agentDirs(workspaceRoot string) []string {
 		dirs = append(dirs, filepath.Join(cfg, "agents"))
 	}
 	dirs = append(dirs, filepath.Join(workspaceRoot, "zarlcode", "agents"))
+	if root := sourceFamilyDir(workspaceRoot); root != "" {
+		dirs = append(dirs, filepath.Join(root, ".zarlcode", "agents"))
+	}
 	if ws := home.WorkspaceDir(workspaceRoot); ws != "" {
 		dirs = append(dirs, filepath.Join(ws, "agents"))
 	}
@@ -264,6 +267,9 @@ func skillDirs(workspaceRoot string) []string {
 		dirs = append(dirs, filepath.Join(h, "skills"))
 	}
 	dirs = append(dirs, filepath.Join(workspaceRoot, "zarlcode", "skills"))
+	if root := sourceFamilyDir(workspaceRoot); root != "" {
+		dirs = append(dirs, filepath.Join(root, ".zarlcode", "skills"))
+	}
 	if ws := home.WorkspaceDir(workspaceRoot); ws != "" {
 		dirs = append(dirs, filepath.Join(ws, "skills"))
 	}
@@ -279,10 +285,38 @@ func hookDirs(workspaceRoot string) []string {
 		dirs = append(dirs, filepath.Join(h, "hooks"))
 	}
 	dirs = append(dirs, filepath.Join(workspaceRoot, "zarlcode", "hooks"))
+	if root := sourceFamilyDir(workspaceRoot); root != "" {
+		dirs = append(dirs, filepath.Join(root, ".zarlcode", "hooks"))
+	}
 	if ws := home.WorkspaceDir(workspaceRoot); ws != "" {
 		dirs = append(dirs, filepath.Join(ws, "hooks"))
 	}
 	return dirs
+}
+
+// sourceFamilyDir returns the user src root when workspaceRoot is inside it.
+// This provides one bounded shared catalogue for source workspaces without making
+// it global to unrelated directories. Exact workspace entries are loaded later
+// and therefore retain override precedence.
+func sourceFamilyDir(workspaceRoot string) string {
+	if workspaceRoot == "" {
+		return ""
+	}
+	userHome, err := home.SafeUserHomeDir()
+	if err != nil {
+		return ""
+	}
+	root := filepath.Join(userHome, "src")
+	workspace, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return ""
+	}
+	workspace = filepath.Clean(workspace)
+	rel, err := filepath.Rel(root, workspace)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return root
 }
 
 func loadAgentFile(path string) (Agent, error) {

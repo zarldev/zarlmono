@@ -16,8 +16,9 @@ func TestComposerWrapReservesPrefixWidth(t *testing.T) {
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	c := composer{value: []rune(alphabet)} // cursor at 0
 
-	// w=14 → innerW=12; h=8 → maxLines=6, plenty so nothing scrolls off.
-	buf := uv.NewScreenBuffer(14, 8)
+	// The mode prompt is wider than the old glyph-only prompt, so leave enough
+	// height for every wrapped line.
+	buf := uv.NewScreenBuffer(14, 10)
 	c.draw(buf, buf.Bounds(), false)
 	plain := ansi.Strip(buf.Render())
 

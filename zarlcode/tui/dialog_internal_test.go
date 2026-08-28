@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -41,6 +42,64 @@ func TestHelpDialog_RendersAndDismisses(t *testing.T) {
 	m.overlay.pop()
 	if strings.Contains(ansi.Strip(m.View().Content), "submit prompt") {
 		t.Error("help content should be gone after pop")
+	}
+}
+
+func TestHelpDialogScrollsWithinSharedDialogRegions(t *testing.T) {
+	d := newHelpDialog()
+	buf := uv.NewScreenBuffer(80, 10)
+	d.draw(buf, buf.Bounds())
+	first := ansi.Strip(buf.Render())
+
+	for _, want := range []string{"[keys]", "contextual shortcuts", "of", "↑↓/jk scroll", "ctrl+g / esc close"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("help dialog missing %q:\n%s", want, first)
+		}
+	}
+	if strings.Count(first, "[keys]") != 1 {
+		t.Fatalf("help should render one framed title:\n%s", first)
+	}
+
+	d.handleKey(skey(tea.KeyEnd))
+	buf = uv.NewScreenBuffer(80, 10)
+	d.draw(buf, buf.Bounds())
+	last := ansi.Strip(buf.Render())
+	if d.scroll == 0 || !strings.Contains(last, "global") {
+		t.Fatalf("help end did not reveal final section (scroll=%d):\n%s", d.scroll, last)
+	}
+	d.handleKey(skey(tea.KeyHome))
+	if d.scroll != 0 {
+		t.Fatalf("help home scroll = %d, want 0", d.scroll)
+	}
+}
+
+func TestActionDialogsUseSharedContextBodyFooter(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialog  dialog
+		context string
+		body    string
+		footer  string
+	}{
+		{name: "quit", dialog: newQuitConfirmDialog(), context: "confirm", body: "quit " + appDisplayName + "?", footer: "any other key cancel"},
+		{name: "conversation", dialog: newConversationActionsDialog(), context: "context", body: "conversation context", footer: "x clear…"},
+		{name: "clear", dialog: newClearContextConfirmDialog(), context: "reset conversation", body: "clear conversation context?", footer: "any other key cancel"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := uv.NewScreenBuffer(100, 20)
+			tt.dialog.draw(buf, buf.Bounds())
+			lines := strings.Split(ansi.Strip(buf.Render()), "\n")
+			out := strings.Join(lines, "\n")
+			for _, want := range []string{tt.context, tt.body, tt.footer} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s dialog missing %q:\n%s", tt.name, want, out)
+				}
+			}
+			if strings.Count(out, "["+tt.name+"]") != 1 {
+				t.Errorf("%s dialog should render one framed title:\n%s", tt.name, out)
+			}
+		})
 	}
 }
 

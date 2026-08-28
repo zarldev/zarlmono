@@ -16,6 +16,10 @@ var (
 	// TaskResult.Err with Reason = TerminalCancelled.
 	ErrCancelled = errors.New("runner: run cancelled")
 
+	// ErrTaskIDActive is returned when another Run on the same Runner already
+	// owns the requested non-empty TaskSpec.ID. Completed IDs may be reused.
+	ErrTaskIDActive = errors.New("runner: task id already active")
+
 	// ErrPromptRender wraps a PromptSource.System failure. Surfaced as
 	// TaskResult.Err with Reason = TerminalError before iteration 0.
 	ErrPromptRender = errors.New("runner: prompt render")

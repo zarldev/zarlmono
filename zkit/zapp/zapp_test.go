@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/zapp"
 )
@@ -180,6 +181,47 @@ func TestCloseRunsInReverseRegistrationOrder(t *testing.T) {
 	want := []string{"third", "second", "first"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("close order = %v, want %v", order, want)
+	}
+}
+
+func TestContextCloserReceivesShutdownDeadline(t *testing.T) {
+	app := zapp.New(testProgram{name: "test-app"})
+	var sawDeadline bool
+	if err := app.AddContextCloser("worker", zapp.ContextCloseFunc(func(ctx context.Context) error {
+		_, sawDeadline = ctx.Deadline()
+		return nil
+	})); err != nil {
+		t.Fatalf("AddContextCloser: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := app.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !sawDeadline {
+		t.Fatal("context closer did not receive the shutdown deadline")
+	}
+}
+
+func TestContextCloserHonorsExpiredShutdownDeadline(t *testing.T) {
+	app := zapp.New(testProgram{name: "test-app"})
+	if err := app.AddContextCloser("worker", zapp.ContextCloseFunc(func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})); err != nil {
+		t.Fatalf("AddContextCloser: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := app.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Close took %v after deadline", elapsed)
 	}
 }
 

@@ -2,8 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -275,6 +275,8 @@ func (m *UI) handleAction(a action) tea.Cmd {
 
 type helpDialog struct {
 	sections []helpSection
+	scroll   int
+	viewport int
 }
 
 func newHelpDialog() *helpDialog { return &helpDialog{sections: composeHelpSections()} }
@@ -292,21 +294,61 @@ func (m *UI) newHelpDialog() *helpDialog {
 	}
 }
 
-func (helpDialog) handleKey(msg tea.KeyPressMsg) action {
+func (d *helpDialog) handleKey(msg tea.KeyPressMsg) action {
+	lines := d.lines()
+	maxScroll := max(0, len(lines)-max(1, d.viewport))
 	switch msg.String() {
 	case "esc", "enter", "ctrl+g", "q":
 		return actionClose{}
+	case "up", "k":
+		d.scroll = max(0, d.scroll-1)
+	case "down", "j":
+		d.scroll = min(maxScroll, d.scroll+1)
+	case "pgup":
+		d.scroll = max(0, d.scroll-max(1, d.viewport-1))
+	case "pgdown":
+		d.scroll = min(maxScroll, d.scroll+max(1, d.viewport-1))
+	case "home", "g":
+		d.scroll = 0
+	case "end", "G":
+		d.scroll = maxScroll
 	}
 	return actionNone{}
 }
 
-func (d helpDialog) draw(scr uv.Screen, area uv.Rectangle) {
+func (d *helpDialog) draw(scr uv.Screen, area uv.Rectangle) {
+	lines := d.lines()
+	width := min(104, max(40, area.Dx()))
+	height := min(max(8, len(lines)+4), area.Dy())
+	lay, ok := drawDialogPane(scr, area, "keys", width, height, palette.Border, palette.Primary)
+	if !ok {
+		return
+	}
+	d.viewport = lay.Body.Dy()
+	maxScroll := max(0, len(lines)-d.viewport)
+	d.scroll = min(max(d.scroll, 0), maxScroll)
+	context := "contextual shortcuts"
+	if maxScroll > 0 {
+		context += " · " + helpScrollPosition(d.scroll, d.viewport, len(lines))
+	}
+	drawLine(scr, lay.Context, palette.Subtle.On(context))
+	for i, line := range lines[d.scroll:min(len(lines), d.scroll+d.viewport)] {
+		drawLine(scr, uv.Rect(lay.Body.Min.X, lay.Body.Min.Y+i, lay.Body.Dx(), 1), ansi.Truncate(line, lay.Body.Dx(), "…"))
+	}
+	footer := keyLegend(keyHint{"↑↓/jk", "scroll"}, keyHint{"pgup/pgdn", "page"}, keyHint{"ctrl+g / esc", "close"})
+	drawLine(scr, lay.Footer, palette.Muted.On(footer))
+}
+
+func (d *helpDialog) lines() []string {
 	sections := d.sections
 	if len(sections) == 0 {
 		sections = composeHelpSections()
 	}
-	lines := helpLines(sections)
-	drawDialogBox(scr, area, "keys", lines)
+	return helpLines(sections)
+}
+
+func helpScrollPosition(scroll, viewport, total int) string {
+	return fmt.Sprintf("%d–%d of %d", min(scroll+1, total), min(scroll+viewport, total), total)
 }
 
 func composeHelpSections() []helpSection {
@@ -325,6 +367,7 @@ func composeHelpSections() []helpSection {
 				{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
 				{{"ctrl+p", "plan pane"}, {"ctrl+w", "working set"}, {"ctrl+o", "inspector"}},
 				{{"ctrl+h", "tool history"}, {"ctrl+t", "theme"}, {"ctrl+y", "execution tray"}},
+				{{"ctrl+b", "toggle state bar"}},
 			},
 		},
 		{
@@ -359,7 +402,7 @@ func browseHelpSections() []helpSection {
 				{{"enter / space", "expand / collapse"}, {"i / esc", "back to compose"}},
 			},
 		},
-		{title: "quick panes", rows: [][]keyHint{{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}}}},
+		{title: "quick panes", rows: [][]keyHint{{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+b", "toggle state bar"}}}},
 		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+c", "quit"}}}},
 	}
 }
@@ -411,41 +454,17 @@ func helpLines(sections []helpSection) []string {
 	return lines
 }
 
-// --- centered box drawing ---
-
-// drawDialogBox paints a centered, bordered dialog over area without blanking
-// the background. Only the dialog frame and content are drawn; the area around
-// it is left untouched so the underlying UI remains visible (critical for theme
-// preview where the user needs to see colours on real content).
-func drawDialogBox(scr uv.Screen, area uv.Rectangle, title string, lines []string) {
-	drawDialogBoxColored(scr, area, title, lines, 0, palette.Border, palette.Primary)
-}
-
-// drawDialogBoxColored is drawDialogBox with an explicit minimum body width and
-// border/label colours. It is the single auto-sizing centered-box renderer,
-// shared by the plain notice/confirm dialogs and the live plan pane (which
-// wants a PlanMode tint and a minimum width).
-func drawDialogBoxColored(scr uv.Screen, area uv.Rectangle, title string, lines []string, minW int, border, labelCol theme.Color) {
-	w := max(minW, ansi.StringWidth(title))
-	for _, l := range lines {
-		if n := ansi.StringWidth(l); n > w {
-			w = n
-		}
-	}
-	w += 4 // borders + one-column padding on both sides.
-	h := len(lines) + 2
-	r := centerRect(area, w, h)
-	inner := drawFrame(scr, r, frameStyle{Label: title, Border: border, LabelColor: labelCol})
-	innerW := inner.Dx() - 2
-	if innerW < 1 {
+func drawActionDialog(scr uv.Screen, area uv.Rectangle, title, context string, body []string, footer string, width int) {
+	height := len(body) + 4
+	lay, ok := drawDialogPane(scr, area, title, width, height, palette.Border, palette.Primary)
+	if !ok {
 		return
 	}
-	for i, l := range lines {
-		if i >= inner.Dy() {
-			break
-		}
-		drawPaddedLine(scr, uv.Rect(inner.Min.X+1, inner.Min.Y+i, innerW, 1), l)
+	drawLine(scr, lay.Context, palette.Subtle.On(context))
+	for i, line := range body[:min(len(body), lay.Body.Dy())] {
+		drawLine(scr, uv.Rect(lay.Body.Min.X, lay.Body.Min.Y+i, lay.Body.Dx(), 1), line)
 	}
+	drawLine(scr, lay.Footer, palette.Muted.On(footer))
 }
 
 // centerRect computes a centered rectangle and clamps it to area. It is shared
@@ -482,15 +501,9 @@ func (quitConfirmDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (quitConfirmDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	lines := []string{
-		overlayTopBar("quit", nil, 0, "confirm", 72),
-		palette.Subtle.On(strings.Repeat("─", 72)),
+	drawActionDialog(scr, area, "quit", "confirm", []string{
 		palette.Warning.On("quit " + appDisplayName + "?"),
-		"",
-		palette.Subtle.On("y / enter") + palette.Muted.On("  confirm"),
-		palette.Subtle.On("any other key") + palette.Muted.On("  cancel"),
-	}
-	drawDialogBox(scr, area, "quit", lines)
+	}, keyLegend(keyHint{"y / enter", "confirm"}, keyHint{"any other key", "cancel"}), 64)
 }
 
 // --- conversation actions dialog ---
@@ -510,18 +523,11 @@ func (conversationActionsDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (conversationActionsDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	lines := []string{
-		overlayTopBar("conversation", nil, 0, "context", 76),
-		palette.Subtle.On(strings.Repeat("─", 76)),
+	drawActionDialog(scr, area, "conversation", "context", []string{
 		palette.Primary.On("conversation context"),
 		palette.Muted.On("Compact keeps the transcript visible but shrinks what the next turn remembers."),
 		palette.Muted.On("Clear drops the transcript and live conversation context."),
-		"",
-		palette.Subtle.On("c / enter") + palette.Muted.On("  compact now"),
-		palette.Subtle.On("x") + palette.Muted.On("          clear conversation…"),
-		palette.Subtle.On("any other") + palette.Muted.On("  cancel"),
-	}
-	drawDialogBox(scr, area, "conversation", lines)
+	}, keyLegend(keyHint{"c / enter", "compact now"}, keyHint{"x", "clear…"}, keyHint{"any other", "cancel"}), 80)
 }
 
 // clearContextConfirmDialog asks before dropping the live conversation context
@@ -539,15 +545,9 @@ func (clearContextConfirmDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (clearContextConfirmDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	lines := []string{
-		overlayTopBar("clear", nil, 0, "reset", 72),
-		palette.Subtle.On(strings.Repeat("─", 72)),
+	drawActionDialog(scr, area, "clear", "reset conversation", []string{
 		palette.Primary.On("clear conversation context?"),
 		palette.Muted.On("This clears the transcript and what the next turn remembers."),
 		palette.Muted.On("It does not revert files or stop background processes."),
-		"",
-		palette.Subtle.On("y / enter") + palette.Muted.On("  confirm"),
-		palette.Subtle.On("any other key") + palette.Muted.On("  cancel"),
-	}
-	drawDialogBox(scr, area, "clear", lines)
+	}, keyLegend(keyHint{"y / enter", "confirm"}, keyHint{"any other key", "cancel"}), 76)
 }

@@ -144,6 +144,98 @@ Use package resources.
 	}
 }
 
+func TestLoadCatalogUsesBoundedSourceFamily(t *testing.T) {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceRoot := filepath.Join(userHome, "src")
+	workspace := filepath.Join(sourceRoot, "new")
+
+	writeAgent(t, filepath.Join(sourceRoot, ".zarlcode", "skills", "shared", "SKILL.md"), `---
+name: shared
+description: source family skill
+---
+
+Shared.
+`)
+	writeAgent(t, filepath.Join(sourceRoot, ".zarlcode", "agents", "shared.md"), `---
+name: shared
+description: source family agent
+---
+
+Shared.
+`)
+
+	skills, skillErrs := LoadSkills(workspace)
+	if len(skillErrs) != 0 {
+		t.Fatalf("LoadSkills errors: %v", skillErrs)
+	}
+	if len(skills) != 1 || skills[0].Description != "source family skill" {
+		t.Fatalf("LoadSkills = %#v, want source family skill", skills)
+	}
+	agents, agentErrs := LoadAgents(workspace)
+	if len(agentErrs) != 0 {
+		t.Fatalf("LoadAgents errors: %v", agentErrs)
+	}
+	if len(agents) != 1 || agents[0].Description != "source family agent" {
+		t.Fatalf("LoadAgents = %#v, want source family agent", agents)
+	}
+}
+
+func TestLoadSkillsWorkspaceOverridesSourceFamily(t *testing.T) {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceRoot := filepath.Join(userHome, "src")
+	workspace := filepath.Join(sourceRoot, "new")
+	writeAgent(t, filepath.Join(sourceRoot, ".zarlcode", "skills", "shared", "SKILL.md"), `---
+name: shared
+description: source family skill
+---
+
+Shared.
+`)
+	writeAgent(t, filepath.Join(workspace, ".zarlcode", "skills", "shared", "SKILL.md"), `---
+name: shared
+description: workspace skill
+---
+
+Workspace.
+`)
+
+	skills, errs := LoadSkills(workspace)
+	if len(errs) != 0 {
+		t.Fatalf("LoadSkills errors: %v", errs)
+	}
+	if len(skills) != 1 || skills[0].Description != "workspace skill" {
+		t.Fatalf("LoadSkills = %#v, want workspace override", skills)
+	}
+}
+
+func TestLoadSkillsOutsideSourceFamilyDoesNotUseIt(t *testing.T) {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAgent(t, filepath.Join(userHome, "src", ".zarlcode", "skills", "shared", "SKILL.md"), `---
+name: shared
+description: source family skill
+---
+
+Shared.
+`)
+
+	skills, errs := LoadSkills(filepath.Join(userHome, "other", "new"))
+	if len(errs) != 0 {
+		t.Fatalf("LoadSkills errors: %v", errs)
+	}
+	if len(skills) != 0 {
+		t.Fatalf("LoadSkills = %#v, want no source family skills", skills)
+	}
+}
+
 func writeAgent(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

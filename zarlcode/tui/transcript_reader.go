@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -159,21 +160,35 @@ func (r *transcriptReader) itemText(i int) string {
 func (r *transcriptReader) currentMessageText() string { return r.itemText(r.view.sel) }
 
 func (r *transcriptReader) draw(scr uv.Screen, area uv.Rectangle) {
-	inner := drawPaneFrameColored(scr, area, "TRANSCRIPT READER", palette.Border, palette.Primary)
-	if inner.Empty() {
+	if area.Dx() < 4 || area.Dy() < 3 {
 		return
 	}
-	body := uv.Rect(inner.Min.X, inner.Min.Y, inner.Dx(), max(0, inner.Dy()-2))
+	header := lg.NewStyle().
+		Background(lgColor(palette.Highlight)).
+		Width(area.Dx()).
+		Render(palette.Primary.On("transcript") + "  " + palette.Info.On(r.view.viewportStateLabel()))
+	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y, area.Dx(), 1), header)
+	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y+1, area.Dx(), 1), palette.Border.On(strings.Repeat("─", area.Dx())))
+
+	body := uv.Rect(area.Min.X+1, area.Min.Y+2, max(0, area.Dx()-2), max(0, area.Dy()-3))
 	r.view.viewWidth, r.view.viewHeight = body.Dx(), body.Dy()
 	lines := r.view.renderBrowse(body.Dx(), body.Dy())
 	for i, line := range lines {
 		drawLine(scr, uv.Rect(body.Min.X, body.Min.Y+i, body.Dx(), 1), line)
 	}
-	footer := "↑↓ navigate  [ ] user turns  ctrl+f search  v select  y copy range  Y copy message  esc close"
-	if r.searching {
-		footer = "search: " + r.query + "█"
-	} else if r.query != "" {
-		footer = "search: " + r.query + "  ·  n/N next/previous  ·  " + footer
+	footer := ""
+	switch {
+	case r.searching:
+		footer = " search: " + r.query + "█"
+	case r.query != "":
+		footer = " search: " + r.query + "  ·  n/N next/previous"
+	case r.view.selectionActive():
+		footer = " visual selection  ·  y copy range  ·  Y copy message  ·  esc cancel"
 	}
-	drawLine(scr, uv.Rect(inner.Min.X, inner.Max.Y-1, inner.Dx(), 1), palette.Muted.On(ansi.Truncate(footer, inner.Dx(), "…")))
+	bar := lg.NewStyle().
+		Background(lgColor(palette.Highlight)).
+		Foreground(lgColor(palette.Subtle)).
+		Width(area.Dx()).
+		Render(ansi.Truncate(footer, area.Dx(), "…"))
+	drawLine(scr, uv.Rect(area.Min.X, area.Max.Y-1, area.Dx(), 1), bar)
 }

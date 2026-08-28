@@ -2,7 +2,10 @@ package spawn_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"iter"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +45,217 @@ func TestAsyncToolReturnsReceiptBeforeChildCompletes(t *testing.T) {
 	}
 }
 
+func TestListAgentTasksDoesNotConsumeOrExposeTerminalSummary(t *testing.T) {
+	group := spawn.NewGroup()
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	start := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "secret summary"}, runner.WithSink(runner.NopSink{}))), group)
+	id := startImmediateTask(t, start, "spawn")
+	waitTerminal(t, group, id)
+
+	listed, err := spawn.NewList(group).Execute(t.Context(), tools.ToolCall{ID: "list"})
+	if err != nil || listed == nil || !listed.Success {
+		t.Fatalf("list = (%#v, %v)", listed, err)
+	}
+	tasks := listed.Data.(map[string]any)["tasks"].([]map[string]any)
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %#v", tasks)
+	}
+	if _, exposed := tasks[0]["summary"]; exposed {
+		t.Fatalf("list exposed terminal summary: %#v", tasks[0])
+	}
+	if _, exposed := tasks[0]["error"]; exposed {
+		t.Fatalf("list exposed terminal error: %#v", tasks[0])
+	}
+	if observed, _ := tasks[0]["observed"].(bool); observed {
+		t.Fatalf("list marked terminal observed: %#v", tasks[0])
+	}
+	if got := group.Outstanding(); len(got) != 1 || got[0].ID != id {
+		t.Fatalf("outstanding after list = %#v", got)
+	}
+
+	status, err := spawn.NewStatus(group).Execute(t.Context(), tools.ToolCall{ID: "status", Arguments: tools.ToolParameters{"task_id": string(id)}})
+	if err != nil || status == nil || !status.Success {
+		t.Fatalf("status = (%#v, %v)", status, err)
+	}
+	if summary := status.Data.(map[string]any)["summary"]; summary != "secret summary" {
+		t.Fatalf("status summary = %#v", summary)
+	}
+	if got := group.Outstanding(); len(got) != 0 {
+		t.Fatalf("outstanding after status = %#v", got)
+	}
+}
+
+func TestLifecycleToolsFailSafelyWithoutGroup(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		tool tools.Tool
+	}{
+		{name: "await", tool: spawn.NewAwait(nil)},
+		{name: "status", tool: spawn.NewStatus(nil)},
+		{name: "stop", tool: spawn.NewStop(nil)},
+		{name: "list", tool: spawn.NewList(nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result, err := tc.tool.Execute(t.Context(), tools.ToolCall{ID: "call", Arguments: tools.ToolParameters{"task_id": "task"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.FATAL {
+				t.Fatalf("result = %#v, want fatal configuration failure", result)
+			}
+		})
+	}
+}
+
+func TestAsyncToolEnforcesConcurrentChildCap(t *testing.T) {
+	client := &blockingClient{started: make(chan struct{}), release: make(chan struct{})}
+	child := runner.New(client, runner.WithSink(runner.NopSink{}))
+	group := spawn.NewGroup(spawn.WithMaxConcurrent(1))
+	t.Cleanup(func() {
+		close(client.release)
+		_ = group.Close(t.Context())
+	})
+	tool := spawn.NewAsync(spawn.New(child), group)
+
+	first, err := tool.Execute(t.Context(), tools.ToolCall{ID: "first", Arguments: tools.ToolParameters{"prompt": "wait"}})
+	if err != nil || !first.Success {
+		t.Fatalf("first spawn = (%#v, %v)", first, err)
+	}
+	<-client.started
+	second, err := tool.Execute(t.Context(), tools.ToolCall{ID: "second", Arguments: tools.ToolParameters{"prompt": "also wait"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Success || second.Err == nil || second.Err.Kind != tools.Kinds.BUDGET {
+		t.Fatalf("second spawn = %#v, want concurrency budget failure", second)
+	}
+}
+
+func TestAsyncToolRejectsNegativeMaxIterationsBeforeAdmission(t *testing.T) {
+	t.Parallel()
+	group := spawn.NewGroup()
+	tool := spawn.NewAsync(spawn.New(nil), group)
+	result, err := tool.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "work", "max_iterations": -1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.VALIDATION {
+		t.Fatalf("result = %#v, want validation failure", result)
+	}
+	if got := group.List(); len(got) != 0 {
+		t.Fatalf("invalid spawn admitted tasks: %#v", got)
+	}
+}
+
+func TestAsyncToolContainsChildPanicAndReleasesCapacity(t *testing.T) {
+	child := runner.New(panicClient{}, runner.WithSink(runner.NopSink{}))
+	group := spawn.NewGroup(spawn.WithMaxConcurrent(1))
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	tool := spawn.NewAsync(spawn.New(child), group)
+
+	first, err := tool.Execute(t.Context(), tools.ToolCall{ID: "first", Arguments: tools.ToolParameters{"prompt": "panic"}})
+	if err != nil || first == nil || !first.Success {
+		t.Fatalf("first spawn = (%#v, %v), want receipt", first, err)
+	}
+	firstID := spawn.TaskID(first.Data.(map[string]any)["task_id"].(string))
+	snapshot, err := group.Await(t.Context(), firstID)
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+	if snapshot.State != spawn.AgentTaskStates.FAILED || snapshot.Result.Reason != runner.TerminalError {
+		t.Fatalf("panic snapshot = %#v, want FAILED/error", snapshot)
+	}
+	if !strings.Contains(snapshot.Result.Error, "sub-agent panic: provider exploded") {
+		t.Fatalf("panic error = %q", snapshot.Result.Error)
+	}
+
+	second, err := tool.Execute(t.Context(), tools.ToolCall{ID: "second", Arguments: tools.ToolParameters{"prompt": "panic again"}})
+	if err != nil || second == nil || !second.Success {
+		t.Fatalf("second spawn = (%#v, %v), want released capacity", second, err)
+	}
+}
+
+func TestGroupEvictsOldestObservedTerminalTasks(t *testing.T) {
+	group := spawn.NewGroup(spawn.WithMaxObserved(2))
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	tool := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))), group)
+
+	ids := make([]spawn.TaskID, 0, 3)
+	for i := range 3 {
+		result, err := tool.Execute(t.Context(), tools.ToolCall{ID: tools.ToolCallID(fmt.Sprintf("spawn-%d", i)), Arguments: tools.ToolParameters{"prompt": "finish"}})
+		if err != nil || result == nil || !result.Success {
+			t.Fatalf("spawn %d = (%#v, %v)", i, result, err)
+		}
+		id := spawn.TaskID(result.Data.(map[string]any)["task_id"].(string))
+		ids = append(ids, id)
+		if _, err := group.Await(t.Context(), id); err != nil {
+			t.Fatalf("await %d: %v", i, err)
+		}
+	}
+
+	if _, err := group.Peek(ids[0]); !errors.Is(err, spawn.ErrTaskNotFound) {
+		t.Fatalf("oldest observed Peek error = %v, want ErrTaskNotFound", err)
+	}
+	listed := group.List()
+	if len(listed) != 2 || listed[0].ID != ids[1] || listed[1].ID != ids[2] {
+		t.Fatalf("retained tasks = %#v, want latest two observed tasks", listed)
+	}
+}
+
+func TestGroupNeverEvictsUnobservedTerminalTasks(t *testing.T) {
+	group := spawn.NewGroup(spawn.WithMaxObserved(1))
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	tool := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))), group)
+
+	unobserved := startImmediateTask(t, tool, "unobserved")
+	waitTerminal(t, group, unobserved)
+	firstObserved := startImmediateTask(t, tool, "observed-1")
+	if _, err := group.Await(t.Context(), firstObserved); err != nil {
+		t.Fatal(err)
+	}
+	latestObserved := startImmediateTask(t, tool, "observed-2")
+	if _, err := group.Await(t.Context(), latestObserved); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := group.Peek(unobserved); err != nil {
+		t.Fatalf("unobserved terminal was evicted: %v", err)
+	}
+	if _, err := group.Peek(firstObserved); !errors.Is(err, spawn.ErrTaskNotFound) {
+		t.Fatalf("old observed Peek error = %v, want ErrTaskNotFound", err)
+	}
+	if got := group.Outstanding(); len(got) != 1 || got[0].ID != unobserved {
+		t.Fatalf("outstanding = %#v, want unobserved terminal", got)
+	}
+}
+
+func startImmediateTask(t *testing.T, tool tools.Tool, callID string) spawn.TaskID {
+	t.Helper()
+	result, err := tool.Execute(t.Context(), tools.ToolCall{ID: tools.ToolCallID(callID), Arguments: tools.ToolParameters{"prompt": "finish"}})
+	if err != nil || result == nil || !result.Success {
+		t.Fatalf("spawn %s = (%#v, %v)", callID, result, err)
+	}
+	return spawn.TaskID(result.Data.(map[string]any)["task_id"].(string))
+}
+
+func waitTerminal(t *testing.T, group *spawn.Group, id spawn.TaskID) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snapshot, err := group.Peek(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.State != spawn.AgentTaskStates.RUNNING {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("task %s did not become terminal", id)
+}
+
 func TestGroupCloseCancelsAndJoinsChild(t *testing.T) {
 	client := &cancelClient{started: make(chan struct{})}
 	child := runner.New(client, runner.WithSink(runner.NopSink{}))
@@ -62,6 +276,92 @@ func TestGroupCloseCancelsAndJoinsChild(t *testing.T) {
 	}
 	if snapshot.State != spawn.AgentTaskStates.CANCELLED {
 		t.Fatalf("state = %s, want CANCELLED", snapshot.State)
+	}
+}
+
+func TestAgentAwaitClassifiesCancelledTaskAsTransient(t *testing.T) {
+	client := &cancelClient{started: make(chan struct{})}
+	group := spawn.NewGroup()
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	start := spawn.NewAsync(spawn.New(runner.New(client, runner.WithSink(runner.NopSink{}))), group)
+	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "wait"}})
+	if err != nil || !spawned.Success {
+		t.Fatalf("spawn = (%#v, %v)", spawned, err)
+	}
+	<-client.started
+	id := spawned.Data.(map[string]any)["task_id"].(string)
+	if _, err := spawn.NewStop(group).Execute(t.Context(), tools.ToolCall{ID: "stop", Arguments: tools.ToolParameters{"task_id": id}}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := spawn.NewAwait(group).Execute(t.Context(), tools.ToolCall{ID: "await", Arguments: tools.ToolParameters{"task_id": id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.TRANSIENT {
+		t.Fatalf("cancelled await = %#v, want transient failure", result)
+	}
+}
+
+func TestAgentAwaitClassifiesChildErrorAsFatal(t *testing.T) {
+	group := spawn.NewGroup()
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	start := spawn.NewAsync(spawn.New(runner.New(errorClient{}, runner.WithSink(runner.NopSink{}))), group)
+	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "fail"}})
+	if err != nil || !spawned.Success {
+		t.Fatalf("spawn = (%#v, %v)", spawned, err)
+	}
+	id := spawned.Data.(map[string]any)["task_id"].(string)
+	result, err := spawn.NewAwait(group).Execute(t.Context(), tools.ToolCall{ID: "await", Arguments: tools.ToolParameters{"task_id": id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.FATAL {
+		t.Fatalf("errored await = %#v, want fatal failure", result)
+	}
+}
+
+func TestAgentAwaitClassifiesIterationExhaustionAsBudget(t *testing.T) {
+	group := spawn.NewGroup()
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	provider := &scriptedProvider{turns: [][]llm.CompletionChunk{{toolCallChunk("probe", "missing"), doneChunk()}}}
+	child := runner.New(runner.ClientFromProvider(provider), runner.WithSink(runner.NopSink{}), runner.WithMaxIterations(1))
+	start := spawn.NewAsync(spawn.New(child), group)
+	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "keep working"}})
+	if err != nil || !spawned.Success {
+		t.Fatalf("spawn = (%#v, %v)", spawned, err)
+	}
+	id := spawned.Data.(map[string]any)["task_id"].(string)
+	result, err := spawn.NewAwait(group).Execute(t.Context(), tools.ToolCall{ID: "await", Arguments: tools.ToolParameters{"task_id": id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.BUDGET {
+		t.Fatalf("exhausted await = %#v, want budget failure", result)
+	}
+}
+
+func TestGroupMaxRuntimeCancelsChildAndReportsBudget(t *testing.T) {
+	client := &cancelClient{started: make(chan struct{})}
+	group := spawn.NewGroup(spawn.WithMaxRuntime(20 * time.Millisecond))
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	start := spawn.NewAsync(spawn.New(runner.New(client, runner.WithSink(runner.NopSink{}))), group)
+	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "wait"}})
+	if err != nil || !spawned.Success {
+		t.Fatalf("spawn = (%#v, %v)", spawned, err)
+	}
+	<-client.started
+	id := spawned.Data.(map[string]any)["task_id"].(string)
+	result, err := spawn.NewAwait(group).Execute(t.Context(), tools.ToolCall{ID: "await", Arguments: tools.ToolParameters{"task_id": id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.BUDGET {
+		t.Fatalf("timed-out await = %#v, want budget failure", result)
+	}
+	data := result.Data.(map[string]any)
+	if timedOut, _ := data["timed_out"].(bool); !timedOut {
+		t.Fatalf("timed_out = %#v, want true", data["timed_out"])
 	}
 }
 
@@ -99,6 +399,25 @@ func TestAgentAwaitCanRecoverSingleTaskIDAndTimesOutWithoutStoppingTask(t *testi
 	data := waited.Data.(map[string]any)
 	if data["status"] != spawn.AgentTaskStates.RUNNING.String() || data["timed_out"] != true {
 		t.Fatalf("agent_await data = %#v, want timed-out RUNNING snapshot", data)
+	}
+}
+
+func TestAgentAwaitRejectsInvalidRequestedTimeout(t *testing.T) {
+	group := spawn.NewGroup()
+	await := spawn.NewAwait(group, spawn.WithAwaitMaxTimeout(2*time.Second))
+	for name, seconds := range map[string]int{
+		"negative":           -1,
+		"above host maximum": 3,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := await.Execute(t.Context(), tools.ToolCall{ID: "await", Arguments: tools.ToolParameters{"task_id": "missing", "timeout_seconds": seconds}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.VALIDATION {
+				t.Fatalf("result = %#v, want validation failure", result)
+			}
+		})
 	}
 }
 
@@ -159,8 +478,8 @@ func TestAgentAwaitDoesNotTreatParentDeadlineAsPollingTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.BUDGET {
-		t.Fatalf("agent_await = %#v, want parent deadline budget failure", result)
+	if result.Success || result.Err == nil || result.Err.Kind != tools.Kinds.TRANSIENT {
+		t.Fatalf("agent_await = %#v, want parent deadline transient failure", result)
 	}
 }
 
@@ -209,6 +528,12 @@ func (c *blockingClient) Complete(ctx context.Context, _ llm.CompletionRequest) 
 	}, nil
 }
 
+type panicClient struct{}
+
+func (panicClient) Complete(context.Context, llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+	panic("provider exploded")
+}
+
 type cancelClient struct{ started chan struct{} }
 
 func (c *cancelClient) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
@@ -216,4 +541,10 @@ func (c *cancelClient) Complete(ctx context.Context, _ llm.CompletionRequest) (i
 		close(c.started)
 		<-ctx.Done()
 	}, nil
+}
+
+type errorClient struct{}
+
+func (errorClient) Complete(context.Context, llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+	return nil, errors.New("provider broke")
 }

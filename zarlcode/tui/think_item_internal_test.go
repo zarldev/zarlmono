@@ -30,3 +30,18 @@ func TestThinkingItem_ExpandedRendersMarkdown(t *testing.T) {
 		t.Fatalf("expanded thinking body should render muted:\n%q", raw)
 	}
 }
+
+func TestThinkingItem_NormalizesAdjacentBoldChunks(t *testing.T) {
+	it := &thinkingItem{
+		text:     "**Planning removal****Refactoring queued indicator**",
+		expanded: true,
+		done:     true,
+	}
+	plain := ansi.Strip(strings.Join(it.render(80), "\n"))
+	if strings.Contains(plain, "****") {
+		t.Fatalf("expanded thinking leaked adjacent markdown markers:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Planning removal") || !strings.Contains(plain, "Refactoring queued indicator") {
+		t.Fatalf("expanded thinking lost chunk headings:\n%s", plain)
+	}
+}

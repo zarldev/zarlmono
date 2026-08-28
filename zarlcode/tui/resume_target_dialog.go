@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 )
@@ -41,19 +39,11 @@ func (d *resumeTargetDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	if d != nil && d.saved != nil {
 		saved = providerModelLabel(d.saved.Provider, d.saved.Model)
 	}
-	lines := []string{
-		overlayTopBar("resume", nil, 0, "target", 72),
-		palette.Subtle.On(strings.Repeat("─", 72)),
+	drawActionDialog(scr, area, "resume", "choose model target", []string{
 		palette.Warning.On("saved session uses a different model target"),
-		"",
 		palette.Subtle.On("saved") + palette.Muted.On("    ") + saved,
 		palette.Subtle.On("current") + palette.Muted.On("  ") + d.current,
-		"",
-		palette.Subtle.On("s / enter") + palette.Muted.On("  resume with saved target"),
-		palette.Subtle.On("c") + palette.Muted.On("          resume with current target"),
-		palette.Subtle.On("any other key") + palette.Muted.On("  cancel"),
-	}
-	drawDialogBox(scr, area, "resume", lines)
+	}, keyLegend(keyHint{"s / enter", "use saved"}, keyHint{"c", "use current"}, keyHint{"any other", "cancel"}), 76)
 }
 
 func providerModelLabel(provider, model string) string {

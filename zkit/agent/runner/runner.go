@@ -41,9 +41,11 @@
 package runner
 
 import (
+	"sync"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/options"
@@ -53,6 +55,8 @@ import (
 // task. The runner's own state (client, registries, stores) is
 // read-only after construction; per-task state is local to Run, so
 // concurrent Run calls do not corrupt each other.
+// Concurrent calls with the same explicit non-empty TaskSpec.ID are rejected;
+// after the owning Run returns, the ID may represent a later generation.
 //
 // Concurrent Run calls do, however, share the installed plumbing —
 // EventSink, Steerer, Truncator, PromptSource, ToolOutputSink. Each interface
@@ -136,6 +140,8 @@ type Runner struct {
 	// on the runner goroutine, so it should be fast (a single UPDATE
 	// or a channel send), not block on network.
 	progressUpdater ProgressUpdater
+	activeMu        sync.Mutex
+	activeIDs       map[taskscope.ID]struct{}
 }
 
 // New constructs a Runner. The only required argument is the LLM client
@@ -160,6 +166,7 @@ func New(
 		truncator:     DefaultTruncator{},
 		maxIterations: defaultMaxIterations,
 		keep:          keepPolicy{static: 4}, // conservative default; override via WithCompactKeepRecent
+		activeIDs:     make(map[taskscope.ID]struct{}),
 		timeouts: timeouts{
 			iteration:  defaultIterationTimeout,
 			streamIdle: defaultStreamIdleTimeout,

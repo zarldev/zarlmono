@@ -50,14 +50,14 @@ func (m *UI) handleMouse(msg tea.Msg) bool {
 		if innerH < 1 {
 			return false
 		}
-		top := main.Min.Y + 1
+		top := main.Min.Y + 2
 		if mo.Y < top || mo.Y >= top+innerH {
 			return false
 		}
-		// The scrollbar is a 1-col gutter at main.Max.X-2: a click there jumps
-		// to the matching fraction of the scroll range (top = top, bottom =
+		// The open transcript's scrollbar owns its final column. A click there
+		// jumps to the matching fraction of the scroll range (top = top, bottom =
 		// follow the tail).
-		if mo.X == main.Max.X-2 {
+		if mo.X == main.Max.X-1 {
 			denom := max(innerH-1, 1)
 			m.timeline.scrollToFraction(float64(mo.Y-top) / float64(denom))
 			return true
@@ -66,8 +66,8 @@ func (m *UI) handleMouse(msg tea.Msg) bool {
 		// bears one — the group / thinking header, or an individual tool / diff
 		// sub-entry. Consume it only when something actually toggled, so a click
 		// on plain text falls through.
-		innerW := main.Dx() - 2 - scrollbarWidth
-		if mo.X >= main.Min.X+1 && mo.X < main.Min.X+1+innerW {
+		innerW := main.Dx() - scrollbarWidth
+		if mo.X >= main.Min.X && mo.X < main.Min.X+innerW {
 			return m.timeline.toggleAtViewportLine(mo.Y - top)
 		}
 		return false

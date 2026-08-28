@@ -95,10 +95,13 @@ func (p *themePicker) handleKey(msg tea.KeyPressMsg) action {
 
 func (p *themePicker) draw(scr uv.Screen, area uv.Rectangle) {
 	w, h := area.Dx(), area.Dy()
-	if w < 30 || h < 8 {
+	if h < 8 {
 		return
 	}
 	hint := keyLegend(keyHint{"↑↓", "navigate"}, keyHint{"enter", "select"}, keyHint{"esc", "close"})
+	if w < 40 {
+		hint = keyLegend(keyHint{"esc", "close"}, keyHint{"↑↓", "move"}, keyHint{"enter", "use"})
+	}
 	boxW := themePickerMinWidth
 	if contentW := p.longestNameWidth() + 6; contentW > boxW {
 		boxW = contentW

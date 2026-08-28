@@ -68,12 +68,13 @@ func (a *agentActivityScreen) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (a *agentActivityScreen) draw(scr uv.Screen, area uv.Rectangle) {
-	l, ok := drawSplitPane(scr, area, "AGENT ACTIVITY", 38)
+	l, ok := drawUtilitySplitPane(scr, area, 38)
 	if !ok {
 		return
 	}
 	agents := a.agents()
-	drawLine(scr, l.Context, palette.Muted.On(fmt.Sprintf("%d delegated agents · live session activity", len(agents))))
+	header := overlayTopBar("agent activity", nil, 0, fmt.Sprintf("%d delegated agents · live session activity", len(agents)), l.Context.Dx())
+	drawOverlayContext(scr, l, header, palette.Border)
 	if len(agents) == 0 {
 		drawLine(scr, l.Nav, palette.Muted.On("no delegated agents this session"))
 	} else {
@@ -98,7 +99,11 @@ func (a *agentActivityScreen) draw(scr uv.Screen, area uv.Rectangle) {
 			drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+row, l.Detail.Dx(), 1), line)
 		}
 	}
-	drawLine(scr, l.Footer, palette.Muted.On("↑↓ agent  ·  pgup/pgdown detail  ·  esc close"))
+	footer := "↑↓ agent  ·  pgup/pgdown detail  ·  esc close"
+	if l.Footer.Dx() < 60 {
+		footer = keyLegend(keyHint{"↑↓", "agent"}, keyHint{"pgup/dn", "detail"}, keyHint{"esc", "close"})
+	}
+	drawLine(scr, l.Footer, palette.Muted.On(footer))
 }
 
 func agentElapsed(agent *subAgentItem) string {

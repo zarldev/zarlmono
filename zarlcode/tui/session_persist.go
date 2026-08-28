@@ -19,7 +19,10 @@ import (
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
-const activeSessionKey = "active_session"
+const (
+	activeSessionKey      = "active_session"
+	sessionSaveCommandTTL = 2 * time.Second
+)
 
 type sessionSaveFailedMsg struct{ Error string }
 type sessionClearFailedMsg struct{ Error string }
@@ -371,8 +374,10 @@ func (m *UI) SaveSession(ctx context.Context) error {
 func (m *UI) saveSessionCmd() tea.Cmd {
 	snapshot, err := m.sessionSnapshot()
 	settings := m.settings
-	ctx := context.WithoutCancel(m.appContext())
+	baseCtx := context.WithoutCancel(m.appContext())
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(baseCtx, sessionSaveCommandTTL)
+		defer cancel()
 		if errors.Is(err, errSessionSnapshotEmpty) {
 			return nil
 		}

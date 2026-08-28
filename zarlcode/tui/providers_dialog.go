@@ -652,28 +652,28 @@ func (d *providersDialog) addFormLines() []string {
 	return lines
 }
 
-// draw renders the panel as a standalone centered dialog (used when pushed
+// draw renders the panel as a standalone full-screen utility (used when pushed
 // directly, e.g. in tests). Inline use goes through detailLines + the host's
-// footer; standalone re-appends the footer hint so the box reads on its own.
+// footer; standalone re-appends the footer hint so the surface reads on its own.
 func (d *providersDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	w, h := area.Dx(), area.Dy()
-	if w < 50 || h < 10 {
-		return
-	}
-	l, ok := drawSplitPane(scr, area, "providers", 26)
+	l, ok := drawUtilitySplitPane(scr, area, 26)
 	if !ok {
 		return
 	}
 	left := overlayTopBar("providers", []string{"registry", "oauth", "custom"}, 0, d.summary(), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Subtle.On("esc close "), palette.Border)
+	drawOverlayContext(scr, l, left, palette.Border)
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" providers · built-in and custom"))
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
 	lines := d.detailLines(l.Nav.Dx())
-	for i, line := range lines {
-		if i+2 >= l.Nav.Dy() {
-			break
-		}
-		drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+2+i, l.Nav.Dx(), 1), ansi.Truncate(line, l.Nav.Dx(), ""))
+	navY := l.Nav.Min.Y + min(2, l.Nav.Dy())
+	navH := max(0, l.Nav.Dy()-2)
+	selectedLine := min(d.cursor, max(0, len(lines)-1))
+	if d.modelPicker != nil || d.adding || d.oauthBusy {
+		selectedLine = 0
+	}
+	start, end := windowAroundCursor(selectedLine, len(lines), navH)
+	for i := start; i < end; i++ {
+		drawLine(scr, uv.Rect(l.Nav.Min.X, navY+i-start, l.Nav.Dx(), 1), ansi.Truncate(lines[i], l.Nav.Dx(), ""))
 	}
 	detail := []string{
 		sectionHead("selection", l.Detail.Dx()),
@@ -706,7 +706,11 @@ func (d *providersDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		}
 		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, l.Detail.Dx(), 1), ansi.Truncate(line, l.Detail.Dx(), ""))
 	}
-	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+d.footerHint()), "")
+	footer := d.footerHint()
+	if l.Footer.Dx() < 60 && d.modelPicker == nil && !d.editing && !d.adding && !d.oauthBusy {
+		footer = keyLegend(keyHint{"↑↓", "move"}, keyHint{"enter", "use"}, keyHint{"esc", "back"})
+	}
+	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
 }
 
 // tags renders the per-provider status badges (active / origin / credential)

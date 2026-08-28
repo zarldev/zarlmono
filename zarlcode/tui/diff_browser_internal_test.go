@@ -36,12 +36,45 @@ func TestDiffBrowser_SelectedEntryVisibleWhenScrolled(t *testing.T) {
 	}
 }
 
+func TestDiffBrowser_RendersAtSharedUtilityMinimum(t *testing.T) {
+	d := newDiffBrowser(seededDiffBrowserWorkingSet())
+	d.cursor = len(d.entries()) - 1
+	selected := d.entries()[d.cursor].label
+	out := drawDiffBrowserWithSize(t, d, 42, 7)
+	lines := strings.Split(out, "\n")
+
+	if !strings.Contains(out, "diff browser") || !strings.Contains(out, selected) {
+		t.Fatalf("narrow diff browser lost header or selected group:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "enter/esc back") {
+		t.Fatalf("narrow diff browser missing back action: %q", lines[len(lines)-1])
+	}
+}
+
+func TestDiffBrowser_UsesOpenUtilityChrome(t *testing.T) {
+	d := newDiffBrowser(seededDiffBrowserWorkingSet())
+	out := drawDiffBrowser(t, d)
+	lines := strings.Split(out, "\n")
+	if strings.HasPrefix(lines[0], "┌") || strings.HasPrefix(lines[len(lines)-1], "└") {
+		t.Fatalf("diff browser should not use an outer box:\n%s", out)
+	}
+	if !strings.Contains(lines[0], "diff browser") || !strings.Contains(lines[0], "[ by turn ]") {
+		t.Fatalf("diff browser utility header missing identity or active mode: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "─") || !strings.Contains(lines[2], "│") {
+		t.Fatalf("diff browser missing utility divider or nav/detail split:\n%s", strings.Join(lines[:3], "\n"))
+	}
+	if strings.Contains(lines[0], "enter back") || !strings.Contains(lines[len(lines)-1], "enter/esc back") {
+		t.Fatalf("diff browser actions should be contextual footer only:\n%s", out)
+	}
+}
+
 func TestDiffBrowser_GroupsByTurnInMutationOrder(t *testing.T) {
 	ws := seededDiffBrowserWorkingSet()
 	d := newDiffBrowser(ws)
 	out := drawDiffBrowser(t, d)
 
-	for _, want := range []string{"diff browser · by turn", "turn #1", "turn #2", "2 files · 2 diffs", "a.go · mutation #1"} {
+	for _, want := range []string{"diff browser", "[ by turn ]", "turn #1", "turn #2", "2 files · 2 diffs", "a.go · mutation #1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("turn diff browser missing %q:\n%s", want, out)
 		}
@@ -56,7 +89,7 @@ func TestDiffBrowser_TabSwitchesToFileAndSessionPatch(t *testing.T) {
 	d := newDiffBrowser(ws)
 	d.handleKey(tea.KeyPressMsg{Code: tea.KeyTab})
 	out := drawDiffBrowser(t, d)
-	for _, want := range []string{"diff browser · by file", "a.go", "b.go", "2 diffs · +2 -1"} {
+	for _, want := range []string{"diff browser", "[ by file ]", "a.go", "b.go", "2 diffs · +2 -1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("file diff browser missing %q:\n%s", want, out)
 		}

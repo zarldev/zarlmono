@@ -49,19 +49,22 @@ func TestCorePanesUseUnifiedThemedFrame(t *testing.T) {
 	t.Cleanup(func() { UseTheme(theme.Theme{}) })
 
 	for _, tc := range []struct {
-		name string
-		draw func(*UI, uv.ScreenBuffer)
+		name  string
+		color string
+		draw  func(*UI, uv.ScreenBuffer)
 	}{
-		{name: "timeline", draw: func(m *UI, buf uv.ScreenBuffer) { m.drawTimeline(buf, buf.Bounds()) }},
-		{name: "sidebar", draw: func(m *UI, buf uv.ScreenBuffer) { m.drawSidebar(buf, buf.Bounds()) }},
-		{name: "dialog", draw: func(_ *UI, buf uv.ScreenBuffer) { drawDialogBox(buf, buf.Bounds(), "keys", []string{"enter  select"}) }},
+		{name: "timeline", color: "#cc8844", draw: func(m *UI, buf uv.ScreenBuffer) { m.drawTimeline(buf, buf.Bounds()) }},
+		{name: "sidebar", color: "#224466", draw: func(m *UI, buf uv.ScreenBuffer) { m.drawSidebar(buf, buf.Bounds()) }},
+		{name: "dialog", color: "#224466", draw: func(_ *UI, buf uv.ScreenBuffer) {
+			drawDialogPane(buf, buf.Bounds(), "keys", 40, 8, palette.Border, palette.Primary)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := New()
 			buf := uv.NewScreenBuffer(80, 20)
 			tc.draw(m, buf)
 			out := buf.Render()
-			if !strings.Contains(out, theme.Color("#224466").FG()) {
+			if !strings.Contains(out, theme.Color(tc.color).FG()) {
 				t.Fatalf("%s did not render themed border color:\n%q", tc.name, out)
 			}
 		})

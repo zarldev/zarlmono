@@ -3,7 +3,6 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -52,18 +51,24 @@ func (d *rollbackDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (d *rollbackDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	lines := append([]string{overlayTopBar("rollback", nil, 0, "confirm", 72), palette.Subtle.On(strings.Repeat("─", 72))}, d.lines()...)
-	drawDialogBox(scr, area, "rollback", lines)
+	context := "confirm"
+	footer := keyLegend(keyHint{"y / enter", "rollback"}, keyHint{"esc / q", "cancel"})
+	if d.err != nil {
+		context = "unavailable"
+		footer = keyLegend(keyHint{"enter / esc", "close"})
+	} else if d.plan.Conflict {
+		context = "conflict · rollback refused"
+		footer = keyLegend(keyHint{"enter / esc", "close"})
+	}
+	body := d.lines()
+	drawActionDialog(scr, area, "rollback", context, body, footer, 88)
 }
 
 func (d *rollbackDialog) lines() []string {
 	if d.err != nil {
 		return []string{
 			palette.Error.On("rollback unavailable"),
-			"",
 			palette.Muted.On(d.err.Error()),
-			"",
-			palette.Subtle.On("enter / esc") + palette.Muted.On("  close"),
 		}
 	}
 	label := "turn " + d.plan.TurnID
@@ -88,15 +93,9 @@ func (d *rollbackDialog) lines() []string {
 			palette.Error.On("conflict detected"),
 			palette.Muted.On("current file content no longer matches checkpoint output"),
 			palette.Muted.On("rollback is refused in this version"),
-			"",
-			palette.Subtle.On("enter / esc")+palette.Muted.On("  close"),
 		)
 		return lines
 	}
-	lines = append(lines,
-		palette.Subtle.On("y / enter")+palette.Muted.On("  rollback"),
-		palette.Subtle.On("esc / q")+palette.Muted.On("  cancel"),
-	)
 	return lines
 }
 
