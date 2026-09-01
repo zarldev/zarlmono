@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Published the provider, runner, tool, workspace-coordination, preferences, cache, MCP, and lifecycle contracts required by the zarlcode conformance release.
 - Migrated zkit-owned tests to external black-box packages and tightened cancellation, redaction, deterministic concurrency, and process ownership coverage.
 
+## [zarlcode/v0.17.0] — 2026-09-01
+
+### Changed
+
+- Pins the standalone zarlcode module to zkit/v0.17.0 so published builds include the conformance, lifecycle, persistence, provider, and black-box testing changes.
+- Supersedes the unpublished zarlcode/v0.16.0 tag, whose standalone build correctly rejected the stale zkit/v0.16.0 dependency.
+
 ## [zarlcode/v0.16.0] — 2026-09-01
 
 ### Changed
