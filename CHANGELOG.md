@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.17.0] — 2026-09-01
+
+### Changed
+
+- Published the provider, runner, tool, workspace-coordination, preferences, cache, MCP, and lifecycle contracts required by the zarlcode conformance release.
+- Migrated zkit-owned tests to external black-box packages and tightened cancellation, redaction, deterministic concurrency, and process ownership coverage.
+
 ## [zarlcode/v0.16.0] — 2026-09-01
 
 ### Changed
