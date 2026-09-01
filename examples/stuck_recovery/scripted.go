@@ -24,33 +24,27 @@ func NewScriptedClient() runner.Client {
 		// Turn 1: Search for the function (failure 1 — pass through).
 		{
 			runnertest.ChunkToolCall("c1", string(ToolGrep), `{"pattern": "NonExistentHandler"}`),
-			runnertest.ChunkDone(),
 		},
 		// Turn 2: Retry the same call (failure 2 — pass through).
 		{
 			runnertest.ChunkToolCall("c2", string(ToolGrep), `{"pattern": "NonExistentHandler"}`),
-			runnertest.ChunkDone(),
 		},
 		// Turn 3: Retry again (failure 3 — triggers advisory).
 		{
 			runnertest.ChunkToolCall("c3", string(ToolGrep), `{"pattern": "NonExistentHandler"}`),
-			runnertest.ChunkDone(),
 		},
 		// Turn 4: Retry once more (failure 4 — triggers fatal).
 		{
 			runnertest.ChunkToolCall("c4", string(ToolGrep), `{"pattern": "NonExistentHandler"}`),
-			runnertest.ChunkDone(),
 		},
 		// Turn 5: Spawn a researcher
 		{
 			runnertest.ChunkToolCall("c5", string(ToolSpawn), `{"prompt": "Search the codebase thoroughly for any function related to handler. List all files and search for handler-related patterns.", "agent": "researcher", "mode": "explore"}`),
-			runnertest.ChunkDone(),
 		},
 		// Turn 6: Conclude from the researcher's findings (no tool calls
 		// ends the run; the oracle then verifies against the filesystem).
 		{
 			runnertest.ChunkText("Confirmed: NonExistentHandler does not exist in the codebase."),
-			runnertest.ChunkDone(),
 		},
 	}
 

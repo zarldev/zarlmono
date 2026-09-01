@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -27,12 +29,24 @@ func serveQuizPage(questions []quizQuestion) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
-	go func() { _ = server.Serve(listener) }()
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: time.Second,
+	}
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("quiz server stopped", "err", err)
+		}
+	}()
 	shutdown := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_ = server.Shutdown(ctx)
+		if err := server.Shutdown(ctx); err != nil {
+			_ = server.Close()
+		}
+		<-serveDone
 	}
 	return "http://" + listener.Addr().String(), shutdown, nil
 }

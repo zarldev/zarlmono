@@ -21,9 +21,9 @@ import (
 )
 
 // RunHeadless executes one task to completion without a TUI, returning the
-// runner's terminal result. It reuses [LiveRunner.buildTurn] — the same
-// guarded tool set, tuned options, and compactor the interactive path builds,
-// with headless/eval policy overrides such as strict test-edit protection.
+// runner's terminal result. It uses the same guarded tool set, tuned options,
+// and compactor as the interactive path, with headless/eval policy overrides
+// such as strict test-edit protection.
 //
 // By default headless is the harness's degenerate config: one attempt,
 // trust the terminal reason. With a verify loop configured (SetVerifyLoop)
@@ -45,7 +45,7 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 	provider, model := l.headlessProviderModel()
 	rec.start(ctx, prompt, provider, model)
 
-	r, group, err := l.buildHeadlessTurn(ctx, runner.WithProgressUpdater(rec.progress))
+	r, resources, err := l.buildHeadlessTurn(ctx, runner.WithProgressUpdater(rec.progress))
 	if err != nil {
 		res := runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
 		rec.complete(ctx, res)
@@ -90,7 +90,7 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 		}))
 	}
 	result := driveHeadless(ctx, r, spec, rec, reqOpts, driveOpts...)
-	if closeErr := group.Close(ctx); closeErr != nil && result.Err == nil {
+	if closeErr := resources.Close(ctx); closeErr != nil && result.Err == nil {
 		result.Reason = runner.TerminalError
 		result.Err = closeErr
 	}

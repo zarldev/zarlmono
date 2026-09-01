@@ -19,7 +19,7 @@ import (
 )
 
 func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int) {
-	if reg == nil || parent == nil || group == nil || maxDepth == 0 {
+	if reg == nil || parent == nil || group == nil || maxDepth <= 0 {
 		return
 	}
 	if l.settings != nil && !l.settings.SpawnEnabled(ctx) {
@@ -84,7 +84,7 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 		spawn.WithFallbackPolicy(fallback),
 	)
 	for _, tool := range []tools.Tool{
-		spawn.NewAsync(base, group, coordinator),
+		spawn.NewAsync(base, group),
 		spawn.NewAwait(group, spawn.WithAwaitTimeout(awaitTimeout), spawn.WithAwaitMaxTimeout(awaitMaxTimeout)),
 		spawn.NewStatus(group),
 		spawn.NewStop(group),
@@ -198,7 +198,7 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	visible = NewModeFilteredSource(src, l.isPlan)
 	opts = append(opts, runner.WithTools(visible))
 	r := runner.New(runner.ClientFromProvider(prov), opts...)
-	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth, spawnMaxIter)
+	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth-1, spawnMaxIter)
 	return r, nil
 }
 
@@ -207,6 +207,11 @@ func spawnRunnerPromptOption(l *LiveRunner, agent catalog.Agent, src func() tool
 		return runner.WithPrompt(l.promptFunc(src))
 	}
 	return runner.WithPrompt(l.agentPromptFunc(agent, src))
+}
+
+// ResolveSpawnMaxIterations resolves the sub-agent iteration limit in precedence order.
+func ResolveSpawnMaxIterations(host, profile, fallback int) int {
+	return resolveSpawnMaxIterations(host, profile, fallback)
 }
 
 func resolveSpawnMaxIterations(host, profile, fallback int) int {

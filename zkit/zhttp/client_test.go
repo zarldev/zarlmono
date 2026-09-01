@@ -32,11 +32,7 @@ func fixture(t *testing.T, h func(int, http.ResponseWriter, *http.Request)) (str
 // doesn't sit on time.Sleep.
 func fastClient(t *testing.T, maxAttempts int) *zhttp.Client {
 	t.Helper()
-	p := zhttp.DefaultRetryPolicy()
-	p.MaxAttempts = maxAttempts
-	p.InitialBackoff = time.Millisecond
-	p.MaxBackoff = 10 * time.Millisecond
-	p.JitterFactor = 0
+	p := zhttp.NewRetryPolicy(maxAttempts, time.Millisecond, 10*time.Millisecond, zhttp.NoRetryJitter)
 	return zhttp.NewClient(zhttp.WithRetryPolicy(p))
 }
 
@@ -114,16 +110,9 @@ func TestDo_HonorsRetryAfterSeconds(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	c := zhttp.NewClient(zhttp.WithRetryPolicy(zhttp.RetryPolicy{
-		MaxAttempts:          3,
-		InitialBackoff:       1 * time.Millisecond, // tiny — so we know Retry-After dominates
-		MaxBackoff:           5 * time.Second,
-		Multiplier:           2,
-		JitterFactor:         0,
-		RetryableStatusCodes: []int{429},
-		RetryNetworkErrors:   true,
-		RespectRetryAfter:    true,
-	}))
+	c := zhttp.NewClient(zhttp.WithRetryPolicy(
+		zhttp.NewRetryPolicy(3, time.Millisecond, 5*time.Second, zhttp.NoRetryJitter),
+	))
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 	resp, err := c.Do(t.Context(), req)
 	if err != nil {
@@ -140,6 +129,34 @@ func TestDo_HonorsRetryAfterSeconds(t *testing.T) {
 	// Retry-After: 1s — allow ±200ms slack for scheduling.
 	if gap < 800*time.Millisecond || gap > 1500*time.Millisecond {
 		t.Errorf("gap between attempts = %v, want ~1s from Retry-After header", gap)
+	}
+}
+func TestDo_OverflowingRetryAfterFallsBackToBackoff(t *testing.T) {
+	t.Parallel()
+
+	url, attempts := fixture(t, func(attempt int, w http.ResponseWriter, _ *http.Request) {
+		if attempt == 1 {
+			// This fits in int64, but overflows time.Duration when converted
+			// from seconds and would wrap to a positive delay without a bound check.
+			w.Header().Set("Retry-After", "18446744075")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	client := zhttp.NewClient(zhttp.WithRetryPolicy(
+		zhttp.NewRetryPolicy(2, 5*time.Millisecond, time.Second, zhttp.NoRetryJitter),
+	))
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resp, err := client.Do(ctx, req)
+	if err != nil {
+		t.Fatalf("Do: %v; overflowing Retry-After was not rejected", err)
+	}
+	resp.Body.Close()
+	if got := atomic.LoadInt32(attempts); got != 2 {
+		t.Fatalf("attempts = %d, want 2", got)
 	}
 }
 
@@ -163,9 +180,7 @@ func TestDo_ContextCancellationStopsRetry(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	p := zhttp.DefaultRetryPolicy()
-	p.MaxAttempts = 10
-	p.InitialBackoff = 500 * time.Millisecond // larger than ctx — first retry sleep should be cut short
+	p := zhttp.NewRetryPolicy(10, 500*time.Millisecond, 30*time.Second, zhttp.FullRetryJitter)
 	c := zhttp.NewClient(zhttp.WithRetryPolicy(p))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	_, err := c.Do(ctx, req)
@@ -282,18 +297,77 @@ func TestPostJSON_SendsBodyAndDecodes(t *testing.T) {
 	}
 }
 
-// NoRetry honours the "exactly one attempt" contract: a 503 stays a
-// 503 instead of being retried 3 times.
-func TestNoRetryPolicy_NeverRetries(t *testing.T) {
+func TestRetryPolicyZeroValueNeverRetries(t *testing.T) {
 	t.Parallel()
 	url, n := fixture(t, func(_ int, w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
-	c := zhttp.NewClient(zhttp.WithRetryPolicy(zhttp.NoRetry()))
+	c := zhttp.NewClient(zhttp.WithRetryPolicy(zhttp.RetryPolicy{}))
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 	resp, _ := c.Do(t.Context(), req)
 	resp.Body.Close()
 	if got := atomic.LoadInt32(n); got != 1 {
-		t.Errorf("attempts = %d, want 1 (NoRetry)", got)
+		t.Errorf("attempts = %d, want 1 (zero policy)", got)
+	}
+}
+
+func TestRetryPolicyShouldRetry(t *testing.T) {
+	t.Parallel()
+
+	policy := zhttp.DefaultRetryPolicy()
+	tests := []struct {
+		name string
+		resp *http.Response
+		err  error
+		want bool
+	}{
+		{name: "transient status", resp: &http.Response{StatusCode: http.StatusServiceUnavailable}, want: true},
+		{name: "permanent status", resp: &http.Response{StatusCode: http.StatusNotFound}, want: false},
+		{name: "transport error", err: errors.New("connection reset"), want: true},
+		{name: "canceled", err: context.Canceled, want: false},
+		{name: "deadline", err: context.DeadlineExceeded, want: false},
+		{name: "no response", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := policy.ShouldRetry(tt.resp, tt.err); got != tt.want {
+				t.Errorf("ShouldRetry() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRetryPolicyZeroValueShouldNotRetry(t *testing.T) {
+	t.Parallel()
+	if (zhttp.RetryPolicy{}).ShouldRetry(
+		&http.Response{StatusCode: http.StatusServiceUnavailable}, errors.New("transport error"),
+	) {
+		t.Fatal("zero RetryPolicy.ShouldRetry() = true, want false")
+	}
+}
+
+func TestNewRetryPolicyRejectsInvalidValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		attempts   int
+		initial    time.Duration
+		maxBackoff time.Duration
+	}{
+		{name: "attempts", attempts: 0, initial: time.Second, maxBackoff: time.Second},
+		{name: "initial", attempts: 1, maxBackoff: time.Second},
+		{name: "maximum", attempts: 1, initial: 2 * time.Second, maxBackoff: time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			defer func() {
+				if recover() == nil {
+					t.Fatal("NewRetryPolicy did not panic")
+				}
+			}()
+			zhttp.NewRetryPolicy(tt.attempts, tt.initial, tt.maxBackoff, zhttp.NoRetryJitter)
+		})
 	}
 }

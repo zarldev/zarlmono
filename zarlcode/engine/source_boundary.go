@@ -18,7 +18,10 @@ type toolBoundarySource struct {
 	names    map[tools.ToolName]struct{}
 }
 
-func newToolBoundarySource(direct, boundary tools.Source, names ...tools.ToolName) tools.Source {
+// RouteToolBoundary routes selected tool names through boundary and all other
+// calls through direct. Tools are listed from direct, and task cleanup is owned
+// by boundary to avoid forwarding cleanup through direct twice.
+func RouteToolBoundary(direct, boundary tools.Source, names ...tools.ToolName) tools.Source {
 	selected := make(map[tools.ToolName]struct{}, len(names))
 	for _, name := range names {
 		selected[name] = struct{}{}

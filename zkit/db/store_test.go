@@ -92,6 +92,62 @@ func TestSessionMigrationsBackfillAndRollback(t *testing.T) {
 	}
 }
 
+func TestSessionLabelProvenanceMigrationBackfillsAndRollsBack(t *testing.T) {
+	t.Parallel()
+
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "label-provenance.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d, os.DirFS("migrations"))
+	if err != nil {
+		t.Fatalf("new migration provider: %v", err)
+	}
+	ctx := t.Context()
+	if _, err := provider.UpTo(ctx, 21); err != nil {
+		t.Fatalf("migrate to 21: %v", err)
+	}
+	if _, err := d.ExecContext(ctx, `
+		INSERT INTO sessions (id, workspace, label, created_at, updated_at)
+		VALUES ('named', '/workspace', 'existing label', 1, 1),
+		       ('blank', '/workspace', '', 1, 1)`); err != nil {
+		t.Fatalf("seed sessions: %v", err)
+	}
+	if _, err := provider.UpByOne(ctx); err != nil {
+		t.Fatalf("apply label provenance migration: %v", err)
+	}
+
+	rows, err := d.QueryContext(ctx, "SELECT id, label_manual FROM sessions ORDER BY id")
+	if err != nil {
+		t.Fatalf("query label provenance: %v", err)
+	}
+	defer rows.Close()
+	got := make(map[string]int)
+	for rows.Next() {
+		var id string
+		var manual int
+		if err := rows.Scan(&id, &manual); err != nil {
+			t.Fatalf("scan label provenance: %v", err)
+		}
+		got[id] = manual
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate label provenance: %v", err)
+	}
+	if got["named"] != 1 || got["blank"] != 0 {
+		t.Fatalf("label provenance = %#v, want named manual and blank automatic", got)
+	}
+
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("roll back label provenance migration: %v", err)
+	}
+	if _, err := d.ExecContext(ctx, "SELECT label_manual FROM sessions"); err == nil {
+		t.Fatal("label_manual still exists after rollback")
+	}
+}
+
 func TestStore_OpenHardensPermissions(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "state")
@@ -676,5 +732,32 @@ func TestOpen_RefusesNewerSchema(t *testing.T) {
 		t.Fatal("Open should refuse a DB whose schema is newer than the binary")
 	} else if !strings.Contains(err.Error(), "newer than this binary") {
 		t.Errorf("error = %v, want 'newer than this binary'", err)
+	}
+}
+
+func TestStoreSessionIntroMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	s := openTempStore(t)
+	ctx := t.Context()
+	record := db.SessionRecord{
+		ID: "metadata", Workspace: "ws", Label: "rich", AgentName: "planner",
+		Provider: "anthropic", Model: "sonnet", MessageCount: 18,
+		ChangedFileCount: 2, PlanCompletedCount: 3, PlanTotalCount: 5, LabelManual: true,
+	}
+	mustSave(t, s, record)
+	got, err := s.GetSession(ctx, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AgentName != "planner" || got.ChangedFileCount != 2 || got.PlanCompletedCount != 3 || got.PlanTotalCount != 5 || !got.LabelManual {
+		t.Fatalf("stored metadata = %#v", got)
+	}
+	summaries, err := s.ListSessionSummaries(ctx, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].AgentName != "planner" || summaries[0].ChangedFileCount != 2 || summaries[0].PlanCompletedCount != 3 || summaries[0].PlanTotalCount != 5 || !summaries[0].LabelManual {
+		t.Fatalf("summary metadata = %#v", summaries)
 	}
 }

@@ -3,7 +3,6 @@ package runner_test
 import (
 	"context"
 	"fmt"
-	"iter"
 	"sync"
 	"testing"
 
@@ -49,16 +48,16 @@ type parentChildClient struct {
 	parentSecond chan struct{}
 }
 
-func (c *parentChildClient) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (c *parentChildClient) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	if taskscope.DepthFrom(ctx) > 0 {
 		return func(yield func(llm.CompletionChunk, error) bool) {
 			close(c.childStarted)
 			select {
 			case <-c.childRelease:
-				yield(llm.CompletionChunk{Content: "child done", Done: true}, nil)
+				yield(llm.CompletionChunk{Content: "child done"}, nil)
 			case <-ctx.Done():
 			}
-		}, nil
+		}
 	}
 
 	c.mu.Lock()
@@ -69,17 +68,19 @@ func (c *parentChildClient) Complete(ctx context.Context, req llm.CompletionRequ
 	case 0:
 		return chunks(
 			llm.CompletionChunk{ToolCalls: []llm.ToolCall{{ID: "spawn-1", Type: "function", Function: llm.ToolCallFunction{Name: "agent_spawn", Arguments: `{"prompt":"child work","mode":"explore"}`}}}},
-			llm.CompletionChunk{Done: true},
-		), nil
+			llm.CompletionChunk{},
+		)
 	case 1:
 		close(c.parentSecond)
-		return chunks(llm.CompletionChunk{Content: "parent continued", Done: true}), nil
+		return chunks(llm.CompletionChunk{Content: "parent continued"})
 	default:
-		return nil, fmt.Errorf("unexpected parent completion %d with %d messages", call, len(req.Messages))
+		return func(yield func(llm.CompletionChunk, error) bool) {
+			yield(llm.CompletionChunk{}, fmt.Errorf("unexpected parent completion %d with %d messages", call, len(req.Messages)))
+		}
 	}
 }
 
-func chunks(items ...llm.CompletionChunk) iter.Seq2[llm.CompletionChunk, error] {
+func chunks(items ...llm.CompletionChunk) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		for _, item := range items {
 			if !yield(item, nil) {

@@ -45,6 +45,31 @@ type ToolStartedMsg struct {
 	Sequence     int
 }
 
+// WorkspaceWaitStartedMsg fires when a tool call enters the workspace wait queue.
+type WorkspaceWaitStartedMsg struct {
+	TaskID       string
+	Depth        int
+	ToolID       string
+	ToolName     string
+	Access       tools.WorkspaceAccess
+	Paths        []string
+	BlockerCount int
+	ParentToolID string
+	Sequence     int
+}
+
+// WorkspaceWaitEndedMsg fires when a queued tool call acquires access or is cancelled.
+type WorkspaceWaitEndedMsg struct {
+	TaskID       string
+	Depth        int
+	ToolID       string
+	ToolName     string
+	Outcome      tools.WorkspaceWaitOutcome
+	Duration     time.Duration
+	ParentToolID string
+	Sequence     int
+}
+
 // ToolCompletedMsg fires when a tool call returns successfully.
 type ToolCompletedMsg struct {
 	TaskID          string
@@ -122,8 +147,7 @@ type ConversationEndedMsg struct {
 // [llm.Usage], which never regresses to nil mid-Run — and keeps the
 // mid-turn token gauges fresh; without it the gauge stays on a
 // chars-based estimate until the Run completes. Delta is this
-// iteration's own usage, nil when the provider dropped it (llama.cpp's
-// openai-compat endpoint is known to on the terminal chunk); consumers
+// iteration's own usage, nil when the provider does not report it; consumers
 // sum Delta for per-iteration flow figures like the live tok/s estimate.
 type IterationCompletedMsg struct {
 	TaskID string

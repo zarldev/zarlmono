@@ -9,6 +9,7 @@ import (
 	"iter"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -188,6 +189,46 @@ func (tm ToolMetadata) SetError(err error) ToolMetadata {
 func (tm ToolMetadata) SetCacheHit(hit bool) ToolMetadata {
 	tm["cache_hit"] = hit
 	return tm
+}
+func safeWorkspaceScopePaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" || filepath.IsAbs(path) || filepath.VolumeName(path) != "" {
+			return nil
+		}
+		clean := filepath.Clean(path)
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(clean))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func patchWorkspaceScopePaths(patch string) []string {
+	const (
+		addPrefix    = "*** Add File: "
+		updatePrefix = "*** Update File: "
+		deletePrefix = "*** Delete File: "
+		movePrefix   = "*** Move to: "
+	)
+	if !strings.HasPrefix(patch, "*** Begin Patch\n") || !strings.HasSuffix(strings.TrimSpace(patch), "*** End Patch") {
+		return nil
+	}
+	paths := make([]string, 0)
+	for line := range strings.SplitSeq(patch, "\n") {
+		for _, prefix := range []string{addPrefix, updatePrefix, deletePrefix, movePrefix} {
+			if after, ok := strings.CutPrefix(line, prefix); ok {
+				paths = append(paths, after)
+				break
+			}
+		}
+	}
+	return safeWorkspaceScopePaths(paths)
 }
 
 // SetToolInfo records the tool name and any expression context.
@@ -382,6 +423,58 @@ func (r *ToolResult) ProcessEffects() []ProcessEffect {
 	return out
 }
 
+// WorkspaceScope declares how a tool call's workspace-relative coordination
+// paths are derived. Its zero value is conservative workspace-wide scope.
+type WorkspaceScope struct {
+	kind     WorkspaceScopeKind
+	argument string
+	fixed    []string
+}
+
+// WorkspaceScopeArgument derives one scope from a string tool argument, such
+// as "path" or "root". Missing or unsafe values fall back to the workspace root.
+func WorkspaceScopeArgument(argument string) WorkspaceScope {
+	return WorkspaceScope{kind: WorkspaceScopeKinds.ARGUMENT, argument: strings.TrimSpace(argument)}
+}
+
+// WorkspaceScopeFixed declares fixed workspace-relative coordination paths.
+// Unsafe fixed declarations fall back to the workspace root at resolution time.
+func WorkspaceScopeFixed(paths ...string) WorkspaceScope {
+	return WorkspaceScope{kind: WorkspaceScopeKinds.FIXED, fixed: append([]string(nil), paths...)}
+}
+
+// WorkspaceScopePatch derives every Add, Update, Delete, and Move destination
+// path from a Codex-style patch argument. Malformed or unsafe patches fall back
+// to the workspace root.
+func WorkspaceScopePatch(argument string) WorkspaceScope {
+	return WorkspaceScope{kind: WorkspaceScopeKinds.PATCH, argument: strings.TrimSpace(argument)}
+}
+
+// Paths resolves s against call arguments. Nil means conservative workspace-wide
+// scope. Returned paths are lexical workspace-relative paths.
+func (s WorkspaceScope) Paths(arguments ToolParameters) []string {
+	switch s.kind {
+	case WorkspaceScopeKinds.ARGUMENT:
+		if s.argument == "" {
+			return nil
+		}
+		value := strings.TrimSpace(arguments.String(s.argument, ""))
+		if value == "" {
+			return nil
+		}
+		return safeWorkspaceScopePaths([]string{value})
+	case WorkspaceScopeKinds.FIXED:
+		return safeWorkspaceScopePaths(s.fixed)
+	case WorkspaceScopeKinds.PATCH:
+		if s.argument == "" {
+			return nil
+		}
+		return patchWorkspaceScopePaths(strings.TrimSpace(arguments.String(s.argument, "")))
+	default:
+		return nil
+	}
+}
+
 // ToolSpec is the LLM-facing description of a tool. The Definition() method
 // on Tool returns one.
 type ToolSpec struct {
@@ -407,6 +500,10 @@ type ToolSpec struct {
 	// conservatively from ChangesWorkspace: changing tools require WRITE; others
 	// default to NONE.
 	WorkspaceAccess WorkspaceAccess `json:"workspace_access,omitempty"`
+	// WorkspaceScope standardizes per-call path inference for coordination. Its
+	// zero value covers the whole workspace. It is host-only metadata and is not
+	// serialized into provider tool definitions.
+	WorkspaceScope WorkspaceScope `json:"-"`
 	// AffectsWorkspace declares that executing the tool can change durable
 	// state by some means OTHER than a tracked file edit — the canonical case
 	// is bash, whose command may write files, mutate git state, or touch the

@@ -86,16 +86,13 @@ func TestProvider_Streaming_TextResponse(t *testing.T) {
 		t.Fatalf("NewProvider: %v", err)
 	}
 
-	seq, err := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: "you are a friendly bot"},
 			{Role: "user", Content: "say hi"},
 		},
 		Stream: true,
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
 
 	var content strings.Builder
 	var last llm.CompletionChunk
@@ -109,11 +106,11 @@ func TestProvider_Streaming_TextResponse(t *testing.T) {
 	if content.String() != "Hello, world" {
 		t.Errorf("content = %q, want %q", content.String(), "Hello, world")
 	}
-	if !last.Done || last.FinishReason != "stop" {
-		t.Errorf("last chunk done/reason = %v/%q", last.Done, last.FinishReason)
+	if last.FinishReason != llm.FinishReasons.STOP {
+		t.Errorf("last finish reason = %q, want stop", last.FinishReason)
 	}
-	if last.Usage == nil || last.Usage.PromptTokens != 5 {
-		t.Errorf("usage = %+v", last.Usage)
+	if !last.UsageReported || last.Usage.PromptTokens != 5 {
+		t.Errorf("usage = %+v reported=%v", last.Usage, last.UsageReported)
 	}
 
 	// Wire-shape assertions.
@@ -142,6 +139,166 @@ func TestProvider_Streaming_TextResponse(t *testing.T) {
 	}
 }
 
+func TestProvider_ResponseFormatWireShape(t *testing.T) {
+	t.Parallel()
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"v": map[string]any{"type": "string"}},
+	}
+	cases := []struct {
+		name       string
+		format     llm.ResponseFormat
+		options    llm.ModelOptions
+		wantType   string
+		wantName   string
+		wantStrict bool
+		wantSchema bool
+		wantText   bool
+		verbosity  string
+	}{
+		{name: "JSON schema", format: llm.ResponseFormat{Type: llm.ResponseFormatJSONSchema, Name: "verdict", Schema: llm.SchemaFromMap(schema), Strict: true}, wantType: "json_schema", wantName: "verdict", wantStrict: true, wantSchema: true, wantText: true},
+		{name: "default schema name", format: llm.ResponseFormat{Type: llm.ResponseFormatJSONSchema, Schema: llm.SchemaFromMap(schema)}, wantType: "json_schema", wantName: "response", wantSchema: true, wantText: true},
+		{name: "JSON object", format: llm.ResponseFormat{Type: llm.ResponseFormatJSONObject}, wantType: "json_object", wantText: true},
+		{name: "unconstrained", wantText: false},
+		{name: "verbosity and format", format: llm.ResponseFormat{Type: llm.ResponseFormatJSONObject}, options: llm.ModelOptions{"text_verbosity": "low"}, wantType: "json_object", wantText: true, verbosity: "low"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cb := newCodexBackend(t, func(w http.ResponseWriter) {
+				_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
+			})
+			defer cb.Close()
+			p, err := openaicodex.NewProvider(openaicodex.StaticTokenSource{T: freshToken(t, "acct")}, openaicodex.WithBaseURL(cb.srv.URL), openaicodex.WithNoRetry())
+			if err != nil {
+				t.Fatalf("NewProvider: %v", err)
+			}
+			for _, streamErr := range p.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "test"}}, ResponseFormat: tt.format, Options: tt.options}) {
+				if streamErr != nil {
+					t.Fatalf("Complete: %v", streamErr)
+				}
+			}
+			text, hasText := cb.lastBody["text"].(map[string]any)
+			if hasText != tt.wantText {
+				t.Fatalf("text block present = %v, want %v; body=%v", hasText, tt.wantText, cb.lastBody)
+			}
+			if !tt.wantText {
+				return
+			}
+			format, _ := text["format"].(map[string]any)
+			if got := format["type"]; got != tt.wantType {
+				t.Errorf("format type = %v, want %q", got, tt.wantType)
+			}
+			if got := format["name"]; tt.wantName != "" && got != tt.wantName {
+				t.Errorf("format name = %v, want %q", got, tt.wantName)
+			}
+			if got, _ := format["strict"].(bool); got != tt.wantStrict {
+				t.Errorf("strict = %v, want %v", got, tt.wantStrict)
+			}
+			if _, ok := format["schema"]; ok != tt.wantSchema {
+				t.Errorf("schema present = %v, want %v", ok, tt.wantSchema)
+			}
+			if got := text["verbosity"]; tt.verbosity != "" && got != tt.verbosity {
+				t.Errorf("verbosity = %v, want %q", got, tt.verbosity)
+			}
+		})
+	}
+}
+
+func TestProvider_RequestWireRegressions(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		model string
+		req   llm.CompletionRequest
+		check func(*testing.T, map[string]any)
+	}{
+		{name: "basic shape", model: "gpt-5.1-codex", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}}}, check: func(t *testing.T, body map[string]any) {
+			if body["model"] != "gpt-5.1-codex" || body["stream"] != true || body["store"] != false {
+				t.Errorf("basic wire shape = %v", body)
+			}
+			reasoning := body["reasoning"].(map[string]any)
+			if reasoning["effort"] != "medium" {
+				t.Errorf("default reasoning effort = %v, want medium", reasoning["effort"])
+			}
+		}},
+		{name: "tool call and output", model: "gpt-5.1-codex", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "search"}, {Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call_1", Type: "function", Function: llm.ToolCallFunction{Name: "search", Arguments: `{"q":"foo"}`}}}}, {Role: llm.RoleTool, ToolCallID: "call_1", Content: `{"results":["bar"]}`}}}, check: func(t *testing.T, body map[string]any) {
+			input := body["input"].([]any)
+			if len(input) != 3 || input[1].(map[string]any)["type"] != "function_call" || input[2].(map[string]any)["type"] != "function_call_output" {
+				t.Errorf("tool input shape = %v", input)
+			}
+		}},
+		{name: "options", model: "gpt-5.2", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Options: llm.ModelOptions{"reasoning_effort": "high", "reasoning_summary": "concise", "text_verbosity": "low", "tool_choice": "required", "prompt_cache_key": "sess-123"}}, check: func(t *testing.T, body map[string]any) {
+			if body["tool_choice"] != "required" || body["prompt_cache_key"] != "sess-123" || body["text"].(map[string]any)["verbosity"] != "low" {
+				t.Errorf("option wire shape = %v", body)
+			}
+		}},
+		{name: "multimodal image", model: "gpt-5.1-codex", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Parts: []llm.ContentPart{llm.TextPart("look"), llm.ImagePartFromURL("https://example.com/cat.png")}}}}, check: func(t *testing.T, body map[string]any) {
+			content := body["input"].([]any)[0].(map[string]any)["content"].([]any)
+			if content[1].(map[string]any)["type"] != "input_image" {
+				t.Errorf("multimodal content = %v", content)
+			}
+		}},
+		{name: "spark omits summary", model: "gpt-5.3-codex-spark", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Options: llm.ModelOptions{"reasoning_effort": "high", "reasoning_summary": "concise"}}, check: func(t *testing.T, body map[string]any) {
+			reasoning := body["reasoning"].(map[string]any)
+			if reasoning["effort"] != "high" {
+				t.Errorf("spark effort = %v, want high", reasoning["effort"])
+			}
+			if _, ok := reasoning["summary"]; ok {
+				t.Errorf("spark reasoning summary present: %v", reasoning)
+			}
+		}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cb := newCodexBackend(t, func(w http.ResponseWriter) {
+				_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
+			})
+			defer cb.Close()
+			p, err := openaicodex.NewProvider(openaicodex.StaticTokenSource{T: freshToken(t, "acct")}, openaicodex.WithBaseURL(cb.srv.URL), openaicodex.WithNoRetry(), openaicodex.WithModel(tt.model))
+			if err != nil {
+				t.Fatalf("NewProvider: %v", err)
+			}
+			for _, streamErr := range p.Complete(t.Context(), tt.req) {
+				if streamErr != nil {
+					t.Fatalf("Complete: %v", streamErr)
+				}
+			}
+			tt.check(t, cb.lastBody)
+		})
+	}
+}
+
+func TestProviderOptionsAssignEmptyValues(t *testing.T) {
+	t.Parallel()
+	cb := newCodexBackend(t, func(w http.ResponseWriter) {
+		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
+	})
+	defer cb.Close()
+
+	p, err := openaicodex.NewProvider(
+		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
+		openaicodex.WithBaseURL(cb.srv.URL),
+		openaicodex.WithModel(""),
+		openaicodex.WithDefaultReasoningEffort(""),
+	)
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	})
+	for _, err := range seq {
+		if err != nil {
+			t.Fatalf("chunk error: %v", err)
+		}
+	}
+	if got := cb.lastBody["model"]; got != "" {
+		t.Errorf("wire model = %v, want empty option value", got)
+	}
+}
+
 func TestProvider_PresetModelMapsBaseAndEffort(t *testing.T) {
 	t.Parallel()
 	cb := newCodexBackend(t, func(w http.ResponseWriter) {
@@ -154,7 +311,7 @@ func TestProvider_PresetModelMapsBaseAndEffort(t *testing.T) {
 		openaicodex.WithBaseURL(cb.srv.URL),
 		openaicodex.WithModel("gpt-5.6-sol-high"),
 	)
-	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},
 		Stream:   true,
 	})
@@ -194,7 +351,7 @@ func TestProvider_ToolCallStream(t *testing.T) {
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 	)
-	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "search foo"}},
 		Tools: []llm.Tool{{
 			Type: "function",
@@ -207,22 +364,20 @@ func TestProvider_ToolCallStream(t *testing.T) {
 		Stream: true,
 	})
 	var args strings.Builder
-	var sawDone bool
-	var finishReason string
+	var finishReason llm.FinishReason
 	for c := range seq {
 		for _, tc := range c.ToolCalls {
 			args.WriteString(tc.Function.Arguments)
 		}
-		if c.Done {
-			sawDone = true
+		if c.FinishReason != llm.FinishReasons.UNKNOWN {
 			finishReason = c.FinishReason
 		}
 	}
 	if args.String() != `{"q":"foo"}` {
 		t.Errorf("accumulated args = %q", args.String())
 	}
-	if !sawDone || finishReason != "tool_calls" {
-		t.Errorf("done/reason = %v/%q", sawDone, finishReason)
+	if finishReason != llm.FinishReasons.TOOLCALLS {
+		t.Errorf("finish reason = %q, want tool_calls", finishReason)
 	}
 
 	tools, _ := cb.lastBody["tools"].([]any)
@@ -248,7 +403,7 @@ func TestProvider_HTTPErrorSurfacesAsChunkError(t *testing.T) {
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithNoRetry(),
 	)
-	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -290,7 +445,7 @@ func TestProvider_UsageLimitBodyParsedIntoRateLimitError(t *testing.T) {
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithNoRetry(),
 	)
-	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -343,18 +498,16 @@ func TestProvider_RetriesOn429ThenSucceeds(t *testing.T) {
 		// the backoff at the minimum.
 		openaicodex.WithRetryPolicy(4, 10*time.Millisecond, 50*time.Millisecond),
 	)
-	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
 	var content strings.Builder
-	var last llm.CompletionChunk
 	for c, cerr := range seq {
 		if cerr != nil {
 			t.Fatalf("unexpected chunk error: %v", cerr)
 		}
 		content.WriteString(c.Content)
-		last = c
 	}
 	if attempts != 3 {
 		t.Errorf("server saw %d attempts, want 3 (two 429s then success)", attempts)
@@ -362,8 +515,32 @@ func TestProvider_RetriesOn429ThenSucceeds(t *testing.T) {
 	if content.String() != "hi" {
 		t.Errorf("content = %q, want %q", content.String(), "hi")
 	}
-	if !last.Done {
-		t.Errorf("expected terminal Done chunk")
+}
+
+func TestProvider_NoRetryOptionUsesActiveClient(t *testing.T) {
+	t.Parallel()
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	p, err := openaicodex.NewProvider(
+		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
+		openaicodex.WithNoRetry(),
+		openaicodex.WithBaseURL(srv.URL),
+	)
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{{Role: "user", Content: "x"}},
+	})
+	for range seq {
+	}
+	if attempts != 1 {
+		t.Errorf("server saw %d attempts, want 1", attempts)
 	}
 }
 
@@ -394,7 +571,7 @@ func TestProvider_RetriesHonorRetryAfter(t *testing.T) {
 		// gap shorter than ~1s proves the header didn't win.
 		openaicodex.WithRetryPolicy(4, 10*time.Millisecond, 5*time.Second),
 	)
-	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -424,7 +601,7 @@ func TestProvider_DoesNotRetryOn4xxOtherThan429(t *testing.T) {
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithRetryPolicy(4, 10*time.Millisecond, 50*time.Millisecond),
 	)
-	seq, _ := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 		Stream:   true,
 	})
@@ -468,6 +645,26 @@ func TestListPresetModelsContainsExpectedIDs(t *testing.T) {
 			t.Errorf("preset %q missing from ListPresetModels", id)
 		}
 	}
+}
+
+func TestListPresetModelsReportsPresetContextWindow(t *testing.T) {
+	t.Parallel()
+	const presetID = "gpt-5.6"
+
+	want := openaicodex.ContextWindowFor(presetID)
+	if want == openaicodex.DefaultContextWindow {
+		t.Fatalf("ContextWindowFor(%q) = DefaultContextWindow; want preset-specific window", presetID)
+	}
+	for _, model := range openaicodex.ListPresetModels() {
+		if model.ID != presetID {
+			continue
+		}
+		if model.MaxTokens != want {
+			t.Errorf("preset %q MaxTokens = %d, want ContextWindow %d", presetID, model.MaxTokens, want)
+		}
+		return
+	}
+	t.Fatalf("preset %q missing from ListPresetModels", presetID)
 }
 
 func TestFetchContextWindowUsesBackendAutoCompactLimit(t *testing.T) {
@@ -532,7 +729,7 @@ func TestFetchContextWindowDerivesUpstreamAutoCompactDefault(t *testing.T) {
 
 func TestPresetContextWindowIsConservativeForOAuthBackend(t *testing.T) {
 	t.Parallel()
-	for _, model := range []string{"gpt-5.6", "gpt-5.6-sol-max", "gpt-5.5", "gpt-5.5-high", "gpt-5.4", "unknown-experimental"} {
+	for _, model := range []string{"gpt-5.5", "gpt-5.5-high", "gpt-5.4", "unknown-experimental"} {
 		if got := openaicodex.ContextWindowFor(model); got != openaicodex.DefaultContextWindow {
 			t.Errorf("ContextWindowFor(%q) = %d, want %d", model, got, openaicodex.DefaultContextWindow)
 		}
@@ -555,13 +752,10 @@ func TestProvider_NonStreamingCallerStillRequestsSSE(t *testing.T) {
 		t.Fatalf("NewProvider: %v", err)
 	}
 
-	seq, err := p.Complete(t.Context(), llm.CompletionRequest{
+	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},
 		Stream:   false,
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
 	var content strings.Builder
 	var last llm.CompletionChunk
 	for c, cerr := range seq {
@@ -571,8 +765,8 @@ func TestProvider_NonStreamingCallerStillRequestsSSE(t *testing.T) {
 		content.WriteString(c.Content)
 		last = c
 	}
-	if content.String() != "hi" || !last.Done {
-		t.Fatalf("content/done = %q/%v, want hi/true", content.String(), last.Done)
+	if content.String() != "hi" || last.FinishReason != llm.FinishReasons.STOP {
+		t.Fatalf("content/reason = %q/%q, want hi/stop", content.String(), last.FinishReason)
 	}
 	if got, ok := cb.lastBody["stream"].(bool); !ok || !got {
 		t.Fatalf("wire stream = %#v, want true", cb.lastBody["stream"])

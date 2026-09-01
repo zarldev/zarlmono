@@ -124,8 +124,8 @@ func TestStandardOptionsDriveARunToCompletion(t *testing.T) {
 		Result: "ok",
 	})
 	client := runnertest.NewClient([][]llm.CompletionChunk{
-		{runnertest.ChunkToolCall("c1", "noop", "{}"), runnertest.ChunkDone()},
-		{runnertest.ChunkText("done"), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c1", "noop", "{}")},
+		{runnertest.ChunkText("done")},
 	})
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{MaxIterations: 5})

@@ -3,7 +3,6 @@ package compact_test
 import (
 	"context"
 	"errors"
-	"iter"
 	"strings"
 	"testing"
 
@@ -36,13 +35,14 @@ type execFakeProvider struct {
 	err  error
 }
 
-func (f execFakeProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	if f.err != nil {
-		return nil, f.err
-	}
+func (f execFakeProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		yield(llm.CompletionChunk{Content: f.body, Done: true}, nil)
-	}, nil
+		if f.err != nil {
+			yield(llm.CompletionChunk{}, f.err)
+			return
+		}
+		yield(llm.CompletionChunk{Content: f.body}, nil)
+	}
 }
 
 func TestExecutive_FullBriefingShape(t *testing.T) {
@@ -133,6 +133,23 @@ func TestExecutive_NoState_NarrativeOnly(t *testing.T) {
 	}
 	if !strings.Contains(briefing, "NARRATIVE") {
 		t.Errorf("expected NARRATIVE section, got:\n%s", briefing)
+	}
+}
+
+func TestExecutive_EmptySuccessKeepsStructuredBriefing(t *testing.T) {
+	t.Parallel()
+	e := compact.NewExecutive(execFakeProvider{}, "", nil)
+	res, err := e.Compact(t.Context(), []llm.Message{
+		{Role: "user", Content: "a"},
+		{Role: "assistant", Content: "b"},
+		{Role: "user", Content: "c"},
+		{Role: "assistant", Content: "d"},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if !strings.Contains(res.History[0].Content, "no narrative") {
+		t.Fatalf("briefing = %q, want empty-narrative marker", res.History[0].Content)
 	}
 }
 

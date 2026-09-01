@@ -148,6 +148,9 @@ const (
 	// KeyConfirmQuit toggles the quit-confirmation dialog. When "on" (the
 	// default), ctrl+c shows a confirmation prompt before quitting.
 	KeyConfirmQuit = "confirm_quit"
+	// KeyNotificationSounds controls terminal bell notifications: "off",
+	// "completion", or "all" (completion plus plan-step progress).
+	KeyNotificationSounds = "notification_sounds"
 
 	// KeyCredentialProtection controls how provider credentials are stored.
 	// "off" stores plaintext in state.db and never prompts. "passphrase"

@@ -14,7 +14,6 @@ package ollama
 
 import (
 	"context"
-	"iter"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
@@ -65,7 +64,7 @@ func NewProvider(opts ...options.Option[Provider]) (llm.Provider, error) {
 func (p *Provider) Name() string { return "ollama" }
 
 // Complete delegates to the underlying OpenAI-compatible provider.
-func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return p.inner.Complete(ctx, req)
 }
 

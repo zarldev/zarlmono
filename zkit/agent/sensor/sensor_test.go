@@ -67,10 +67,6 @@ func TestRunner_FiresHandlerOnChange(t *testing.T) {
 		r.Start(ctx)
 		t.Cleanup(r.Stop)
 
-		for range 3 {
-			time.Sleep(100 * time.Millisecond)
-		}
-		synctest.Wait()
 		for _, want := range []string{"v1", "v2", "v3"} {
 			if got := <-seen; got != want {
 				t.Errorf("handler value = %q, want %q", got, want)

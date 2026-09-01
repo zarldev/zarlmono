@@ -20,9 +20,8 @@ func TestRun_RateLimitErrorPopulatesConversationEnded(t *testing.T) {
 
 	rle := &llm.RateLimitError{Message: "slow down", RetryAfter: 30 * time.Second}
 	provider := &fakeProvider{
-		turns: [][]llm.CompletionChunk{
-			{{Error: rle}},
-		},
+		turns:    [][]llm.CompletionChunk{{}},
+		turnErrs: map[int]error{0: rle},
 	}
 	sink := newRecordingSink()
 
@@ -63,9 +62,8 @@ func TestRun_NonRateLimitErrorLeavesRateLimitNil(t *testing.T) {
 	t.Parallel()
 
 	provider := &fakeProvider{
-		turns: [][]llm.CompletionChunk{
-			{{Error: context.DeadlineExceeded}},
-		},
+		turns:    [][]llm.CompletionChunk{{}},
+		turnErrs: map[int]error{0: context.DeadlineExceeded},
 	}
 	sink := newRecordingSink()
 
@@ -93,21 +91,22 @@ func TestRun_NonRateLimitErrorLeavesRateLimitNil(t *testing.T) {
 func TestRun_RateLimitRetryBudgetResetsAfterSuccess(t *testing.T) {
 	t.Parallel()
 
-	rateLimited := func() llm.CompletionChunk {
-		return chunkErr(&llm.RateLimitError{
+	rateLimited := func() error {
+		return &llm.RateLimitError{
 			Message:    "slow down",
 			RetryAfter: time.Nanosecond,
 			Retryable:  true,
-		})
+		}
 	}
-	provider := &fakeProvider{turns: [][]llm.CompletionChunk{
-		{rateLimited()},
-		{chunkToolCall("call-1", "echo", `{}`), chunkDone()},
-		{rateLimited()},
-		{rateLimited()},
-		{rateLimited()},
-		{chunkText("finished"), chunkDone()},
-	}}
+	provider := &fakeProvider{
+		turns: [][]llm.CompletionChunk{
+			{},
+			{chunkToolCall("call-1", "echo", `{}`)},
+			{}, {}, {},
+			{chunkText("finished")},
+		},
+		turnErrs: map[int]error{0: rateLimited(), 2: rateLimited(), 3: rateLimited(), 4: rateLimited()},
+	}
 	sink := newRecordingSink()
 	r := runner.New(
 		runner.ClientFromProvider(provider),

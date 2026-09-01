@@ -146,8 +146,8 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 	}
 	for iter := range maxIter {
 		t.iter = iter
-		if err := ctx.Err(); err != nil {
-			return t.cancelled(ctx, err)
+		if err := context.Cause(ctx); err != nil {
+			return t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, err))
 		}
 		// Yield to real-time conversation if applicable. The lock
 		// uses sync.Cond + context.AfterFunc; no polling, immediate
@@ -239,16 +239,14 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// next iteration). When both timeouts are 0, this is just
 		// ctx — no-op wrapper.
 		iterCtx, cancelIter := iterationContext(ctx, r.timeouts.iteration)
-		stream, err := r.client.Complete(iterCtx, req)
-		if err != nil {
-			cancelIter()
-			return t.errored(ctx, fmt.Errorf("complete: %w", err))
-		}
+		streamCtx, cancelStream := context.WithCancelCause(iterCtx)
+		stream := r.client.Complete(streamCtx, req)
+		stream = withStreamIdle(cancelStream, r.timeouts.streamIdle, stream)
 
-		// Drain the completion stream: accumulate content / thinking /
-		// tool calls, run the idle watchdog + producer goroutine,
-		// classify the terminal condition, and cancelIter. See drain.go.
-		sr := r.drainStream(ctx, iterCtx, cancelIter, spec, stream)
+		// Drain synchronously. The idle wrapper observes only upstream-controlled
+		// time and joins its watchdog before returning.
+		sr := r.drainStream(ctx, streamCtx, cancelStream, spec, stream)
+		cancelIter()
 		toolCalls := sr.toolCalls
 		toolCallOrder := sr.toolCallOrder
 		streamErr := sr.err
@@ -264,7 +262,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		}
 
 		if streamErr != nil {
-			if terminal := t.recoverStreamErr(ctx, streamErr); terminal != nil {
+			if terminal := t.recoverStreamErr(ctx, streamErr, sr.accepted); terminal != nil {
 				return *terminal
 			}
 			continue // retry — recovery may have appended a corrective turn
@@ -338,7 +336,6 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 				if decision.DisableThinking {
 					t.thinking = false // permanent for this Run — see taskRun.thinking
 				}
-				cancelIter()
 				continue
 			}
 		}

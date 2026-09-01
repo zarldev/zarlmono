@@ -88,10 +88,7 @@ func (j *LLMVerdictJudge) Judge(ctx context.Context, in VerdictInput) (Verdict, 
 		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
-	chunks, err := j.provider.Complete(ctx, req)
-	if err != nil {
-		return Verdict{}, fmt.Errorf("verdict provider: %w", err)
-	}
+	chunks := j.provider.Complete(ctx, req)
 
 	var body strings.Builder
 	for chunk, cerr := range chunks {

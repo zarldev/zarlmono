@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/mcp"
@@ -286,6 +287,35 @@ func TestReadResource_Multimodal(t *testing.T) {
 	}
 	if img.MIMEType != "image/png" {
 		t.Errorf("MIMEType = %q", img.MIMEType)
+	}
+}
+
+func TestReadResource_MalformedTypedContentIncludesContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "text", content: `{"type":"text","text":1}`, want: "decode text content"},
+		{name: "image", content: `{"type":"image","data":1}`, want: "decode image content"},
+		{name: "audio", content: `{"type":"audio","data":1}`, want: "decode audio content"},
+		{name: "resource", content: `{"type":"resource","uri":1}`, want: "decode resource content"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"contents":[` + tt.content + `]}}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			_, err := mcp.NewClient(srv.URL, "").ReadResource(t.Context(), "file:///malformed")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want context %q", err, tt.want)
+			}
+		})
 	}
 }
 

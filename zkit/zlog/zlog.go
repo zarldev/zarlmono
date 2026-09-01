@@ -172,7 +172,7 @@ func SetupConfig(config Config) (io.ReadWriteCloser, error) {
 		stdlibWriter = io.MultiWriter(logFile, os.Stdout)
 	}
 
-	slog.SetDefault(slog.New(multiHandler{handlers: handlers}))
+	slog.SetDefault(slog.New(NewMultiHandler(handlers...)))
 	if config.Stdlib {
 		SetStdlibOutput(stdlibWriter)
 	}

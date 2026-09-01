@@ -89,6 +89,9 @@ func testCacheContract(t *testing.T, c cache.Cache[string, int]) {
 				if err := c.Clear(operationCtx); !errors.Is(err, want) {
 					t.Errorf("Clear() error = %v, want %v", err, want)
 				}
+				if err := c.Healthy(operationCtx); !errors.Is(err, want) {
+					t.Errorf("Healthy() error = %v, want %v", err, want)
+				}
 			})
 		}
 	})

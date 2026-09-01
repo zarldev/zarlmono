@@ -3,9 +3,12 @@ package tui
 import (
 	"context"
 
+	"log/slog"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/sleepinhibit"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
@@ -26,6 +29,12 @@ func RunFn(ctx context.Context, l *engine.LiveRunner, prompt string) tea.Cmd {
 
 func RunFnWithAttachments(ctx context.Context, l *engine.LiveRunner, prompt string, attachments []llm.ContentPart) tea.Cmd {
 	return func() tea.Msg {
+		inhibitor, err := sleepinhibit.Acquire(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "sleep inhibition unavailable", "err", err)
+		} else {
+			defer inhibitor.Close()
+		}
 		if err := l.RunTurnWithAttachments(ctx, prompt, attachments); err != nil {
 			return turnSetupFailedMsg{Prompt: prompt, Error: err.Error()}
 		}

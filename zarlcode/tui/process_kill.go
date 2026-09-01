@@ -78,7 +78,7 @@ func (m *UI) updateInspectorAfterProcessKill(status string) {
 		if !ok {
 			continue
 		}
-		ins.snapshot = BuildInspectorSnapshot(m.session, m.live, nil)
+		ins.snapshot = BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
 		ins.status = status
 		if ins.processCursor >= len(ins.snapshot.Processes) {
 			ins.processCursor = max(0, len(ins.snapshot.Processes)-1)

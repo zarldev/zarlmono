@@ -77,12 +77,12 @@ type prLoadedMsg struct {
 // Update loop. Any failure (gh missing, no PR, not a GitHub repo, timeout)
 // resolves to a nil PR rather than an error: the workspace card simply omits
 // the PR line. dir scopes gh to the active workspace.
-func fetchPRCmd(dir, branch string) tea.Cmd {
+func fetchPRCmd(ctx context.Context, dir, branch string) tea.Cmd {
 	if branch == "" {
 		return nil
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), prFetchTimeout)
+		ctx, cancel := context.WithTimeout(ctx, prFetchTimeout)
 		defer cancel()
 
 		cmd := exec.CommandContext(ctx, "gh", "pr", "view", branch,
@@ -116,7 +116,7 @@ func fetchPRCmd(dir, branch string) tea.Cmd {
 // fetchPRCmd returns the lookup command for the session's active workspace and
 // branch, or nil when there's no branch to resolve.
 func (m *UI) fetchPRCmd() tea.Cmd {
-	return fetchPRCmd(m.session.WorkspaceDir, m.session.Branch)
+	return fetchPRCmd(m.appContext(), m.session.WorkspaceDir, m.session.Branch)
 }
 
 // handlePRMsg applies a completed PR lookup, ignoring stale results whose

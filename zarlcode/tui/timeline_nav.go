@@ -141,14 +141,42 @@ func (tl *timeline) clampScroll(total int) {
 	}
 }
 
+// reflowBrowse preserves the item and relative position at the top of the
+// viewport when a width change rewraps transcript content.
+func (tl *timeline) reflowBrowse(oldWidth, newWidth, newHeight int) {
+	if !tl.browsing || oldWidth <= 0 || newWidth <= 0 || oldWidth == newWidth || len(tl.items) == 0 {
+		return
+	}
+	oldStarts, oldEnds, _ := tl.layoutIndex(oldWidth)
+	anchor := sort.Search(len(oldEnds), func(i int) bool { return oldEnds[i] > tl.scrollTop })
+	if anchor >= len(tl.items) {
+		anchor = len(tl.items) - 1
+	}
+	oldLength := max(1, oldEnds[anchor]-oldStarts[anchor])
+	oldLocal := max(0, tl.scrollTop-oldStarts[anchor])
+
+	newStarts, newEnds, total := tl.layoutIndex(newWidth)
+	newLength := max(1, newEnds[anchor]-newStarts[anchor])
+	newLocal := min(newLength-1, oldLocal*newLength/oldLength)
+	tl.scrollTop = newStarts[anchor] + newLocal
+	tl.viewHeight = newHeight
+	tl.clampScroll(total)
+}
+
 func (tl *timeline) enterBrowse() {
 	if tl.browsing {
 		return
 	}
+	// Freeze the viewport where follow mode is currently showing it. Deriving the
+	// offset from the selected item's header jumps to the start of a tall final
+	// response, which makes most of a restored transcript appear to disappear on
+	// the first wheel/page-up.
+	starts, ends, total := tl.layoutIndex(tl.lwidth())
 	tl.browsing = true
-	tl.sel = len(tl.items) - 1 // freeze on the tail
+	tl.scrollTop = maxOffset(total, tl.viewHeight)
+	tl.sel = len(tl.items) - 1
 	tl.selLocal = 0
-	tl.scrollToSel()
+	tl.clampSelToView(starts, ends)
 }
 
 func (tl *timeline) exitBrowse() {

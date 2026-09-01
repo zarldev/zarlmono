@@ -40,6 +40,31 @@ type ToolStarted struct {
 	Sequence     int
 }
 
+// WorkspaceWaitStarted fires when a tool call enters the workspace wait queue.
+type WorkspaceWaitStarted struct {
+	TaskID       taskscope.ID
+	Depth        int
+	ToolID       string
+	ToolName     string
+	Access       tools.WorkspaceAccess
+	Paths        []string
+	BlockerCount int
+	ParentToolID string
+	Sequence     int
+}
+
+// WorkspaceWaitEnded fires when a queued tool call acquires access or is cancelled.
+type WorkspaceWaitEnded struct {
+	TaskID       taskscope.ID
+	Depth        int
+	ToolID       string
+	ToolName     string
+	Outcome      tools.WorkspaceWaitOutcome
+	Duration     time.Duration
+	ParentToolID string
+	Sequence     int
+}
+
 // ToolCompleted fires when a tool call returns successfully.
 type ToolCompleted struct {
 	TaskID          taskscope.ID
@@ -264,6 +289,12 @@ type ToolSink interface {
 	OnToolFailed(ToolFailed)
 }
 
+// WorkspaceWaitSink observes path-aware workspace wait lifecycle events.
+type WorkspaceWaitSink interface {
+	OnWorkspaceWaitStarted(WorkspaceWaitStarted)
+	OnWorkspaceWaitEnded(WorkspaceWaitEnded)
+}
+
 // ConversationSink observes the bookend events around a single
 // Run. Started fires once per Run; Ended fires exactly once after it
 // (carrying the terminal reason). Sub-agent runs (depth > 0) produce
@@ -320,6 +351,7 @@ type EventSink interface {
 	ContentSink
 	ThinkingSink
 	ToolSink
+	WorkspaceWaitSink
 	ConversationSink
 	SteerSink
 	CompactionSink
@@ -332,14 +364,16 @@ type NopSink struct{}
 
 // Every NopSink event method discards its event and returns immediately.
 
-func (NopSink) OnContent(Content)                         {}
-func (NopSink) OnThinking(Thinking)                       {}
-func (NopSink) OnToolStarted(ToolStarted)                 {}
-func (NopSink) OnToolCompleted(ToolCompleted)             {}
-func (NopSink) OnToolFailed(ToolFailed)                   {}
-func (NopSink) OnConversationStarted(ConversationStarted) {}
-func (NopSink) OnConversationEnded(ConversationEnded)     {}
-func (NopSink) OnIterationCompleted(IterationCompleted)   {}
-func (NopSink) OnSteerInjected(SteerInjected)             {}
-func (NopSink) OnCompactionApplied(CompactionApplied)     {}
-func (NopSink) OnDiagnostic(Diagnostic)                   {}
+func (NopSink) OnContent(Content)                           {}
+func (NopSink) OnThinking(Thinking)                         {}
+func (NopSink) OnToolStarted(ToolStarted)                   {}
+func (NopSink) OnToolCompleted(ToolCompleted)               {}
+func (NopSink) OnToolFailed(ToolFailed)                     {}
+func (NopSink) OnConversationStarted(ConversationStarted)   {}
+func (NopSink) OnConversationEnded(ConversationEnded)       {}
+func (NopSink) OnIterationCompleted(IterationCompleted)     {}
+func (NopSink) OnSteerInjected(SteerInjected)               {}
+func (NopSink) OnCompactionApplied(CompactionApplied)       {}
+func (NopSink) OnDiagnostic(Diagnostic)                     {}
+func (NopSink) OnWorkspaceWaitStarted(WorkspaceWaitStarted) {}
+func (NopSink) OnWorkspaceWaitEnded(WorkspaceWaitEnded)     {}

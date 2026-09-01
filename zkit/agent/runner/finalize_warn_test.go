@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,7 +46,7 @@ func (p *loopingProvider) requestsWithUserContaining(substr string) int {
 	return n
 }
 
-func (p *loopingProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *loopingProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	p.mu.Lock()
 	p.requests = append(p.requests, req.Messages)
 	p.mu.Unlock()
@@ -63,7 +62,7 @@ func (p *loopingProvider) Complete(_ context.Context, req llm.CompletionRequest)
 				},
 			}},
 		}, nil)
-	}, nil
+	}
 }
 
 func (p *loopingProvider) Name() string { return "looping" }

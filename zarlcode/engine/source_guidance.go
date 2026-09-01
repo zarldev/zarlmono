@@ -20,11 +20,17 @@ type guidanceSource struct {
 	index instructions.Index
 }
 
-func newGuidanceSource(inner tools.Source, docs []instructions.NestedDoc) tools.Source {
+// NewGuidanceSource annotates successful workspace reads with the applicable
+// nested instruction paths while leaving instruction bodies lazy.
+func NewGuidanceSource(inner tools.Source, docs []instructions.NestedDoc) tools.Source {
 	if inner == nil || len(docs) == 0 {
 		return inner
 	}
 	return &guidanceSource{inner: inner, index: instructions.NewIndex(docs)}
+}
+
+func newGuidanceSource(inner tools.Source, docs []instructions.NestedDoc) tools.Source {
+	return NewGuidanceSource(inner, docs)
 }
 
 func (s *guidanceSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {

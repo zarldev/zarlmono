@@ -307,7 +307,8 @@ func (r *runner) executeNested(nc nestedCall) nestedResult {
 		out = nestedFailure(nc, errObj.Error())
 		return out
 	}
-	res, err := r.source.inner.Execute(r.ctx, call)
+	callCtx := tools.ContextWithWorkspaceWaitCall(r.ctx, tools.WorkspaceWaitCall{ToolID: call.ID, ToolName: call.ToolName, ParentToolID: r.callID, Sequence: nc.Sequence})
+	res, err := r.source.inner.Execute(callCtx, call)
 	result, execErr = res, err
 	if err != nil {
 		out = nestedFailure(nc, err.Error())

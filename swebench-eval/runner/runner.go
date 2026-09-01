@@ -117,21 +117,23 @@ func Run(ctx context.Context, cfg Config) (Results, error) {
 		})
 	}
 
+	producerDone := make(chan struct{})
 	go func() {
+		defer close(producerDone)
+		defer close(work)
 		for _, s := range cfg.Specs {
 			for _, d := range cfg.Drivers {
 				select {
 				case <-ctx.Done():
-					close(work)
 					return
 				case work <- slot{spec: s, driver: d}:
 				}
 			}
 		}
-		close(work)
 	}()
 
 	wg.Wait()
+	<-producerDone
 	close(resultsCh)
 
 	out := Results{Started: time.Now()}

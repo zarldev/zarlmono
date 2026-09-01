@@ -24,15 +24,17 @@ The default screen is four regions:
   left, transient toasts on the right.
 
 The layout is responsive. At **≥160 columns** the cockpit sidebar
-shows; below that it collapses and the timeline goes full-width, with
-the run state folded into a compact text strip. Nothing disappears as
-the window shrinks — it reflows.
+shows; below that it collapses and the timeline goes full-width.
 
 When you launch `zarlcode` with no flags you land on the **intro
 screen**: a prompt box and a picker of saved sessions. Type a task and
 press `Enter` to start fresh, or pick a prior session to resume. (The
 overlay shortcuts below only activate once you're past the intro, in
 the main UI.)
+
+Saved-session rows are ordered with pinned sessions first, then by recent activity. Focus the session list and press `/` to search, `p` to pin or unpin, `Ctrl+N` to rename, or `d` to delete after confirmation. Rows also summarize message, plan, changed-file, model/agent, and pending-draft state.
+
+Composer text is saved as a debounced local draft. If you quit before submitting, resume that session to continue editing where you left off; an accepted submission clears the saved draft.
 
 ## The timeline
 
@@ -77,22 +79,22 @@ or `Ctrl+L` closes it.
 
 ## The working set
 
-Press **`Ctrl+W`** for the **working set** — every file the agent has
-mutated this session, plus the turns that changed them. The left column
-toggles between a **Files** view and a **Turns** view (`Tab`); the right
-shows the corresponding diffs.
+Press **`Ctrl+W`** to see every file the agent has mutated this session, plus
+the turns that changed them and any tracked background processes. `Tab` cycles
+between **Files**, **Turns**, and **Processes**; the detail area shows the selected
+change or process.
 
-From here, `Enter` opens the full **diff browser** for the selected
-file or turn, `o` opens the file in your editor, and **`r`** rolls the
-file or turn back to its checkpoint — zarlcode snapshots file state per
-turn, so a bad edit is undoable without `git`.
+From here, `Enter` opens the full **diff browser** for the selected file or
+turn, `o` opens the file in your editor, and **`r`** rolls the file or turn back
+to its checkpoint — zarlcode snapshots file state per turn, so a bad edit is
+undoable without `git`.
 
 ![The working set and diff browser](/zarlmono/zarlcode-workingset.gif)
 
 ## The file viewer
 
-Press **`Ctrl+F`** for a full-screen, read-only **file viewer** with
-four tabs (`Tab` to cycle):
+Press **`Ctrl+F`** for a full-screen, read-only browser with four tabs (`Tab`
+to cycle):
 
 - **Files** — a directory tree on the left, file preview on the right.
 - **Skills** — the workspace's discovered [skills](/zarlmono/foundation/#shared-infrastructure).
@@ -101,7 +103,8 @@ four tabs (`Tab` to cycle):
 
 Arrow keys move, `Enter` descends into a directory (or jumps to a
 definition's source), `o` opens the selected file in your editor, and
-`Esc` closes. It's the fastest way to see what the agent can see.
+`Esc` closes. Open it directly with **`Ctrl+F`**. It's the fastest way to see what
+the agent can see.
 
 ![The file viewer](/zarlmono/zarlcode-fileviewer.gif)
 
@@ -111,22 +114,24 @@ Press **`Shift+Tab`** to toggle between **build** mode (the default —
 full tool surface) and **plan** mode. In plan mode the UI tint shifts,
 the agent's tool surface goes read-only, and it produces a structured,
 reviewable plan instead of editing. Toggle back to build when the plan
-looks right. `Ctrl+P` opens the plan pane to review live and saved
+looks right. Open the **Plan browser** with `Ctrl+P` to review live and saved
 plans (the latter persist under `.zarlcode/plans/`).
 
 ![Plan mode](/zarlmono/zarlcode-planmode.gif)
 
 ## Models, providers, and themes
 
-- **`Ctrl+E`** — the **model picker**: provider tabs across the top
-  (`Tab`/`←`/`→`), a scrollable model list, and a free-text fallback for
-  a model name the list doesn't have. Selecting re-points the live
-  runner mid-session.
-- **`Ctrl+S`** — **settings**: a master-detail pane for providers (keys
-  in the vault, OAuth sign-in, custom OpenAI-compatible endpoints),
-  appearance, agents, skills, hooks, and MCP servers.
-- **`Ctrl+T`** — the **theme picker**, with live preview as you move
-  through the list.
+- **`Ctrl+K`** — the searchable **command palette** for help, settings, model and
+  theme pickers, session naming, plan and tool-history panes, the file viewer,
+  copying the latest assistant response, and Markdown session export.
+- **`Ctrl+N`** names or renames the active session; `/name <label>` does the same.
+- **`Ctrl+Shift+C`** copies the latest assistant response. `/export [path]` writes
+  the conversation as Markdown; without a path it uses `.zarlcode/exports/` in
+  the current workspace and never overwrites an existing export.
+- **Settings → interface → notification sounds** controls terminal bells: `off`,
+  `completion` (the default), or `all` to also ring as plan steps complete.
+- While a turn is active, zarlcode best-effort inhibits operating-system sleep on
+  Linux and macOS; the turn continues normally if inhibition is unavailable.
 
 ![The model picker](/zarlmono/zarlcode-modelpicker.gif)
 
@@ -154,22 +159,20 @@ output; conflicting workspace writes are refused instead of racing.
 | `v` / `y` | select transcript lines / copy selection in browse mode |
 | `Esc` | stop the running turn / leave browse / close an overlay |
 | `Shift+Tab` | toggle plan ⇄ build mode |
+| `Ctrl+K` | search the command palette |
+| `Ctrl+N` | name or rename the active session |
+| `Ctrl+Shift+C` | copy the latest assistant response |
 | `Ctrl+L` | expand / collapse the context dashboard |
-| `Ctrl+W` | working set (changed files & turns) |
-| `Ctrl+F` | file viewer (Files / Skills / Agents / Hooks) |
-| `Ctrl+E` | model & provider picker |
-| `Ctrl+S` | settings |
-| `Ctrl+T` | theme picker |
-| `Ctrl+P` | plan pane |
-| `Ctrl+K` | agents & skills catalog |
+| `Ctrl+F` / `Ctrl+W` | open the file viewer / working set |
+| `Ctrl+E` / `Ctrl+P` | open the model picker / plan pane |
 | `Ctrl+G` | key help |
-| `Ctrl+Q` | clear context (with confirm) |
-| `Ctrl+I` | inspector |
-| `Ctrl+C` | quit |
+| `Ctrl+Q` | conversation actions |
+| `Ctrl+C` | stop the running turn; press again when idle to quit |
 
-Slash commands work in the composer too: `/clear` resets the
-conversation, `/help` opens the key help. Press `Ctrl+G` any time for
-the full, context-aware list.
+Slash commands work in the composer too: `/clear` resets the conversation,
+`/help` opens key help, `/name [label]` names the session, and `/export [path]`
+writes a Markdown transcript. Press `Ctrl+G` any time for the full,
+context-aware list.
 
 ## Launch flags
 

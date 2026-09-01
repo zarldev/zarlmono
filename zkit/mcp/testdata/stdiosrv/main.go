@@ -28,6 +28,9 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	enc := json.NewEncoder(os.Stdout)
+	if path := os.Getenv("ZARL_MCP_STDIO_PID_FILE"); path != "" {
+		_ = os.WriteFile(path, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
+	}
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -49,6 +52,9 @@ func main() {
 				"capabilities":    map[string]any{},
 				"serverInfo":      map[string]any{"name": "fake", "version": "0"},
 			}})
+			if os.Getenv("ZARL_MCP_STDIO_MODE") == "stop-reading-after-init" {
+				select {}
+			}
 		case "tools/list":
 			_ = enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 				"tools": []map[string]any{{
@@ -68,6 +74,9 @@ func main() {
 			}
 			_ = json.Unmarshal(req.Params, &p)
 			msg, _ := p.Arguments["message"].(string)
+			if strings.HasPrefix(msg, "stderr:") {
+				_, _ = fmt.Fprintln(os.Stderr, strings.TrimPrefix(msg, "stderr:"))
+			}
 			if strings.HasPrefix(msg, "env:") {
 				key := strings.TrimPrefix(msg, "env:")
 				msg = os.Getenv(key)

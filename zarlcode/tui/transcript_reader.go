@@ -13,9 +13,12 @@ import (
 // transcript. It owns independent navigation state while sharing immutable
 // item objects with the live timeline.
 type transcriptReader struct {
-	view      timeline
-	query     string
-	searching bool
+	view           timeline
+	query          string
+	searching      bool
+	initialTail    bool
+	viewportWidth  int
+	viewportHeight int
 }
 
 func newTranscriptReader(source *timeline) *transcriptReader {
@@ -30,7 +33,15 @@ func newTranscriptReader(source *timeline) *transcriptReader {
 	r.view.sel = max(0, len(r.view.items)-1)
 	r.view.selLocal = 0
 	r.view.selection = transcriptSelection{}
+	r.initialTail = true
 	return r
+}
+
+// scrollLines lets the full-screen reader participate in the shared overlay
+// wheel-routing contract instead of swallowing wheel events at the dialog.
+func (r *transcriptReader) scrollLines(n int) {
+	r.syncViewport()
+	r.view.scrollLines(n)
 }
 
 func (*transcriptReader) fullScreen() bool { return true }
@@ -39,6 +50,16 @@ func (r *transcriptReader) handlePaste(text string) {
 	if r.searching {
 		r.query += strings.ReplaceAll(text, "\n", " ")
 	}
+}
+
+func (r *transcriptReader) syncViewport() {
+	if r.viewportWidth <= 0 || r.viewportHeight <= 0 {
+		return
+	}
+	oldWidth := r.view.viewWidth
+	r.view.reflowBrowse(oldWidth, r.viewportWidth, r.viewportHeight)
+	r.view.viewWidth = r.viewportWidth
+	r.view.viewHeight = r.viewportHeight
 }
 
 func (r *transcriptReader) handleKey(msg tea.KeyPressMsg) action {
@@ -146,15 +167,11 @@ func (r *transcriptReader) findNext(direction int) {
 	}
 }
 
-func (r *transcriptReader) itemText(i int) string {
-	if i < 0 || i >= len(r.view.items) {
+func (r *transcriptReader) itemText(itemIndex int) string {
+	if itemIndex < 0 || itemIndex >= len(r.view.items) {
 		return ""
 	}
-	lines := r.view.renderItem(r.view.items[i], r.view.lwidth())
-	for i := range lines {
-		lines[i] = cleanTranscriptCopyLine(r.view.items[i], lines[i])
-	}
-	return strings.Join(lines, "\n")
+	return transcriptItemText(r.view.items[itemIndex])
 }
 
 func (r *transcriptReader) currentMessageText() string { return r.itemText(r.view.sel) }
@@ -171,8 +188,14 @@ func (r *transcriptReader) draw(scr uv.Screen, area uv.Rectangle) {
 	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y+1, area.Dx(), 1), palette.Border.On(strings.Repeat("─", area.Dx())))
 
 	body := uv.Rect(area.Min.X+1, area.Min.Y+2, max(0, area.Dx()-2), max(0, area.Dy()-3))
-	r.view.viewWidth, r.view.viewHeight = body.Dx(), body.Dy()
-	lines := r.view.renderBrowse(body.Dx(), body.Dy())
+	r.viewportWidth, r.viewportHeight = body.Dx(), body.Dy()
+	r.syncViewport()
+	if r.initialTail {
+		_, _, total := r.view.layoutIndex(r.view.lwidth())
+		r.view.scrollTop = maxOffset(total, r.view.viewHeight)
+		r.initialTail = false
+	}
+	lines := r.view.renderViewport(body.Dx(), body.Dy())
 	for i, line := range lines {
 		drawLine(scr, uv.Rect(body.Min.X, body.Min.Y+i, body.Dx(), 1), line)
 	}

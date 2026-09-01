@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,11 +31,15 @@ const (
 )
 
 type upgradeOptions struct {
+	APIBase         string
+	GOOS            string
+	GOARCH          string
 	Version         string
 	DryRun          bool
 	DryRunOverride  bool
 	Restart         bool
 	RestartOverride bool
+	Exec            func(path string, argv, env []string) error
 	Stdout          io.Writer
 	Stderr          io.Writer
 }
@@ -50,9 +55,43 @@ type upgradeResult struct {
 	UpToDate  bool
 }
 
-type upgradeExecFunc func(path string, argv, env []string) error
+// UpgradeCommand executes upgrade commands against an explicitly supplied
+// preference service. APIBase, GOOS, GOARCH, and Exec are optional environment
+// overrides used by embedders; their zero values select the production defaults.
+type UpgradeCommand struct {
+	Service *prefs.Service
+	APIBase string
+	GOOS    string
+	GOARCH  string
+	Exec    func(path string, argv, env []string) error
+}
 
-var execUpgradeBinary upgradeExecFunc = syscall.Exec
+// Execute runs an upgrade command and returns its process exit code. When
+// allowExec is false, a requested restart is reported but not executed.
+func (c UpgradeCommand) Execute(ctx context.Context, args []string, stdout, stderr io.Writer, allowExec bool) int {
+	apiBase := c.APIBase
+	if apiBase == "" {
+		apiBase = githubAPIBase
+	}
+	goos := c.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	goarch := c.GOARCH
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	exec := c.Exec
+	if exec == nil {
+		exec = syscall.Exec
+	}
+	return runUpgradeWithService(ctx, c.Service, args, stdout, stderr, allowExec, upgradeOptions{
+		APIBase: apiBase,
+		GOOS:    goos,
+		GOARCH:  goarch,
+		Exec:    exec,
+	})
+}
 
 // repoSlugRE matches a GitHub "owner/repo" slug. The upgrade source setting
 // holds this rather than a local checkout — releases are the upgrade channel.
@@ -71,10 +110,10 @@ func RunUpgrade(args []string, stdout io.Writer) int {
 	}
 	defer store.Close()
 	svc := prefs.NewService(store, nil, "")
-	return runUpgradeWithService(ctx, svc, args, stdout, os.Stderr, true)
+	return (UpgradeCommand{Service: svc}).Execute(ctx, args, stdout, os.Stderr, true)
 }
 
-func runUpgradeWithService(ctx context.Context, svc *prefs.Service, args []string, stdout, stderr io.Writer, allowExec bool) int {
+func runUpgradeWithService(ctx context.Context, svc *prefs.Service, args []string, stdout, stderr io.Writer, allowExec bool, environment upgradeOptions) int {
 	if len(args) > 0 {
 		switch args[0] {
 		case "-h", "--help", "help":
@@ -94,6 +133,10 @@ func runUpgradeWithService(ctx context.Context, svc *prefs.Service, args []strin
 	}
 
 	opts, err := parseUpgradeRunArgs(args)
+	opts.APIBase = environment.APIBase
+	opts.GOOS = environment.GOOS
+	opts.GOARCH = environment.GOARCH
+	opts.Exec = environment.Exec
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -120,7 +163,7 @@ func runUpgradeWithService(ctx context.Context, svc *prefs.Service, args []strin
 	if res.Restart {
 		fmt.Fprintf(stdout, "restarting: %s\n", res.BinPath)
 		if allowExec {
-			if err := execUpgradeBinary(res.BinPath, []string{res.BinPath}, os.Environ()); err != nil {
+			if err := opts.Exec(res.BinPath, []string{res.BinPath}, os.Environ()); err != nil {
 				fmt.Fprintln(stderr, "restart:", err)
 				return 1
 			}
@@ -178,8 +221,7 @@ func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (u
 		opts.Restart = boolSetting(ctx, svc, settingKeyUpgradeRestart, false)
 	}
 
-	goos, goarch := currentGOOS(), currentGOARCH()
-	rel, archive, checksums, err := resolveRelease(ctx, repo, opts.Version, goos, goarch)
+	rel, archive, checksums, err := resolveRelease(ctx, opts.APIBase, repo, opts.Version, opts.GOOS, opts.GOARCH)
 	if err != nil {
 		return upgradeResult{}, err
 	}
@@ -213,11 +255,11 @@ func runUpgrade(ctx context.Context, svc *prefs.Service, opts upgradeOptions) (u
 	if err := verifyChecksum(archive.Name, archiveData, manifest); err != nil {
 		return res, err
 	}
-	binData, err := extractBinary(archive.Name, archiveData, goos)
+	binData, err := extractBinary(archive.Name, archiveData, opts.GOOS)
 	if err != nil {
 		return res, err
 	}
-	if err := installBinary(binPath, binData, goos); err != nil {
+	if err := installBinary(binPath, binData, opts.GOOS); err != nil {
 		return res, err
 	}
 	return res, nil

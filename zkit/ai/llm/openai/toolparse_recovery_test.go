@@ -111,7 +111,7 @@ func completeWithFakeOpenAI(t *testing.T, stream bool, response string) []llm.Co
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
-	seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
+	seq := provider.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "read foo"}},
 		Stream:   stream,
 		Tools: []llm.Tool{{
@@ -122,9 +122,6 @@ func completeWithFakeOpenAI(t *testing.T, stream bool, response string) []llm.Co
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
 	var out []llm.CompletionChunk
 	for chunk, err := range seq {
 		if err != nil {

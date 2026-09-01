@@ -16,20 +16,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
-// githubAPIBase is the GitHub REST root. It's a var so tests can point the
-// release client at an httptest server.
-var githubAPIBase = "https://api.github.com"
-
-// currentGOOS / currentGOARCH report the running platform. They're vars so
-// tests can pretend to be another platform without cross-compiling.
-var (
-	currentGOOS   = func() string { return runtime.GOOS }
-	currentGOARCH = func() string { return runtime.GOARCH }
-)
+const githubAPIBase = "https://api.github.com"
 
 // binaryName is the executable packed inside each release archive — see the
 // release workflow, which builds `zarlcode` (`.exe` on windows).
@@ -69,20 +59,20 @@ func releaseVersion(tag string) string {
 // first published one that actually carries a zarlcode asset for this platform —
 // so a monorepo that also tags other binaries (e.g. swebench-eval/vX) is handled
 // correctly. A pinned version resolves the submodule-prefixed tag directly.
-func resolveRelease(ctx context.Context, repo, version, goos, goarch string) (ghRelease, ghAsset, ghAsset, error) {
+func resolveRelease(ctx context.Context, apiBase, repo, version, goos, goarch string) (ghRelease, ghAsset, ghAsset, error) {
 	if v := strings.TrimSpace(version); v != "" && v != "latest" {
 		tag := v
 		if !strings.HasPrefix(tag, releaseTagPrefix) {
 			tag = releaseTagPrefix + tag
 		}
-		rel, err := getRelease(ctx, fmt.Sprintf("%s/repos/%s/releases/tags/%s", githubAPIBase, repo, url.PathEscape(tag)))
+		rel, err := getRelease(ctx, fmt.Sprintf("%s/repos/%s/releases/tags/%s", apiBase, repo, url.PathEscape(tag)))
 		if err != nil {
 			return ghRelease{}, ghAsset{}, ghAsset{}, err
 		}
 		archive, checksums, err := selectAssets(rel, goos, goarch)
 		return rel, archive, checksums, err
 	}
-	releases, err := listReleases(ctx, repo)
+	releases, err := listReleases(ctx, apiBase, repo)
 	if err != nil {
 		return ghRelease{}, ghAsset{}, ghAsset{}, err
 	}
@@ -112,8 +102,8 @@ func getRelease(ctx context.Context, url string) (ghRelease, error) {
 	return rel, nil
 }
 
-func listReleases(ctx context.Context, repo string) ([]ghRelease, error) {
-	body, err := githubAPIGet(ctx, fmt.Sprintf("%s/repos/%s/releases?per_page=100", githubAPIBase, repo))
+func listReleases(ctx context.Context, apiBase, repo string) ([]ghRelease, error) {
+	body, err := githubAPIGet(ctx, fmt.Sprintf("%s/repos/%s/releases?per_page=100", apiBase, repo))
 	if err != nil {
 		return nil, err
 	}

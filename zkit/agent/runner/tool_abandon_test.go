@@ -19,8 +19,8 @@ func TestRun_ToolTimeoutMarksAbandoned(t *testing.T) {
 	t.Parallel()
 
 	provider := &fakeProvider{turns: [][]llm.CompletionChunk{
-		{chunkToolCall("c1", "slow", `{}`), chunkDone()}, // calls the blocking tool
-		{chunkText("done"), chunkDone()},                 // completes after the timeout failure
+		{chunkToolCall("c1", "slow", `{}`)}, // calls the blocking tool
+		{chunkText("done")},                 // completes after the timeout failure
 	}}
 	reg := newRegistry(blockingTool{name: "slow", started: make(chan struct{})})
 	sink := newRecordingSink()

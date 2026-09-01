@@ -164,14 +164,14 @@ func (r *Runner) dispatch(
 			}
 		}()
 		nestedCtx := tools.ContextWithNestedToolObserver(execCtx, nestedToolPublisher{r: r, spec: spec})
+		nestedCtx = tools.ContextWithWorkspaceWaitObserver(nestedCtx, workspaceWaitPublisher{r: r, spec: spec, call: call})
+		nestedCtx = tools.ContextWithWorkspaceWaitCall(nestedCtx, tools.WorkspaceWaitCall{ToolID: call.ID, ToolName: call.ToolName})
 		result, err := r.tools.Execute(nestedCtx, call)
 		done <- toolExecResult{result: result, err: err}
 	}()
 
 	var result *tools.ToolResult
 	var err error
-	// inFlight is true when we stopped waiting via the per-tool deadline
-	// rather than the tool returning — i.e. its goroutine is still running.
 	var inFlight bool
 	select {
 	case out := <-done:
@@ -180,14 +180,8 @@ func (r *Runner) dispatch(
 		err = execCtx.Err()
 		inFlight = true
 	}
-	// If the tool returned because of our per-tool deadline (and not
-	// the caller's outer ctx), surface a Timeout-classed failure so
-	// the model sees a clear "tool exceeded its time budget" signal
-	// rather than a generic "context deadline exceeded" string.
 	abandoned := false
 	if err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && toolTimeout > 0 {
-		// Abandoned only when the tool didn't stop on the deadline — its
-		// goroutine is still in flight and may keep mutating state.
 		abandoned = inFlight
 		err = nil
 		result = tools.Failure(call.ID, tools.Transient(string(name), fmt.Errorf(

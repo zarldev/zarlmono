@@ -116,7 +116,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("--ablations: %w", err)
 	}
-	drivers := buildDrivers(driverBuildOpts{
+	drivers, err := buildDrivers(driverBuildOpts{
 		spec:                *driversFlag,
 		ablations:           ablations,
 		envFile:             *envFile,
@@ -141,6 +141,9 @@ func run() error {
 		threadTranscript:    *zarlcodeThreadTranscript,
 		transcriptDir:       *zarlcodeTranscriptDir,
 	})
+	if err != nil {
+		return fmt.Errorf("--drivers: %w", err)
+	}
 	if len(drivers) == 0 {
 		fmt.Fprintln(os.Stderr, "no drivers configured (unknown name?)")
 		os.Exit(2)
@@ -269,10 +272,9 @@ type driverBuildOpts struct {
 }
 
 // buildDrivers parses the --drivers flag and instantiates the named
-// adapters with shared per-driver config. Unknown names are silently
-// dropped so a typo doesn't bring down the whole run — instead the
-// "no drivers configured" check upstream catches the empty result.
-func buildDrivers(o driverBuildOpts) []harness.Driver {
+// adapters with shared per-driver config. Unknown names are rejected so a
+// typo cannot silently change the evaluation comparison set.
+func buildDrivers(o driverBuildOpts) ([]harness.Driver, error) {
 	names := strings.Split(o.spec, ",")
 	out := make([]harness.Driver, 0, len(names))
 	for _, raw := range names {
@@ -314,10 +316,10 @@ func buildDrivers(o driverBuildOpts) []harness.Driver {
 				})
 			}
 		default:
-			fmt.Fprintf(os.Stderr, "unknown driver %q (skipping)\n", name)
+			return nil, fmt.Errorf("unknown driver %q", name)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // closeDrivers releases any driver that holds resources. The in-process

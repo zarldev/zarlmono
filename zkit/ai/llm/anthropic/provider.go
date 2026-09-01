@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
 	"net/http"
 	"strconv"
 	"strings"
@@ -70,16 +69,19 @@ func (p *Provider) Name() string {
 	return llm.LLMProviders.ANTHROPIC.String()
 }
 
-// Complete generates a completion as a native iter.Seq2 — the stream's
-// chunks are yielded directly (errors as the second value), no channel.
-func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+// Complete constructs a fully lazy Anthropic completion stream.
+func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
+		if cause := cancellationCause(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
+		}
 		if req.Stream {
 			p.streamCompletion(ctx, req, yield)
 		} else {
 			p.nonStreamCompletion(ctx, req, yield)
 		}
-	}, nil
+	}
 }
 
 // streamCompletion handles streaming responses, yielding each chunk (errors
@@ -128,8 +130,10 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	applyResponseFormat(&params, req.ResponseFormat)
 	applyThinking(&params, req.Thinking)
 
-	// Create streaming request
+	// Acquire the SDK stream only after iteration starts and always close it,
+	// including cancellation and downstream early-stop paths.
 	stream := p.client.Messages.NewStreaming(ctx, params)
+	defer stream.Close()
 
 	// Track accumulated message for tool calls and usage
 	message := anthropic.Message{}
@@ -140,7 +144,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 
 		// Accumulate the message
 		if err := message.Accumulate(event); err != nil {
-			yield(llm.CompletionChunk{Done: true}, fmt.Errorf("accumulate stream event: %w", err))
+			yield(llm.CompletionChunk{}, completionError(ctx, fmt.Errorf("accumulate stream event: %w", err)))
 			return
 		}
 		// Handle different event types using type switch
@@ -197,38 +201,27 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		}
 	}
 	if err := stream.Err(); err != nil {
-		// Terminal error path. Done:true so downstream readers see one
-		// canonical terminal chunk; the error rides the second yield value.
-		yield(llm.CompletionChunk{
-			Done: true,
-		}, anthropicRateLimitError(err, fmt.Errorf("stream error: %w", err)))
+		yield(llm.CompletionChunk{}, completionError(ctx,
+			anthropicRateLimitError(err, fmt.Errorf("stream error: %w", err))))
 		return
 	}
 
-	// Send final chunk with usage. Anthropic splits prompt tokens
-	// into base (InputTokens) + cache-creation + cache-read; sum
-	// them for the "true" prompt total and surface the cache-read
-	// subset so the cockpit can show "served from cache" alongside
-	// the gauge.
-	var usage *llm.Usage
-	if message.Usage.InputTokens > 0 || message.Usage.OutputTokens > 0 ||
-		message.Usage.CacheReadInputTokens > 0 || message.Usage.CacheCreationInputTokens > 0 {
-		prompt := int(message.Usage.InputTokens +
-			message.Usage.CacheCreationInputTokens +
-			message.Usage.CacheReadInputTokens)
-		usage = &llm.Usage{
+	// Anthropic reports usage on every completed message, including a legitimate
+	// all-zero report. Preserve that presence with an owned value.
+	prompt := int(message.Usage.InputTokens +
+		message.Usage.CacheCreationInputTokens +
+		message.Usage.CacheReadInputTokens)
+	chunk := llm.CompletionChunk{
+		FinishReason: normalizeFinishReason(message.StopReason),
+		Usage: llm.Usage{
 			PromptTokens:     prompt,
 			CompletionTokens: int(message.Usage.OutputTokens),
 			TotalTokens:      prompt + int(message.Usage.OutputTokens),
 			CachedTokens:     int(message.Usage.CacheReadInputTokens),
-		}
+		},
+		UsageReported: true,
 	}
-
-	yield(llm.CompletionChunk{
-		Done:         true,
-		Usage:        usage,
-		FinishReason: string(message.StopReason),
-	}, nil)
+	yield(chunk, nil)
 }
 
 // nonStreamCompletion handles non-streaming responses.
@@ -273,11 +266,8 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 	// Make the request
 	response, err := p.client.Messages.New(ctx, params)
 	if err != nil {
-		// Terminal error path. Done:true so downstream readers see one
-		// canonical terminal chunk; the error rides the second yield value.
-		yield(llm.CompletionChunk{
-			Done: true,
-		}, anthropicRateLimitError(err, fmt.Errorf("anthropic sdk: %w", err)))
+		yield(llm.CompletionChunk{}, completionError(ctx,
+			anthropicRateLimitError(err, fmt.Errorf("anthropic sdk: %w", err))))
 		return
 	}
 
@@ -318,29 +308,46 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 		Content:      fullContent.String(),
 		Thinking:     thinkingContent.String(),
 		ToolCalls:    toolCalls,
-		FinishReason: string(response.StopReason),
+		FinishReason: normalizeFinishReason(response.StopReason),
 	}, nil) {
 		return
 	}
 
-	// Send completion with usage. Combine base prompt + cache
-	// creation + cache read into PromptTokens; surface cache reads
-	// in CachedTokens so the cockpit can render "served from cache".
-	usage := &llm.Usage{}
-	if response.Usage.InputTokens > 0 || response.Usage.OutputTokens > 0 ||
-		response.Usage.CacheReadInputTokens > 0 || response.Usage.CacheCreationInputTokens > 0 {
-		usage.PromptTokens = int(response.Usage.InputTokens +
+	usage := llm.Usage{
+		PromptTokens: int(response.Usage.InputTokens +
 			response.Usage.CacheCreationInputTokens +
-			response.Usage.CacheReadInputTokens)
-		usage.CompletionTokens = int(response.Usage.OutputTokens)
-		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-		usage.CachedTokens = int(response.Usage.CacheReadInputTokens)
+			response.Usage.CacheReadInputTokens),
+		CompletionTokens: int(response.Usage.OutputTokens),
+		CachedTokens:     int(response.Usage.CacheReadInputTokens),
 	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	yield(llm.CompletionChunk{Usage: usage, UsageReported: true}, nil)
+}
 
-	yield(llm.CompletionChunk{
-		Done:  true,
-		Usage: usage,
-	}, nil)
+func cancellationCause(ctx context.Context) error {
+	return context.Cause(ctx)
+}
+
+func completionError(ctx context.Context, fallback error) error {
+	if cause := cancellationCause(ctx); cause != nil {
+		return cause
+	}
+	return fallback
+}
+
+func normalizeFinishReason(reason anthropic.StopReason) llm.FinishReason {
+	switch reason {
+	case anthropic.StopReasonEndTurn, anthropic.StopReasonStopSequence, anthropic.StopReasonPauseTurn:
+		return llm.FinishReasons.STOP
+	case anthropic.StopReasonMaxTokens:
+		return llm.FinishReasons.LENGTH
+	case anthropic.StopReasonToolUse:
+		return llm.FinishReasons.TOOLCALLS
+	case anthropic.StopReasonRefusal:
+		return llm.FinishReasons.CONTENTFILTER
+	default:
+		return llm.FinishReasons.UNKNOWN
+	}
 }
 
 // extractSystemPrompt extracts and combines system messages.

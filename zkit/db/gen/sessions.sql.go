@@ -7,7 +7,17 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 )
+
+const clearSessionDraft = `-- name: ClearSessionDraft :exec
+UPDATE sessions SET pending_json = '[]' WHERE id = ?
+`
+
+func (q *Queries) ClearSessionDraft(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, clearSessionDraft, id)
+	return err
+}
 
 const deleteEmptySession = `-- name: DeleteEmptySession :exec
 DELETE FROM sessions
@@ -31,7 +41,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json FROM sessions WHERE id = ?
+SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
@@ -53,25 +63,41 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.PlanJson,
 		&i.MessageCount,
 		&i.ToolTraceJson,
+		&i.Pinned,
+		&i.PinnedAt,
+		&i.ChangedFileCount,
+		&i.PlanCompletedCount,
+		&i.PlanTotalCount,
+		&i.LabelManual,
 	)
 	return i, err
 }
 
 const listSessionSummariesByWorkspace = `-- name: ListSessionSummariesByWorkspace :many
-SELECT id, label, provider, model, created_at, updated_at, message_count
+SELECT id, label, label_manual, agent_name, provider, model, created_at, updated_at, message_count,
+       pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count,
+       CASE WHEN pending_json IS NOT NULL AND TRIM(pending_json) NOT IN ('', '[]', 'null') THEN 1 ELSE 0 END AS has_draft
 FROM sessions
 WHERE workspace = ?
-ORDER BY updated_at DESC
+ORDER BY pinned DESC, pinned_at DESC, updated_at DESC
 `
 
 type ListSessionSummariesByWorkspaceRow struct {
-	ID           string
-	Label        string
-	Provider     string
-	Model        string
-	CreatedAt    int64
-	UpdatedAt    int64
-	MessageCount int64
+	ID                 string
+	Label              string
+	LabelManual        int64
+	AgentName          string
+	Provider           string
+	Model              string
+	CreatedAt          int64
+	UpdatedAt          int64
+	MessageCount       int64
+	Pinned             int64
+	PinnedAt           sql.NullInt64
+	ChangedFileCount   int64
+	PlanCompletedCount int64
+	PlanTotalCount     int64
+	HasDraft           int64
 }
 
 func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace string) ([]ListSessionSummariesByWorkspaceRow, error) {
@@ -86,11 +112,19 @@ func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace
 		if err := rows.Scan(
 			&i.ID,
 			&i.Label,
+			&i.LabelManual,
+			&i.AgentName,
 			&i.Provider,
 			&i.Model,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.MessageCount,
+			&i.Pinned,
+			&i.PinnedAt,
+			&i.ChangedFileCount,
+			&i.PlanCompletedCount,
+			&i.PlanTotalCount,
+			&i.HasDraft,
 		); err != nil {
 			return nil, err
 		}
@@ -106,7 +140,7 @@ func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace
 }
 
 const listSessionsByWorkspace = `-- name: ListSessionsByWorkspace :many
-SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json FROM sessions
+SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual FROM sessions
 WHERE workspace = ?
 ORDER BY updated_at DESC
 `
@@ -136,6 +170,12 @@ func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string)
 			&i.PlanJson,
 			&i.MessageCount,
 			&i.ToolTraceJson,
+			&i.Pinned,
+			&i.PinnedAt,
+			&i.ChangedFileCount,
+			&i.PlanCompletedCount,
+			&i.PlanTotalCount,
+			&i.LabelManual,
 		); err != nil {
 			return nil, err
 		}
@@ -150,18 +190,95 @@ func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string)
 	return items, nil
 }
 
+const renameSession = `-- name: RenameSession :exec
+UPDATE sessions
+SET label = ?, label_manual = 1
+WHERE id = ?
+`
+
+type RenameSessionParams struct {
+	Label string
+	ID    string
+}
+
+func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) error {
+	_, err := q.db.ExecContext(ctx, renameSession, arg.Label, arg.ID)
+	return err
+}
+
+const saveSessionDraft = `-- name: SaveSessionDraft :exec
+INSERT INTO sessions (
+    id, workspace, label, label_manual, agent_name, provider, model,
+    history_json, pending_json, last_usage_json, diff_bodies_json, plan_json,
+    message_count, tool_trace_json, created_at, updated_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?,
+    '[]', ?, '{}', '{}', '{}',
+    0, '[]', ?, ?
+)
+ON CONFLICT(id) DO UPDATE SET
+    pending_json = excluded.pending_json
+`
+
+type SaveSessionDraftParams struct {
+	ID          string
+	Workspace   string
+	Label       string
+	LabelManual int64
+	AgentName   string
+	Provider    string
+	Model       string
+	PendingJson string
+	CreatedAt   int64
+	UpdatedAt   int64
+}
+
+func (q *Queries) SaveSessionDraft(ctx context.Context, arg SaveSessionDraftParams) error {
+	_, err := q.db.ExecContext(ctx, saveSessionDraft,
+		arg.ID,
+		arg.Workspace,
+		arg.Label,
+		arg.LabelManual,
+		arg.AgentName,
+		arg.Provider,
+		arg.Model,
+		arg.PendingJson,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const setSessionPinned = `-- name: SetSessionPinned :exec
+UPDATE sessions
+SET pinned = ?, pinned_at = ?
+WHERE id = ?
+`
+
+type SetSessionPinnedParams struct {
+	Pinned   int64
+	PinnedAt sql.NullInt64
+	ID       string
+}
+
+func (q *Queries) SetSessionPinned(ctx context.Context, arg SetSessionPinnedParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionPinned, arg.Pinned, arg.PinnedAt, arg.ID)
+	return err
+}
+
 const upsertSession = `-- name: UpsertSession :exec
 INSERT INTO sessions (
-    id, workspace, label, agent_name, provider, model,
+    id, workspace, label, label_manual, agent_name, provider, model,
     history_json, pending_json, last_usage_json, diff_bodies_json, plan_json, message_count, tool_trace_json,
-    created_at, updated_at
+    created_at, updated_at, changed_file_count, plan_completed_count, plan_total_count
 ) VALUES (
-    ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?,
-    ?, ?
+    ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?
 )
 ON CONFLICT (id) DO UPDATE SET
     label            = excluded.label,
+    label_manual     = excluded.label_manual,
     agent_name       = excluded.agent_name,
     provider         = excluded.provider,
     model            = excluded.model,
@@ -172,25 +289,32 @@ ON CONFLICT (id) DO UPDATE SET
     plan_json        = excluded.plan_json,
     tool_trace_json  = excluded.tool_trace_json,
     message_count    = excluded.message_count,
-    updated_at       = excluded.updated_at
+    updated_at           = excluded.updated_at,
+    changed_file_count   = excluded.changed_file_count,
+    plan_completed_count = excluded.plan_completed_count,
+    plan_total_count     = excluded.plan_total_count
 `
 
 type UpsertSessionParams struct {
-	ID             string
-	Workspace      string
-	Label          string
-	AgentName      string
-	Provider       string
-	Model          string
-	HistoryJson    string
-	PendingJson    string
-	LastUsageJson  string
-	DiffBodiesJson string
-	PlanJson       string
-	MessageCount   int64
-	ToolTraceJson  string
-	CreatedAt      int64
-	UpdatedAt      int64
+	ID                 string
+	Workspace          string
+	Label              string
+	LabelManual        int64
+	AgentName          string
+	Provider           string
+	Model              string
+	HistoryJson        string
+	PendingJson        string
+	LastUsageJson      string
+	DiffBodiesJson     string
+	PlanJson           string
+	MessageCount       int64
+	ToolTraceJson      string
+	CreatedAt          int64
+	UpdatedAt          int64
+	ChangedFileCount   int64
+	PlanCompletedCount int64
+	PlanTotalCount     int64
 }
 
 func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) error {
@@ -198,6 +322,7 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) er
 		arg.ID,
 		arg.Workspace,
 		arg.Label,
+		arg.LabelManual,
 		arg.AgentName,
 		arg.Provider,
 		arg.Model,
@@ -210,6 +335,9 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) er
 		arg.ToolTraceJson,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.ChangedFileCount,
+		arg.PlanCompletedCount,
+		arg.PlanTotalCount,
 	)
 	return err
 }

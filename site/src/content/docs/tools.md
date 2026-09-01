@@ -128,9 +128,9 @@ a result.
 
 `runner.MemoSource` wraps a tool source and memoises tools that
 declare themselves pure (`read`, `ls`, `grep`, …). A re-read of the
-same path returns cached bytes without touching the tool — or the
-guardrail chain — which also stops repeated identical reads from
-eating a fan-out budget. Cache entries are dropped per task on
+same path returns cached bytes without touching the underlying tool. Guardrails
+still wrap the memoized source and run on every request, while repeated identical
+reads no longer consume the inner fan-out budget. Cache entries are dropped per
 completion.
 
 ## Tool effects
@@ -165,7 +165,8 @@ tool := tools.NewTyped(spec, writeFile,
 ## Output formats
 
 Tools that return structured data (`web_search`, `bash_output`,
-`glob`, `ls`, `grep`) accept an `output` parameter with two modes:
+`glob`, `ls`, `grep`, `list_processes`, `list_agent_tasks`, and `mcp_list`)
+accept an `output` parameter with two modes:
 
 - **`labeled`** (default) — human-readable, one result per line
   with headers. What the model reads in the conversation.
@@ -212,8 +213,8 @@ in `zkit/ai/tools/dynamic` make this possible:
 - **`unregister_tool`** — remove a dynamic tool from the registry.
 - **`mcp_connect`** / **`mcp_disconnect`** / **`mcp_list`** —
   connect to Model Context Protocol servers over stdio or HTTP,
-  discover their tools, and register them prefixed by connection
-  name. MCP-pushed notifications flow into the runner's steer
+  discover their tools, and register them under each connection's namespace.
+  MCP-pushed notifications flow into the runner's steer
   queue as untrusted data.
 
 All dynamic tools register under the `"dynamic"` provider tag.

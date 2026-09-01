@@ -53,13 +53,10 @@ func TestRequest_CachePromptGating(t *testing.T) {
 				t.Fatalf("NewProvider: %v", err)
 			}
 
-			seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
+			seq := provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages: []llm.Message{{Role: "user", Content: "hi"}},
 				Stream:   true,
 			})
-			if err != nil {
-				t.Fatalf("Complete: %v", err)
-			}
 			for range seq {
 			}
 
@@ -115,14 +112,11 @@ func TestRequest_ChatTemplateKwargsGating(t *testing.T) {
 				t.Fatalf("NewProvider: %v", err)
 			}
 
-			seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
+			seq := provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages:           []llm.Message{{Role: "user", Content: "hi"}},
 				Stream:             true,
 				ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: true},
 			})
-			if err != nil {
-				t.Fatalf("Complete: %v", err)
-			}
 			for range seq {
 			}
 

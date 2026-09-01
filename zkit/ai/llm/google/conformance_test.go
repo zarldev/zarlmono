@@ -46,10 +46,21 @@ func TestProvider_Conformance(t *testing.T) {
 				Timeout:         3 * time.Second,
 			},
 			{
-				Name:    "StreamingDone_FinalChunkMarked",
+				Name:    "FinishReason_ReportedOnFinalChunk",
 				Handler: googleSimpleStream(),
 				Request: providertest.SimpleRequest("hi"),
-				Assert:  providertest.AssertStreamingDoneSet,
+				Assert: func(t *testing.T, collected []llm.CompletionChunk, completeErr error) {
+					t.Helper()
+					if completeErr != nil {
+						t.Fatalf("Complete returned err = %v, want nil", completeErr)
+					}
+					if len(collected) == 0 {
+						t.Fatal("no chunks collected")
+					}
+					if got := collected[len(collected)-1].FinishReason; got != llm.FinishReasons.STOP {
+						t.Errorf("FinishReason = %q, want %q", got, llm.FinishReasons.STOP)
+					}
+				},
 			},
 			{
 				Name:    "Usage_ReportedOnFinalChunk",

@@ -2,6 +2,7 @@ package coderunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 
@@ -9,23 +10,17 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-// coordinatedSource acquires short-lived workspace access for each tool call.
-// Long-lived agent leases use the same task ID, so child calls reenter their
-// owner's lease while conflicting parent/child calls fail without blocking.
+// coordinatedSource acquires short-lived, automatically inferred workspace
+// access for each tool call. Unknown or opaque effects fall back to the root.
 type coordinatedSource struct {
 	inner       tools.Source
 	coordinator *tools.WorkspaceCoordinator
 }
 
-// CoordinateWorkspace returns a source governed by coordinator. A nil
-// coordinator preserves the original source.
+// CoordinateWorkspace returns a source governed by coordinator.
 func CoordinateWorkspace(inner tools.Source, coordinator *tools.WorkspaceCoordinator) tools.Source {
-	if inner == nil || coordinator == nil {
-		return inner
-	}
 	return coordinatedSource{inner: inner, coordinator: coordinator}
 }
-
 func (s coordinatedSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 	return s.inner.Tools(ctx)
 }
@@ -44,8 +39,11 @@ func (s coordinatedSource) Execute(ctx context.Context, call tools.ToolCall) (*t
 		return s.inner.Execute(ctx, call)
 	}
 	owner := tools.WorkspaceOwner(taskscope.IDFrom(ctx))
-	lease, err := s.coordinator.Acquire(owner, spec.Access())
+	lease, err := s.coordinator.AcquirePathsWait(ctx, owner, spec.Access(), spec.WorkspaceScope.Paths(call.Arguments))
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return tools.Failure(call.ID, tools.Transient(call.ToolName.String(), err)), nil
+		}
 		return tools.Failure(call.ID, tools.Budget(call.ToolName.String(), fmt.Sprintf("workspace access: %v", err))), nil
 	}
 	defer lease.Release()

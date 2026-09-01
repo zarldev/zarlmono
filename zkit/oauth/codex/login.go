@@ -68,7 +68,7 @@ func RunLogin(
 			callbackAddr,
 			listenErr,
 		)
-		return runManual(ctx, svc, flow, stdin, stdout)
+		return runManual(ctx, svc, flow, stdin, stdout, exchangeAuthorizationCode)
 	}
 	defer listener.Close()
 
@@ -95,8 +95,12 @@ func RunLogin(
 		if res.err != nil {
 			return fmt.Errorf("oauth: callback: %w", res.err)
 		}
-		return finishLogin(ctx, svc, flow.PKCE.Verifier, res.code, stdout)
+		return finishLogin(ctx, svc, flow.PKCE.Verifier, res.code, stdout, exchangeAuthorizationCode)
 	}
+}
+
+func exchangeAuthorizationCode(ctx context.Context, code, verifier string) (openaicodex.Token, error) {
+	return openaicodex.ExchangeAuthorizationCode(ctx, code, verifier)
 }
 
 // runManual is the fallback path when the local callback
@@ -109,6 +113,7 @@ func runManual(
 	flow openaicodex.AuthorizationFlow,
 	stdin io.Reader,
 	stdout io.Writer,
+	exchange func(context.Context, string, string) (openaicodex.Token, error),
 ) error {
 	fmt.Fprintln(stdout, "oauth: visit this URL in your browser:")
 	fmt.Fprintln(stdout, "  "+flow.URL)
@@ -143,7 +148,7 @@ func runManual(
 	if state != flow.State {
 		return errors.New("oauth: state mismatch — refusing to continue")
 	}
-	return finishLogin(ctx, svc, flow.PKCE.Verifier, code, stdout)
+	return finishLogin(ctx, svc, flow.PKCE.Verifier, code, stdout, exchange)
 }
 
 // indexByte is strings.IndexByte for byte slices — local to keep the
@@ -161,8 +166,14 @@ func indexByte(b []byte, c byte) int {
 // persists them at [prefs.ScopeGlobal] via the [prefs.Service] so every
 // workspace inherits the credential through the standard precedence
 // chain. Shared by both the auto and manual flow paths.
-func finishLogin(ctx context.Context, svc *prefs.Service, verifier, code string, stdout io.Writer) error {
-	tok, err := openaicodex.ExchangeAuthorizationCode(ctx, code, verifier)
+func finishLogin(
+	ctx context.Context,
+	svc *prefs.Service,
+	verifier, code string,
+	stdout io.Writer,
+	exchange func(context.Context, string, string) (openaicodex.Token, error),
+) error {
+	tok, err := exchange(ctx, code, verifier)
 	if err != nil {
 		return fmt.Errorf("oauth: exchange code: %w", err)
 	}

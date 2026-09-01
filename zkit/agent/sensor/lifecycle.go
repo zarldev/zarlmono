@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Start begins polling each sensor on its own goroutine. Safe to call
-// once. Cancel ctx or call Stop to shut down. Polling receives a
+// Start begins polling each sensor on its own goroutine. Subsequent calls are
+// no-ops. Cancel ctx or call Stop to shut down. Polling receives a
 // context derived from both the caller ctx and the runner ctx, so Stop
 // cancels context-aware Poll calls even if the caller ctx remains live.
 // Stop waits for poll-loop goroutines up to pollShutdownCap.
@@ -22,18 +22,21 @@ func (r *Runner) Start(ctx context.Context) {
 		r.mu.Unlock()
 		return
 	}
+	if r.started {
+		r.mu.Unlock()
+		return
+	}
+	r.started = true
 	sensors := append([]Sensor{}, r.sensors...)
 	runnerCtx := r.ctx
 	// Add to the WaitGroup while holding the lock, so a concurrent Stop
 	// (which sets r.stopped under the same lock, then later Waits) can never
 	// observe an Add after its Wait has begun.
-	r.pollWG.Add(len(sensors))
+	r.pollWG.Add(len(sensors) + 1)
 	r.mu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	pollCtx, cancelPoll := context.WithCancel(runnerCtx)
 	go func() {
+		defer r.pollWG.Done()
 		select {
 		case <-ctx.Done():
 			cancelPoll()

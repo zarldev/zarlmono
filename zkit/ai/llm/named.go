@@ -1,9 +1,6 @@
 package llm
 
-import (
-	"context"
-	"iter"
-)
+import "context"
 
 // Named returns a Provider that delegates to inner but reports name from
 // Name(). Useful when one adapter type (e.g. openai.Provider) is reused
@@ -19,7 +16,7 @@ type named struct {
 	name  string
 }
 
-func (n *named) Complete(ctx context.Context, req CompletionRequest) (iter.Seq2[CompletionChunk, error], error) {
+func (n *named) Complete(ctx context.Context, req CompletionRequest) CompletionStream {
 	return n.inner.Complete(ctx, req)
 }
 

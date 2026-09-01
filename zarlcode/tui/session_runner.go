@@ -27,7 +27,6 @@ type toolCompletedEffect struct {
 
 type sessionEffect struct {
 	ToastChanged bool
-	Notice       string
 }
 
 func (s *Session) applyTurnSetupFailed(e turnSetupFailedMsg) setupFailedEffect {
@@ -92,6 +91,14 @@ func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
 			s.PendingSkillNames[e.ToolID] = name
 		}
 	}
+}
+
+func (s *Session) applyWorkspaceWaitStarted(e teasink.WorkspaceWaitStartedMsg) {
+	s.logEvent("workspace wait started", e.ToolName)
+}
+
+func (s *Session) applyWorkspaceWaitEnded(e teasink.WorkspaceWaitEndedMsg) {
+	s.logEvent("workspace wait ended", e.ToolName)
 }
 
 func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEffect {
@@ -195,9 +202,9 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 		if e.RateLimit != nil {
 			msg = formatRateLimit(e.RateLimit)
 		}
-		s.SetErrorToast(msg)
+		s.SetErrorToast("provider error: " + msg)
 		s.reconcileTopLevelRun()
-		return sessionEffect{ToastChanged: true, Notice: palette.Error.On("✗ provider error: ") + msg}
+		return sessionEffect{ToastChanged: true}
 	}
 
 	if e.Depth == 0 {
@@ -212,14 +219,13 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 // reconcileTopLevelRun idempotently clears UI-visible live state. The command
 // completion path calls this as a safety net when a terminal sink event is
 // missing; normal terminal events have already cleared it through folding.
-func (s *Session) reconcileTopLevelRun() bool {
+func (s *Session) reconcileTopLevelRun() {
 	if !s.Run.Running && s.Run.activeTopLevel == "" {
-		return false
+		return
 	}
 	s.Run.Running = false
 	s.Run.activeTopLevel = ""
 	s.Run.bumpRevision()
-	return true
 }
 
 type providerErrorEnvelope struct {

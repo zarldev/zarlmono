@@ -44,6 +44,11 @@ func newVaultUnlockModel(setup, retry bool) *vaultUnlockModel {
 	return m
 }
 
+// NewVaultUnlockModel creates the interactive vault passphrase surface.
+func NewVaultUnlockModel(setup, retry bool) tea.Model {
+	return newVaultUnlockModel(setup, retry)
+}
+
 func (m *vaultUnlockModel) Init() tea.Cmd { return nil }
 
 func (m *vaultUnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -257,9 +262,6 @@ func runVaultUnlockSplash(ctx context.Context, setup, retry bool) (string, error
 }
 
 func runVaultUnlockSplashWithProgram(ctx context.Context, setup, retry bool, opts []tea.ProgramOption) (string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	model := newVaultUnlockModel(setup, retry)
 	programOpts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler()}
 	programOpts = append(programOpts, opts...)

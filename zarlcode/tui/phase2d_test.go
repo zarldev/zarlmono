@@ -28,14 +28,15 @@ func TestTimeline_ToolShowsArgHint(t *testing.T) {
 func TestTimeline_SubAgentFrameNested(t *testing.T) {
 	out := drive(t,
 		teasink.ConversationStartedMsg{TaskID: "t1", Depth: 0, Prompt: "main task"},
-		teasink.ConversationStartedMsg{TaskID: "s1", Depth: 1, Prompt: "sub task"},
+		teasink.ToolStartedMsg{TaskID: "t1", Depth: 0, ToolID: "spawn-1", ToolName: "agent_spawn", Parameters: map[string]any{"prompt": "sub task"}},
+		teasink.ConversationStartedMsg{TaskID: "s1", Depth: 1, ParentToolCallID: "spawn-1", Prompt: "sub task"},
 		teasink.ContentMsg{TaskID: "s1", Depth: 1, Delta: "working on it"},
 	)
-	// Sub-agent now renders as a collapsible block (collapsed by default).
-	if !strings.Contains(out, "[+] agents (1)") {
+	// Spawn-backed agent groups stay open so the new agent box is visible immediately.
+	if !strings.Contains(out, "[-] agents (1)") {
 		t.Errorf("agents group missing:\n%s", out)
 	}
-	// Content is hidden while collapsed.
+	// The individual agent box remains collapsed until selected.
 	if strings.Contains(out, "working on it") {
 		t.Errorf("sub-agent content should be hidden while collapsed:\n%s", out)
 	}
@@ -45,17 +46,17 @@ func TestTimeline_SubAgentExpandedShowsContent(t *testing.T) {
 	var m tea.Model = tui.New()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	m, _ = m.Update(teasink.ConversationStartedMsg{TaskID: "t1", Depth: 0, Prompt: "main task"})
-	m, _ = m.Update(teasink.ConversationStartedMsg{TaskID: "s1", Depth: 1, AgentName: "helper", Prompt: "sub task"})
+	m, _ = m.Update(teasink.ToolStartedMsg{TaskID: "t1", Depth: 0, ToolID: "spawn-1", ToolName: "agent_spawn", Parameters: map[string]any{"agent": "helper", "prompt": "sub task"}})
+	m, _ = m.Update(teasink.ConversationStartedMsg{TaskID: "s1", Depth: 1, ParentToolCallID: "spawn-1", AgentName: "helper", Prompt: "sub task"})
 	m, _ = m.Update(teasink.ContentMsg{TaskID: "s1", Depth: 1, Delta: "working on it"})
 
 	out := ansi.Strip(m.View().Content)
-	if !strings.Contains(out, "[+] agents (1)") {
-		t.Fatalf("collapsed agents group missing:\n%s", out)
+	if !strings.Contains(out, "[-] agents (1)") {
+		t.Fatalf("expanded agents group missing:\n%s", out)
 	}
 
-	// Enter browse mode and expand the sub-agent block.
+	// Enter browse mode, move into the expanded agents group, and expand the child.
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	out = ansi.Strip(m.View().Content)

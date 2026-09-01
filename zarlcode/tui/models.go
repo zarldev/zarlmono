@@ -23,7 +23,7 @@ type settingsTickMsg struct{}
 const settingsTickInterval = time.Second
 
 func settingsTick() tea.Cmd {
-	return tea.Tick(settingsTickInterval, func(time.Time) tea.Msg { return settingsTickMsg{} })
+	return oneShotTimerCmd(settingsTickInterval, func(time.Time) tea.Msg { return settingsTickMsg{} })
 }
 
 // openSettings pushes the settings overlay and kicks an initial model fetch
@@ -33,7 +33,7 @@ func (m *UI) openSettings() tea.Cmd {
 	if m.settings == nil {
 		return nil
 	}
-	d := newSettingsDialogWithContext(m.appContext(), m.settings)
+	d := newSettingsDialog(m.appContext(), m.settings)
 	m.overlay.push(d)
 	cmds := []tea.Cmd{settingsTick()} // toast heartbeat
 	if p := d.currentProvider(); p != "" {

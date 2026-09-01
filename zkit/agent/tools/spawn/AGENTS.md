@@ -34,13 +34,13 @@ Public snapshots contain compact immutable result values, never the runner's mut
 
 ## Failures are recoverable
 
-Validation, recursion, resolution, workspace-lease, and admission failures return `Success:false` with a typed tool error and nil Go error so the model can recover. A failed child retains its useful partial summary.
+Validation, recursion, resolution, workspace-coordination, and admission failures return `Success:false` with a typed tool error and nil Go error so the model can recover. A failed child retains its useful partial summary.
 
 ## Agent resolution and work modes
 
 `WithAgentResolver` maps authored names from `list_agents` to runners. Unknown names soft-fall back to the parent runner with a visible notice. The optional planner chooses only from the closed candidate set.
 
-Explore and verify modes are enforced through `WithModeToolPolicy`; implement retains the full surface. When a workspace coordinator is supplied, explore/verify children hold a READ lease and implement children hold a WRITE lease for their entire run.
+Explore and verify modes are enforced through `WithModeToolPolicy`; implement retains the full surface. Workspace coordination is automatic per tool call: known file paths and every `apply_patch` path are scoped, while opaque or unsafe operations conservatively use the workspace root. Overlapping calls wait cancellably with FIFO fairness; disjoint calls bypass them.
 
 ## Things to never do
 

@@ -105,10 +105,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
-	chunks, err := p.provider.Complete(ctx, req)
-	if err != nil {
-		return SpawnPlan{}, fmt.Errorf("planner provider: %w", err)
-	}
+	chunks := p.provider.Complete(ctx, req)
 
 	var body strings.Builder
 	for chunk, cerr := range chunks {

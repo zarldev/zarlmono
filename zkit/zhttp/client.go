@@ -66,75 +66,77 @@ type Client struct {
 	traceHook  TraceHook
 }
 
-// RetryPolicy governs how [Client.Do] re-issues a failed request.
-// Zero-value fields fall back to defaults: 3 attempts (so 2 retries
-// after the first), 100 ms initial backoff doubling each step up to
-// 30 s, ±20 % jitter, and the standard transient-failure status set
-// (408 / 429 / 500 / 502 / 503 / 504). Tune the policy per client
-// when an upstream needs special treatment (idempotent-only,
-// no-retry, longer backoff).
+// RetryPolicy governs how [Client.Do] re-issues a failed request. Its zero
+// value makes exactly one attempt and never retries. Use [NewRetryPolicy] or
+// [DefaultRetryPolicy] to construct a retrying policy.
 type RetryPolicy struct {
-	// MaxAttempts caps total request attempts including the first.
-	// 1 means "no retry"; 3 means "first try + 2 retries". Default 3.
-	MaxAttempts int
-
-	// InitialBackoff is the sleep before the first retry. Default 100ms.
-	InitialBackoff time.Duration
-
-	// MaxBackoff caps the per-attempt sleep regardless of how many
-	// attempts have failed. Default 30s.
-	MaxBackoff time.Duration
-
-	// Multiplier scales the backoff between attempts (geometric
-	// progression). Default 2.0.
-	Multiplier float64
-
-	// JitterFactor adds ±jitter to each sleep so a fleet of clients
-	// retrying after a shared outage don't thundering-herd the
-	// upstream. 0.2 means "±20% of the computed sleep". Default 0.2.
-	JitterFactor float64
-
-	// RetryableStatusCodes is the set of HTTP status codes that
-	// trigger a retry. Default is the standard transient-failure
-	// set; override for upstreams that use non-standard codes.
-	RetryableStatusCodes []int
-
-	// RetryNetworkErrors retries connection-level failures (refused,
-	// reset, timeout). Default true. Set false when the caller wants
-	// to handle network errors itself.
-	RetryNetworkErrors bool
-
-	// RespectRetryAfter honours the Retry-After response header on
-	// 429 / 503 (delta-seconds or HTTP-date). When the server
-	// suggests a wait longer than the computed backoff, we use the
-	// server's value. Default true.
-	RespectRetryAfter bool
+	retries        int
+	initialBackoff time.Duration
+	maxBackoff     time.Duration
+	jitter         RetryJitter
 }
 
-// DefaultRetryPolicy returns the package-default policy. Use as a
-// starting point and mutate fields rather than constructing from
-// zero — the field defaults are not the Go zero values.
-func DefaultRetryPolicy() RetryPolicy {
+// RetryJitter is the closed jitter policy applied to exponential retry delays.
+// Its zero value leaves delays unchanged.
+type RetryJitter bool
+
+const (
+	// NoRetryJitter leaves retry delays unchanged.
+	NoRetryJitter RetryJitter = false
+	// FullRetryJitter chooses a delay uniformly between zero and the computed delay.
+	FullRetryJitter RetryJitter = true
+)
+
+// NewRetryPolicy constructs a retry policy. maxAttempts includes the first
+// request, so 1 disables retries. It panics unless maxAttempts is positive,
+// initialBackoff is positive, and maxBackoff is at least initialBackoff.
+func NewRetryPolicy(
+	maxAttempts int,
+	initialBackoff time.Duration,
+	maxBackoff time.Duration,
+	jitter RetryJitter,
+) RetryPolicy {
+	if maxAttempts < 1 {
+		panic("zhttp: retry policy max attempts must be positive")
+	}
+	if initialBackoff <= 0 {
+		panic("zhttp: retry policy initial backoff must be positive")
+	}
+	if maxBackoff < initialBackoff {
+		panic("zhttp: retry policy max backoff must not be less than initial backoff")
+	}
 	return RetryPolicy{
-		MaxAttempts:          3,
-		InitialBackoff:       100 * time.Millisecond,
-		MaxBackoff:           30 * time.Second,
-		Multiplier:           2.0,
-		JitterFactor:         0.2,
-		RetryableStatusCodes: []int{408, 429, 500, 502, 503, 504},
-		RetryNetworkErrors:   true,
-		RespectRetryAfter:    true,
+		retries:        maxAttempts - 1,
+		initialBackoff: initialBackoff,
+		maxBackoff:     maxBackoff,
+		jitter:         jitter,
 	}
 }
 
-// NoRetry is the policy for "issue the request exactly once, never
-// retry." Useful for endpoints with non-idempotent side effects the
-// caller doesn't want to risk replaying.
-func NoRetry() RetryPolicy {
-	p := DefaultRetryPolicy()
-	p.MaxAttempts = 1
-	return p
+// DefaultRetryPolicy returns a policy with 3 attempts, 100 ms initial
+// backoff, a 30 s backoff cap, multiplier 2, and full jitter.
+func DefaultRetryPolicy() RetryPolicy {
+	return NewRetryPolicy(3, 100*time.Millisecond, 30*time.Second, FullRetryJitter)
 }
+
+// NoRetry returns the zero retry policy: issue the request exactly once.
+func NoRetry() RetryPolicy { return RetryPolicy{} }
+
+// ShouldRetry reports whether a response or error is transient according to
+// the policy. The zero policy always returns false. Context cancellation and
+// deadline errors are never retryable; other transport errors and status codes
+// 408, 429, 500, 502, 503, and 504 are retryable.
+func (p RetryPolicy) ShouldRetry(resp *http.Response, err error) bool {
+	if p.retries == 0 {
+		return false
+	}
+	if err != nil {
+		return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+	}
+	return resp != nil && slices.Contains(defaultRetryableStatusCodes, resp.StatusCode)
+}
+
+var defaultRetryableStatusCodes = []int{408, 429, 500, 502, 503, 504}
 
 // NewClient builds a Client with the default transport, default
 // retry policy, and a 30s per-request timeout. Override via options.
@@ -163,31 +165,23 @@ func WithTimeout(d time.Duration) options.Option[Client] {
 	return func(c *Client) { c.httpClient.Timeout = d }
 }
 
-// WithTransport replaces the default transport. Useful for tests
-// (httptest), for callers that need a custom dialer (Unix socket,
-// SOCKS proxy), or for adding a wrapping RoundTripper for
-// instrumentation. The replacement is used as-is — none of the
-// timeouts [DefaultTransport] sets carry over.
+// WithTransport replaces the default transport. Useful for tests, custom
+// dialers, or instrumentation. The replacement is used as-is; none of the
+// timeouts from [DefaultTransport] carry over.
 func WithTransport(t http.RoundTripper) options.Option[Client] {
 	return func(c *Client) { c.httpClient.Transport = t }
 }
 
-// WithRetryPolicy installs a custom retry policy. Pass [NoRetry] to
-// disable retries entirely (the request runs once); pass a tweaked
-// [DefaultRetryPolicy] for a tighter / looser schedule.
+// WithRetryPolicy installs a custom retry policy. The zero value disables
+// retries; use [DefaultRetryPolicy] for the package-default schedule.
 func WithRetryPolicy(p RetryPolicy) options.Option[Client] {
 	return func(c *Client) { c.retry = p }
 }
 
-// WithLogger installs the slog instance used for retry-attempt and
-// final-failure logs. Default is slog.Default(). Pass slog.New(
-// slog.NewTextHandler(io.Discard, nil)) to silence the client.
+// WithLogger installs the slog instance used for retry-attempt and final-failure
+// logs. Default is slog.Default().
 func WithLogger(l *slog.Logger) options.Option[Client] {
-	return func(c *Client) {
-		if l != nil {
-			c.logger = l
-		}
-	}
+	return func(c *Client) { c.logger = l }
 }
 
 // WithUserAgent sets the User-Agent header for every outgoing
@@ -258,9 +252,6 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	}
 
 	policy := c.retry
-	if policy.MaxAttempts < 1 {
-		policy.MaxAttempts = 1
-	}
 
 	// Remember whether retries can replay. Either there's no body
 	// or the stdlib populated GetBody (it does so for the three
@@ -271,7 +262,7 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 
 	var lastResp *http.Response
 	var lastErr error
-	for attempt := range policy.MaxAttempts {
+	for attempt := 0; attempt <= policy.retries; attempt++ {
 		// Honour ctx cancellation BEFORE issuing — saves a wasted
 		// roundtrip when the caller has already given up.
 		if ctx.Err() != nil {
@@ -305,10 +296,10 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 		}
 		lastResp, lastErr = resp, err
 
-		if !c.shouldRetry(resp, err, policy) {
+		if !policy.ShouldRetry(resp, err) {
 			return resp, err
 		}
-		if attempt == policy.MaxAttempts-1 {
+		if attempt == policy.retries {
 			// Out of attempts — return whatever we got last.
 			break
 		}
@@ -326,7 +317,7 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 			slog.String("method", req.Method),
 			slog.String("url", req.URL.String()),
 			slog.Int("attempt", attempt+1),
-			slog.Int("max_attempts", policy.MaxAttempts),
+			slog.Int("max_attempts", policy.retries+1),
 			slog.Duration("sleep", sleep),
 			slog.Any("err", err),
 			slog.Int("status", statusOf(resp)),
@@ -347,7 +338,7 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 		c.logger.LogAttrs(ctx, slog.LevelWarn, "zhttp client: gave up after retries",
 			slog.String("method", req.Method),
 			slog.String("url", req.URL.String()),
-			slog.Int("attempts", policy.MaxAttempts),
+			slog.Int("attempts", policy.retries+1),
 			slog.Any("err", lastErr),
 		)
 	}
@@ -355,101 +346,56 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 }
 
 // ErrUnretryableBody is returned by [Client.Do] when a retry would
-// have fired but the request body can't be rewound. Pass a
-// *bytes.Reader (or other io.ReadSeeker) to opt into retry on
-// requests with bodies; otherwise the request is sent exactly once.
+// fire but the request body has no [http.Request.GetBody] factory. Build
+// requests with [http.NewRequest] and a *bytes.Buffer, *bytes.Reader, or
+// *strings.Reader to opt into body replay; otherwise the request is sent once.
 var ErrUnretryableBody = errors.New("zhttp client: retry impossible — request body is not seekable")
 
-// shouldRetry decides whether a (resp, err) pair warrants another
-// attempt. Network errors retry by default; status-code retry is
-// driven by RetryableStatusCodes.
-func (c *Client) shouldRetry(resp *http.Response, err error, p RetryPolicy) bool {
-	if err != nil {
-		if !p.RetryNetworkErrors {
-			return false
-		}
-		// Don't retry context cancellation / deadline — the caller
-		// asked us to stop. The net error path catches genuine
-		// transport failures (refused, reset, DNS).
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return false
-		}
-		return true
-	}
-	if resp == nil {
-		return false
-	}
-	return slices.Contains(p.RetryableStatusCodes, resp.StatusCode)
-}
-
-// nextBackoff computes the sleep before the next attempt. Respects
-// the server's Retry-After when present + the policy allows it;
-// otherwise standard exponential backoff with jitter.
+// nextBackoff computes the sleep before the next attempt. It honors the
+// server's Retry-After header when present; otherwise it uses exponential
+// backoff with jitter. Policies reaching this method were valid at construction.
 func (c *Client) nextBackoff(attempt int, resp *http.Response, p RetryPolicy) time.Duration {
-	if p.RespectRetryAfter && resp != nil {
+	if resp != nil {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
-			// Cap at MaxBackoff so a buggy server can't tell us to
-			// sleep 24 hours. Negative / past dates → 0 → backoff
-			// continues with the regular schedule.
-			if d > p.MaxBackoff {
-				d = p.MaxBackoff
+			// Cap at maxBackoff so a buggy server cannot force an excessive sleep.
+			if d > p.maxBackoff {
+				d = p.maxBackoff
 			}
 			if d > 0 {
 				return d
 			}
 		}
 	}
-	// Exponential: base * mult^attempt, capped, with ±jitter.
-	mult := p.Multiplier
-	if mult <= 1 {
-		mult = 2
+	// Exponential backoff doubles from the initial delay and is capped.
+	d := float64(p.initialBackoff) * math.Pow(2, float64(attempt))
+	if d > float64(p.maxBackoff) {
+		d = float64(p.maxBackoff)
 	}
-	base := float64(p.InitialBackoff)
-	if base <= 0 {
-		base = float64(100 * time.Millisecond)
-	}
-	d := base * math.Pow(mult, float64(attempt))
-	maxD := float64(p.MaxBackoff)
-	if maxD <= 0 {
-		maxD = float64(30 * time.Second)
-	}
-	if d > maxD {
-		d = maxD
-	}
-	if j := p.JitterFactor; j > 0 {
-		// ±j fraction of d. rand.Float64() is fine here — we
-		// don't need crypto-strength randomness for backoff jitter.
-		d += d * j * (rand.Float64()*2 - 1)
-	}
-	if d < 0 {
-		d = 0
+	if p.jitter == FullRetryJitter {
+		// rand.Float64 is sufficient for backoff jitter.
+		d *= rand.Float64()
 	}
 	return time.Duration(d)
 }
 
-// parseRetryAfter accepts either delta-seconds ("120") or an
-// HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT") and returns the
-// duration to wait. Returns (0, false) on unparseable input or
-// past dates so the caller falls back to the regular schedule.
+// parseRetryAfter accepts either delta-seconds ("120") or an HTTP-date and
+// returns the duration to wait. It returns false for invalid or past values.
 func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	v := strings.TrimSpace(value)
 	if v == "" {
 		return 0, false
 	}
-	// Delta-seconds (most servers use this).
-	if secs, err := strconv.Atoi(v); err == nil {
-		if secs < 0 {
+	if secs, err := strconv.ParseUint(v, 10, 64); err == nil {
+		if secs > uint64(math.MaxInt64/int64(time.Second)) {
 			return 0, false
 		}
 		return time.Duration(secs) * time.Second, true
 	}
-	// HTTP-date.
 	if t, err := http.ParseTime(v); err == nil {
 		d := t.Sub(now)
 		if d < 0 {
 			return 0, false
 		}
-		// Round to second so the log line is readable.
 		return d.Round(time.Second), true
 	}
 	return 0, false

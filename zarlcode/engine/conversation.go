@@ -15,16 +15,16 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
-// conversation threads multi-turn history across runs. Each turn runs
+// Conversation threads multi-turn history across runs. Each turn runs
 // with the accumulated history as TaskSpec.Context; the run's result
 // Messages (the runner strips the re-built-each-turn system prompt)
 // become the next turn's context, so the agent sees its own prior tool
 // calls and answers.
 //
-// run serializes turns under a mutex: a second submit blocks until the
+// Run serializes turns under a mutex: a second submit blocks until the
 // first turn finishes, then runs with that turn's history — sequential,
 // continuous chat without concurrent runs corrupting the history.
-type conversation struct {
+type Conversation struct {
 	mu      sync.Mutex
 	history []llm.Message
 }
@@ -44,7 +44,7 @@ type conversation struct {
 // TUI surfaces as an error toast + log + idle-clear (see
 // Session.applyConversationEnded). So there is nothing to return here — we
 // keep only the partial history.
-func (c *conversation) transition(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
+func (c *Conversation) transition(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -63,15 +63,15 @@ func (c *conversation) transition(spec runner.TaskSpec, setup func() (func(runne
 	return nil
 }
 
-func (c *conversation) run(prompt string, exec func(runner.TaskSpec) runner.TaskResult) {
+func (c *Conversation) run(prompt string, exec func(runner.TaskSpec) runner.TaskResult) {
 	c.runSpec(runner.TaskSpec{Prompt: prompt}, exec)
 }
 
-func (c *conversation) runSpec(spec runner.TaskSpec, exec func(runner.TaskSpec) runner.TaskResult) {
+func (c *Conversation) runSpec(spec runner.TaskSpec, exec func(runner.TaskSpec) runner.TaskResult) {
 	_ = c.transition(spec, func() (func(runner.TaskSpec) runner.TaskResult, error) { return exec, nil })
 }
 
-func (c *conversation) snapshot() []llm.Message {
+func (c *Conversation) snapshot() []llm.Message {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]llm.Message, len(c.history))
@@ -85,7 +85,7 @@ func (c *conversation) snapshot() []llm.Message {
 // providers reject with a 400 on every subsequent turn, permanently bricking
 // -continue for that session. RepairToolPairing rebalances the pairing on the
 // way in so a corrupt blob degrades to a warning + truncation instead.
-func (c *conversation) restore(history []llm.Message) {
+func (c *Conversation) restore(history []llm.Message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	repaired, changed := agentcompact.RepairToolPairing(history)
@@ -98,7 +98,7 @@ func (c *conversation) restore(history []llm.Message) {
 	c.history = repaired
 }
 
-func (c *conversation) compactNow(ctx context.Context, compactor agentcompact.Compactor, sink runner.EventSink) (ManualCompactionResult, error) {
+func (c *Conversation) compactNow(ctx context.Context, compactor agentcompact.Compactor, sink runner.EventSink) (ManualCompactionResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	before := len(c.history)
@@ -133,3 +133,22 @@ func (c *conversation) compactNow(ctx context.Context, compactor agentcompact.Co
 	}
 	return out, nil
 }
+
+// Run executes a turn and threads its returned messages into subsequent turns.
+func (c *Conversation) Run(prompt string, exec func(runner.TaskSpec) runner.TaskResult) {
+	c.run(prompt, exec)
+}
+
+// History returns a concurrency-safe copy of the conversation history.
+func (c *Conversation) History() []llm.Message { return c.snapshot() }
+
+// Restore replaces history after repairing incomplete tool-call pairs.
+func (c *Conversation) Restore(history []llm.Message) { c.restore(history) }
+
+// Compact applies compactor to the current history without changing history on failure.
+func (c *Conversation) Compact(ctx context.Context, compactor agentcompact.Compactor, sink runner.EventSink) (ManualCompactionResult, error) {
+	return c.compactNow(ctx, compactor, sink)
+}
+
+// Snapshot returns a concurrency-safe copy of the conversation history.
+func (c *Conversation) Snapshot() []llm.Message { return c.snapshot() }

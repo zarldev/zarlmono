@@ -132,18 +132,10 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 		Temperature: 0.2,
 		Stream:      true,
 	}
-	stream, err := h.Provider.Complete(ctx, req)
+	doc, err := collectContent(h.Provider.Complete(ctx, req), "Handover")
 	if err != nil {
-		return Result{}, fmt.Errorf("compact.Handover: provider complete: %w", err)
+		return Result{}, err
 	}
-	var body strings.Builder
-	for chunk, cerr := range stream {
-		if cerr != nil {
-			return Result{}, fmt.Errorf("compact.Handover: stream: %w", cerr)
-		}
-		body.WriteString(chunk.Content)
-	}
-	doc := strings.TrimSpace(body.String())
 	if doc == "" {
 		return Result{}, errors.New("compact.Handover: model returned an empty document")
 	}

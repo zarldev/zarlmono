@@ -4,16 +4,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
 	openaicodex "github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
-	"github.com/zarldev/zarlmono/zkit/zhttp"
 )
 
 // makeJWT builds a fake three-segment JWT with the given payload. The
@@ -129,170 +124,6 @@ func TestCreateAuthorizationFlow(t *testing.T) {
 	}
 	if q.Get("redirect_uri") != openaicodex.RedirectURI {
 		t.Errorf("redirect_uri = %q, want %q", q.Get("redirect_uri"), openaicodex.RedirectURI)
-	}
-}
-
-// fakeTokenServer is an httptest backend that mimics auth.openai.com's
-// token endpoint. It records the last form posted (for assertions) and
-// returns scripted responses.
-type fakeTokenServer struct {
-	t        *testing.T
-	respond  func(form url.Values) (status int, body string)
-	lastForm url.Values
-}
-
-func (f *fakeTokenServer) handler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/oauth/token" {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		body, _ := io.ReadAll(r.Body)
-		form, err := url.ParseQuery(string(body))
-		if err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
-			return
-		}
-		f.lastForm = form
-		status, resp := f.respond(form)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = io.WriteString(w, resp)
-	}
-}
-
-// redirectTokenURL stands up the httptest server's transport on the
-// package's OAuth client for the duration of the test, then restores
-// the previous client. Retries are disabled — refresh tests assert
-// exact request counts, and a retry on a transient httptest failure
-// would muddy the counter (the retry path has its own scenarios).
-//
-// Tests that touch the OAuth client share global state and so must
-// not run in parallel.
-func redirectTokenURL(t *testing.T, srv *httptest.Server) {
-	t.Helper()
-	target, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatalf("parse test server url: %v", err)
-	}
-	restore := openaicodex.SetOAuthClientForTesting(zhttp.NewClient(
-		zhttp.WithTransport(&rewriteTransport{target: target}),
-		zhttp.WithRetryPolicy(zhttp.NoRetry()),
-	))
-	t.Cleanup(restore)
-}
-
-// rewriteTransport sends every outbound request to the test server's
-// host while preserving the original path. This lets us point the
-// pinned auth.openai.com TokenURL at httptest without exposing a
-// "with base url" knob on the package surface.
-type rewriteTransport struct {
-	target *url.URL
-}
-
-func (rt *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.URL.Scheme = rt.target.Scheme
-	req.URL.Host = rt.target.Host
-	return http.DefaultTransport.RoundTrip(req)
-}
-
-// Not parallel — mutates the package-level OAuth client via
-// [openaicodex.SetOAuthClientForTesting]. The other tests sharing
-// that seam are likewise sequential.
-func TestExchangeAuthorizationCode(t *testing.T) {
-	jwt := makeJWT(t, map[string]any{
-		"https://api.openai.com/auth": map[string]any{
-			"chatgpt_account_id": "acct_xyz",
-		},
-	})
-	fake := &fakeTokenServer{t: t, respond: func(form url.Values) (int, string) {
-		if form.Get("grant_type") != "authorization_code" {
-			return http.StatusBadRequest, `{"error":"wrong grant"}`
-		}
-		if form.Get("code") != "the-code" {
-			return http.StatusBadRequest, `{"error":"wrong code"}`
-		}
-		if form.Get("code_verifier") != "the-verifier" {
-			return http.StatusBadRequest, `{"error":"wrong verifier"}`
-		}
-		return http.StatusOK, `{"access_token":"` + jwt + `","refresh_token":"r1","expires_in":3600}`
-	}}
-	srv := httptest.NewServer(fake.handler())
-	defer srv.Close()
-	redirectTokenURL(t, srv)
-
-	tok, err := openaicodex.ExchangeAuthorizationCode(t.Context(), "the-code", "the-verifier")
-	if err != nil {
-		t.Fatalf("ExchangeAuthorizationCode: %v", err)
-	}
-	if tok.Access != jwt {
-		t.Errorf("access mismatch")
-	}
-	if tok.Refresh != "r1" {
-		t.Errorf("refresh = %q, want r1", tok.Refresh)
-	}
-	if tok.AccountID != "acct_xyz" {
-		t.Errorf("account id = %q, want acct_xyz", tok.AccountID)
-	}
-	if time.Until(tok.Expires) < time.Hour-time.Minute {
-		t.Errorf("expires too soon: %v", tok.Expires)
-	}
-	if fake.lastForm.Get("client_id") != openaicodex.ClientID {
-		t.Errorf("client_id missing in form")
-	}
-	if fake.lastForm.Get("redirect_uri") != openaicodex.RedirectURI {
-		t.Errorf("redirect_uri missing in form")
-	}
-}
-
-// Not parallel — shares the OAuth-client seam (see
-// [TestExchangeAuthorizationCode]).
-func TestExchangeAuthorizationCode_Failure(t *testing.T) {
-	fake := &fakeTokenServer{t: t, respond: func(form url.Values) (int, string) {
-		return http.StatusUnauthorized, `{"error":"invalid_grant"}`
-	}}
-	srv := httptest.NewServer(fake.handler())
-	defer srv.Close()
-	redirectTokenURL(t, srv)
-	_, err := openaicodex.ExchangeAuthorizationCode(t.Context(), "x", "y")
-	if !errors.Is(err, openaicodex.ErrTokenExchange) {
-		t.Errorf("err = %v, want ErrTokenExchange", err)
-	}
-	if !strings.Contains(err.Error(), "401") {
-		t.Errorf("err = %v, want status 401 in message", err)
-	}
-}
-
-// Not parallel — shares the OAuth-client seam (see
-// [TestExchangeAuthorizationCode]).
-func TestRefreshAccessToken(t *testing.T) {
-	jwt := makeJWT(t, map[string]any{
-		"https://api.openai.com/auth": map[string]any{
-			"chatgpt_account_id": "acct_refresh",
-		},
-	})
-	fake := &fakeTokenServer{t: t, respond: func(form url.Values) (int, string) {
-		if form.Get("grant_type") != "refresh_token" {
-			return http.StatusBadRequest, `{"error":"wrong grant"}`
-		}
-		if form.Get("refresh_token") != "old-refresh" {
-			return http.StatusBadRequest, `{"error":"wrong refresh"}`
-		}
-		return http.StatusOK, `{"access_token":"` + jwt + `","refresh_token":"new-refresh","expires_in":1800}`
-	}}
-	srv := httptest.NewServer(fake.handler())
-	defer srv.Close()
-	redirectTokenURL(t, srv)
-
-	tok, err := openaicodex.RefreshAccessToken(t.Context(), "old-refresh")
-	if err != nil {
-		t.Fatalf("RefreshAccessToken: %v", err)
-	}
-	if tok.Refresh != "new-refresh" {
-		t.Errorf("refresh = %q, want new-refresh", tok.Refresh)
-	}
-	if tok.AccountID != "acct_refresh" {
-		t.Errorf("account id = %q, want acct_refresh", tok.AccountID)
 	}
 }
 

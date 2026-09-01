@@ -33,8 +33,9 @@ type timeline struct {
 	// subAgents tracks in-progress sub-agent runs by TaskID. Depth>0
 	// events route into the matching subAgentItem instead of the flat
 	// items slice, so each spawned agent gets its own collapsible block.
-	subAgents map[string]*subAgentItem
-	agents    *groupItem
+	subAgents        map[string]*subAgentItem // child TaskID -> active item
+	subAgentsBySpawn map[string]*subAgentItem // agent_spawn ToolID -> reserved/correlated item
+	agents           *groupItem
 
 	// curTools/curEdits are the open per-iteration groups (nil = none);
 	// reset by closeGroups so each iteration starts fresh groups.
@@ -126,6 +127,7 @@ func (tl *timeline) Clear() {
 	tl.cache = make(map[item]cacheEntry)
 	tl.queued = nil
 	tl.subAgents = make(map[string]*subAgentItem)
+	tl.subAgentsBySpawn = make(map[string]*subAgentItem)
 	tl.agents = nil
 	tl.curTools = nil
 	tl.curEdits = nil
@@ -139,12 +141,13 @@ func (tl *timeline) Clear() {
 
 func newTimeline() *timeline {
 	return &timeline{
-		toolIdx:         make(map[string]toolRef),
-		pendingChildren: make(map[string][]pendingToolChild),
-		turns:           make(map[string]*openTurn),
-		cache:           make(map[item]cacheEntry),
-		subAgents:       make(map[string]*subAgentItem),
-		geometry:        timelineGeometry{dirty: 0},
+		toolIdx:          make(map[string]toolRef),
+		pendingChildren:  make(map[string][]pendingToolChild),
+		turns:            make(map[string]*openTurn),
+		cache:            make(map[item]cacheEntry),
+		subAgents:        make(map[string]*subAgentItem),
+		subAgentsBySpawn: make(map[string]*subAgentItem),
+		geometry:         timelineGeometry{dirty: 0},
 	}
 }
 
@@ -254,8 +257,12 @@ type toolItem struct {
 	effect         string // compact post-action effect summary
 	state          toolState
 	failKind       tools.Kind // failure classification; only meaningful when state == toolFailed
-	result         string     // full formatted output (or error); shown when expanded
-	data           any        // typed structured result (code.GrepResult, …); nil = render from result string
+	waiting        bool
+	waitAccess     tools.WorkspaceAccess
+	waitPaths      []string
+	waitDuration   time.Duration
+	result         string // full formatted output (or error); shown when expanded
+	data           any    // typed structured result (code.GrepResult, …); nil = render from result string
 	dur            time.Duration
 	sequence       int
 	expanded       bool // result shown ([-]) vs hidden ([+]); only meaningful once result != ""
@@ -312,7 +319,14 @@ func (t *toolItem) render(width int) []string {
 	}
 	head := icon + " " + t.name
 	if t.state == toolRunning {
-		head += " " + palette.Warning.On("running")
+		if t.waiting {
+			head += " " + palette.Warning.On("waiting")
+			if summary := workspaceWaitSummary(t.waitAccess, t.waitPaths); summary != "" {
+				head += "  " + palette.Muted.On("· "+summary)
+			}
+		} else {
+			head += " " + palette.Warning.On("running")
+		}
 	}
 	if t.state == toolFailed && t.failKind != tools.Kinds.UNKNOWN {
 		head += " " + kindBadge(t.failKind)
@@ -572,19 +586,45 @@ func (tl *timeline) addNotice(text string) {
 	tl.pushItem(&noticeItem{depth: 0, text: text})
 }
 
-// startSubAgent creates a collapsible subAgentItem and registers it as the
-// active sub-agent for taskID. All subsequent Depth>0 events for this task
-// route into this item instead of the flat timeline.
-func (tl *timeline) startSubAgent(taskID string, depth int, agentName, prompt string) *subAgentItem {
+// reserveSubAgent creates the visible transcript row as soon as agent_spawn
+// starts. The child TaskID does not exist yet, so ConversationStarted later
+// binds the reserved row through ParentToolCallID.
+func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, prompt string) *subAgentItem {
+	if spawnToolID != "" {
+		if sa := tl.subAgentsBySpawn[spawnToolID]; sa != nil {
+			return sa
+		}
+	}
 	if tl.agents == nil {
-		tl.agents = &groupItem{kind: groupAgents, nested: true}
+		tl.agents = &groupItem{kind: groupAgents, nested: true, expanded: spawnToolID != ""}
 		tl.agents.notify = func() { tl.invalidateItem(tl.agents) }
 		tl.pushItem(tl.agents)
 	}
-	sa := newSubAgentItem(depth, agentName, prompt, taskID)
+	sa := newPendingSubAgentItem(depth+1, agentName, prompt, spawnToolID)
 	sa.depth = 0
 	sa.notify = tl.agents.bump
 	tl.agents.add(sa)
+	if spawnToolID != "" {
+		tl.subAgentsBySpawn[spawnToolID] = sa
+	}
+	return sa
+}
+
+// startSubAgentWithParent binds the child run to the row reserved by its exact
+// agent_spawn call. Falling back to a new row keeps replayed/legacy event
+// streams that lack ParentToolCallID visible.
+func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, prompt, spawnToolID string) *subAgentItem {
+	if sa := tl.subAgents[taskID]; sa != nil {
+		return sa
+	}
+	var sa *subAgentItem
+	if spawnToolID != "" {
+		sa = tl.subAgentsBySpawn[spawnToolID]
+	}
+	if sa == nil {
+		sa = tl.reserveSubAgent(spawnToolID, depth-1, agentName, prompt)
+	}
+	sa.bind(taskID, depth, agentName, prompt)
 	tl.subAgents[taskID] = sa
 	return sa
 }
@@ -602,9 +642,16 @@ func (tl *timeline) finishSubAgent(taskID string) {
 	delete(tl.subAgents, taskID)
 }
 
-// subAgent returns the active sub-agent for taskID, or nil.
 func (tl *timeline) subAgent(taskID string) *subAgentItem {
 	return tl.subAgents[taskID]
+}
+
+// failSubAgentSpawn leaves a terminal box in the transcript when validation or
+// admission fails before a child ConversationStarted event can be published.
+func (tl *timeline) failSubAgentSpawn(spawnToolID, detail string) {
+	if sa := tl.subAgentsBySpawn[spawnToolID]; sa != nil {
+		sa.failLaunch(detail)
+	}
 }
 
 // addLoadedSkill records a successfully loaded skill under the given turn.
@@ -805,6 +852,7 @@ func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duratio
 		if failed {
 			ref.tool.state = toolFailed
 		}
+		ref.tool.waiting = false
 		ref.tool.failKind = failKind
 		ref.tool.result = result
 		ref.tool.data = data
@@ -821,6 +869,7 @@ func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duratio
 			if failed {
 				ref.tool.state = toolFailed
 			}
+			ref.tool.waiting = false
 			ref.tool.failKind = failKind
 			ref.tool.result = result
 			ref.tool.data = data
@@ -831,6 +880,50 @@ func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duratio
 			return
 		}
 	}
+}
+
+func (tl *timeline) waitTool(toolID string, access tools.WorkspaceAccess, paths []string) {
+	if ref, ok := tl.toolRef(toolID); ok {
+		ref.tool.waiting = true
+		ref.tool.waitAccess = access
+		ref.tool.waitPaths = append(ref.tool.waitPaths[:0], paths...)
+		ref.tool.waitDuration = 0
+		tl.bumpToolOwner(ref)
+	}
+}
+
+func (tl *timeline) resumeTool(toolID string, duration time.Duration) {
+	if ref, ok := tl.toolRef(toolID); ok {
+		ref.tool.waiting = false
+		ref.tool.waitDuration = duration
+		tl.bumpToolOwner(ref)
+	}
+}
+
+func (tl *timeline) toolRef(toolID string) (toolRef, bool) {
+	if ref, ok := tl.toolIdx[toolID]; ok {
+		return ref, true
+	}
+	for _, sa := range tl.subAgents {
+		if ref, ok := sa.toolIdx[toolID]; ok {
+			return ref, true
+		}
+	}
+	return toolRef{}, false
+}
+
+func workspaceWaitSummary(access tools.WorkspaceAccess, paths []string) string {
+	scope := "workspace"
+	switch len(paths) {
+	case 1:
+		if paths[0] != "." {
+			scope = paths[0]
+		}
+	case 0:
+	default:
+		scope = fmt.Sprintf("%d paths", len(paths))
+	}
+	return access.String() + " · " + scope
 }
 
 func firstEffectSummary(effects []string) string {
@@ -1066,7 +1159,7 @@ func (m *UI) drawTimelineScrollbar(scr uv.Screen, r uv.Rectangle, height int, _ 
 		if i >= g.ThumbStart && i <= g.ThumbEnd {
 			glyph = thumbGlyph
 		}
-		drawLine(scr, uv.Rect(x, r.Min.Y+1+i, 1, 1), glyph)
+		drawLine(scr, uv.Rect(x, r.Min.Y+2+i, 1, 1), glyph)
 	}
 }
 

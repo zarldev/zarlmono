@@ -55,12 +55,14 @@ var serviceDialogRows = []struct {
 }
 
 func newServiceDialog(ctx context.Context) *serviceDialog {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	d := &serviceDialog{ctx: ctx}
 	d.refresh()
 	return d
+}
+
+// OpenServiceDialog opens the local web-search service manager.
+func (m *UI) OpenServiceDialog() {
+	m.overlay.push(newServiceDialog(m.appContext()))
 }
 
 func (d *serviceDialog) refresh() { d.status = localservices.Probe(d.ctx) }

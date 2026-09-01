@@ -377,7 +377,7 @@ A second workstream in this same worktree hardened sub-agent configuration, life
   - iteration limits,
   - strict/planner/parent fallback policy.
 - Settings expose profile pickers, per-mode limits, concurrency, child runtime, await defaults/ceilings, and fallback policy.
-- `Group` now owns cancellation, one retryable join path, panic containment, workspace leases, concurrency admission, bounded observed-result retention, and maximum child runtime.
+- `Group` now owns cancellation, one retryable join path, panic containment, concurrency admission, bounded observed-result retention, and maximum child runtime.
 - Terminal outcomes distinguish cancellation (`Transient`), iteration/runtime exhaustion (`Budget`), and execution faults (`Fatal`).
 - Lifecycle tools validate nil configuration, task lookup errors, await timeouts, and negative spawn iteration input.
 - `list_agent_tasks` is metadata-only and non-consuming; status/await/stop deliver terminal summaries.
@@ -487,3 +487,295 @@ The broad `zkit/agent/sandbox` run has an environment-sensitive existing smoke f
 - Provider/model behavior belongs in profiles or typed per-mode targets, not duplicated ad hoc settings.
 - Verify/explore cannot obtain workspace write capability through tool selection or opaque shell indirection when enforceable sandboxing is available.
 - Never discard the extensive concurrent TUI and agentic changes in this worktree.
+
+---
+
+# Handover Update — Workspace Coordination and Core QoL Program
+
+## Current request and product direction
+
+The user asked for core-product fixes, not metrics work. The active product program is tracked in:
+
+- `.zarlcode/plans/core-qol-roadmap.md`
+- `.zarlcode/plans/workspace-wait-observability.md`
+
+Work completed in this uncommitted worktree includes path-aware multi-agent workspace coordination, wait observability, session naming/search/pinning/metadata, first-prompt titles, a command palette, clipboard improvements, Markdown export, completion sounds, and draft recovery.
+
+The next agent should **stabilize and review the current large worktree before starting another roadmap feature**. Do not assume every modified file belongs to this program; preserve all existing user work.
+
+## Non-negotiable test-style rule
+
+The user explicitly corrected the testing style during this session:
+
+> All tests must be black-box tests in external `*_test` packages.
+
+This is now recorded in root `AGENTS.md`. Do not add package-internal tests and do not add coverage to `*_internal_test.go`. If behavior is not testable externally, expose the smallest behavior-specific public seam or move pure logic into a small domain package.
+
+During this session, newly added white-box TUI/engine tests were removed. Current new tests created by this work are external packages, including:
+
+- `zarlcode/draft/draft_test.go` — `package draft_test`
+- `zkit/db/session_draft_test.go` — `package db_test`
+- `zkit/db/session_pin_test.go` — `package db_test`
+- `zkit/db/session_rename_test.go` — `package db_test`
+- `zkit/agent/coderunner/workspace_coordination_integration_test.go` — `package coderunner_test`
+
+Before adding tests, inspect the package declaration explicitly.
+
+## Workspace coordination work completed
+
+### Typed tool scopes
+
+`tools.ToolSpec` now carries typed workspace-scope metadata. Built-in tools declare one of:
+
+- argument-derived paths;
+- fixed paths;
+- Codex patch paths;
+- conservative workspace-root fallback.
+
+The strategy identity uses a generated concrete enum rather than free-form strings. Relevant files include:
+
+- `zkit/ai/tools/tools.go`
+- `zkit/ai/tools/workspace_scope_enum.go`
+- generated `zkit/ai/tools/workspacescopekinds_enums.go`
+- workspace-aware tools under `zkit/ai/tools/code/`
+
+### Per-call coordination only
+
+Legacy coarse child/task-lifetime leases were removed. The production model is per tool call:
+
+- disjoint paths may run concurrently;
+- ancestor/descendant and equal paths conflict;
+- compatible readers overlap;
+- opaque effects such as shell operations conservatively use the workspace root;
+- unsafe or missing inferred paths fall back to root.
+
+`WorkspaceCoordinator` supports fail-fast acquisition and cancellable fair waiting. Overlapping waiters are FIFO relative to conflicting requests; disjoint requests bypass them.
+
+Core files:
+
+- `zkit/ai/tools/workspace_coordinator.go`
+- `zkit/agent/coderunner/coordinated_source.go`
+- `zarlcode/engine/live.go`
+- `zarlcode/engine/live_spawn.go`
+
+### Wait observability
+
+Workspace waits emit a typed lifecycle through context observers and runner events. The TUI shows waiting state on the existing tool row, including nested program tool calls.
+
+Core files:
+
+- `zkit/ai/tools/workspace_wait.go`
+- `zkit/ai/tools/workspace_wait_outcome_enum.go`
+- generated `workspacewaitoutcomes` enum file
+- `zkit/agent/runner/workspace_wait_publish.go`
+- runner sink/event files
+- `zarlcode/tui/teasink/messages.go`
+- `zarlcode/tui/teasink/teasink.go`
+- `zarlcode/tui/timeline.go`
+
+A full async-spawn integration test verifies that overlapping child tool calls wait and publish lifecycle events.
+
+## Session and intro QoL completed
+
+### Session naming
+
+- `Ctrl+N` names the active session.
+- `/name <label>` sets it directly.
+- The intro screen supports rename-in-place on the selected saved session.
+- Saved labels are shown correctly with timestamp/unnamed fallback only at display time.
+- The prior bug where close/save replaced user names with timestamps was fixed by keeping timestamp fallback out of `Session.Label`.
+- Intro deletion now requires confirmation; only Enter/Y confirms and all other keys cancel.
+
+### Search, pinning, and richer metadata
+
+The intro screen now supports:
+
+- `/` search mode over label, agent name, model, and ID;
+- stable selection by session ID under filtering;
+- `p` pin toggle;
+- pinned-first ordering by pin time, then normal recent ordering;
+- richer cheap metadata: agent, model, messages, plan progress, changed-file count, and Draft marker;
+- confirmed delete and rename operating on the filtered selection.
+
+DB migrations added during this program:
+
+- `zkit/db/migrations/00020_session_pins.sql`
+- `zkit/db/migrations/00021_session_intro_metadata.sql`
+- `zkit/db/migrations/00022_session_label_provenance.sql`
+
+Queries were regenerated with SQLC from `zkit/db/queries/sessions.sql`; do not edit generated files directly.
+
+### First-prompt titles
+
+Session labels now have explicit provenance:
+
+- generated from the first real prompt only;
+- slash commands do not become titles;
+- generated title is one line and bounded to 80 runes;
+- manual rename before or after generation always wins;
+- manual clearing remains explicit/manual and does not regenerate;
+- provenance survives save, close, and resume.
+
+## Command palette and copy/export work
+
+### Command palette
+
+`Ctrl+K` opens a searchable command palette backed by a generated concrete command ID enum. Initial commands include help, settings, theme, model selection, naming, plan, tool history, files, copy-last-response, and export.
+
+Files:
+
+- `zarlcode/tui/command_id_enum.go`
+- generated `zarlcode/tui/commandids_enums.go`
+- `zarlcode/tui/command_palette.go`
+
+### Clipboard
+
+A shared clipboard result/toast path was added in `zarlcode/tui/clipboard.go`.
+
+- `Ctrl+Shift+C` copies the latest non-empty assistant response.
+- The same action is available in the command palette.
+- Transcript reader’s existing selection/message copy remains.
+
+### Markdown export
+
+Active sessions can be exported via:
+
+- command palette `Export session`;
+- `/export [path]`.
+
+Default output is collision-safe under:
+
+```text
+.zarlcode/exports/<safe-label>-<short-id>.md
+```
+
+The serializer is deterministic and preserves Markdown/code content. Implementation is in `zarlcode/tui/session_export.go`.
+
+## Notification sounds
+
+A persisted `notification sounds` setting was added under Interface with:
+
+- `off`
+- `completion` (default)
+- `all`
+
+It uses terminal BEL through Bubble Tea rather than platform audio APIs. Top-level successful completion rings once; `all` additionally rings once when plan steps newly become completed.
+
+Files:
+
+- `zkit/prefs/keys.go`
+- `zarlcode/engine/settings.go`
+- `zarlcode/tui/settings_dialog.go`
+- `zarlcode/tui/notification_sound.go`
+
+## Draft recovery completed
+
+Draft recovery was the most recent feature.
+
+### Domain and storage
+
+A public bounded codec lives in:
+
+- `zarlcode/draft/draft.go`
+- external test `zarlcode/draft/draft_test.go`
+
+Text is limited to 256 KiB. Empty text serializes to the legacy `[]` pending representation.
+
+Dedicated DB operations were added:
+
+- `Store.SaveSessionDraft`
+- `Store.ClearSessionDraft`
+
+They write only `pending_json`; on existing sessions they preserve history, labels, and activity timestamps. External DB coverage is in `zkit/db/session_draft_test.go`.
+
+### TUI behavior
+
+`zarlcode/tui/draft_persist.go` owns draft debounce and persistence:
+
+- Bubble Tea-owned debounce, no free-running goroutine;
+- stale generations are ignored;
+- composer text changes/paste schedule a save;
+- session identity is created before draft save;
+- resume decodes pending JSON and restores composer text;
+- real accepted prompt submission clears persisted draft state;
+- save errors appear as toasts;
+- intro summary query exposes a cheap `HasDraft` marker.
+
+Confirmed intro deletion is currently the explicit discard path for saved draft-only sessions.
+
+## Verification state
+
+The latest full verification command completed successfully:
+
+```bash
+go test -C zkit -race -count=1 ./db
+go test -C zarlcode -race -count=1 ./draft ./tui/...
+go tool task check
+go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run ./zarlcode/... ./zkit/db/...
+go tool task zarlcode
+```
+
+Earlier `go tool task race` was also rerun successfully after a transient failure report.
+
+A previous repository-wide lint run was once blocked by unrelated `zkit/mcp/client_test.go` err113 issues while other workspace work was in progress. The latest affected-module lint command above passes. Re-run `go tool task lint` before final delivery and distinguish unrelated failures carefully.
+
+The rebuilt binary has been installed by `go tool task zarlcode` multiple times after feature milestones.
+
+## Current worktree warning
+
+The workspace is very dirty and contains a large mixture of modified and untracked files. `git status --short` currently reports well over one hundred paths. Important points:
+
+- Do not reset, restore, or discard changes.
+- Do not assume all changes were made by this session.
+- Review diffs by subsystem before editing.
+- There are currently no running sub-agent tasks.
+- All SQLC/generated enum source files should be treated according to repo guidance.
+
+Useful first commands for the next agent:
+
+```bash
+git status --short
+git diff --stat
+git diff --check
+go test -C zkit -count=1 ./db
+go test -C zarlcode -count=1 ./draft ./tui/...
+```
+
+## Remaining QoL roadmap
+
+From `.zarlcode/plans/core-qol-roadmap.md`, the main uncompleted product items are:
+
+1. Better sub-agent status and controls.
+2. Focus/attention-aware completion notifications.
+3. Additional context-aware copy actions beyond copy-last-response.
+4. Export of persisted/inactive sessions from the intro screen, plus richer optional sections.
+5. Draft attachment recovery and a dedicated recover/discard prompt if desired.
+6. Registry convergence so palette/help/slash metadata share more definitions.
+
+The roadmap originally listed draft recovery before sub-agent controls; draft recovery is now implemented. The recommended next feature is **sub-agent status and controls**, but first review and stabilize the current worktree.
+
+## Recommended next-agent sequence
+
+1. Read root and nested `AGENTS.md` files for the subsystem.
+2. Run the focused smoke tests above.
+3. Audit `git diff --check` and generated-file consistency.
+4. Review draft recovery and session migration diffs for accidental duplication.
+5. Confirm all newly added tests are external packages:
+
+   ```bash
+   git status --short | awk '$2 ~ /_test\.go$/ {print $2}' | while read f; do head -n 1 "$f"; done
+   ```
+
+6. Re-run `go tool task check` and `go tool task lint` before starting new feature work.
+7. If clean enough, start sub-agent controls using an event-driven TUI task view; keep `spawn.Group` as lifecycle owner and avoid polling goroutines.
+
+## Known design constraints for next work
+
+- Do not add metrics work; user asked for core product fixes.
+- Do not reintroduce task-lifetime workspace leases.
+- Do not add model-authored workspace path scopes.
+- Do not use strings where a concrete generated domain type is appropriate.
+- Do not add white-box/internal tests.
+- Every goroutine/process must have an owner, stop condition, and wait path.
+- Preserve user-named sessions; generated titles/timestamps must never overwrite manual names.
+- Keep intro list queries blob-free.

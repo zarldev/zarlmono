@@ -147,6 +147,20 @@ func TestNotificationStore_UnsubscribeRemovesAndCloses(t *testing.T) {
 	}
 }
 
+func TestNotificationStore_UnsubscribeRetainsPending(t *testing.T) {
+	t.Parallel()
+
+	store := notify.NewNotificationStore()
+	store.Push(notify.Notification{SessionID: "S", Content: "queued"})
+	ch := store.Subscribe(t.Context(), "S")
+	store.Unsubscribe("S", ch)
+
+	pending := store.Drain("S")
+	if len(pending) != 1 || pending[0].Content != "queued" {
+		t.Errorf("pending after unsubscribe = %+v, want queued notification", pending)
+	}
+}
+
 func TestNotificationStore_SubscribeCtxAutoUnsubscribes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := notify.NewNotificationStore()

@@ -177,9 +177,10 @@ func WithToolTimeout(d time.Duration) options.Option[Runner] {
 // WithIterationTimeout caps the LLM call + stream drain of a single
 // iteration. It does NOT bound tool dispatch — that's WithToolTimeout's
 // job (see the timeouts type). The default is 5 minutes; pass 0 to disable.
-// With a non-zero value, an iteration whose stream runs longer than d aborts
-// cleanly with ErrIterationTimeout — far more diagnostic than the "signal:
-// killed" an outer ctx timeout produces.
+// With a non-zero value, expiration cancels the provider context with
+// ErrIterationTimeout. A conforming [llm.Provider] then unwinds and the runner
+// reports that cause; this cannot forcibly interrupt a provider that violates
+// the cancellation contract.
 //
 // Tune for the slowest legitimate stream you expect: a small local
 // model stuck in thinking-mode shows up as "no progress after 60s +
@@ -250,12 +251,13 @@ func WithEmptyStreamBackoff(d time.Duration) options.Option[Runner] {
 	}
 }
 
-// WithStreamIdleTimeout caps the gap between consecutive chunks from
-// the LLM stream. The default is 60 seconds; pass 0 to disable. Use to
-// catch genuinely dead connections (provider hang) without bailing on
-// legitimate long-running responses. Independent of iteration timeout:
-// a stream that emits one chunk every 30s for 10 minutes is fine for
-// idle timeout but trips iteration timeout.
+// WithStreamIdleTimeout caps the gap between consecutive chunks from the LLM
+// stream. The default is 60 seconds; pass 0 to disable. Use it to catch
+// genuinely dead connections without bailing on legitimate long-running responses.
+// Expiration cancels the provider context; bounded return depends on the
+// [llm.Provider] cancellation contract. Independent
+// of iteration timeout: a stream that emits one chunk every 30s for 10 minutes
+// is fine for idle timeout but trips iteration timeout.
 func WithStreamIdleTimeout(d time.Duration) options.Option[Runner] {
 	return func(r *Runner) {
 		if d >= 0 {

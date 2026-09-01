@@ -9,11 +9,11 @@ the zarlcode TUI (`zarlcode/tui`).
 The runner depends on six small consumer-implemented interfaces;
 everything else is pushed onto the consumer side.
 
-1. **LLM client** — [`Client`] (single method, streaming via `iter.Seq2[Chunk, error]`).
+1. **LLM client** — [`Client`] (single method returning lazy, synchronous `llm.CompletionStream`).
 2. **The loop** — `Runner.Run(ctx, TaskSpec) (TaskResult, error)`.
 3. **Dynamic tool list** — [`ToolSource`], re-snapshotted every iteration.
-4. **Live-reloadable system prompt** — [`PromptSource`], called at the start of every Run.
-5. **Event sink** — [`EventSink`] composite (5 sub-sinks), one method per event type.
+4. **Live-reloadable system prompt** — [`PromptSource`], called when each Run assembles its initial history.
+5. **Event sink** — [`EventSink`] composite (8 focused sub-sinks), one method per event type.
 6. **Compaction policy** — [`Compactor`], called between iterations to shrink history.
 
 Optional plumbing: [`Steerer`] (queued user messages), [`ConversationLock`]
@@ -49,24 +49,28 @@ Every state a consumer wants to mutate at runtime flows through a
 **pull-shaped** boundary:
 
 - **Tools**: `ToolSource.Tools()` returns `iter.Seq[tools.Tool]` — the runner re-reads every iteration. Register a tool mid-run and it's callable on the next turn.
-- **System prompt**: `PromptSource.System(ctx, vars)` is called at the start of every Run. A source backed by a watched file or a database row picks up changes between turns automatically.
+- **System prompt**: `PromptSource.System(ctx, vars)` is called when each `Run` assembles its initial history. A source backed by a watched file or database row picks up changes between runs.
 - **Steered messages**: `Steerer.Drain(ctx)` returns an `iter.Seq[llm.Message]` at the top of every iteration. An interactive harness (or the MCP notification bridge in `zkit/agent/mcp`) injects fresh user messages without restarting the loop.
-- **Compaction**: `Compactor.Compact(ctx, messages, lastUsage)` is called at the start of every iteration after the first. The compactor decides whether the next request would overflow and returns a shrunken history.
+- **Compaction**: `Compactor.Compact(ctx, messages, keepRecent)` is called at the start of every iteration after the first. The compactor decides whether the next request would overflow and returns a shrunken history.
 
 No watchers, no broadcast machinery. The runner asks; the source
 answers fresh.
 
 ## Key types
 
-- [`Client`] — single-method LLM interface (`Complete` returning `iter.Seq2[Chunk, error]`). `ClientFromProvider` adapts a wider `llm.Provider`.
+- [`Client`] — single-method LLM interface (`Complete` returning `llm.CompletionStream`). `ClientFromProvider` explicitly narrows an `llm.Provider`. Calling `Complete` only constructs the stream; work and operational errors begin during synchronous iteration.
 - [`ToolSource`] = [`Iterable`] + [`Executor`] — narrow read+dispatch contract the runner consumes.
 - [`ToolRegistry`] extends `ToolSource` with `Register` / `Unregister` for producer-side mutation.
-- [`EventSink`] — composite of [`ContentSink`], [`ToolSink`], [`ConversationSink`], [`SteerSink`], [`CompactionSink`]. [`NopSink`] provides no-op defaults so consumers can opt out of future events explicitly.
+- [`EventSink`] — composite of [`ContentSink`], [`ThinkingSink`], [`ToolSink`], [`WorkspaceWaitSink`], [`ConversationSink`], [`SteerSink`], [`CompactionSink`], and [`DiagnosticSink`]. [`NopSink`] provides no-op defaults so consumers can opt out of future events explicitly.
 - [`PromptSource`] — single-method system-prompt source. [`PromptFunc`] and [`StaticPrompt`] are convenience adapters.
 - [`Compactor`] — single-method history-shrinking policy. [`CompactFunc`] adapter.
 - [`Truncator`] — tool-result trimming policy. [`DefaultTruncator`] (no spill) and [`SpillingTruncator`] (writes to disk) ship in the package.
 - [`Steerer`] — single-method queued-message drain.
 - [`ConversationLock`] — cooperative mutex with a sync.Cond inside; yields cleanly to a real-time conversation.
+
+## Completion streaming
+
+`Client.Complete` returns a fully lazy, one-shot stream with no outer error. The runner ranges it synchronously: successful EOF completes the invocation, while a provider failure is one terminal zero-chunk error yield. Finish/usage observations are metadata rather than completion sentinels. Request state is borrowed through iteration and yielded reference-backed chunk state only through the callback, so retaining consumers clone synchronously. Cancellation must propagate into provider setup and reads; no chunks channel or producer goroutine sits between provider and runner.
 
 ## Sentinel errors
 

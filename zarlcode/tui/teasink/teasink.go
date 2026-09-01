@@ -93,6 +93,10 @@ type Sink struct {
 // fast streaming.
 const coalesceWindow = 16 * time.Millisecond
 
+// CoalesceWindow returns the maximum delay before buffered content is dispatched.
+// It is exposed so callers can synchronize virtual-time tests with Sink behavior.
+func CoalesceWindow() time.Duration { return coalesceWindow }
+
 // pumpBuffer is the depth of the channel between dispatch and the
 // pump goroutine. Sized to absorb a multi-second sub-agent burst
 // without stalling the runner: at ~200 events/s across three
@@ -384,6 +388,16 @@ func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 	})
 }
 
+// OnWorkspaceWaitStarted flushes pending content, then forwards the workspace wait event.
+func (s *Sink) OnWorkspaceWaitStarted(e runner.WorkspaceWaitStarted) {
+	s.flush()
+	s.dispatch(WorkspaceWaitStartedMsg{
+		TaskID: string(e.TaskID), Depth: e.Depth, ToolID: e.ToolID, ToolName: e.ToolName,
+		Access: e.Access, Paths: e.Paths, BlockerCount: e.BlockerCount,
+		ParentToolID: e.ParentToolID, Sequence: e.Sequence,
+	})
+}
+
 // OnToolCompleted forwards as ToolCompletedMsg.
 func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 	s.flush()
@@ -416,6 +430,16 @@ func (s *Sink) OnToolFailed(e runner.ToolFailed) {
 		Sequence:     e.Sequence,
 		Effects:      e.Effects,
 		Duration:     e.Duration,
+	})
+}
+
+// OnWorkspaceWaitEnded flushes pending content, then forwards the workspace wait event.
+func (s *Sink) OnWorkspaceWaitEnded(e runner.WorkspaceWaitEnded) {
+	s.flush()
+	s.dispatch(WorkspaceWaitEndedMsg{
+		TaskID: string(e.TaskID), Depth: e.Depth, ToolID: e.ToolID, ToolName: e.ToolName,
+		Outcome: e.Outcome, Duration: e.Duration,
+		ParentToolID: e.ParentToolID, Sequence: e.Sequence,
 	})
 }
 

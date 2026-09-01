@@ -15,12 +15,11 @@ func (m *UI) handleServiceAction(a serviceAction) tea.Cmd {
 		d.busy = a.op
 		d.output = ""
 	}
-	return serviceCmd(a.op)
+	return serviceCmd(m.appContext(), a.op)
 }
 
-func serviceCmd(op serviceOp) tea.Cmd {
+func serviceCmd(ctx context.Context, op serviceOp) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
 		var out bytes.Buffer
 		var err error
 		switch op {

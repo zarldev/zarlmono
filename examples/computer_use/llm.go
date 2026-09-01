@@ -28,7 +28,7 @@ Choices:
 %s
 
 Reply with only the exact answer choice text.`, visibleText, strings.Join(choices, "\n"))
-	seq, err := provider.Complete(ctx, llm.CompletionRequest{
+	seq := provider.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: "Answer with exactly one provided choice and no extra text."},
 			{Role: llm.RoleUser, Content: prompt},
@@ -37,9 +37,6 @@ Reply with only the exact answer choice text.`, visibleText, strings.Join(choice
 		Temperature: 0,
 	})
 	slog.DebugContext(ctx, "asking llm", "choices", choices)
-	if err != nil {
-		return "", err
-	}
 
 	var b strings.Builder
 	for chunk, err := range seq {
@@ -107,7 +104,7 @@ Sources:
 %s`, strings.Join(parts, "\n\n"))
 
 	slog.DebugContext(ctx, "generating quiz questions", "articles", len(summaries))
-	seq, err := provider.Complete(ctx, llm.CompletionRequest{
+	seq := provider.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: "Output only valid JSON arrays. No markdown, no explanation."},
 			{Role: llm.RoleUser, Content: prompt},
@@ -115,14 +112,11 @@ Sources:
 		MaxTokens:   4096,
 		Temperature: 0.7,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("generate quiz questions: %w", err)
-	}
 
 	var b strings.Builder
 	for chunk, err := range seq {
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("generate quiz questions: %w", err)
 		}
 		b.WriteString(chunk.Content)
 	}

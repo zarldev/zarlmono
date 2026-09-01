@@ -73,7 +73,7 @@ var _ LiveSink = nopLiveSink{}
 type LiveRunner struct {
 	ws    code.Workspace
 	sink  LiveSink
-	conv  conversation
+	conv  Conversation
 	queue *queueState
 
 	// mu guards the hot-swappable run target. A turn snapshots target under the
@@ -195,6 +195,12 @@ func newLivePlanStore() *livePlanStore {
 	return &livePlanStore{sink: nopLiveSink{}}
 }
 
+// LivePlanStore is the runner-side structured plan store.
+type LivePlanStore = livePlanStore
+
+// NewLivePlanStore returns an empty structured plan store.
+func NewLivePlanStore() *LivePlanStore { return newLivePlanStore() }
+
 func (p *livePlanStore) SetPlan(pl code.Plan) {
 	p.mu.Lock()
 	p.plan = clonePlan(pl)
@@ -253,6 +259,11 @@ func WithMCP(reg *dynamic.MCPRegistry, host *tools.Registry) options.Option[Live
 	return func(l *LiveRunner) { l.mcp, l.mcpHost = reg, host }
 }
 
+// WithComputerSessionFactory overrides browser-session construction.
+func WithComputerSessionFactory(factory ComputerSessionFactory) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.computer.newSession = factory }
+}
+
 // WithLiveSink overrides the no-op event sink. Passing nil is invalid.
 func WithLiveSink(s LiveSink) options.Option[LiveRunner] {
 	if s == nil {
@@ -282,10 +293,10 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 		fetchTool:     fetch.New(),
 		sink:          nopLiveSink{},
 	}
+	l.computer = &liveComputer{owner: l}
 	for _, opt := range opts {
 		opt(l)
 	}
-	l.computer = &liveComputer{owner: l}
 	l.planStore.sink = l.sink
 	return l
 }
@@ -422,6 +433,15 @@ func (l *LiveRunner) Verification() *agentcompact.VerificationState {
 	return l.operational.verificationState()
 }
 
+// RecordOperationalResult records one dispatched tool result in session operational state.
+// It is intended for integrations that dispatch tools outside the runner's wrapped source.
+func (l *LiveRunner) RecordOperationalResult(call tools.ToolCall, result *tools.ToolResult, dispatchErr error) {
+	if l == nil || l.operational == nil {
+		return
+	}
+	l.operational.record(call, result, dispatchErr)
+}
+
 // UnresolvedFailures returns the bounded latest unresolved tool failures.
 func (l *LiveRunner) UnresolvedFailures() []agentcompact.FailureState {
 	if l == nil || l.operational == nil {
@@ -497,7 +517,7 @@ func (l *LiveRunner) History() []llm.Message {
 	if l == nil {
 		return nil
 	}
-	return l.conv.snapshot()
+	return l.conv.Snapshot()
 }
 
 // RestoreHistory replaces the conversation context when the intro resumes a
@@ -893,7 +913,7 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, d
 	}
 	base := tools.Source(reg)
 	if l.mcpHost != nil {
-		base = newCompositeSource(base, l.mcpHost)
+		base = ComposeSources(base, l.mcpHost)
 	}
 	base = newGuidanceSource(base, l.instructionNestedSnapshot())
 
@@ -933,29 +953,27 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, d
 		if err != nil {
 			return nil, nil, fmt.Errorf("program boundary guardrails: %w", err)
 		}
-		guarded = newToolBoundarySource(programSource, programBoundary.Source, programtools.ToolName)
+		guarded = RouteToolBoundary(programSource, programBoundary.Source, programtools.ToolName)
 	}
 	return guarded, reg, nil
 }
 
-// buildTurn assembles the runner for one turn: a snapshot of the
-// re-pointable run target, the guarded standard tool set, the shared tuned
-// options, the live-resolved compactor, and the late-registered spawn tool.
-// RunFn (interactive) calls this; RunHeadless calls buildHeadlessTurn. Both
-// route through buildTurnWithSource so the loop body is shared and cannot
-// drift — they differ only in guardrail policy (interactive test-edit is
-// advisory; headless/eval is strict).
-func (l *LiveRunner) buildTurn(ctx context.Context) (*runner.Runner, error) {
-	// Interactive only: the cockpit's context-window graph consumes the
-	// per-iteration breakdown. Headless/eval (buildHeadlessTurn) leave it off.
-	r, _, _, err := l.buildTurnWithSource(ctx, l.source, runner.WithContextBreakdown())
-	return r, err
+func (l *LiveRunner) buildHeadlessTurn(ctx context.Context, extraOpts ...options.Option[runner.Runner]) (*runner.Runner, *turnResources, error) {
+	r, _, resources, err := l.buildTurnWithSource(ctx, l.headlessSource, extraOpts...)
+	return r, resources, err
 }
-func (l *LiveRunner) buildHeadlessTurn(ctx context.Context, extraOpts ...options.Option[runner.Runner]) (*runner.Runner, *spawn.Group, error) {
-	r, _, group, err := l.buildTurnWithSource(ctx, l.headlessSource, extraOpts...)
-	return r, group, err
+
+type turnResources struct {
+	group       *spawn.Group
+	coordinator *tools.WorkspaceCoordinator
 }
-func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, *spawn.Group, error) {
+
+func (r *turnResources) Close(ctx context.Context) error {
+	r.coordinator.BeginShutdown()
+	return r.group.Close(ctx)
+}
+
+func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, *turnResources, error) {
 	// Snapshot the (re-pointable) run target for this turn. The PLAN flag
 	// is still read live by prompt/source closures so a mid-turn toggle
 	// gates the next dispatch.
@@ -1037,7 +1055,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 		return nil, false, nil, err
 	}
 	src = newOperationalSource(src, l.operational)
-	evidence := newCompletionEvidence()
+	evidence := NewCompletionEvidence()
 	spawnConcurrent := 0
 	spawnRuntime := time.Duration(0)
 	if l.settings != nil {
@@ -1047,7 +1065,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	group := spawn.NewGroup(spawn.WithMaxConcurrent(spawnConcurrent), spawn.WithMaxRuntime(spawnRuntime))
 	coordinator := tools.NewWorkspaceCoordinator()
 	src = coderunner.CoordinateWorkspace(src, coordinator)
-	visible = NewModeFilteredSource(newEvidenceSource(src, evidence), l.isPlan)
+	visible = NewModeFilteredSource(WithCompletionEvidence(src, evidence), l.isPlan)
 	opts = append(opts, extraOpts...)
 	opts = append(opts, runner.WithTurnQuality(NewAgentAwareTurnQuality(newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence), group)))
 	opts = append(opts, runner.WithTools(visible))
@@ -1056,7 +1074,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	// runner exists (the registry enumerates lazily, so it's visible to
 	// this turn). spawnDepth 0 leaves spawning disabled.
 	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth, spawnMaxIter)
-	return r, thinking, group, nil
+	return r, thinking, &turnResources{group: group, coordinator: coordinator}, nil
 }
 
 // ManualCompactionResult reports the effect of a user-triggered conversation
@@ -1130,7 +1148,7 @@ func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, 
 		if err != nil {
 			return nil, err
 		}
-		r, thinking, group, err := l.buildTurnWithSource(runCtx, l.source, runner.WithContextBreakdown())
+		r, thinking, resources, err := l.buildTurnWithSource(runCtx, l.source, runner.WithContextBreakdown())
 		if err != nil {
 			finish()
 			return nil, err
@@ -1139,7 +1157,7 @@ func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, 
 			defer finish()
 			spec.Thinking = thinking
 			result := r.Run(runCtx, spec)
-			if closeErr := group.Close(runCtx); closeErr != nil && result.Err == nil {
+			if closeErr := resources.Close(runCtx); closeErr != nil && result.Err == nil {
 				result.Reason = runner.TerminalError
 				result.Err = closeErr
 			}

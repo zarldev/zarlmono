@@ -52,7 +52,7 @@ func TestProgramCallsAndEmitsFilteredResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := src.Execute(context.Background(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
+	res, err := src.Execute(t.Context(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
 r = call("echo", {"value": "kept"})
 emit({"ok": r["ok"], "value": r["data"]["value"]})
 `}})
@@ -100,7 +100,7 @@ func TestProgramEmitsNestedObserverEventsInDeclarationOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	obs := &recordingNestedObserver{}
-	ctx := tools.ContextWithNestedToolObserver(context.Background(), obs)
+	ctx := tools.ContextWithNestedToolObserver(t.Context(), obs)
 	res, err := src.Execute(ctx, tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
 rs = call_many([
   {"name": "echo", "args": {"value": "a"}},
@@ -149,7 +149,7 @@ func TestToolsHidesOnlyProgramPolicyTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := map[tools.ToolName]bool{}
-	for tool := range src.Tools(context.Background()) {
+	for tool := range src.Tools(t.Context()) {
 		seen[tool.Definition().Name] = true
 	}
 	if !seen[program.ToolName] || !seen["write"] || !seen["bash"] {
@@ -168,7 +168,7 @@ func TestDenyByDefaultAndNoEmitFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := src.Execute(context.Background(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit(call("echo", {}))`}})
+	res, err := src.Execute(t.Context(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit(call("echo", {}))`}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestDenyByDefaultAndNoEmitFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err = src.Execute(context.Background(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `x = 1`}})
+	res, err = src.Execute(t.Context(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `x = 1`}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestCallManyPreservesOrderAndLimitsConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := src.Execute(context.Background(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
+	res, err := src.Execute(t.Context(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
 rs = call_many([
   {"name": "echo", "args": {"value": "a"}},
   {"name": "echo", "args": {"value": "b"}},
@@ -257,7 +257,7 @@ func TestProgramNormalizesTypedToolResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := src.Execute(context.Background(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit(call("typed", {})["data"])`}})
+	res, err := src.Execute(t.Context(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit(call("typed", {})["data"])`}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestProgramInvalidEscapeSuggestsRawString(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := src.Execute(context.Background(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit("\(")`}})
+	res, err := src.Execute(t.Context(), tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit("\(")`}})
 	if err != nil {
 		t.Fatal(err)
 	}

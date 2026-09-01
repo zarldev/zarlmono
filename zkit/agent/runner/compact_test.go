@@ -76,7 +76,7 @@ func TestRun_CompactorSkippedOnFirstIteration(t *testing.T) {
 	// One-turn run that completes on iteration 0 — compactor must
 	// not be invoked.
 	provider := &fakeProvider{
-		turns: [][]llm.CompletionChunk{{chunkText("done"), chunkDone()}},
+		turns: [][]llm.CompletionChunk{{chunkText("done")}},
 	}
 	reg := newRegistry()
 	c := &trackingCompactor{}
@@ -103,9 +103,9 @@ func TestRun_CompactorInvokedBetweenIterations(t *testing.T) {
 	// Three iterations: tool, tool, text.
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("a", "echo", `{}`), chunkDone()},
-			{chunkToolCall("b", "echo", `{}`), chunkDone()},
-			{chunkText("done"), chunkDone()},
+			{chunkToolCall("a", "echo", `{}`)},
+			{chunkToolCall("b", "echo", `{}`)},
+			{chunkText("done")},
 		},
 	}
 	reg := newRegistry(stubTool{name: "echo"})
@@ -139,9 +139,9 @@ func TestRun_CompactorAppliesAndPublishesEvent(t *testing.T) {
 
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("a", "echo", `{}`), chunkDone()},
-			{chunkToolCall("b", "echo", `{}`), chunkDone()},
-			{chunkText("done"), chunkDone()},
+			{chunkToolCall("a", "echo", `{}`)},
+			{chunkToolCall("b", "echo", `{}`)},
+			{chunkText("done")},
 		},
 	}
 	reg := newRegistry(stubTool{name: "echo"})
@@ -185,9 +185,9 @@ func TestRun_InPlaceCompactionIsAdopted(t *testing.T) {
 	// Three iterations → two compact calls (iter 0 skipped).
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("a", "echo", `{}`), chunkDone()},
-			{chunkToolCall("b", "echo", `{}`), chunkDone()},
-			{chunkText("done"), chunkDone()},
+			{chunkToolCall("a", "echo", `{}`)},
+			{chunkToolCall("b", "echo", `{}`)},
+			{chunkText("done")},
 		},
 	}
 	reg := newRegistry(stubTool{name: "echo"})

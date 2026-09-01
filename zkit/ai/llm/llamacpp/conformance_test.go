@@ -42,10 +42,10 @@ func TestProvider_Conformance(t *testing.T) {
 				Timeout:         3 * time.Second,
 			},
 			{
-				Name:    "StreamingDone_FinalChunkMarked",
+				Name:    "StreamingEOF_FinishMetadataReported",
 				Handler: openaiStyleSimpleStream(),
 				Request: providertest.SimpleRequest("hi"),
-				Assert:  providertest.AssertStreamingDoneSet,
+				Assert:  providertest.AssertStreamingEOF,
 			},
 			{
 				Name:    "Usage_ReportedOnFinalChunk",

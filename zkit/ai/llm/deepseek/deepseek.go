@@ -5,7 +5,6 @@ package deepseek
 import (
 	"context"
 	"encoding/json"
-	"iter"
 	"strings"
 	"time"
 
@@ -77,11 +76,17 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) (llm.Provider,
 // Name returns the provider name.
 func (p *Provider) Name() string { return llm.LLMProviders.DEEPSEEK.String() }
 
-// Complete delegates to the OpenAI-compatible transport's native iter.Seq2
-// stream after rewriting any response_format DeepSeek's hosted API can't
-// accept (see adaptResponseFormat).
-func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	return p.inner.Complete(ctx, adaptResponseFormat(req))
+// Complete lazily adapts the borrowed request, then delegates to the
+// OpenAI-compatible transport. Only structures changed by the adaptation are
+// cloned, and adaptation begins when the stream is invoked.
+func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		if cause := context.Cause(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
+		}
+		p.inner.Complete(ctx, adaptResponseFormat(req))(yield)
+	}
 }
 
 // adaptResponseFormat rewrites a request's response_format into the shape

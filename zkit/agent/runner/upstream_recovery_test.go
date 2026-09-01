@@ -22,11 +22,9 @@ import (
 // payload and llama-server returned 500 before the chunks reached
 // our downstream repair.Unmarshal).
 
-// chunkErr builds a stream chunk carrying the given error. The
-// runner's drain loop translates this into streamErr and exits the
-// iteration's read phase.
+// chunkErr builds the fake provider's terminal-error marker.
 func chunkErr(err error) llm.CompletionChunk {
-	return llm.CompletionChunk{Error: err}
+	return llm.CompletionChunk{Content: "\x00runner-test-error:" + err.Error()}
 }
 
 func TestRun_RecoversFromUpstreamToolCallJSONError(t *testing.T) {
@@ -40,7 +38,7 @@ func TestRun_RecoversFromUpstreamToolCallJSONError(t *testing.T) {
 			{chunkErr(errors.New(
 				"streaming error: 500 Internal Server Error " +
 					`{"code":500,"message":"Failed to parse tool call arguments as JSON: bad escape"}`))},
-			{chunkText("recovered"), chunkDone()},
+			{chunkText("recovered")},
 		},
 	}
 	reg := newRegistry()
@@ -149,7 +147,7 @@ func TestRun_RetriesEmptyStream(t *testing.T) {
 	prov := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
 			{chunkErr(errors.New("stream: unexpected end of JSON input"))},
-			{chunkText("recovered after empty stream"), chunkDone()},
+			{chunkText("recovered after empty stream")},
 		},
 	}
 	reg := newRegistry()

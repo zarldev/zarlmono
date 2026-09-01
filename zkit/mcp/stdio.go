@@ -278,8 +278,14 @@ func (t *stdioTransport) writeFrame(ctx context.Context, payload any) error {
 	}()
 	select {
 	case e := <-werr:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		return e
 	case <-t.done:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		return errors.New("stdio transport closed")
 	case <-ctx.Done():
 		// The write is stuck (server not draining stdin): the frame is only

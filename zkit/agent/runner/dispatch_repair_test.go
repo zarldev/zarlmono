@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +26,7 @@ type singleCallProvider struct {
 	finalSay string
 }
 
-func (p *singleCallProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *singleCallProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		switch p.iter.Add(1) {
 		case 1:
@@ -44,7 +43,7 @@ func (p *singleCallProvider) Complete(_ context.Context, _ llm.CompletionRequest
 		default:
 			yield(llm.CompletionChunk{Content: p.finalSay}, nil)
 		}
-	}, nil
+	}
 }
 
 func (p *singleCallProvider) Name() string { return "single-call" }

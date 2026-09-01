@@ -105,10 +105,11 @@ func PatchExistingPaths(text string) []string {
 // files.
 func (t *ApplyPatchTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameApplyPatch,
-		Description: "Apply a Codex-style patch across one or more workspace files. Patch body uses the standard `*** Begin Patch` / `*** End Patch` envelope with Add / Update / Delete sections and `@@` hunks. Commits atomically — any hunk failure rolls back the whole patch. Best fit for multi-file changes; for single-line tweaks `edit` is simpler.",
-		Parameters:  tools.SchemaFor[ApplyPatchArgs](),
-		Mutates:     true,
+		Name:           ToolNameApplyPatch,
+		Description:    "Apply a Codex-style patch across one or more workspace files. Patch body uses the standard `*** Begin Patch` / `*** End Patch` envelope with Add / Update / Delete sections and `@@` hunks. Commits atomically — any hunk failure rolls back the whole patch. Best fit for multi-file changes; for single-line tweaks `edit` is simpler.",
+		WorkspaceScope: tools.WorkspaceScopePatch("patch"),
+		Parameters:     tools.SchemaFor[ApplyPatchArgs](),
+		Mutates:        true,
 	}
 }
 

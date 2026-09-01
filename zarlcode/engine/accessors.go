@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 
+	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -146,4 +147,9 @@ func (s *Settings) WorkspaceRoot() string {
 		return ""
 	}
 	return s.wsRoot
+}
+
+// GuardrailDeps returns the resolved guardrail dependencies for an interactive or headless turn.
+func (l *LiveRunner) GuardrailDeps(ctx context.Context, headless bool) guardrails.Deps {
+	return l.guardrailDepsFor(ctx, headless)
 }

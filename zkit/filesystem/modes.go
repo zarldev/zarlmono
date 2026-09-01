@@ -32,7 +32,9 @@ var filePermissionBits = [...]struct {
 	{mask: 0o400, mode: 0o400},
 }
 
-func fileModeFromPermissionBits(mode int) fs.FileMode {
+// FileModeFromPermissionBits converts an integer permission mask to an fs.FileMode.
+// Non-permission and non-positive bits are ignored.
+func FileModeFromPermissionBits(mode int) fs.FileMode {
 	if mode <= 0 {
 		return 0
 	}

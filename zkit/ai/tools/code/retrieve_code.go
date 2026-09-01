@@ -58,7 +58,8 @@ func (t *RetrieveCodeTool) Definition() tools.ToolSpec {
 		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Deterministically retrieve relevant source chunks without embeddings or LSP. " +
 			"Go files are split by SyntaxChunker (go/parser+go/ast) into whole funcs, methods, and types, then ranked by stable lexical matching against query tokens, paths, symbols, and source text.",
-		Parameters: tools.SchemaFor[RetrieveCodeArgs](),
+		WorkspaceScope: tools.WorkspaceScopeArgument("root"),
+		Parameters:     tools.SchemaFor[RetrieveCodeArgs](),
 	}
 }
 

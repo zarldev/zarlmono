@@ -423,7 +423,7 @@ func findAgentCandidate(agents []AgentCandidate, name string) (AgentCandidate, b
 type Args struct {
 	Prompt        string `json:"prompt" doc:"The task for the sub-agent. Be specific — the sub-agent has none of your context."`
 	Agent         string `json:"agent,omitempty" doc:"Optional named agent to dispatch to (must be one returned by list_agents). Empty/omitted = use the parent's provider/model/prompt."`
-	Mode          string `json:"mode,omitempty" doc:"Optional work mode: 'explore' (read-only investigation — the host blocks file edits and shell), 'verify' (run tests/builds, no file edits), or 'implement' (full tool surface, the default). When the host enforces it, an explore sub-agent literally cannot write or edit files."`
+	Mode          string `json:"mode,omitempty" doc:"Optional work mode: 'explore' (read-only investigation), 'verify' (tests/builds without file edits), or 'implement' (full tool surface, the default). When the host enforces work-mode policies, disallowed tools are blocked literally."`
 	MaxIterations int    `json:"max_iterations,omitempty" doc:"Optional non-negative iteration cap. Prefer omitting (0) — the host applies the configured sub-agent limit automatically."`
 }
 

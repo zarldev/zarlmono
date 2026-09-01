@@ -74,19 +74,6 @@ func dashboardColumnCount(innerW int) int {
 	}
 }
 
-func dashboardMaxScroll(columns [][]string, visibleH int) int {
-	maxLines := 0
-	for _, lines := range columns {
-		if len(lines) > maxLines {
-			maxLines = len(lines)
-		}
-	}
-	if visibleH <= 0 || maxLines <= visibleH {
-		return 0
-	}
-	return maxLines - visibleH
-}
-
 func (m *UI) dashboardGeometry() (int, int) {
 	r := m.dashboardRect()
 	innerW, innerH := r.Dx()-4, r.Dy()-2
@@ -108,10 +95,6 @@ func (m *UI) dashboardMaxScroll() int {
 		return 0
 	}
 	return len(contentLines) - visibleH
-}
-
-func (m *UI) clampDashboardScroll() {
-	m.clampContextViewScroll()
 }
 
 func (m *UI) clampContextViewScroll() {

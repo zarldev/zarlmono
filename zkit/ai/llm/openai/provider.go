@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
 	"net/http"
 	"strconv"
 	"strings"
@@ -104,14 +103,16 @@ func (p *Provider) Name() string {
 	return llm.LLMProviders.OPENAI.String()
 }
 
-// Complete generates a completion using OpenAI's API as an iter.Seq2 — the
-// stream's chunks are yielded directly (errors as the second value), no
-// channel.
-func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+// Complete constructs a fully lazy OpenAI completion stream.
+func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
+		if cause := contextError(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
+		}
 		plan, err := planRequest(p.model, req)
 		if err != nil {
-			yield(llm.CompletionChunk{Done: true}, err)
+			yield(llm.CompletionChunk{}, err)
 			return
 		}
 		switch plan := plan.(type) {
@@ -124,9 +125,38 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (ite
 		case responsesPlan:
 			p.responsesCompletion(ctx, req, plan, yield)
 		default:
-			yield(llm.CompletionChunk{Done: true}, fmt.Errorf("openai: unhandled request plan %T", plan))
+			yield(llm.CompletionChunk{}, fmt.Errorf("openai: unhandled request plan %T", plan))
 		}
-	}, nil
+	}
+}
+
+func contextError(ctx context.Context) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	return ctx.Err()
+}
+
+func normalizeContextError(ctx context.Context, err error) error {
+	if cause := contextError(ctx); cause != nil {
+		return cause
+	}
+	return err
+}
+
+func semanticFinishReason(reason string) llm.FinishReason {
+	switch reason {
+	case "stop":
+		return llm.FinishReasons.STOP
+	case "length":
+		return llm.FinishReasons.LENGTH
+	case "tool_calls", "function_call":
+		return llm.FinishReasons.TOOLCALLS
+	case "content_filter":
+		return llm.FinishReasons.CONTENTFILTER
+	default:
+		return llm.FinishReasons.UNKNOWN
+	}
 }
 
 // streamCompletion handles streaming responses using the official OpenAI SDK,
@@ -198,15 +228,8 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 
 	// Stream events following the official example pattern.
 	//
-	// finishReason + finalUsage accumulate across chunks because
-	// llama.cpp (and OpenAI under stream_options.include_usage) emit
-	// finish_reason on one chunk and usage on a *separate* trailing
-	// chunk with choices=[]. The old code returned early on the
-	// finish_reason chunk and never observed the usage chunk, so
-	// downstream lastUsage was permanently zero — which silently
-	// disabled the runner's token-pressure compaction gate. Keep
-	// draining until stream.Next() returns false; emit the terminal
-	// Done chunk once, after the loop, with whatever usage we saw.
+	// Keep draining after finish_reason because usage commonly arrives in a
+	// separate trailing chunk. Both are emitted as ordinary metadata below.
 	var finishReason string
 	var finalUsage openai.CompletionUsage
 	var usageSeen bool
@@ -229,26 +252,26 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			}
 
 			if choice.Delta.Content != "" {
-				// FinishReason is captured below and emitted on the single
-				// terminal Done chunk only — not on content deltas — so the
-				// "final chunk carries the finish reason" contract holds.
+				recoveredArtifact := false
 				// Recover tool calls from <tool_calls> artifacts in streamed content.
 				if toolparse.IsToolCallArtifactPrefix(choice.Delta.Content) {
 					result := toolparse.ParseArtifact(choice.Delta.Content)
 					if result.HighConfidence {
 						if !yield(llm.CompletionChunk{
-							Content:   result.RemainingContent,
-							Done:      true,
-							ToolCalls: result.Calls,
+							Content:      result.RemainingContent,
+							ToolCalls:    result.Calls,
+							FinishReason: llm.FinishReasons.TOOLCALLS,
 						}, nil) {
 							return
 						}
-						return
+						recoveredArtifact = true
 					}
 				}
 
-				if !yield(llm.CompletionChunk{Content: choice.Delta.Content}, nil) {
-					return
+				if !recoveredArtifact {
+					if !yield(llm.CompletionChunk{Content: choice.Delta.Content}, nil) {
+						return
+					}
 				}
 			}
 
@@ -298,34 +321,30 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		// whichever shape arrives. Any non-zero token field counts as
 		// "real usage data" — zero across all three means the server
 		// either didn't honour include_usage or hasn't emitted it yet.
-		if evt.Usage.TotalTokens > 0 || evt.Usage.PromptTokens > 0 || evt.Usage.CompletionTokens > 0 {
+		if strings.Contains(evt.RawJSON(), `"usage"`) {
 			finalUsage = evt.Usage
 			usageSeen = true
 		}
 	}
 
 	if err := stream.Err(); err != nil {
-		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("stream: %w", userFacingAPIError(err)))
+		yield(llm.CompletionChunk{}, fmt.Errorf("stream: %w", normalizeContextError(ctx, userFacingAPIError(err))))
 		return
 	}
 
-	// One terminal chunk per stream. Usage is attached only when the
-	// server actually emitted it (otherwise we'd write zero values
-	// into runner.lastUsage and silently re-disable the compaction
-	// gate the include_usage flag is supposed to feed).
-	done := llm.CompletionChunk{
-		Done:         true,
-		FinishReason: finishReason,
-	}
+	metadata := llm.CompletionChunk{FinishReason: semanticFinishReason(finishReason)}
 	if usageSeen {
-		done.Usage = &llm.Usage{
+		metadata.Usage = llm.Usage{
 			PromptTokens:     int(finalUsage.PromptTokens),
 			CompletionTokens: int(finalUsage.CompletionTokens),
 			TotalTokens:      int(finalUsage.TotalTokens),
 			CachedTokens:     int(finalUsage.PromptTokensDetails.CachedTokens),
 		}
+		metadata.UsageReported = true
 	}
-	yield(done, nil)
+	if metadata.FinishReason != llm.FinishReasons.UNKNOWN || metadata.UsageReported {
+		yield(metadata, nil)
+	}
 }
 
 // reasoningFieldCandidates is the ordered list of streaming-delta
@@ -577,10 +596,11 @@ func (p *Provider) nonStreamCompletion(
 	completion, err := p.client.Chat.Completions.New(ctx, params,
 		p.extraJSONOptions(req)...)
 	if err != nil {
-		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("completion: %w", userFacingAPIError(err)))
+		yield(llm.CompletionChunk{}, fmt.Errorf("completion: %w", normalizeContextError(ctx, userFacingAPIError(err))))
 		return
 	}
 
+	usageReported := strings.Contains(completion.RawJSON(), `"usage"`)
 	if len(completion.Choices) > 0 {
 		choice := completion.Choices[0]
 
@@ -602,36 +622,40 @@ func (p *Provider) nonStreamCompletion(
 		if len(toolCalls) == 0 && toolparse.IsToolCallArtifactPrefix(choice.Message.Content) {
 			result := toolparse.ParseArtifact(choice.Message.Content)
 			if result.HighConfidence {
-				yield(llm.CompletionChunk{
+				if !yield(llm.CompletionChunk{
 					Content:      result.RemainingContent,
 					Thinking:     extractReasoningFromMessage(choice.Message),
-					FinishReason: choice.FinishReason,
-					Done:         true,
+					FinishReason: semanticFinishReason(choice.FinishReason),
 					ToolCalls:    result.Calls,
-					Usage: &llm.Usage{
+					Usage: llm.Usage{
 						PromptTokens:     int(completion.Usage.PromptTokens),
 						CompletionTokens: int(completion.Usage.CompletionTokens),
 						TotalTokens:      int(completion.Usage.TotalTokens),
 						CachedTokens:     int(completion.Usage.PromptTokensDetails.CachedTokens),
 					},
-				}, nil)
+					UsageReported: usageReported,
+				}, nil) {
+					return
+				}
 				return
 			}
 		}
 
-		yield(llm.CompletionChunk{
+		if !yield(llm.CompletionChunk{
 			Content:      choice.Message.Content,
 			Thinking:     extractReasoningFromMessage(choice.Message),
-			FinishReason: choice.FinishReason,
-			Done:         true,
+			FinishReason: semanticFinishReason(choice.FinishReason),
 			ToolCalls:    toolCalls,
-			Usage: &llm.Usage{
+			Usage: llm.Usage{
 				PromptTokens:     int(completion.Usage.PromptTokens),
 				CompletionTokens: int(completion.Usage.CompletionTokens),
 				TotalTokens:      int(completion.Usage.TotalTokens),
 				CachedTokens:     int(completion.Usage.PromptTokensDetails.CachedTokens),
 			},
-		}, nil)
+			UsageReported: usageReported,
+		}, nil) {
+			return
+		}
 	}
 }
 

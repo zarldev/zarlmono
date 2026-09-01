@@ -38,9 +38,6 @@ func (m *UI) editFileCmd(path string) tea.Cmd {
 // VISUAL, then EDITOR, then vi. The value may carry flags (e.g. "code -w" /
 // "emacs -nw"), which are split off.
 func editorCommand(ctx context.Context, path, configured string) *exec.Cmd {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	editor := strings.TrimSpace(configured)
 	if editor == "" {
 		editor = firstNonEmptyEnv("ZARLCODE_EDITOR", "VISUAL", "EDITOR")

@@ -216,7 +216,10 @@ func (s *Store) BackfillResultProviderModel(ctx context.Context, runID, driverNa
 	if err != nil {
 		return 0, fmt.Errorf("backfill provider/model %q/%q: %w", runID, driverName, err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count backfilled provider/model rows %q/%q: %w", runID, driverName, err)
+	}
 	return n, nil
 }
 

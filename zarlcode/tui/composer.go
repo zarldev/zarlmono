@@ -151,6 +151,13 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.overlay.push(newConversationActionsDialog())
 		return nil
 	}
+	if msg.String() == "ctrl+n" {
+		if m.intro != nil {
+			return m.handleIntroKey(msg)
+		}
+		m.openSessionNameDialog()
+		return nil
+	}
 	if cmd, ok := m.handleGlobalShortcut(msg); ok {
 		return cmd
 	}
@@ -191,7 +198,7 @@ func (m *UI) handleStartupFailureKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "ctrl+w":
-		m.overlay.push(newWorkingSetPane(m.session, m.live, m.session.WorkspaceDir))
+		m.overlay.push(newWorkingSetPane(m.appContext(), m.session, m.live, m.session.WorkspaceDir))
 		return nil, true
 	case "ctrl+y":
 		if m.live != nil {
@@ -199,7 +206,7 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case "ctrl+o":
-		m.overlay.push(newInspector(BuildInspectorSnapshot(m.session, m.live, nil)))
+		m.overlay.push(newInspector(BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)))
 		return nil, true
 	case "ctrl+b":
 		m.session.StateSidebarHidden = !m.session.StateSidebarHidden
@@ -228,8 +235,13 @@ func (m *UI) handleShellShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 
 func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
+	case "ctrl+k":
+		m.openCommandPalette()
+		return nil, true
+	case "ctrl+shift+c":
+		return m.copyLastAssistantResponse(), true
 	case "ctrl+f":
-		viewer := newFileViewer(m.session.WorkspaceDir)
+		viewer := newFileViewer(m.appContext(), m.session.WorkspaceDir)
 		m.overlay.push(viewer)
 		return m.fileViewerInitialCmd(viewer), true
 	case "ctrl+e":
@@ -239,7 +251,7 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	case "ctrl+h":
 		if m.settings != nil {
-			m.overlay.push(newToolHistory(m.settings.Store, m.session.ID))
+			m.overlay.push(newToolHistory(m.appContext(), m.settings.Store, m.session.ID))
 		}
 		return nil, true
 	case "ctrl+t":
@@ -296,9 +308,17 @@ func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.timeline.selectionActive() {
 		return m.handleSelectionKey(msg)
 	}
-	// Browsing freezes the transcript viewport, not the composer. Printable input
-	// takes precedence over vim-style browse mnemonics; dedicated navigation keys
-	// continue to move through the transcript.
+	// Browsing freezes the transcript viewport, not the composer. Dedicated
+	// navigation keys and the documented v/i browse commands remain controls;
+	// other printable text keeps editing the prompt while scrolled back.
+	switch msg.String() {
+	case "v":
+		m.timeline.startSelection()
+		return nil
+	case "i":
+		m.timeline.exitBrowse()
+		return nil
+	}
 	if msg.Text != "" {
 		return m.handleComposerKey(msg)
 	}
@@ -326,7 +346,7 @@ func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.timeline.pageUp()
 	case "pgdown":
 		m.timeline.pageDown()
-	case "enter":
+	case "enter", "space", " ":
 		m.timeline.toggleSelected()
 	}
 	return nil
@@ -392,9 +412,15 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "down":
 		m.nextInputHistory()
 	case "enter":
-		if text := m.composer.submit(); text != "" {
-			m.rememberInput(text)
-			return m.submit(text)
+		if text := strings.TrimSpace(m.composer.text()); text != "" {
+			cmd, accepted := m.acceptSubmit(text)
+			if accepted {
+				m.composer.setText("")
+				m.rememberInput(text)
+				m.draftScheduleSuppressed = true
+				return tea.Batch(cmd, m.clearDraftCmd())
+			}
+			return cmd
 		}
 	case "backspace":
 		m.composer.backspace()
@@ -522,19 +548,27 @@ func (m *UI) handlePaste(content string) {
 // it renders in the transcript as a pending item and is picked up by the
 // runner at the next Steerer drain point (or promoted to a follow-up turn
 // on completion when the runner never reaches another drain).
+// The first real prompt also seeds a generated session label after slash-command
+// handling and before dispatch; generated labels never claim manual provenance.
 func (m *UI) submit(text string) tea.Cmd {
+	cmd, _ := m.acceptSubmit(text)
+	return cmd
+}
+
+func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 	if strings.HasPrefix(text, "/") {
-		return m.handleSlashSubmit(text)
+		return m.handleSlashSubmit(text), true
 	}
 	if m.session.Run.Running && m.live != nil {
 		if len(m.pendingAttachments) > 0 {
 			m.session.SetErrorToast("image attachments can only be sent with a new turn")
-			return m.toastExpiryCmd()
+			return m.toastExpiryCmd(), false
 		}
 		m.live.QueueInput(text)
 		m.timeline.addQueuedUser(text)
-		return nil
+		return nil, true
 	}
+	m.generateFirstPromptLabel(text)
 	if m.live != nil {
 		attachments := m.attachmentParts()
 		m.pendingAttachments = nil
@@ -542,13 +576,20 @@ func (m *UI) submit(text string) tea.Cmd {
 			m.startupPrompt = text
 			m.startupAttachments = attachments
 			m.session.SetToast("finishing startup before the first turn…")
-			return m.toastExpiryCmd()
+			return m.toastExpiryCmd(), true
 		}
-		return RunFnWithAttachments(m.appContext(), m.live, text, attachments)
+		return RunFnWithAttachments(m.appContext(), m.live, text, attachments), true
 	}
 	if m.runFn != nil {
-		return m.runFn(text)
+		return m.runFn(text), true
 	}
 	m.timeline.addUser(text)
-	return nil
+	return nil, true
+}
+
+func (m *UI) generateFirstPromptLabel(prompt string) {
+	if m.session.LabelManual || m.session.Label != "" {
+		return
+	}
+	m.session.Label = normalizeSessionLabel(prompt)
 }

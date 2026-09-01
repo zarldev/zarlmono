@@ -141,19 +141,10 @@ func (s *Summary) Compact(ctx context.Context, history []llm.Message, keepRecent
 		Temperature: 0.2,
 		Stream:      true,
 	}
-	stream, err := s.Provider.Complete(ctx, req)
+	body, err := collectContent(s.Provider.Complete(ctx, req), "Summary")
 	if err != nil {
-		return Result{}, fmt.Errorf("compact.Summary: provider complete: %w", err)
+		return Result{}, err
 	}
-
-	var summary strings.Builder
-	for chunk, cerr := range stream {
-		if cerr != nil {
-			return Result{}, fmt.Errorf("compact.Summary: stream: %w", cerr)
-		}
-		summary.WriteString(chunk.Content)
-	}
-	body := strings.TrimSpace(summary.String())
 	if body == "" {
 		return Result{}, errors.New("compact.Summary: model returned empty summary")
 	}

@@ -65,6 +65,7 @@ func (t *SavePlanTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:            ToolNameSavePlan,
 		WorkspaceAccess: tools.WorkspaceAccesses.WRITE,
+		WorkspaceScope:  tools.WorkspaceScopeFixed(".zarlcode/plans"),
 		Description: "Save a plan-mode artifact to .zarlcode/plans/<name>.md. " +
 			"Use at the end of plan-mode work to persist the proposal as a " +
 			"markdown document the user can revisit, edit, or share. Writes " +

@@ -230,6 +230,24 @@ func (s *Settings) ConfirmQuit(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyConfirmQuit, "on") == "on"
 }
 
+const (
+	notificationSoundsOff        = "off"
+	notificationSoundsCompletion = "completion"
+	notificationSoundsAll        = "all"
+)
+
+// NotificationSounds resolves terminal bell notifications. Valid values are
+// "off", "completion", and "all"; unset or invalid values default to completion.
+func (s *Settings) NotificationSounds(ctx context.Context) string {
+	value := s.setting(ctx, prefs.KeyNotificationSounds, notificationSoundsCompletion)
+	switch value {
+	case notificationSoundsOff, notificationSoundsCompletion, notificationSoundsAll:
+		return value
+	default:
+		return notificationSoundsCompletion
+	}
+}
+
 // SudoAskpass resolves whether sudo -A integration should be exposed to bash
 // subprocesses. Off by default: enabling it lets shell commands trigger a TUI
 // password prompt via a private Unix socket.

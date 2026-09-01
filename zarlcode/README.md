@@ -85,6 +85,8 @@ The TUI is there to keep the run legible. Tool calls, command output, diffs,
 sub-agent results, context pressure, and changed files are visible while the
 model works, instead of disappearing into a log stream.
 
+Quality-of-life state is local too: composer drafts survive an early quit, saved sessions can be searched, pinned, renamed, or deleted from the intro screen, and `Ctrl+K` provides a searchable command palette. Active turns best-effort prevent system sleep, while configurable terminal bells can notify you when work completes.
+
 Sessions are local and resumable. Provider keys live in the local vault,
 workspace settings can override global defaults, and `zarlcode -continue` picks
 up the last session for the current repo.
@@ -217,7 +219,12 @@ Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls
 | `Esc` | Stop running turn |
 | `Ctrl+C` | Quit |
 | `Ctrl+Q` | Clear context |
+| `Ctrl+K` | Open searchable command palette |
+| `Ctrl+N` | Name or rename this session |
+| `Ctrl+Shift+C` | Copy latest assistant response |
 | `Ctrl+L` | Expand context dashboard |
+| `Ctrl+F` / `Ctrl+W` | Open file viewer / working set |
+| `Ctrl+E` / `Ctrl+P` | Open model picker / plan pane |
 | `PgUp` / `PgDn` | Page transcript |
 
 #### Global overlays (work from any mode)
@@ -230,9 +237,9 @@ Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls
 | `Ctrl+T` | Theme picker |
 | `Ctrl+P` | Plan pane — structured step list with status tracking |
 | `Ctrl+G` | Help — full key reference |
-| `Ctrl+W` | Working set pane — files touched this session |
+| `Ctrl+W` | Working set pane — files, turns, and tracked processes |
 | `Ctrl+Y` | Execution tray — steer a live run |
-| `Ctrl+I` | Inspector — drill into tool calls and results |
+| `Ctrl+O` | Inspector — drill into tool calls and results |
 | `Ctrl+H` | Tool history — full output of captured tool calls |
 
 #### Browse mode (`Tab` to enter)
@@ -244,6 +251,7 @@ Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls
 | `g` / `Home` | Jump to top |
 | `End` | Jump to bottom |
 | `Esc` / `i` | Return to compose |
+| `v`, then `y` | Select transcript lines and copy clean text |
 
 #### Mouse
 

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -22,6 +21,7 @@ type themeGallery struct {
 	s       *engine.Settings
 	names   []string
 	cursor  int
+	onError func(error)
 	origin  string // theme active when focus entered, for revert-on-leave
 	focused bool
 	cols    int // columns last rendered, drives grid navigation
@@ -30,10 +30,8 @@ type themeGallery struct {
 // themeCellW is one grid cell's width (marker + name + padding).
 const themeCellW = 22
 
+// newThemeGalleryWithContext constructs a gallery for a known-valid owner context.
 func newThemeGalleryWithContext(ctx context.Context, s *engine.Settings) *themeGallery {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	g := &themeGallery{ctx: ctx, s: s, names: themeNames(), cols: 3}
 	g.refresh()
 	return g
@@ -124,23 +122,26 @@ func (g *themeGallery) handleKey(msg tea.KeyPressMsg) bool {
 		g.preview()
 	case "enter", "space", " ":
 		if g.cursor >= 0 && g.cursor < len(g.names) {
-			g.commit(g.names[g.cursor])
-			return true
+			return g.commit(g.names[g.cursor])
 		}
 	}
 	return false
 }
 
-func (g *themeGallery) commit(name string) {
+func (g *themeGallery) commit(name string) bool {
 	if g.s != nil && g.s.Svc != nil {
 		if err := g.s.Svc.SetSetting(g.ctx, prefs.ScopeWorkspace, prefs.KeyTheme, name); err != nil {
-			slog.WarnContext(g.ctx, "persist theme selection", "err", err, "theme", name)
+			if g.onError != nil {
+				g.onError(err)
+			}
+			return false
 		}
 	}
 	if t, ok := theme.ByName(name); ok {
 		UseTheme(t)
 	}
 	g.origin = name // committed — keep it when leaving
+	return true
 }
 
 // detailLines lays the themes into a multi-column grid sized to width, and

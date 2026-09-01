@@ -15,22 +15,15 @@ type uiLayout struct {
 }
 
 const (
-	headerHeight    = 0   // app/mode/model are folded into the timeline title
-	editorMinHeight = 3   // box: border + one input row
-	editorMaxHeight = 8   // box: border + six input rows, matching intro prompt
-	statusHeight    = 1   // single-line hint bar
-	sidebarWidth    = 56  // fits the state summary sections comfortably
-	sidebarMinWidth = 160 // below this total width the sidebar collapses
+	headerHeight          = 0  // app/mode/model are folded into the timeline title
+	editorMinHeight       = 3  // box: border + one input row
+	editorMaxHeight       = 8  // box: border + six input rows, matching intro prompt
+	statusHeight          = 1  // single-line hint bar
+	sidebarWidth          = 56 // preferred state summary width on wide terminals
+	sidebarMinWidth       = 32 // minimum usable state summary width
+	sidebarMinMainWidth   = 72 // keep the transcript readable beside the state summary
+	sidebarPreferredWidth = 160
 )
-
-// computeLayout slices a w×h screen into pane rects. Header pins to the
-// top, editor + status to the bottom, and the middle is the timeline —
-// flanked by the sidebar at ultrawide widths, full-width below
-// sidebarMinWidth. Negative/zero middle heights on tiny terminals yield
-// empty rects, which Draw skips and ultraviolet clips.
-func computeLayout(w, h int) uiLayout {
-	return computeLayoutWithEditorLinesAndSidebar(w, h, 1, true)
-}
 
 func computeLayoutWithEditorLinesAndSidebar(w, h, editorLines int, showSidebar bool) uiLayout {
 	if w <= 0 || h <= 0 {
@@ -47,9 +40,13 @@ func computeLayoutWithEditorLinesAndSidebar(w, h, editorLines int, showSidebar b
 	midTop := headerHeight
 	midH := max(h-midTop-bottom, 0)
 
-	if showSidebar && w >= sidebarMinWidth && midH > 0 {
-		l.main = uv.Rect(0, midTop, w-sidebarWidth, midH)
-		l.sidebar = uv.Rect(w-sidebarWidth, midTop, sidebarWidth, midH)
+	if showSidebar && w >= sidebarMinMainWidth+sidebarMinWidth && midH > 0 {
+		width := sidebarMinWidth
+		if w >= sidebarPreferredWidth {
+			width = sidebarWidth
+		}
+		l.main = uv.Rect(0, midTop, w-width, midH)
+		l.sidebar = uv.Rect(w-width, midTop, width, midH)
 	} else {
 		l.main = uv.Rect(0, midTop, w, midH)
 		// sidebar stays the zero rect (collapsed)

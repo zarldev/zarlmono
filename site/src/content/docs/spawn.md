@@ -65,10 +65,14 @@ Unknown names soft-fall back to the parent runner with a visible notice. The opt
 - **`verify`** — review and bounded verification without file-edit tools;
 - **`implement`** — full tool surface.
 
-Explore and verify children hold a shared workspace READ lease for their lifetime.
-Implement children hold an exclusive WRITE lease. Parent and child tool calls acquire
-short-lived leases under their task IDs. Conflicts fail recoverably instead of
-blocking or racing; a child may re-enter its own lease.
+Workspace scopes are inferred automatically for each tool call. File tools use their
+`path` or `root`; `apply_patch` coordinates every path in the patch; plan tools use
+`.zarlcode/plans`. Disjoint paths may execute concurrently, while equal or
+ancestor/descendant paths conflict. Operations whose effects cannot be bounded—such
+as shell commands—or calls with missing/unsafe paths conservatively cover the whole
+workspace. Overlapping calls wait in fair arrival order and wake when the blocking
+lease is released; disjoint paths continue concurrently. Cancellation or deadlines
+remove a queued call cleanly.
 
 ## What the child sees
 

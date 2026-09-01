@@ -19,6 +19,7 @@ const toolHistoryNavW = 34
 // are listed first; the cursor starts on the most recent. Output bodies are
 // loaded lazily on selection rather than eagerly at open.
 type toolHistory struct {
+	ctx       context.Context
 	store     *db.Store
 	sessionID string
 	summaries []db.ToolOutputSummary
@@ -31,13 +32,13 @@ type toolHistory struct {
 // newToolHistory loads the session's tool-call metadata, newest first, plus the
 // full body of the most recent call. A nil store or empty session identity
 // yields an empty viewer with an orientation status rather than an error.
-func newToolHistory(store *db.Store, sessionID string) *toolHistory {
-	h := &toolHistory{store: store, sessionID: sessionID, full: map[string]db.ToolOutputRecord{}}
+func newToolHistory(ctx context.Context, store *db.Store, sessionID string) *toolHistory {
+	h := &toolHistory{ctx: ctx, store: store, sessionID: sessionID, full: map[string]db.ToolOutputRecord{}}
 	if store == nil || sessionID == "" {
 		h.status = "no session yet — run a task first"
 		return h
 	}
-	summaries, err := store.ListToolOutputSummariesBySession(context.Background(), sessionID)
+	summaries, err := store.ListToolOutputSummariesBySession(ctx, sessionID)
 	if err != nil {
 		h.status = "tool history: " + err.Error()
 		return h
@@ -46,14 +47,14 @@ func newToolHistory(store *db.Store, sessionID string) *toolHistory {
 		summaries[i], summaries[j] = summaries[j], summaries[i]
 	}
 	h.summaries = summaries
-	h.loadAt(h.cursor)
+	h.loadAt(ctx, h.cursor)
 	return h
 }
 
 // loadAt fetches and caches the full output body for the summary at index i.
 // Best-effort: a fetch failure leaves the entry absent and the detail pane
 // reports it.
-func (h *toolHistory) loadAt(i int) {
+func (h *toolHistory) loadAt(ctx context.Context, i int) {
 	if h.store == nil || h.sessionID == "" || i < 0 || i >= len(h.summaries) {
 		return
 	}
@@ -61,7 +62,7 @@ func (h *toolHistory) loadAt(i int) {
 	if _, ok := h.full[id]; ok {
 		return
 	}
-	if rec, err := h.store.GetToolOutput(context.Background(), h.sessionID, id); err == nil {
+	if rec, err := h.store.GetToolOutput(ctx, h.sessionID, id); err == nil {
 		h.full[id] = rec
 	}
 }
@@ -84,14 +85,14 @@ func (h *toolHistory) handleKey(msg tea.KeyPressMsg) action {
 		if h.cursor > 0 {
 			h.cursor--
 			h.scroll = 0
-			h.loadAt(h.cursor)
+			h.loadAt(h.ctx, h.cursor)
 		}
 		return actionNone{}
 	case "down", "j":
 		if h.cursor < len(h.summaries)-1 {
 			h.cursor++
 			h.scroll = 0
-			h.loadAt(h.cursor)
+			h.loadAt(h.ctx, h.cursor)
 		}
 		return actionNone{}
 	case "home", "g":

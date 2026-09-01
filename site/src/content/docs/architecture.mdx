@@ -151,7 +151,7 @@ can't drift.
 
 ## Extending it
 
-The toolkit grows through six interfaces. Implement one and the
+The toolkit grows through focused interfaces. Implement one and the
 runner takes it without changes:
 
 | Interface | Shape | Implement it for |
@@ -161,7 +161,7 @@ runner takes it without changes:
 | `compact.Compactor` (+ `Prober`) | compact + cheap pre-check | a new compaction strategy |
 | `pursue.Goal` (+ `Watcher`) | decide + early-stop | a new completion oracle |
 | `spawn.AgentResolver` | name → runner | routing sub-agents to different models |
-| `runner.EventSink` | six typed sub-sinks (embed `NopSink`) | a new observability surface |
+| `runner.EventSink` | seven typed sub-sinks (embed `NopSink`) | a new observability surface |
 | `retrieval.Embedder` / `VectorStore` | embed text + search vectors | a new RAG backend |
 | `workflow.Node` / `Route` | run typed step + pick next node | deterministic graph orchestration |
 | `checkpoint.Store` | save/load/list snapshots | durable run state |

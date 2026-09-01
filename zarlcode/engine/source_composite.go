@@ -34,7 +34,10 @@ type compositeSource struct {
 	cached bool
 }
 
-func newCompositeSource(primary, secondary tools.Source) tools.Source {
+// ComposeSources returns a live union of primary and secondary. Primary
+// wins on duplicate tool names. Versioned operands are cached until either
+// version changes; unversioned operands are re-enumerated on every operation.
+func ComposeSources(primary, secondary tools.Source) tools.Source {
 	if primary == nil {
 		return secondary
 	}

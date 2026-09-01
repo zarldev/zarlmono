@@ -34,8 +34,8 @@ func (m *modeProbeTool) Execute(ctx context.Context, call tools.ToolCall) (*tool
 func TestExecute_PlantsWorkModeOnChildCtx(t *testing.T) {
 	run := func(mode string) taskscope.WorkMode {
 		provider := &scriptedProvider{turns: [][]llm.CompletionChunk{
-			{toolCallChunk("p1", "probe"), doneChunk()}, // child calls probe
-			{textChunk("done"), doneChunk()},            // then completes
+			{toolCallChunk("p1", "probe")}, // child calls probe
+			{textChunk("done")},            // then completes
 		}}
 		probe := &modeProbeTool{}
 		reg := tools.NewRegistry()

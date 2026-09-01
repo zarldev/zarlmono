@@ -368,11 +368,11 @@ func decodeCallParams(raw any) (callParams, error) {
 	}
 	b, err := json.Marshal(raw)
 	if err != nil {
-		return callParams{}, err
+		return callParams{}, fmt.Errorf("marshal call params: %w", err)
 	}
 	var p callParams
 	if err := json.Unmarshal(b, &p); err != nil {
-		return callParams{}, err
+		return callParams{}, fmt.Errorf("decode call params: %w", err)
 	}
 	if p.Name == "" {
 		return callParams{}, errors.New("missing tool name")

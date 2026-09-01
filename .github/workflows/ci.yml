@@ -71,6 +71,19 @@ jobs:
         working-directory: zkit
         run: go test -race -count=1 ./...
 
+  test-policy:
+    name: test policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: reject new same-package tests and Background test contexts
+        env:
+          TEST_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/check-new-test-policy.sh "$TEST_POLICY_BASE"
+
   lint:
     name: golangci-lint (${{ matrix.module }})
     runs-on: ubuntu-latest

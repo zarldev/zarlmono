@@ -30,10 +30,13 @@ type subAgentItem struct {
 
 	// Internal routing state — mirrors the timeline's own fields so
 	// events can be routed into this sub-agent's item tree.
-	curTools *groupItem
-	curEdits *groupItem
-	turn     *openTurn
-	toolIdx  map[string]toolRef // local index for tools owned by this sub-agent
+	curTools     *groupItem
+	curEdits     *groupItem
+	turn         *openTurn
+	toolIdx      map[string]toolRef // local index for tools owned by this sub-agent
+	spawnToolID  string             // parent agent_spawn ToolID; set before child TaskID is known
+	pending      bool               // true between agent_spawn start and child ConversationStarted
+	launchFailed bool
 }
 
 func newSubAgentItem(depth int, agentName, prompt, taskID string) *subAgentItem {
@@ -46,6 +49,41 @@ func newSubAgentItem(depth int, agentName, prompt, taskID string) *subAgentItem 
 		toolIdx:   make(map[string]toolRef),
 		startedAt: time.Now(),
 	}
+}
+
+func newPendingSubAgentItem(depth int, agentName, prompt, spawnToolID string) *subAgentItem {
+	sa := newSubAgentItem(depth, agentName, prompt, "")
+	sa.spawnToolID = spawnToolID
+	sa.pending = true
+	return sa
+}
+
+func (sa *subAgentItem) bind(taskID string, _ int, agentName, prompt string) {
+	sa.taskID = taskID
+	sa.depth = 0
+	sa.pending = false
+	if agentName != "" {
+		sa.agentName = agentName
+	}
+	if prompt = firstLine(prompt); prompt != "" {
+		sa.prompt = prompt
+	}
+	sa.bump()
+}
+
+func (sa *subAgentItem) failLaunch(detail string) {
+	if !sa.pending {
+		return
+	}
+	sa.pending = false
+	sa.closed = true
+	sa.launchFailed = true
+	sa.endedAt = time.Now()
+	if detail != "" {
+		sa.addNotice("✗ " + detail)
+		return
+	}
+	sa.bump()
 }
 
 func (sa *subAgentItem) bump() {
@@ -87,10 +125,20 @@ func (sa *subAgentItem) render(width int) []string {
 		toggle = palette.Subtle.On("[") + palette.Primary.On("-") + palette.Subtle.On("]")
 	}
 
-	// Summary: agent name + prompt + stats
 	summary := sa.agentName
+	if summary == "" {
+		summary = "agent"
+	}
 	if sa.prompt != "" {
 		summary += ": " + sa.prompt
+	}
+	switch {
+	case sa.pending:
+		summary += "  " + palette.Warning.On("starting")
+	case sa.launchFailed:
+		summary += "  " + palette.Error.On("failed")
+	case !sa.closed:
+		summary += "  " + palette.Warning.On("running")
 	}
 	toolCount := sa.toolCount()
 	if toolCount > 0 {

@@ -17,6 +17,8 @@ var slashCommands = []slashCommand{
 	{name: "/clear", desc: "clear the conversation"},
 	{name: "/help", desc: "open key help"},
 	{name: "/init", desc: "create or update AGENTS.md"},
+	{name: "/export", desc: "export Markdown"},
+	{name: "/name", desc: "name this session"},
 }
 
 func slashStatusHint(input string) string {
@@ -47,6 +49,16 @@ func (m *UI) handleSlashSubmit(text string) tea.Cmd {
 	case "/help":
 		m.overlay.push(m.newHelpDialog())
 		return nil
+	case "/name":
+		label := strings.TrimSpace(strings.TrimPrefix(text, name[0]))
+		if label == "" {
+			m.openSessionNameDialog()
+			return nil
+		}
+		return m.setSessionLabel(label)
+	case "/export":
+		path := strings.TrimSpace(strings.TrimPrefix(text, name[0]))
+		return m.exportSession(path)
 	case "/init":
 		if m.runFn != nil {
 			return m.runFn(prompts.Init)

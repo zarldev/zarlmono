@@ -43,10 +43,6 @@ type frameStyle struct {
 	LabelColor theme.Color
 }
 
-func defaultFrameStyle(label string) frameStyle {
-	return frameStyle{Label: label, Border: palette.Border, LabelColor: palette.Primary}
-}
-
 // drawFrame paints the standard zarlcode box chrome and returns its drawable
 // interior. It is the single primitive for pane, modal, and cockpit borders.
 func drawFrame(scr uv.Screen, r uv.Rectangle, style frameStyle) uv.Rectangle {

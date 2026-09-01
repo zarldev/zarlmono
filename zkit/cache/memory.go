@@ -108,7 +108,7 @@ func (c *MemoryCache[K, V]) Clear(ctx context.Context) error {
 	return nil
 }
 
-// Healthy returns nil as memory cache is always healthy.
-func (c *MemoryCache[K, V]) Healthy() error {
-	return nil
+// Healthy returns ctx.Err() when canceled; otherwise memory cache is healthy.
+func (c *MemoryCache[K, V]) Healthy(ctx context.Context) error {
+	return ctx.Err()
 }

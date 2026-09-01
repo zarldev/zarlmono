@@ -87,13 +87,10 @@ var shellPath = sync.OnceValue(func() string {
 
 // BashTool runs a shell command with cwd set to the workspace root.
 //
-// procMgr (optional) routes background=true through a managed
-// process with in-memory output capture so the agent can poll via
-// bash_output and kill via stop_process. When nil, background mode
-// falls back to the legacy "detach + write to log file" path. The
-// zarlcode wires a real ProcessManager via WithProcessManager;
-// other consumers (headless tests) can omit it and keep
-// the simpler log-file behaviour.
+// procMgr routes background=true through an owned managed process with
+// in-memory output capture so the agent can poll via bash_output and stop it
+// via stop_process. Without one, foreground execution remains available and
+// background requests return a recoverable tool failure.
 type BashTool struct {
 	ws      Workspace
 	procMgr *ProcessManager
@@ -137,9 +134,8 @@ func WithEnv(env map[string]string) BashOption {
 	return func(t *BashTool) { t.env = cloneEnvMap(env) }
 }
 
-// NewBashTool returns the shell tool rooted at ws. Without a process
-// manager (WithProcessManager), background execution degrades to the
-// legacy detach-and-log path.
+// NewBashTool returns the shell tool rooted at ws. Background execution
+// requires [WithProcessManager] so every process has an owner and shutdown path.
 func NewBashTool(ws Workspace, opts ...BashOption) *BashTool {
 	t := &BashTool{ws: ws}
 	for _, opt := range opts {
@@ -284,7 +280,7 @@ func (t *BashTool) executeBackground(
 	if t.procMgr != nil {
 		return t.executeBackgroundManaged(ctx, call, cmdStr, autoFlipReason)
 	}
-	return t.executeBackgroundLog(ctx, call, cmdStr, autoFlipReason)
+	return tools.Failure(call.ID, tools.Fatal("bash", errors.New("background execution requires a process manager"))), nil
 }
 
 // executeBackgroundManaged is the ProcessManager-backed background
@@ -320,67 +316,6 @@ func (t *BashTool) executeBackgroundManaged(
 	effect.Process.Background = true
 	effect.Process.ProcessID = id.String()
 	effect.Process.PID = info.PID
-	effect.Process.AutoBackgrounded = autoFlipReason != ""
-	return tools.Success(call.ID, body, effect), nil
-}
-
-// executeBackgroundLog is the original log-file fallback used when
-// no ProcessManager is wired. Kept verbatim for behavioural
-// compatibility with consumers that still rely on
-// `tail <path>` and `kill <pid>` semantics.
-func (t *BashTool) executeBackgroundLog(
-	_ context.Context,
-	call tools.ToolCall,
-	cmdStr, autoFlipReason string,
-) (*tools.ToolResult, error) {
-	logFile, err := os.CreateTemp("", "agent-bash-bg-*.log")
-	if err != nil {
-		return nil, fmt.Errorf("bash: create log: %w", err)
-	}
-	defer logFile.Close()
-	logPath := logFile.Name()
-
-	// Detach from parent context — background processes outlive the
-	// tool call.
-	cmd, cleanupStdin, err := t.newCmd(context.Background(), cmdStr)
-	if err != nil {
-		return nil, err
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	if err := cmd.Start(); err != nil {
-		cleanupStdin()
-		return nil, fmt.Errorf("bash background start: %w", err)
-	}
-	// Child has dup'd the stdin FD by now — release the parent copy.
-	// Skipping this on every background launch leaked one FD per call.
-	cleanupStdin()
-	pid := cmd.Process.Pid
-
-	// Reap the child without blocking — without this, a quick-exiting
-	// background process becomes a zombie until the zarlcode exits.
-	go func() { _ = cmd.Wait() }()
-
-	var header string
-	if autoFlipReason != "" {
-		header = fmt.Sprintf(
-			"[auto-backgrounded — command matched long-running pattern %q; pass background:true next time to make the intent explicit]\n",
-			autoFlipReason,
-		)
-	}
-	body := fmt.Sprintf(
-		"%sstarted background pid=%d\nlog: %s\n\nMonitor with: tail %s\nKill with:    kill %d  (or: kill -9 -%d to nuke the whole process group)\n",
-		header,
-		pid,
-		logPath,
-		logPath,
-		pid,
-		pid,
-	)
-	effect := tools.NewProcessEffect(cmdStr, 0)
-	effect.Process.Background = true
-	effect.Process.PID = pid
 	effect.Process.AutoBackgrounded = autoFlipReason != ""
 	return tools.Success(call.ID, body, effect), nil
 }

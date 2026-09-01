@@ -115,8 +115,8 @@ type managedProcess struct {
 	command   string
 	startedAt time.Time
 
-	stdout *lineRingBuffer
-	stderr *lineRingBuffer
+	stdout *LineRingBuffer
+	stderr *LineRingBuffer
 
 	// done is closed once cmd.Wait returns AND both reader
 	// goroutines have drained their pipes. exited captures the
@@ -341,8 +341,8 @@ func (m *ProcessManager) StartProcessContext(ctx context.Context, command string
 		cwd:       cmd.Dir,
 		command:   command,
 		startedAt: time.Now(),
-		stdout:    newLineRingBuffer(m.maxBuffer),
-		stderr:    newLineRingBuffer(m.maxBuffer),
+		stdout:    NewLineRingBuffer(m.maxBuffer),
+		stderr:    NewLineRingBuffer(m.maxBuffer),
 		done:      make(chan struct{}),
 	}
 
@@ -729,7 +729,7 @@ var maxDrainLineBytes = 4 * 1024 * 1024
 // stops early on an over-long line, so a process emitting one giant line
 // (a packed bundle, a base64 blob) keeps streaming instead of wedging.
 // Strips ANSI escape sequences so the agent sees clean content.
-func drainPipe(r io.ReadCloser, ring *lineRingBuffer, wg *sync.WaitGroup) {
+func drainPipe(r io.ReadCloser, ring *LineRingBuffer, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer r.Close()
 	br := bufio.NewReaderSize(r, 64*1024)

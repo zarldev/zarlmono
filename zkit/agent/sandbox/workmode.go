@@ -17,13 +17,8 @@ type WorkModeSandbox struct {
 	verify *Sandbox
 }
 
-// NewWorkModeSandbox constructs mode-aware shell confinement. A nil policy is
-// rejected by construction because silently weakening one mode would make the
-// boundary misleading.
+// NewWorkModeSandbox constructs mode-aware shell confinement.
 func NewWorkModeSandbox(normal, verify *Sandbox) *WorkModeSandbox {
-	if normal == nil || verify == nil {
-		return nil
-	}
 	return &WorkModeSandbox{normal: normal, verify: verify}
 }
 

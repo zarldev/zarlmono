@@ -80,18 +80,6 @@ func withChromePath(path string) rendererOption {
 	return func(cfg *rendererConfig) { cfg.chromePath = path }
 }
 
-func withRenderConcurrency(n int) rendererOption {
-	return func(cfg *rendererConfig) { cfg.concurrency = n }
-}
-
-func withSettleWait(wait time.Duration) rendererOption {
-	return func(cfg *rendererConfig) { cfg.settleWait = wait }
-}
-
-func withActionTimeout(timeout time.Duration) rendererOption {
-	return func(cfg *rendererConfig) { cfg.actionLimit = timeout }
-}
-
 type renderer struct {
 	allocCancel   context.CancelFunc
 	browserCtx    context.Context

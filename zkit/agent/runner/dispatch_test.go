@@ -3,7 +3,6 @@ package runner_test
 import (
 	"context"
 	"fmt"
-	"iter"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,7 +25,7 @@ type batchProvider struct {
 	finalReply string
 }
 
-func (p *batchProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *batchProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		switch p.iter.Add(1) {
 		case 1:
@@ -45,7 +44,7 @@ func (p *batchProvider) Complete(_ context.Context, _ llm.CompletionRequest) (it
 		default:
 			yield(llm.CompletionChunk{Content: p.finalReply}, nil)
 		}
-	}, nil
+	}
 }
 
 // concurrencyTrackingTool sleeps briefly to amplify concurrency, and
@@ -257,7 +256,7 @@ type mixedBatchProvider struct{ iter atomic.Int32 }
 
 func (p *mixedBatchProvider) Name() string { return "mixed" }
 
-func (p *mixedBatchProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *mixedBatchProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		switch p.iter.Add(1) {
 		case 1:
@@ -272,5 +271,5 @@ func (p *mixedBatchProvider) Complete(_ context.Context, _ llm.CompletionRequest
 		default:
 			yield(llm.CompletionChunk{Content: "done"}, nil)
 		}
-	}, nil
+	}
 }

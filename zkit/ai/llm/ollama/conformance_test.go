@@ -18,8 +18,9 @@ import (
 //
 // As with llamacpp, the conformance run catches a facade dropping
 // behaviour: ctx propagation, tool-call surfacing, usage reporting,
-// streaming Done. A real Ollama server speaking /v1/chat/completions
-// is wire-indistinguishable from OpenAI, so the same scenarios apply.
+// finish/usage metadata at successful EOF. A real Ollama server speaking
+// /v1/chat/completions is wire-indistinguishable from OpenAI, so the same
+// scenarios apply.
 func TestProvider_Conformance(t *testing.T) {
 	factory := func(t *testing.T, baseURL string) llm.Provider {
 		p, err := ollama.NewProvider(ollama.WithBaseURL(baseURL))
@@ -41,10 +42,10 @@ func TestProvider_Conformance(t *testing.T) {
 				Timeout:         3 * time.Second,
 			},
 			{
-				Name:    "StreamingDone_FinalChunkMarked",
+				Name:    "StreamingEOF_FinishMetadataReported",
 				Handler: ollamaSimpleStream(),
 				Request: providertest.SimpleRequest("hi"),
-				Assert:  providertest.AssertStreamingDoneSet,
+				Assert:  providertest.AssertStreamingEOF,
 			},
 			{
 				Name:    "Usage_ReportedOnFinalChunk",

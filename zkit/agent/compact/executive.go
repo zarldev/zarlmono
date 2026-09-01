@@ -210,18 +210,10 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 		Temperature: 0.2,
 		Stream:      true,
 	}
-	stream, err := e.Provider.Complete(ctx, req)
+	narrativeBody, err := collectContent(e.Provider.Complete(ctx, req), "Executive")
 	if err != nil {
-		return Result{}, fmt.Errorf("compact.Executive: provider complete: %w", err)
+		return Result{}, err
 	}
-	var narrative strings.Builder
-	for chunk, cerr := range stream {
-		if cerr != nil {
-			return Result{}, fmt.Errorf("compact.Executive: stream: %w", cerr)
-		}
-		narrative.WriteString(chunk.Content)
-	}
-	narrativeBody := strings.TrimSpace(narrative.String())
 	if narrativeBody == "" {
 		// Briefing without a narrative is still useful (structured
 		// sections carry real signal), but flag it so the user knows

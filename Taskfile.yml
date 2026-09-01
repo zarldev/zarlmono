@@ -9,16 +9,45 @@ vars:
     sh: 'printf "%s+%s" "$(git describe --tags --match "zarlcode/v*" --dirty --always 2>/dev/null || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
 
 tasks:
+  release-check:
+    desc: Run the complete module-isolated local pre-release gate
+    cmds:
+      - go test -count=1 ./tools/releasecheck/... ./tools/genformula/...
+      - |
+        for m in examples zkit zarlcode swebench-eval; do
+          echo "==> isolated dependency check ($m)"
+          GOWORK=off go mod verify -C "$m"
+        done
+        # Build/test the working tree through go.work. Consumer go.mod files pin
+        # the last published sibling APIs until the next dependency-ordered release.
+        for m in examples zkit zarlcode swebench-eval; do
+          echo "==> workspace build/vet/test ($m)"
+          go build -C "$m" ./...
+          go vet -C "$m" ./...
+          go test -C "$m" -count=1 ./...
+        done
+      - task: lint
+      - GOWORK=off go test -C zkit -race -count=1 ./...
+      - npm --prefix site ci
+      - npm --prefix site run build
+      - npm --prefix site audit --audit-level=high
+      - GOTOOLCHAIN=go1.27.0 GOWORK=off go test -C zkit -run '^$' ./...
   default:
     desc: Show available tasks
     cmds:
       - go tool task --list
+
 
   help:
     desc: Show available tasks
     cmds:
       - go tool task --list
 
+
+  tui-smoke:
+    desc: Run the bounded PTY-backed interactive TUI smoke (requires tmux)
+    cmds:
+      - bash scripts/tui-smoke.sh
   # --- repo-wide Go workflow (CI-covered modules) ---
 
   build:
@@ -48,12 +77,17 @@ tasks:
           go test -C "$m" -count=1 ./...
         done
 
+  test-policy:
+    desc: Reject new same-package tests and Background contexts in tests
+    cmds:
+      - bash scripts/check-new-test-policy.sh "${TEST_POLICY_BASE:-HEAD}"
   check:
     desc: Build, vet, and test CI-covered Go modules
     cmds:
       - task: build
       - task: vet
       - task: test
+      - task: test-policy
 
   lint:
     desc: Run golangci-lint for CI-covered Go modules
@@ -122,30 +156,37 @@ tasks:
       - echo "removed{{":"}} {{.ZARLCODE}}"
 
   zarlcode:release:
-    desc: Tag and push a zarlcode release directly (manual path; prefer GitHub Actions release-dispatch)
+    desc: Emergency zarlcode tag path; prefer GitHub Actions release-dispatch
     cmds:
       - |
         set -euo pipefail
         version="{{.VERSION}}"
-        case "$version" in
-          v[0-9]*.[0-9]*.[0-9]*) ;;
-          *) echo "VERSION must look like vX.Y.Z (got '$version')" >&2; exit 2 ;;
-        esac
-        tag="zarlcode/$version"
+        go run ./tools/releasecheck/cmd/releasecheck \
+          -version "$version" -scope zarlcode >/tmp/zarlcode-release-plan.json
         if ! git diff --quiet || ! git diff --cached --quiet; then
-          echo "working tree has uncommitted changes; commit or stash before releasing" >&2
+          echo "working tree has uncommitted changes; commit before releasing" >&2
           exit 1
         fi
-        if git rev-parse "$tag" >/dev/null 2>&1; then
+        branch=$(git branch --show-current)
+        remote_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+        if [ "$branch" != main ] || [ "$remote_main" != "$(git rev-parse HEAD)" ]; then
+          echo "manual release requires the current origin/main tip" >&2
+          exit 1
+        fi
+        tag="zarlcode/$version"
+        if git show-ref --verify --quiet "refs/tags/$tag" || \
+           git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
           echo "tag already exists: $tag" >&2
           exit 1
         fi
+        zkit_version=$(jq -r '.pins[] | select(.module == "zkit") | .version' /tmp/zarlcode-release-plan.json)
+        GOPROXY=https://proxy.golang.org GOWORK=off \
+          go list -m "github.com/zarldev/zarlmono/zkit@$zkit_version" >/dev/null
+        go tool task release-check
         git tag -a "$tag" -m "zarlcode $version"
+        test "$(git cat-file -t "$tag")" = tag
         git push origin "$tag"
         echo "pushed release tag: $tag"
-        echo
-        echo "prefer the GitHub Actions release-dispatch workflow for the canonical release path"
-        echo "this direct path still triggers the tag-driven publish workflow for binaries, checksums, and Homebrew updates"
     requires:
       vars: [VERSION]
   # --- SWE-bench eval tool ---

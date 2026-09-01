@@ -36,12 +36,6 @@ func TestProvider_Conformance(t *testing.T) {
 				Timeout:         3 * time.Second,
 			},
 			{
-				Name:    "StreamingDone_FinalChunkMarked",
-				Handler: anthropicSimpleStream(),
-				Request: providertest.SimpleRequest("hi"),
-				Assert:  providertest.AssertStreamingDoneSet,
-			},
-			{
 				Name:    "Usage_ReportedOnFinalChunk",
 				Handler: anthropicSimpleStreamWithUsage(),
 				Request: providertest.SimpleRequest("hi"),
@@ -68,43 +62,6 @@ func anthropicHangForever() http.HandlerFunc {
 			f.Flush()
 		}
 		<-r.Context().Done()
-	}
-}
-
-// anthropicSimpleStream emits the minimum event sequence for a
-// text-only response: message_start → content_block_start (text) →
-// content_block_delta → content_block_stop → message_delta →
-// message_stop. Used for streaming-done validation.
-func anthropicSimpleStream() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		f, _ := w.(http.Flusher)
-		writeAnthropicEvent(
-			w,
-			"message_start",
-			`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"usage":{"input_tokens":4,"output_tokens":0}}}`,
-		)
-		writeAnthropicEvent(
-			w,
-			"content_block_start",
-			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
-		)
-		writeAnthropicEvent(
-			w,
-			"content_block_delta",
-			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
-		)
-		writeAnthropicEvent(w, "content_block_stop", `{"type":"content_block_stop","index":0}`)
-		writeAnthropicEvent(
-			w,
-			"message_delta",
-			`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}`,
-		)
-		writeAnthropicEvent(w, "message_stop", `{"type":"message_stop"}`)
-		if f != nil {
-			f.Flush()
-		}
 	}
 }
 

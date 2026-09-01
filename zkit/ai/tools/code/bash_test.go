@@ -1,13 +1,10 @@
 package code_test
 
 import (
-	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -15,11 +12,12 @@ import (
 
 func TestBash_Background_StartsDetached(t *testing.T) {
 	t.Parallel()
+	mgr := newProcMgrForTest(t)
 	ws, err := code.NewWorkspace(t.TempDir())
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	bash := code.NewBashTool(ws)
+	bash := code.NewBashTool(ws, code.WithProcessManager(mgr))
 
 	// Run a sleep that would otherwise block the call far past test
 	// timeout. Background should return immediately with a pid + log.
@@ -38,8 +36,8 @@ func TestBash_Background_StartsDetached(t *testing.T) {
 	if !ok {
 		t.Fatalf("Data type %T, want string", res.Data)
 	}
-	if !strings.Contains(body, "started background pid=") {
-		t.Errorf("body = %q, want pid line", body)
+	if !strings.Contains(body, "started process_id=") {
+		t.Errorf("body = %q, want managed process line", body)
 	}
 
 	pid := extractPID(t, body)
@@ -47,47 +45,13 @@ func TestBash_Background_StartsDetached(t *testing.T) {
 	if !process.Background || process.PID != pid || process.Command != "sleep 60" {
 		t.Fatalf("process effect = %+v, want background pid=%d command=sleep 60", process, pid)
 	}
-	t.Cleanup(func() {
-		// Kill the process group to clean up the sleep.
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-	})
+	if _, err := mgr.Info(code.ProcessID(process.ProcessID)); err != nil {
+		t.Errorf("managed process %q not registered: %v", process.ProcessID, err)
+	}
 
 	// Verify the process is actually alive.
 	if err := syscall.Kill(pid, 0); err != nil {
 		t.Errorf("background pid %d not alive: %v", pid, err)
-	}
-}
-
-func TestBash_Background_LogFileCaptures(t *testing.T) {
-	t.Parallel()
-	ws, err := code.NewWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatalf("workspace: %v", err)
-	}
-	bash := code.NewBashTool(ws)
-
-	res, _ := bash.Execute(t.Context(), tools.ToolCall{
-		ID:        "tc1",
-		Arguments: tools.ToolParameters{"command": `echo background-marker; sleep 10`, "background": true},
-	})
-	body := res.Data.(string)
-	pid := extractPID(t, body)
-	logPath := extractLogPath(t, body)
-	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
-
-	// The command emits this marker before sleeping. A bounded polling loop
-	// observes the external process without an arbitrary delay.
-	deadline := time.Now().Add(2 * time.Second)
-	var data []byte
-	for time.Now().Before(deadline) {
-		data, _ = os.ReadFile(logPath)
-		if strings.Contains(string(data), "background-marker") {
-			break
-		}
-		runtime.Gosched()
-	}
-	if !strings.Contains(string(data), "background-marker") {
-		t.Errorf("log %s missing marker; got %q", logPath, string(data))
 	}
 }
 
@@ -108,21 +72,6 @@ func extractPID(t *testing.T, body string) int {
 		t.Fatalf("parse pid %q: %v", rest[:end], err)
 	}
 	return pid
-}
-
-func extractLogPath(t *testing.T, body string) string {
-	t.Helper()
-	const prefix = "log: "
-	_, after, ok := strings.Cut(body, prefix)
-	if !ok {
-		t.Fatalf("no log path in body: %q", body)
-	}
-	rest := after
-	end := strings.Index(rest, "\n")
-	if end < 0 {
-		end = len(rest)
-	}
-	return rest[:end]
 }
 
 func TestBash_RedactsSecretsFromForegroundOutput(t *testing.T) {

@@ -168,14 +168,14 @@ func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRe
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("responses marshal: %w", err))
+		yield(llm.CompletionChunk{}, fmt.Errorf("responses marshal: %w", err))
 		return
 	}
 
 	url := strings.TrimRight(p.baseURL, "/") + "/responses"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("responses request: %w", err))
+		yield(llm.CompletionChunk{}, fmt.Errorf("responses request: %w", normalizeContextError(ctx, err)))
 		return
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
@@ -184,17 +184,17 @@ func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRe
 
 	resp, err := defaultHTTPClient().Do(httpReq)
 	if err != nil {
-		yield(llm.CompletionChunk{Done: true}, fmt.Errorf("responses post: %w", err))
+		yield(llm.CompletionChunk{}, fmt.Errorf("responses post: %w", normalizeContextError(ctx, err)))
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		yield(llm.CompletionChunk{Done: true}, responsesHTTPError(resp.StatusCode, resp.Header, msg, resp.Request))
+		yield(llm.CompletionChunk{}, responsesHTTPError(resp.StatusCode, resp.Header, msg, resp.Request))
 		return
 	}
 	if err := parseResponsesSSE(resp.Body, yield); err != nil {
-		yield(llm.CompletionChunk{Done: true}, err)
+		yield(llm.CompletionChunk{}, normalizeContextError(ctx, err))
 	}
 }
 
@@ -309,22 +309,22 @@ func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool)
 	}
 	if data.Len() > 0 {
 		flush()
-		return nil
 	}
-	yield(llm.CompletionChunk{Done: true}, nil)
 	return nil
 }
 
 func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCall, byID map[string]*pendingResponseToolCall, orderedIndexes *[]int, yield func(llm.CompletionChunk, error) bool) bool {
 	var env responseEventEnvelope
 	if err := json.Unmarshal([]byte(payload), &env); err != nil {
-		return !yield(llm.CompletionChunk{}, fmt.Errorf("responses event: %w", err))
+		yield(llm.CompletionChunk{}, fmt.Errorf("responses event: %w", err))
+		return true
 	}
 	switch env.Type {
 	case responseEventOutputTextDelta:
 		var ev responseTextDelta
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, err)
+			yield(llm.CompletionChunk{}, err)
+			return true
 		}
 		if ev.Delta != "" {
 			return !yield(llm.CompletionChunk{Content: ev.Delta}, nil)
@@ -332,7 +332,8 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 	case responseEventReasoningDelta, responseEventReasoningTextDelta, responseEventReasoningSummaryDelta, responseEventReasoningSummaryTextDelta:
 		var ev responseReasoningDelta
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, err)
+			yield(llm.CompletionChunk{}, err)
+			return true
 		}
 		if ev.Delta != "" {
 			return !yield(llm.CompletionChunk{Thinking: ev.Delta}, nil)
@@ -340,7 +341,8 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 	case responseEventOutputItemAdded:
 		var ev responseOutputItemAdded
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, err)
+			yield(llm.CompletionChunk{}, err)
+			return true
 		}
 		if ev.Item.Type == responsesTypeFunctionCall {
 			id := ev.Item.CallID
@@ -350,7 +352,8 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			// Validate that we have a non-empty ID before creating the
 			// pending call. Without one, the tool call would be unusable.
 			if id == "" {
-				return !yield(llm.CompletionChunk{}, fmt.Errorf("responses event: function_call with no ID at output_index %d", ev.OutputIndex))
+				yield(llm.CompletionChunk{}, fmt.Errorf("responses event: function_call with no ID at output_index %d", ev.OutputIndex))
+				return true
 			}
 			call := &pendingResponseToolCall{id: id, name: ev.Item.Name}
 			call.arguments.WriteString(ev.Item.Arguments)
@@ -364,7 +367,8 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 	case responseEventFunctionCallArgsDelta:
 		var ev responseArgsDelta
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, err)
+			yield(llm.CompletionChunk{}, err)
+			return true
 		}
 		call := calls[ev.OutputIndex]
 		if call == nil && ev.ItemID != "" {
@@ -376,7 +380,8 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 	case responseEventFunctionCallArgsDone:
 		var ev responseArgsDone
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, err)
+			yield(llm.CompletionChunk{}, err)
+			return true
 		}
 		call := calls[ev.OutputIndex]
 		if call == nil && ev.ItemID != "" {
@@ -389,7 +394,8 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 	case responseEventCompleted:
 		var ev responseCompleted
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, err)
+			yield(llm.CompletionChunk{}, err)
+			return true
 		}
 		// Emit tool calls in output-index order rather than nondeterministic
 		// map iteration.
@@ -403,15 +409,26 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			}
 			toolCalls = append(toolCalls, llm.ToolCall{ID: call.id, Type: typeFunction, Function: llm.ToolCallFunction{Name: call.name, Arguments: call.arguments.String()}})
 		}
-		chunk := llm.CompletionChunk{Done: true, FinishReason: "stop", ToolCalls: toolCalls}
-		if ev.Response.Usage.TotalTokens > 0 || ev.Response.Usage.InputTokens > 0 || ev.Response.Usage.OutputTokens > 0 {
-			chunk.Usage = &llm.Usage{PromptTokens: ev.Response.Usage.InputTokens, CompletionTokens: ev.Response.Usage.OutputTokens, TotalTokens: ev.Response.Usage.TotalTokens, CachedTokens: ev.Response.Usage.InputTokensDetails.CachedTokens}
+		chunk := llm.CompletionChunk{
+			FinishReason: llm.FinishReasons.STOP,
+			ToolCalls:    toolCalls,
+			Usage: llm.Usage{
+				PromptTokens:     ev.Response.Usage.InputTokens,
+				CompletionTokens: ev.Response.Usage.OutputTokens,
+				TotalTokens:      ev.Response.Usage.TotalTokens,
+				CachedTokens:     ev.Response.Usage.InputTokensDetails.CachedTokens,
+			},
+			UsageReported: strings.Contains(payload, `"usage"`),
+		}
+		if len(toolCalls) > 0 {
+			chunk.FinishReason = llm.FinishReasons.TOOLCALLS
 		}
 		return !yield(chunk, nil)
 	case responseEventFailed:
 		var ev responseFailed
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, err)
+			yield(llm.CompletionChunk{}, err)
+			return true
 		}
 		msg := ev.Response.Error.Message
 		if msg == "" {
@@ -427,9 +444,11 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 				rle.Permanent = true
 				rle.Retryable = false
 			}
-			return !yield(llm.CompletionChunk{Done: true}, rle)
+			yield(llm.CompletionChunk{}, rle)
+			return true
 		}
-		return !yield(llm.CompletionChunk{Done: true}, fmt.Errorf("responses failed: %s", msg))
+		yield(llm.CompletionChunk{}, fmt.Errorf("responses failed: %s", msg))
+		return true
 	default:
 		// Unknown events are silently ignored for forward compatibility.
 	}

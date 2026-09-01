@@ -15,7 +15,7 @@ import (
 // model's final content.
 func ExampleNew_headless() {
 	client := runnertest.NewClient([][]llm.CompletionChunk{
-		{runnertest.ChunkText("hello"), runnertest.ChunkDone()},
+		{runnertest.ChunkText("hello")},
 	})
 	reg := tools.NewRegistry()
 
@@ -63,8 +63,8 @@ func ExamplePromptFunc() {
 func ExampleRunner_Run() {
 	// Turn 1: the model calls the weather tool. Turn 2: it answers.
 	client := runnertest.NewClient([][]llm.CompletionChunk{
-		{runnertest.ChunkToolCall("c1", "weather", `{"city":"Oslo"}`), runnertest.ChunkDone()},
-		{runnertest.ChunkText("It is sunny in Oslo."), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c1", "weather", `{"city":"Oslo"}`)},
+		{runnertest.ChunkText("It is sunny in Oslo.")},
 	})
 	reg := tools.NewRegistry(runnertest.Tool{
 		Name:        "weather",

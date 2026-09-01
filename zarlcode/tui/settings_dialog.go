@@ -125,14 +125,7 @@ type settingsRow struct {
 	isSet bool
 }
 
-func newSettingsDialog(s *engine.Settings) *settingsDialog {
-	return newSettingsDialogWithContext(context.Background(), s)
-}
-
-func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *settingsDialog {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog {
 	d := &settingsDialog{
 		ctx:           ctx,
 		s:             s,
@@ -140,10 +133,10 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 		modelsLoaded:  map[string]bool{},
 		modelsLoading: map[string]bool{},
 		modelsErr:     map[string]error{},
-		providers:     newProvidersDialogWithContext(ctx, s),
+		providers:     newProvidersDialog(ctx, s),
 		gallery:       newThemeGalleryWithContext(ctx, s),
 		catalogPane:   newCatalogPane(s),
-		mcp:           newMCPPaneWithContext(ctx, s),
+		mcp:           newMCPPane(ctx, s),
 		cats: []settingsCat{
 			{name: "model", rows: []settingsRow{
 				{label: "provider", key: prefs.KeyProvider, kind: rowEnum, def: "llamacpp", opts: providerNames(s),
@@ -292,6 +285,8 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 			{name: "interface", rows: []settingsRow{
 				{label: "confirm quit", key: prefs.KeyConfirmQuit, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "show a confirmation prompt before quitting via ctrl+c. turn off to quit instantly."},
+				{label: "notification sounds", key: prefs.KeyNotificationSounds, kind: rowEnum, def: "completion", opts: []string{"off", "completion", "all"},
+					desc: "terminal bell on completed runs; all also rings when plan steps become completed."},
 				{label: "pprof address", section: "Diagnostics", key: prefs.KeyPprofAddr, kind: rowText, def: "(off)",
 					desc: "optional listen address for Go pprof + runtime metrics, e.g. 127.0.0.1:6060. applies on restart; CLI -pprof overrides."},
 				{label: "trace file", section: "Diagnostics", key: prefs.KeyTraceFile, kind: rowText, def: "(off)",
@@ -299,6 +294,7 @@ func newSettingsDialogWithContext(ctx context.Context, s *engine.Settings) *sett
 			}},
 		},
 	}
+	d.gallery.onError = func(err error) { d.setStatus("theme: " + err.Error()) }
 	d.refresh(ctx)
 	return d
 }

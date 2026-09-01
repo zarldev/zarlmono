@@ -171,7 +171,7 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 }
 
 func (m *UI) contextPromptLines(width int) []string {
-	snap := BuildInspectorSnapshot(m.session, m.live, nil)
+	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
 	out := []string{sectionHead("prompt", width)}
 	stackLines := promptStackSummaryLines(snap.PromptStack)
 	if len(stackLines) == 0 {
@@ -220,7 +220,7 @@ func promptPreviewLines(prompt string, width int) []string {
 }
 
 func (m *UI) contextToolsLines(width int) []string {
-	snap := BuildInspectorSnapshot(m.session, m.live, nil)
+	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
 	available, hidden := groupContextTools(snap.Tools, snap.PlanMode)
 	out := []string{sectionHead("tools", width)}
 	out = append(out, palette.Muted.On(fmt.Sprintf("%d available now · %d hidden", len(available), len(hidden))))
@@ -289,7 +289,7 @@ func renderToolSpecRows(specs []tools.ToolSpec) []string {
 }
 
 func (m *UI) contextEventsLines(width int) []string {
-	snap := BuildInspectorSnapshot(m.session, m.live, nil)
+	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
 	groups := groupContextEvents(snap.EventLog)
 	out := []string{sectionHead("events", width)}
 	if len(snap.EventLog) == 0 {
@@ -340,6 +340,10 @@ func (m *UI) llmStateLines() []string {
 	out := make([]string, 0, 9)
 	add := func(label, value string) {
 		out = append(out, palette.Subtle.On(padRight(label, 10))+value)
+	}
+
+	if name := strings.TrimSpace(m.session.Label); name != "" {
+		add("name", palette.Fg.On(name))
 	}
 
 	provider := m.session.Provider

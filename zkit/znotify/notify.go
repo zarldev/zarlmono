@@ -250,8 +250,8 @@ func (s *NotificationStore) Subscribe(ctx context.Context, sessionID string) <-c
 // channel returned by Subscribe — the read-only type means callers
 // must hold the original ref or re-subscribe.
 //
-// Evicts the session from pending cache if this was the last
-// subscriber for that session, preventing stale accumulation.
+// Pending notifications are retained independently of subscriber lifetime and
+// remain available to [NotificationStore.Drain].
 func (s *NotificationStore) Unsubscribe(sessionID string, ch <-chan Notification) {
 	s.unsubscribe(sessionID, ch)
 }
@@ -273,11 +273,6 @@ func (s *NotificationStore) unsubscribe(sessionID string, ch <-chan Notification
 	s.subscribers[sessionID] = slices.Delete(subs, i, i+1)
 	if len(s.subscribers[sessionID]) == 0 {
 		delete(s.subscribers, sessionID)
-	}
-	// Evict this session's pending notifications when the last
-	// subscriber unsubscribes, preventing stale accumulation.
-	if _, ok := s.pending[sessionID]; ok && len(s.subscribers[sessionID]) == 0 {
-		delete(s.pending, sessionID)
 	}
 	close(target)
 }

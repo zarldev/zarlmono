@@ -98,3 +98,15 @@ func (s *SyncSink) OnDiagnostic(e Diagnostic) {
 	defer s.mu.Unlock()
 	s.sink.OnDiagnostic(e)
 }
+
+func (s *SyncSink) OnWorkspaceWaitStarted(e WorkspaceWaitStarted) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sink.OnWorkspaceWaitStarted(e)
+}
+
+func (s *SyncSink) OnWorkspaceWaitEnded(e WorkspaceWaitEnded) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sink.OnWorkspaceWaitEnded(e)
+}

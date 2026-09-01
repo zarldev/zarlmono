@@ -2,8 +2,8 @@ package runner_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"iter"
 	"strings"
 	"sync"
 	"testing"
@@ -23,28 +23,40 @@ import (
 type fakeProvider struct {
 	mu       sync.Mutex
 	turns    [][]llm.CompletionChunk
+	turnErrs map[int]error
 	calls    int
 	requests []llm.CompletionRequest
 }
 
-func (f *fakeProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.requests = append(f.requests, req)
-	if f.calls >= len(f.turns) {
-		return nil, fmt.Errorf("fakeProvider: out of scripted turns (call #%d)", f.calls+1)
-	}
-	chunks := f.turns[f.calls]
-	f.calls++
+func (f *fakeProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
+		f.mu.Lock()
+		f.requests = append(f.requests, req)
+		if f.calls >= len(f.turns) {
+			call := f.calls + 1
+			f.mu.Unlock()
+			yield(llm.CompletionChunk{}, fmt.Errorf("fakeProvider: out of scripted turns (call #%d)", call))
+			return
+		}
+		turn := f.calls
+		chunks := f.turns[turn]
+		turnErr := f.turnErrs[turn]
+		f.calls++
+		f.mu.Unlock()
+		if turnErr != nil {
+			yield(llm.CompletionChunk{}, turnErr)
+			return
+		}
 		for _, c := range chunks {
-			err := c.Error
-			c.Error = nil
-			if !yield(c, err) {
+			if strings.HasPrefix(c.Content, "\x00runner-test-error:") {
+				yield(llm.CompletionChunk{}, errors.New(strings.TrimPrefix(c.Content, "\x00runner-test-error:")))
+				return
+			}
+			if !yield(c, nil) {
 				return
 			}
 		}
-	}, nil
+	}
 }
 
 func (f *fakeProvider) callCount() int {
@@ -91,7 +103,7 @@ func newRegistry(stubs ...tools.Tool) *tools.Registry {
 }
 
 func chunkText(text string) llm.CompletionChunk {
-	return llm.CompletionChunk{Content: text, Done: false}
+	return llm.CompletionChunk{Content: text}
 }
 
 func chunkToolCall(id, name, args string) llm.CompletionChunk {
@@ -109,14 +121,10 @@ func chunkToolCall(id, name, args string) llm.CompletionChunk {
 	}
 }
 
-func chunkDone() llm.CompletionChunk {
-	return llm.CompletionChunk{Done: true}
-}
-
-func chunkDoneUsage(prompt, completion int) llm.CompletionChunk {
+func chunkUsage(prompt, completion int) llm.CompletionChunk {
 	return llm.CompletionChunk{
-		Done: true,
-		Usage: &llm.Usage{
+		UsageReported: true,
+		Usage: llm.Usage{
 			PromptTokens:     prompt,
 			CompletionTokens: completion,
 			TotalTokens:      prompt + completion,
@@ -131,7 +139,7 @@ func TestRun_SkipsToolsWithEmptyNames(t *testing.T) {
 
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkText("ok"), chunkDone()},
+			{chunkText("ok")},
 		},
 	}
 	reg := newRegistry(
@@ -162,7 +170,7 @@ func TestRun_TextOnlyResponseEndsAsCompleted(t *testing.T) {
 
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkText("here is the answer"), chunkDoneUsage(42, 5)},
+			{chunkText("here is the answer"), chunkUsage(42, 5)},
 		},
 	}
 
@@ -203,7 +211,7 @@ func TestRun_ContextBreakdownOffByDefault(t *testing.T) {
 
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkText("answer"), chunkDoneUsage(10, 2)},
+			{chunkText("answer"), chunkUsage(10, 2)},
 		},
 	}
 	sink := newRecordingSink()
@@ -235,8 +243,8 @@ func TestRun_ToolCallThenTextCompletes(t *testing.T) {
 	// calls plus a final assistant message.
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("c1", "echo", `{"x":"hi"}`), chunkDone()},
-			{chunkText("all done"), chunkDone()},
+			{chunkToolCall("c1", "echo", `{"x":"hi"}`)},
+			{chunkText("all done")},
 		},
 	}
 
@@ -266,8 +274,8 @@ func TestRun_ToolCompletedEventCarriesEffects(t *testing.T) {
 
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("c1", "edit", `{}`), chunkDone()},
-			{chunkText("done"), chunkDone()},
+			{chunkToolCall("c1", "edit", `{}`)},
+			{chunkText("done")},
 		},
 	}
 	sink := newRecordingSink()
@@ -301,7 +309,7 @@ func TestRun_MaxIterationsCapsLoop(t *testing.T) {
 	turns := make([][]llm.CompletionChunk, 5)
 	for i := range turns {
 		id := fmt.Sprintf("loop-%d", i)
-		turns[i] = []llm.CompletionChunk{chunkToolCall(id, "echo", `{}`), chunkDone()}
+		turns[i] = []llm.CompletionChunk{chunkToolCall(id, "echo", `{}`)}
 	}
 	provider := &fakeProvider{turns: turns}
 
@@ -325,7 +333,7 @@ func TestRun_SinkEventsPublished(t *testing.T) {
 
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkText("answer"), chunkDone()},
+			{chunkText("answer")},
 		},
 	}
 
@@ -367,9 +375,9 @@ func TestRun_SpawnAgentRunsChildAndReturnsSummary(t *testing.T) {
 	//   parent turn 2 → text-only answer using the child's summary
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("p1", string(spawn.ToolNameAgentSpawn), `{"prompt":"compute X"}`), chunkDone()},
-			{chunkText("X = 42"), chunkDone()},
-			{chunkText("parent saw child say X = 42"), chunkDone()},
+			{chunkToolCall("p1", string(spawn.ToolNameAgentSpawn), `{"prompt":"compute X"}`)},
+			{chunkText("X = 42")},
+			{chunkText("parent saw child say X = 42")},
 		},
 	}
 
@@ -407,21 +415,21 @@ func TestRun_SpawnAgentRespectsDepthCap(t *testing.T) {
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
 			// Depth 0 → spawn (becomes depth 1)
-			{chunkToolCall("a", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
+			{chunkToolCall("a", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`)},
 			// Depth 1 → spawn (becomes depth 2)
-			{chunkToolCall("b", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
+			{chunkToolCall("b", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`)},
 			// Depth 2 → spawn (becomes depth 3)
-			{chunkToolCall("c", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
+			{chunkToolCall("c", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`)},
 			// Depth 3 — refused. The deepest agent gets a tool error
 			// back and then settles on text.
-			{chunkToolCall("d", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`), chunkDone()},
-			{chunkText("hit cap"), chunkDone()},
+			{chunkToolCall("d", string(spawn.ToolNameAgentSpawn), `{"prompt":"down"}`)},
+			{chunkText("hit cap")},
 			// Depth 2 sees its child done, finishes itself.
-			{chunkText("d2 done"), chunkDone()},
+			{chunkText("d2 done")},
 			// Depth 1 same.
-			{chunkText("d1 done"), chunkDone()},
+			{chunkText("d1 done")},
 			// Depth 0 same.
-			{chunkText("d0 done"), chunkDone()},
+			{chunkText("d0 done")},
 		},
 	}
 
@@ -568,8 +576,8 @@ func TestRun_ToolTimeoutAbandonsUncooperativeTool(t *testing.T) {
 
 	provider := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("slow-1", "block", `{}`), chunkDone()},
-			{chunkText("recovered"), chunkDone()},
+			{chunkToolCall("slow-1", "block", `{}`)},
+			{chunkText("recovered")},
 		},
 	}
 
@@ -642,7 +650,7 @@ type delayedProvider struct {
 
 func (p *delayedProvider) Name() string { return "delayed" }
 
-func (p *delayedProvider) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *delayedProvider) Complete(ctx context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		select {
 		case <-ctx.Done():
@@ -652,10 +660,7 @@ func (p *delayedProvider) Complete(ctx context.Context, _ llm.CompletionRequest)
 		if !yield(chunkText(p.reply), nil) {
 			return
 		}
-		if !yield(chunkDone(), nil) {
-			return
-		}
-	}, nil
+	}
 }
 
 type blockingTool struct {

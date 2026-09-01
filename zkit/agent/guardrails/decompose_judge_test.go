@@ -190,6 +190,19 @@ func TestLLMVerdictJudge_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestLLMVerdictJudge_RejectsEmptySuccess(t *testing.T) {
+	srv := httptest.NewServer(rawStreamHandler(""))
+	defer srv.Close()
+
+	judge := newTestJudge(t, srv.URL)
+	_, err := judge.Judge(t.Context(), guardrails.VerdictInput{
+		Tool: "bash", Error: "x", Attempts: 3,
+	})
+	if err == nil || !strings.Contains(err.Error(), "empty response") {
+		t.Fatalf("Judge error = %v, want empty response error", err)
+	}
+}
+
 // newTestJudge builds an LLMVerdictJudge backed by an OpenAI-shaped
 // provider pointed at the test server. Centralised so each subtest
 // reads cleanly.

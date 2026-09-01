@@ -58,6 +58,7 @@ func (t *SavePlanAppendTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:            ToolNameSavePlanAppend,
 		WorkspaceAccess: tools.WorkspaceAccesses.WRITE,
+		WorkspaceScope:  tools.WorkspaceScopeFixed(".zarlcode/plans"),
 		Description: "Append a chunk of markdown to .zarlcode/plans/<name>.md. " +
 			"Use this when a plan exceeds the save_plan one-shot cap: scaffold with " +
 			"save_plan(name, \"\"), then call save_plan_append repeatedly with chunks " +

@@ -495,25 +495,25 @@ func (c *Client) ReadResource(ctx context.Context, uri string) ([]Content, error
 		case contentTypeText:
 			var t TextContent
 			if err := json.Unmarshal(item, &t); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("decode text content: %w", err)
 			}
 			out = append(out, t)
 		case contentTypeImage:
 			var i ImageContent
 			if err := json.Unmarshal(item, &i); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("decode image content: %w", err)
 			}
 			out = append(out, i)
 		case contentTypeAudio:
 			var a AudioContent
 			if err := json.Unmarshal(item, &a); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("decode audio content: %w", err)
 			}
 			out = append(out, a)
 		case contentTypeResource:
 			var rc ResourceContent
 			if err := json.Unmarshal(item, &rc); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("decode resource content: %w", err)
 			}
 			out = append(out, rc)
 		default:

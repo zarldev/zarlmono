@@ -1,0 +1,232 @@
+package engine_test
+
+import (
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zkit/db"
+
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
+	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
+	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	"github.com/zarldev/zarlmono/zkit/prefs"
+)
+
+// Headless/eval turns harden test-edit to strict (the grader's tests must
+// survive untouched); interactive turns have no test-edit guardrail —
+// the advisory is an eval tool, not needed when a human is in the loop.
+func TestHeadlessGuardrailDepsUseStrictTestEdit(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	live := engine.NewLiveRunner(nil, ws, "local")
+
+	if name := live.GuardrailDeps(t.Context(), true).TestEdit.Name(); name != "test_edit_strict" {
+		t.Fatalf("headless test-edit policy = %q, want test_edit_strict", name)
+	}
+	if g := live.GuardrailDeps(t.Context(), false).TestEdit; g != nil {
+		t.Fatalf("interactive test-edit policy = %q, want nil (no test-edit guardrail)", g.Name())
+	}
+}
+
+// The interactive test-edit policy now follows the test_edit_guard setting
+// (off → none, advisory → advisory, strict → strict); headless stays strict
+// regardless so eval grading tests can't be quietly weakened.
+func TestInteractiveTestEditModeFollowsSetting(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	s := newGuardrailSettings(t)
+	live := engine.NewLiveRunner(nil, ws, "local", engine.WithSettings(s))
+
+	set := func(val string) {
+		t.Helper()
+		if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeyTestEditGuard, val); err != nil {
+			t.Fatalf("set: %v", err)
+		}
+	}
+
+	set("advisory")
+	if g := live.GuardrailDeps(t.Context(), false).TestEdit; g == nil || g.Name() != "test_edit_advisory" {
+		t.Fatalf("advisory setting → %v, want test_edit_advisory", g)
+	}
+	set("strict")
+	if g := live.GuardrailDeps(t.Context(), false).TestEdit; g == nil || g.Name() != "test_edit_strict" {
+		t.Fatalf("strict setting → %v, want test_edit_strict", g)
+	}
+	set("off")
+	if g := live.GuardrailDeps(t.Context(), false).TestEdit; g != nil {
+		t.Fatalf("off setting → %q, want no guardrail", g.Name())
+	}
+	// Headless ignores the setting and stays strict.
+	if name := live.GuardrailDeps(t.Context(), true).TestEdit.Name(); name != "test_edit_strict" {
+		t.Fatalf("headless test-edit = %q, want test_edit_strict", name)
+	}
+}
+
+// Turning the always-on guardrails off drops them from the chain via Disabled.
+func TestImprovementAndSkillHintsDisableViaSettings(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	s := newGuardrailSettings(t)
+	live := engine.NewLiveRunner(nil, ws, "local", engine.WithSettings(s))
+
+	// On by default: nothing disabled.
+	if d := live.GuardrailDeps(t.Context(), false).Disabled; len(d) != 0 {
+		t.Fatalf("default Disabled = %v, want empty", d)
+	}
+
+	for _, kv := range []struct{ key, name string }{
+		{prefs.KeyImprovementGuard, guardrails.NameImprovementLoop},
+		{prefs.KeySkillHints, guardrails.NameSkillHint},
+	} {
+		if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, kv.key, "off"); err != nil {
+			t.Fatalf("set %s: %v", kv.key, err)
+		}
+	}
+	got := live.GuardrailDeps(t.Context(), false).Disabled
+	for _, want := range []string{guardrails.NameImprovementLoop, guardrails.NameSkillHint} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("Disabled = %v, want to contain %q", got, want)
+		}
+	}
+}
+
+// shell_guard "auto" follows the sandbox; strict/lenient pin the choice.
+func TestShellGuardLenientModes(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	s := newGuardrailSettings(t)
+	live := engine.NewLiveRunner(nil, ws, "local", engine.WithSettings(s))
+
+	setSandbox := func(v string) {
+		t.Helper()
+		if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeySandbox, v); err != nil {
+			t.Fatalf("set sandbox: %v", err)
+		}
+	}
+	setGuard := func(v string) {
+		t.Helper()
+		if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeyShellGuard, v); err != nil {
+			t.Fatalf("set shell_guard: %v", err)
+		}
+	}
+
+	// auto: lenient only when the sandbox is off.
+	setSandbox("on")
+	if live.GuardrailDeps(t.Context(), false).ShellLenient {
+		t.Fatal("auto + sandbox on → want strict (ShellLenient false)")
+	}
+	setSandbox("off")
+	if !live.GuardrailDeps(t.Context(), false).ShellLenient {
+		t.Fatal("auto + sandbox off → want lenient (ShellLenient true)")
+	}
+	// Pinned modes ignore the sandbox.
+	setGuard("strict")
+	setSandbox("off")
+	if live.GuardrailDeps(t.Context(), false).ShellLenient {
+		t.Fatal("strict pin → want ShellLenient false regardless of sandbox")
+	}
+	setGuard("lenient")
+	setSandbox("on")
+	if !live.GuardrailDeps(t.Context(), false).ShellLenient {
+		t.Fatal("lenient pin → want ShellLenient true regardless of sandbox")
+	}
+	// off: the guardrail is dropped from the chain entirely, not merely
+	// relaxed — Disabled carries its name regardless of the sandbox state.
+	setGuard("off")
+	setSandbox("on")
+	if d := live.GuardrailDeps(t.Context(), false).Disabled; !slices.Contains(d, guardrails.NameShellPolicy) {
+		t.Fatalf("off → Disabled = %v, want to contain %q", d, guardrails.NameShellPolicy)
+	}
+	// Any non-off mode leaves the guardrail in the chain.
+	setGuard("lenient")
+	if d := live.GuardrailDeps(t.Context(), false).Disabled; slices.Contains(d, guardrails.NameShellPolicy) {
+		t.Fatalf("lenient → Disabled = %v, want not to contain %q", d, guardrails.NameShellPolicy)
+	}
+}
+
+func TestZarlcodeGuardrailDepsDoNotDefaultLoadGoVerifier(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	live := engine.NewLiveRunner(nil, ws, "local")
+
+	if got := live.GuardrailDeps(t.Context(), false).Verifiers; len(got) != 0 {
+		t.Fatalf("interactive verifiers = %d, want none by default", len(got))
+	}
+	if got := live.GuardrailDeps(t.Context(), true).Verifiers; len(got) != 0 {
+		t.Fatalf("headless verifiers = %d, want none by default", len(got))
+	}
+}
+
+// agent_spawn carries a per-task fanout cap (default 8) so a task can't fan out
+// sub-agents unbounded; a 0 setting removes it.
+func TestSpawnFanoutCapApplied(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	s := newGuardrailSettings(t)
+	live := engine.NewLiveRunner(nil, ws, "local", engine.WithSettings(s))
+
+	// Default: capped at the standard 8.
+	if got := live.GuardrailDeps(t.Context(), false).FanoutLimits[spawn.ToolNameAgentSpawn]; got != coderunner.StandardSpawnFanoutCap {
+		t.Fatalf("default spawn cap = %d, want %d", got, coderunner.StandardSpawnFanoutCap)
+	}
+
+	// Override to a custom cap.
+	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "3"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := live.GuardrailDeps(t.Context(), false).FanoutLimits[spawn.ToolNameAgentSpawn]; got != 3 {
+		t.Fatalf("override spawn cap = %d, want 3", got)
+	}
+
+	// Zero disables it — the guardrail treats a non-positive limit as unbounded.
+	if err := s.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "0"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := live.GuardrailDeps(t.Context(), false).FanoutLimits[spawn.ToolNameAgentSpawn]; got != 0 {
+		t.Fatalf("zero spawn cap = %d, want 0 (uncapped)", got)
+	}
+}
+
+func TestStandardFanoutDepsLeaveReadUncapped(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	live := engine.NewLiveRunner(nil, ws, "local")
+
+	limits := live.GuardrailDeps(t.Context(), false).FanoutLimits
+	if _, ok := limits[code.ToolNameRead]; ok {
+		t.Fatalf("read fanout cap = %d, want uncapped", limits[code.ToolNameRead])
+	}
+	for _, name := range []tools.ToolName{code.ToolNameLs, code.ToolNameGrep, code.ToolNameGlob} {
+		if limits[name] <= 0 {
+			t.Fatalf("%s fanout cap = %d, want positive", name, limits[name])
+		}
+	}
+}
+
+func newGuardrailSettings(t *testing.T) *engine.Settings {
+	t.Helper()
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return engine.NewSettings(store, nil, nil, t.TempDir())
+}

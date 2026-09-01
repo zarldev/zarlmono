@@ -161,3 +161,36 @@ func (r *headlessRecorder) complete(ctx context.Context, res runner.TaskResult) 
 		slog.WarnContext(ctx, "headless: complete run row", "id", r.id, "err", err)
 	}
 }
+
+// HeadlessRecorder persists a headless run lifecycle. A nil recorder is a no-op.
+type HeadlessRecorder = headlessRecorder
+
+// NewHeadlessRecorder creates a recorder for a run and workspace.
+func NewHeadlessRecorder(store *db.Store, id, workspace string) *HeadlessRecorder {
+	return &headlessRecorder{store: store, id: id, workspace: workspace}
+}
+
+// Start persists the initial run row.
+func (r *headlessRecorder) Start(ctx context.Context, prompt, provider, model string) {
+	r.start(ctx, prompt, provider, model)
+}
+
+// Progress persists current iteration and tool-call counts.
+func (r *headlessRecorder) Progress(ctx context.Context, iterations, toolCalls int) {
+	r.progress(ctx, iterations, toolCalls)
+}
+
+// Attempt persists a completed pursue attempt.
+func (r *headlessRecorder) Attempt(ctx context.Context, report pursue.AttemptReport) {
+	r.attempt(ctx, report)
+}
+
+// VerifierResult persists a verifier result.
+func (r *headlessRecorder) VerifierResult(ctx context.Context, result coderunner.VerifyResult) {
+	r.verifierResult(ctx, result)
+}
+
+// Complete persists the terminal run summary.
+func (r *headlessRecorder) Complete(ctx context.Context, result runner.TaskResult) {
+	r.complete(ctx, result)
+}

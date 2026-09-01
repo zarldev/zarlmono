@@ -23,8 +23,8 @@ func TestToolOutputSinkReceivesFullOutput(t *testing.T) {
 	full := strings.Repeat("line\n", 500) // far past the truncator caps
 
 	client := runnertest.NewClient([][]llm.CompletionChunk{
-		{runnertest.ChunkToolCall("c1", "big", `{"n":500}`), runnertest.ChunkDone()},
-		{runnertest.ChunkText("done"), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c1", "big", `{"n":500}`)},
+		{runnertest.ChunkText("done")},
 	})
 	reg := tools.NewRegistry(runnertest.Tool{Name: "big", Description: "big", Result: full})
 
@@ -37,7 +37,7 @@ func TestToolOutputSinkReceivesFullOutput(t *testing.T) {
 		runner.WithMaxIterations(4),
 	)
 
-	res := r.Run(context.Background(), runner.TaskSpec{Prompt: "go"})
+	res := r.Run(t.Context(), runner.TaskSpec{Prompt: "go"})
 	if res.Err != nil {
 		t.Fatalf("run: %v", res.Err)
 	}

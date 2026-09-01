@@ -26,11 +26,14 @@ type RuntimeCatalog struct {
 	lastErrs    []error
 }
 
-func newRuntimeCatalog(wsRoot string) *RuntimeCatalog {
+// NewRuntimeCatalog loads a runtime catalog rooted at wsRoot.
+func NewRuntimeCatalog(wsRoot string) *RuntimeCatalog {
 	c := &RuntimeCatalog{}
 	c.Reload(wsRoot)
 	return c
 }
+
+func newRuntimeCatalog(wsRoot string) *RuntimeCatalog { return NewRuntimeCatalog(wsRoot) }
 
 // Reload re-reads the skill/agent directories. Individual malformed files are
 // collected and retained, but valid entries still replace the previous snapshot.

@@ -16,6 +16,7 @@ type Runner struct {
 	running   map[string]bool
 	handlers  []Handler
 	stop      chan struct{}
+	started   bool
 	stopped   bool
 	// reactiveDone signals when each reactive goroutine has exited.
 	// Keyed by the reactive's Key().

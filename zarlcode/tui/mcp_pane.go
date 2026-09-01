@@ -39,10 +39,7 @@ type mcpPane struct {
 
 var mcpAddLabels = [6]string{"name", "transport", "command", "args", "base url", "auth token"}
 
-func newMCPPaneWithContext(ctx context.Context, s *engine.Settings) *mcpPane {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func newMCPPane(ctx context.Context, s *engine.Settings) *mcpPane {
 	d := &mcpPane{ctx: ctx, s: s}
 	d.refresh()
 	return d

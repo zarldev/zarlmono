@@ -3,6 +3,7 @@ package tui
 import (
 	_ "embed"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -29,25 +30,31 @@ const (
 )
 
 type introPane struct {
-	wsRoot   string
-	sessions []sessionSummary
-	cursor   int
-	focus    introFocus
-	prompt   []rune
-	pos      int
-	err      string
-	provider string
-	model    string
+	wsRoot      string
+	sessions    []sessionSummary
+	cursor      int
+	focus       introFocus
+	searching   bool
+	searchQuery []rune
+	matches     []int
+	renaming    bool
+	prompt      []rune
+	pos         int
+	err         string
+	provider    string
+	model       string
 }
 
 func newIntroPane(wsRoot string, sessions []sessionSummary, provider, model string) *introPane {
-	return &introPane{
+	p := &introPane{
 		wsRoot:   wsRoot,
 		sessions: sessions,
 		focus:    introFocusPrompt,
 		provider: provider,
 		model:    model,
 	}
+	p.sortSessions()
+	return p
 }
 
 func (p *introPane) handleKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
@@ -63,6 +70,22 @@ func (p *introPane) handleKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
+	if p.searching {
+		return p.handleSearchKey(m, msg)
+	}
+	if p.renaming {
+		return p.handleRenameKey(m, msg)
+	}
+	if msg.String() == "ctrl+n" {
+		if session, ok := p.selectedSession(); ok {
+			p.focus = introFocusSessions
+			p.renaming = true
+			p.prompt = []rune(session.Label)
+			p.pos = len(p.prompt)
+			p.err = ""
+		}
+		return nil
+	}
 	if p.focus == introFocusPrompt {
 		return p.handlePromptKey(m, msg)
 	}
@@ -71,8 +94,10 @@ func (p *introPane) handleKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 
 // handlePaste inserts pasted/clipboard text into the prompt field.
 func (p *introPane) handlePaste(content string) {
-	if p.focus == introFocusPrompt {
+	if p.focus == introFocusPrompt || p.renaming {
 		p.insert(content)
+	} else if p.searching {
+		p.insertSearch(content)
 	}
 }
 
@@ -122,9 +147,22 @@ func isMultilineInsertKey(msg tea.KeyPressMsg) bool {
 
 func (p *introPane) handleSessionKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
+	case "/":
+		p.searching = true
+		p.searchQuery = nil
+		p.refreshMatches("")
+	case "p":
+		return p.toggleSelectedSessionPin(m)
+	case "ctrl+n":
+		if session, ok := p.selectedSession(); ok {
+			p.renaming = true
+			p.prompt = []rune(session.Label)
+			p.pos = len(p.prompt)
+			p.err = ""
+		}
 	case "enter":
-		if len(p.sessions) > 0 {
-			return m.resumeIntroSession(p.sessions[p.cursor].ID)
+		if session, ok := p.selectedSession(); ok {
+			return m.resumeIntroSession(session.ID)
 		}
 	case "esc":
 		p.err = ""
@@ -134,26 +172,116 @@ func (p *introPane) handleSessionKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 			p.cursor--
 		}
 	case "down", "j":
-		if p.cursor < len(p.sessions)-1 {
+		if p.cursor < len(p.matches)-1 {
 			p.cursor++
 		}
 	case "home", "g":
 		p.cursor = 0
 	case "end", "G":
-		if len(p.sessions) > 0 {
-			p.cursor = len(p.sessions) - 1
+		if len(p.matches) > 0 {
+			p.cursor = len(p.matches) - 1
 		}
 	case "pgup", "ctrl+u":
 		p.cursor -= introVisibleSessions
 		if p.cursor < 0 {
 			p.cursor = 0
 		}
+	case "d", "delete":
+		if session, ok := p.selectedSession(); ok {
+			m.overlay.push(newDeleteSessionConfirmDialog(session.ID, introSessionDisplayLabel(session)))
+		}
 	case "pgdown", "ctrl+d":
-		if len(p.sessions) > 0 {
+		if len(p.matches) > 0 {
 			p.cursor += introVisibleSessions
-			if p.cursor >= len(p.sessions) {
-				p.cursor = len(p.sessions) - 1
+			if p.cursor >= len(p.matches) {
+				p.cursor = len(p.matches) - 1
 			}
+		}
+	}
+	return nil
+}
+
+func (p *introPane) toggleSelectedSessionPin(m *UI) tea.Cmd {
+	session, ok := p.selectedSession()
+	if !ok {
+		return nil
+	}
+	p.err = ""
+	return m.setIntroSessionPinned(session.ID, !session.Pinned)
+}
+
+func (p *introPane) handleRenameKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "ctrl+c", "ctrl+n":
+		p.renaming = false
+		p.prompt = nil
+		p.pos = 0
+	case "enter":
+		session, ok := p.selectedSession()
+		if !ok {
+			return nil
+		}
+		label := normalizeSessionLabel(string(p.prompt))
+		p.renaming = false
+		p.prompt = nil
+		p.pos = 0
+		return m.renameIntroSession(session.ID, label)
+	case "backspace":
+		p.backspace()
+	case "delete":
+		if p.pos < len(p.prompt) {
+			p.prompt = append(p.prompt[:p.pos], p.prompt[p.pos+1:]...)
+		}
+	case "left":
+		if p.pos > 0 {
+			p.pos--
+		}
+	case "right":
+		if p.pos < len(p.prompt) {
+			p.pos++
+		}
+	case "home":
+		p.pos = 0
+	case "end":
+		p.pos = len(p.prompt)
+	default:
+		if msg.Text != "" && len(p.prompt) < maxSessionLabelRunes {
+			runes := []rune(msg.Text)
+			if remaining := maxSessionLabelRunes - len(p.prompt); len(runes) > remaining {
+				runes = runes[:remaining]
+			}
+			p.insert(string(runes))
+		}
+	}
+	return nil
+}
+
+func (p *introPane) handleSearchKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		p.searching = false
+		p.searchQuery = nil
+		p.refreshMatches("")
+	case "enter":
+		if session, ok := p.selectedSession(); ok {
+			return m.resumeIntroSession(session.ID)
+		}
+	case "up":
+		if p.cursor > 0 {
+			p.cursor--
+		}
+	case "down":
+		if p.cursor < len(p.matches)-1 {
+			p.cursor++
+		}
+	case "backspace":
+		if len(p.searchQuery) > 0 {
+			p.searchQuery = p.searchQuery[:len(p.searchQuery)-1]
+			p.refreshMatches(string(p.searchQuery))
+		}
+	default:
+		if msg.Text != "" {
+			p.insertSearch(msg.Text)
 		}
 	}
 	return nil
@@ -177,12 +305,6 @@ func (p *introPane) backspace() {
 	}
 	p.prompt = append(p.prompt[:p.pos-1], p.prompt[p.pos:]...)
 	p.pos--
-}
-
-func (p *introPane) paste(s string) {
-	if p.focus == introFocusPrompt && s != "" {
-		p.insert(s)
-	}
 }
 
 const introVisibleSessions = 7
@@ -331,33 +453,44 @@ func padStyled(s string, width int) string {
 
 func (p *introPane) sessionLines() []string {
 	head := "sessions"
+	if p.renaming {
+		head = "rename session"
+	} else if p.searching {
+		head = "search sessions: " + string(p.searchQuery) + "▏"
+	}
 	if len(p.sessions) == 0 {
 		return []string{palette.Subtle.On(head), palette.Muted.On("  (none yet — type above to start fresh)")}
 	}
-	if len(p.sessions) > introVisibleSessions {
-		head += fmt.Sprintf(" [ %d/%d ]", p.cursor+1, len(p.sessions))
+	if len(p.matches) == 0 {
+		return []string{palette.Subtle.On(head), palette.Muted.On("  No matching sessions · esc clear")}
+	}
+	if len(p.matches) > introVisibleSessions {
+		head += fmt.Sprintf(" [ %d/%d ]", p.cursor+1, len(p.matches))
 	}
 	out := []string{palette.Subtle.On(head)}
 	start := 0
 	if p.cursor >= introVisibleSessions {
 		start = p.cursor - introVisibleSessions + 1
 	}
-	end := min(start+introVisibleSessions, len(p.sessions))
-	for i := start; i < end; i++ {
-		s := p.sessions[i]
-		label := truncateRunes(s.Label, 42)
-		meta := ""
-		if !s.SavedAt.IsZero() {
-			meta = formatAgo(time.Since(s.SavedAt))
+	end := min(start+introVisibleSessions, len(p.matches))
+	for displayIndex := start; displayIndex < end; displayIndex++ {
+		s := p.sessions[p.matches[displayIndex]]
+		label := introSessionDisplayLabel(s)
+		if p.renaming && displayIndex == p.cursor {
+			label = string(p.prompt)
+			if label == "" {
+				label = "(unnamed)"
+			}
+			label += "▏"
 		}
-		if meta == "" {
-			meta = "saved"
+		if s.Pinned {
+			label = "★ " + label
 		}
-		if s.Model != "" {
-			meta += " · " + s.Model
-		}
-		row := fmt.Sprintf("%-42s  %s · %d msgs", label, meta, s.Messages)
-		if i == p.cursor && p.focus == introFocusSessions {
+		label = truncateRunes(label, 42)
+
+		metadata := introSessionMetadata(s)
+		row := fmt.Sprintf("%-42s  %s", label, metadata)
+		if displayIndex == p.cursor && p.focus == introFocusSessions {
 			out = append(out, palette.Primary.On("▶ "+row))
 		} else {
 			out = append(out, palette.Subtle.On("  "+row))
@@ -366,11 +499,102 @@ func (p *introPane) sessionLines() []string {
 	return out
 }
 
+func introSessionMetadata(session sessionSummary) string {
+	parts := make([]string, 0, 6)
+	if !session.SavedAt.IsZero() {
+		parts = append(parts, formatAgo(time.Since(session.SavedAt)))
+	} else {
+		parts = append(parts, "saved")
+	}
+	if session.AgentName != "" {
+		parts = append(parts, session.AgentName)
+	}
+	if session.Model != "" {
+		parts = append(parts, session.Model)
+	}
+	if session.HasDraft {
+		parts = append(parts, "Draft")
+	}
+	parts = append(parts, fmt.Sprintf("%d msgs", session.Messages))
+	if session.PlanTotalCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d plan", session.PlanCompletedCount, session.PlanTotalCount))
+	}
+	if session.ChangedFileCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d files", session.ChangedFileCount))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (p *introPane) selectedSession() (sessionSummary, bool) {
+	if p.cursor < 0 || p.cursor >= len(p.matches) {
+		return sessionSummary{}, false
+	}
+	index := p.matches[p.cursor]
+	if index < 0 || index >= len(p.sessions) {
+		return sessionSummary{}, false
+	}
+	return p.sessions[index], true
+}
+
+func (p *introPane) refreshMatches(query string) {
+	selectedID := ""
+	if selected, ok := p.selectedSession(); ok {
+		selectedID = selected.ID
+	}
+	p.refreshMatchesPreserving(query, selectedID)
+}
+
+func (p *introPane) refreshMatchesPreserving(query, selectedID string) {
+	documents := make([]searchDocument, len(p.sessions))
+	for index, session := range p.sessions {
+		documents[index] = searchDocument{ID: session.ID, Fields: []string{session.Label, session.AgentName, session.Model, session.ID}}
+	}
+	p.matches = searchDocuments(documents, query)
+	p.cursor = preserveSearchSelection(documents, p.matches, selectedID)
+}
+
+func (p *introPane) sortSessions() {
+	selectedID := ""
+	if selected, ok := p.selectedSession(); ok {
+		selectedID = selected.ID
+	}
+	sort.SliceStable(p.sessions, func(i, j int) bool {
+		left, right := p.sessions[i], p.sessions[j]
+		if left.Pinned != right.Pinned {
+			return left.Pinned
+		}
+		if left.Pinned && !left.PinnedAt.Equal(right.PinnedAt) {
+			return left.PinnedAt.After(right.PinnedAt)
+		}
+		return left.SavedAt.After(right.SavedAt)
+	})
+	p.refreshMatchesPreserving(string(p.searchQuery), selectedID)
+}
+
+func (p *introPane) insertSearch(text string) {
+	text = strings.ReplaceAll(text, "\n", " ")
+	p.searchQuery = append(p.searchQuery, []rune(text)...)
+	p.refreshMatches(string(p.searchQuery))
+}
+
+func introSessionDisplayLabel(session sessionSummary) string {
+	if label := strings.TrimSpace(session.Label); label != "" {
+		return label
+	}
+	if !session.CreatedAt.IsZero() {
+		return session.CreatedAt.Format("2006-01-02 15:04")
+	}
+	return "Unnamed session"
+}
+
 func (p *introPane) footer() string {
 	key := func(k string) string { return palette.Subtle.On(k) }
 	mut := func(s string) string { return palette.Muted.On(s) }
 	if p.focus == introFocusSessions {
-		return key("↑↓") + mut(" pick") + mut("    ") + key("enter") + mut(" resume") + mut("    ") + key("tab") + mut(" prompt")
+		if p.renaming {
+			return key("enter") + mut(" save name") + mut("    ") + key("esc") + mut(" cancel")
+		}
+		return key("↑↓") + mut(" pick") + mut("    ") + key("enter") + mut(" resume") + mut("    ") + key("p") + mut(" pin") + mut("    ") + key("/") + mut(" search") + mut("    ") + key("ctrl+n") + mut(" rename") + mut("    ") + key("tab") + mut(" prompt")
 	}
 	return key("enter") + mut(" start") + mut("    ") + key("tab") + mut(" sessions") + mut("    ") + key("ctrl+g") + mut(" keys")
 }

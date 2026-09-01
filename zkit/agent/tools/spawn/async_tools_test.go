@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"iter"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/agent/runner/runnertest"
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -45,12 +49,58 @@ func TestAsyncToolReturnsReceiptBeforeChildCompletes(t *testing.T) {
 	}
 }
 
+func TestAsyncChildrenPublishWorkspaceWaitAndSerializeOverlappingTools(t *testing.T) {
+	source := &spawnBlockingWriteSource{entered: make(chan spawnWriteEntry, 2)}
+	coordinator := tools.NewWorkspaceCoordinator()
+	waitStarted := make(chan struct{}, 1)
+	sink := &workspaceWaitSink{Sink: runnertest.NewSink(), started: waitStarted}
+	child := runner.New(
+		&spawnWriteClient{},
+		runner.WithTools(coderunner.CoordinateWorkspace(source, coordinator)),
+		runner.WithSink(sink),
+		runner.WithMaxIterations(3),
+	)
+	group := spawn.NewGroup()
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	start := spawn.NewAsync(spawn.New(child), group)
+
+	first := startSpawnWriteTask(t, start, "first", "zkit/a.go")
+	firstEntry := receiveSpawnWriteEntry(t, source.entered)
+	second := startSpawnWriteTask(t, start, "second", "zkit/a.go")
+	<-waitStarted
+	select {
+	case entry := <-source.entered:
+		t.Fatalf("overlapping child entered before release: %#v", entry)
+	default:
+	}
+
+	close(firstEntry.release)
+	secondEntry := receiveSpawnWriteEntry(t, source.entered)
+	close(secondEntry.release)
+	for _, id := range []spawn.TaskID{first, second} {
+		snapshot, err := group.Await(t.Context(), id)
+		if err != nil || snapshot.State != spawn.AgentTaskStates.COMPLETED {
+			t.Fatalf("await %s = (%#v, %v)", id, snapshot, err)
+		}
+	}
+	started, ok := sink.FirstWorkspaceWaitStarted()
+	if !ok || started.ToolName != "write_test" || len(started.Paths) != 1 || started.Paths[0] != "zkit/a.go" {
+		t.Fatalf("wait started = %#v", started)
+	}
+	ended, ok := sink.FirstWorkspaceWaitEnded()
+	if !ok || ended.Outcome != tools.WorkspaceWaitOutcomes.WORKSPACEWAITACQUIRED {
+		t.Fatalf("wait ended = %#v", ended)
+	}
+}
+
 func TestListAgentTasksDoesNotConsumeOrExposeTerminalSummary(t *testing.T) {
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
 	start := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "secret summary"}, runner.WithSink(runner.NopSink{}))), group)
 	id := startImmediateTask(t, start, "spawn")
-	waitTerminal(t, group, id)
+	if _, err := group.Wait(t.Context(), id); err != nil {
+		t.Fatalf("wait terminal: %v", err)
+	}
 
 	listed, err := spawn.NewList(group).Execute(t.Context(), tools.ToolCall{ID: "list"})
 	if err != nil || listed == nil || !listed.Success {
@@ -210,7 +260,6 @@ func TestGroupNeverEvictsUnobservedTerminalTasks(t *testing.T) {
 	tool := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))), group)
 
 	unobserved := startImmediateTask(t, tool, "unobserved")
-	waitTerminal(t, group, unobserved)
 	firstObserved := startImmediateTask(t, tool, "observed-1")
 	if _, err := group.Await(t.Context(), firstObserved); err != nil {
 		t.Fatal(err)
@@ -218,6 +267,9 @@ func TestGroupNeverEvictsUnobservedTerminalTasks(t *testing.T) {
 	latestObserved := startImmediateTask(t, tool, "observed-2")
 	if _, err := group.Await(t.Context(), latestObserved); err != nil {
 		t.Fatal(err)
+	}
+	if err := group.Close(t.Context()); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 
 	if _, err := group.Peek(unobserved); err != nil {
@@ -238,22 +290,6 @@ func startImmediateTask(t *testing.T, tool tools.Tool, callID string) spawn.Task
 		t.Fatalf("spawn %s = (%#v, %v)", callID, result, err)
 	}
 	return spawn.TaskID(result.Data.(map[string]any)["task_id"].(string))
-}
-
-func waitTerminal(t *testing.T, group *spawn.Group, id spawn.TaskID) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		snapshot, err := group.Peek(id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if snapshot.State != spawn.AgentTaskStates.RUNNING {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("task %s did not become terminal", id)
 }
 
 func TestGroupCloseCancelsAndJoinsChild(t *testing.T) {
@@ -324,7 +360,7 @@ func TestAgentAwaitClassifiesChildErrorAsFatal(t *testing.T) {
 func TestAgentAwaitClassifiesIterationExhaustionAsBudget(t *testing.T) {
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	provider := &scriptedProvider{turns: [][]llm.CompletionChunk{{toolCallChunk("probe", "missing"), doneChunk()}}}
+	provider := &scriptedProvider{turns: [][]llm.CompletionChunk{{toolCallChunk("probe", "missing")}}}
 	child := runner.New(runner.ClientFromProvider(provider), runner.WithSink(runner.NopSink{}), runner.WithMaxIterations(1))
 	start := spawn.NewAsync(spawn.New(child), group)
 	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "keep working"}})
@@ -506,10 +542,102 @@ func TestAgentAwaitRequiresRunningTaskWhenIDIsOmitted(t *testing.T) {
 
 type immediateClient struct{ content string }
 
-func (c *immediateClient) Complete(context.Context, llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (c *immediateClient) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		yield(llm.CompletionChunk{Content: c.content, Done: true}, nil)
-	}, nil
+		yield(llm.CompletionChunk{Content: c.content}, nil)
+	}
+}
+
+type spawnWriteClient struct{ calls atomic.Uint64 }
+
+func (c *spawnWriteClient) Complete(_ context.Context, request llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		for _, message := range request.Messages {
+			if message.Role == "tool" {
+				yield(runnertest.ChunkText("done"), nil)
+				return
+			}
+		}
+		path := "zkit/a.go"
+		for _, message := range request.Messages {
+			if strings.Contains(message.Content, "zarlcode/b.go") {
+				path = "zarlcode/b.go"
+			}
+		}
+		callID := fmt.Sprintf("write-%d", c.calls.Add(1))
+		yield(runnertest.ChunkToolCall(callID, "write_test", fmt.Sprintf(`{"path":%q}`, path)), nil)
+	}
+}
+
+type spawnWriteEntry struct {
+	task    taskscope.ID
+	path    string
+	release chan struct{}
+}
+
+type spawnBlockingWriteSource struct{ entered chan spawnWriteEntry }
+
+func (s *spawnBlockingWriteSource) Tools(context.Context) iter.Seq[tools.Tool] {
+	return func(yield func(tools.Tool) bool) { yield(spawnWriteTool{source: s}) }
+}
+
+func (s *spawnBlockingWriteSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	entry := spawnWriteEntry{task: taskscope.IDFrom(ctx), path: call.Arguments.String("path", ""), release: make(chan struct{})}
+	select {
+	case s.entered <- entry:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case <-entry.release:
+		return tools.Success(call.ID, "written"), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+type spawnWriteTool struct{ source *spawnBlockingWriteSource }
+
+func (t spawnWriteTool) Definition() tools.ToolSpec {
+	return tools.ToolSpec{
+		Name: "write_test", Description: "Test path-scoped write.", Mutates: true,
+		WorkspaceAccess: tools.WorkspaceAccesses.WRITE,
+		WorkspaceScope:  tools.WorkspaceScopeArgument("path"),
+	}
+}
+
+func (t spawnWriteTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	return t.source.Execute(ctx, call)
+}
+
+func startSpawnWriteTask(t *testing.T, tool tools.Tool, callID, path string) spawn.TaskID {
+	t.Helper()
+	result, err := tool.Execute(t.Context(), tools.ToolCall{ID: tools.ToolCallID(callID), Arguments: tools.ToolParameters{"prompt": "write " + path}})
+	if err != nil || result == nil || !result.Success {
+		t.Fatalf("spawn %s = (%#v, %v)", callID, result, err)
+	}
+	return spawn.TaskID(result.Data.(map[string]any)["task_id"].(string))
+}
+
+func receiveSpawnWriteEntry(t *testing.T, entries <-chan spawnWriteEntry) spawnWriteEntry {
+	t.Helper()
+	select {
+	case entry := <-entries:
+		return entry
+	case <-time.After(time.Second):
+		t.Fatal("spawned write did not enter")
+		return spawnWriteEntry{}
+	}
+}
+
+type workspaceWaitSink struct {
+	*runnertest.Sink
+	started chan<- struct{}
+}
+
+func (s *workspaceWaitSink) OnWorkspaceWaitStarted(event runner.WorkspaceWaitStarted) {
+	s.Sink.OnWorkspaceWaitStarted(event)
+	s.started <- struct{}{}
 }
 
 type blockingClient struct {
@@ -517,34 +645,45 @@ type blockingClient struct {
 	release chan struct{}
 }
 
-func (c *blockingClient) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (c *blockingClient) Complete(ctx context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		close(c.started)
+		select {
+		case c.started <- struct{}{}:
+		case <-ctx.Done():
+			yield(llm.CompletionChunk{}, context.Cause(ctx))
+			return
+		}
 		select {
 		case <-c.release:
-			yield(llm.CompletionChunk{Content: "child summary", Done: true}, nil)
+			yield(llm.CompletionChunk{Content: "child summary"}, nil)
 		case <-ctx.Done():
+			yield(llm.CompletionChunk{}, context.Cause(ctx))
 		}
-	}, nil
+	}
 }
 
 type panicClient struct{}
 
-func (panicClient) Complete(context.Context, llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	panic("provider exploded")
+func (panicClient) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
+	return func(func(llm.CompletionChunk, error) bool) {
+		panic("provider exploded")
+	}
 }
 
 type cancelClient struct{ started chan struct{} }
 
-func (c *cancelClient) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	return func(func(llm.CompletionChunk, error) bool) {
+func (c *cancelClient) Complete(ctx context.Context, _ llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
 		close(c.started)
 		<-ctx.Done()
-	}, nil
+		yield(llm.CompletionChunk{}, context.Cause(ctx))
+	}
 }
 
 type errorClient struct{}
 
-func (errorClient) Complete(context.Context, llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	return nil, errors.New("provider broke")
+func (errorClient) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		yield(llm.CompletionChunk{}, errors.New("provider broke"))
+	}
 }

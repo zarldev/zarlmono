@@ -76,7 +76,8 @@ func (p *PressureGated) ObserveUsage(u *llm.Usage) {
 	if u == nil {
 		return
 	}
-	p.usage.Store(u)
+	owned := *u
+	p.usage.Store(&owned)
 }
 
 // Compact passes through to the inner engine unchanged. The gate

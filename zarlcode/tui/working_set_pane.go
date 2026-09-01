@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ const (
 // background processes managed by the live runner, mirroring the inspector's
 // processes tab. File views remain read-only navigation/previews.
 type workingSetPane struct {
+	ctx           context.Context
 	session       *Session
 	live          *engine.LiveRunner
 	workspaceDir  string
@@ -39,8 +41,8 @@ type workingSetPane struct {
 	status        string
 }
 
-func newWorkingSetPane(session *Session, live *engine.LiveRunner, workspaceDir string) *workingSetPane {
-	return &workingSetPane{session: session, live: live, workspaceDir: workspaceDir}
+func newWorkingSetPane(ctx context.Context, session *Session, live *engine.LiveRunner, workspaceDir string) *workingSetPane {
+	return &workingSetPane{ctx: ctx, session: session, live: live, workspaceDir: workspaceDir}
 }
 
 func (p *workingSetPane) fullScreen() bool { return true }
@@ -144,7 +146,7 @@ func (p *workingSetPane) handleKey(msg tea.KeyPressMsg) action {
 		}
 	case "o":
 		if path := p.selectedPath(); path != "" {
-			return actionPush{d: newFileViewerAt(p.workspaceDir, path)}
+			return actionPush{d: newFileViewerAt(p.ctx, p.workspaceDir, path)}
 		}
 	}
 	return actionNone{}

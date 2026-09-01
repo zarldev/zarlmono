@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"iter"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/home"
@@ -43,7 +42,7 @@ type Inspection struct {
 	Hooks []catalog.Hook
 }
 
-// Inspect builds an [Inspection] mirroring buildTurn's assembly without running
+// Inspect builds an [Inspection] mirroring turn assembly without running
 // a turn: it snapshots the run target under the lock, reloads catalog and
 // instructions, arms the guardrail chain, enumerates the tool roster (including
 // the late-registered spawn tool against an inert client), and renders the
@@ -89,7 +88,7 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 		return ins
 	}
 
-	// buildTurn late-registers agent_spawn after runner.New because the tool
+	// Turn assembly late-registers agent_spawn after runner.New because the tool
 	// needs a parent runner. Mirror that with an inert client so the roster and
 	// prompt match the next real turn without starting one.
 	visible := NewModeFilteredSource(src, l.isPlan)
@@ -127,6 +126,6 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 // the prompt without making a model call.
 type inspectorClient struct{}
 
-func (inspectorClient) Complete(context.Context, llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	return func(func(llm.CompletionChunk, error) bool) {}, nil
+func (inspectorClient) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
+	return func(func(llm.CompletionChunk, error) bool) {}
 }

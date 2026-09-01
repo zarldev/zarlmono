@@ -2,7 +2,6 @@ package spawn_test
 
 import (
 	"context"
-	"iter"
 	"testing"
 	"time"
 
@@ -17,18 +16,16 @@ type scriptedProvider struct {
 	calls int
 }
 
-func (p *scriptedProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	chunks := p.turns[p.calls]
-	p.calls++
+func (p *scriptedProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
+		chunks := p.turns[p.calls]
+		p.calls++
 		for _, c := range chunks {
-			err := c.Error
-			c.Error = nil
-			if !yield(c, err) {
+			if !yield(c, nil) {
 				return
 			}
 		}
-	}, nil
+	}
 }
 func (p *scriptedProvider) Name() string { return "scripted" }
 
@@ -53,7 +50,6 @@ func toolCallChunk(id, name string) llm.CompletionChunk {
 	}}}
 }
 func textChunk(s string) llm.CompletionChunk { return llm.CompletionChunk{Content: s} }
-func doneChunk() llm.CompletionChunk         { return llm.CompletionChunk{Done: true} }
 
 // TestExecute_ModePolicyGatesChild proves the spawn tool plants its mode
 // tool-policy on the child Run: an explore-mode child cannot execute the
@@ -72,8 +68,8 @@ func TestExecute_ModePolicyGatesChild(t *testing.T) {
 
 	run := func(mode string) int {
 		provider := &scriptedProvider{turns: [][]llm.CompletionChunk{
-			{toolCallChunk("e1", "edit"), doneChunk()}, // child calls edit
-			{textChunk("done"), doneChunk()},           // then completes
+			{toolCallChunk("e1", "edit")}, // child calls edit
+			{textChunk("done")},           // then completes
 		}}
 		edit := &countTool{name: "edit", mutates: true}
 		reg := tools.NewRegistry()

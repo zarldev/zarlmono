@@ -56,6 +56,7 @@ func TestScheduler_FiresOnSchedule(t *testing.T) {
 		}
 		t.Cleanup(sch.Stop)
 
+		// Advance synctest's fake clock to the scheduled fire time.
 		time.Sleep(time.Second)
 		synctest.Wait()
 		if enq.Count() != 1 {
@@ -76,6 +77,7 @@ func TestScheduler_InvalidScheduleSkipped(t *testing.T) {
 		}
 		t.Cleanup(sch.Stop)
 
+		// Advance synctest's fake clock past the valid trigger interval.
 		time.Sleep(time.Second)
 		synctest.Wait()
 		for _, id := range enq.Snapshot() {
@@ -115,6 +117,7 @@ func TestScheduler_OnFireErrorDoesNotEnqueue(t *testing.T) {
 		}
 		t.Cleanup(sch.Stop)
 
+		// Advance synctest's fake clock to invoke the failing job.
 		time.Sleep(100 * time.Millisecond)
 		<-fired
 		if enq.Count() != 0 {
@@ -148,6 +151,7 @@ func TestScheduler_StopUnblocksJobBlockedOnContext(t *testing.T) {
 			t.Fatalf("Start: %v", err)
 		}
 
+		// Advance synctest's fake clock to start the context-blocked job.
 		time.Sleep(time.Second)
 		<-jobStarted
 		done := make(chan struct{})

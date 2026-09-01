@@ -31,6 +31,7 @@ import (
 // content preview on the right. Pushed over the main cockpit; Esc/ctrl+f/q
 // pops back.
 type fileViewer struct {
+	ctx            context.Context
 	workspaceDir   string // root for relative-path display
 	currentDir     string // absolute path of the displayed directory
 	entries        []os.DirEntry
@@ -110,11 +111,12 @@ type fileViewerImagePlacement struct {
 	w, h int
 }
 
-func newFileViewer(workspaceDir string) *fileViewer {
+func newFileViewer(ctx context.Context, workspaceDir string) *fileViewer {
 	skills, _ := catalog.LoadSkills(workspaceDir)
 	agents, _ := catalog.LoadAgents(workspaceDir)
 	hooks, _ := catalog.LoadHooks(workspaceDir)
 	return &fileViewer{
+		ctx:          ctx,
 		workspaceDir: workspaceDir,
 		currentDir:   workspaceDir,
 		skills:       skills,
@@ -123,8 +125,8 @@ func newFileViewer(workspaceDir string) *fileViewer {
 	}
 }
 
-func newFileViewerAt(workspaceDir, path string) *fileViewer {
-	v := newFileViewer(workspaceDir)
+func newFileViewerAt(ctx context.Context, workspaceDir, path string) *fileViewer {
+	v := newFileViewer(ctx, workspaceDir)
 	v.initialPath = path
 	return v
 }
@@ -376,7 +378,7 @@ func (v *fileViewer) requestEntries(dir string) actionFileViewerEntries {
 	if v.entriesCancel != nil {
 		v.entriesCancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(v.ctx)
 	v.entriesCancel = cancel
 	v.entriesSeq++
 	v.previewSeq++ // directory change invalidates previews too
@@ -443,7 +445,7 @@ func (v *fileViewer) requestSelectedPreview() (actionFileViewerPreview, bool) {
 	if v.previewCancel != nil {
 		v.previewCancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(v.ctx)
 	v.previewCancel = cancel
 	v.previewSeq++
 	v.previewLoading = true

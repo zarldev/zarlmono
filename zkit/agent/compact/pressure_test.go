@@ -56,7 +56,9 @@ func TestPressureGated_OpenWhenUsageOverThreshold(t *testing.T) {
 		Window:  1_000_000,
 		Reserve: 16_000,
 	}
-	g.ObserveUsage(&llm.Usage{TotalTokens: 990_000}) // > 984k threshold
+	usage := &llm.Usage{TotalTokens: 990_000}
+	g.ObserveUsage(usage) // > 984k threshold
+	usage.TotalTokens = 0 // ObserveUsage retains an owned snapshot.
 	if got := g.WouldReduceBytes(nil, 4); got != 12_345 {
 		t.Errorf("WouldReduceBytes = %d, want 12345 (forwarded to inner)", got)
 	}

@@ -80,10 +80,7 @@ distinguishable from "the connection died" and from "the user hit
 ctrl+c". Small local models love to think forever without emitting —
 without the watchdogs that looks identical to a hang.
 
-**Channel-based stream drain.** A producer goroutine pushes chunks
-into a buffered channel; the consumer selects on the iteration ctx.
-A stream that hangs without emitting can still unblock. Ranging
-directly over a provider stream cannot.
+**Direct synchronous stream consumption.** `Complete` constructs a fully lazy `llm.CompletionStream`; provider setup and I/O start only when the runner invokes it. The runner processes each yield synchronously and returns the downstream boolean directly, preserving backpressure and borrowed chunk lifetimes. There is no forwarding channel or producer goroutine. Provider cancellation is part of the contract, while the iteration/idle wrapper owns and joins its watchdog and preserves the context cause; time spent in the runner's yield callback does not count as provider idle. Successful EOF completes the stream, and a terminal failure is one zero-chunk error yield—never a `Done` chunk or outer setup error.
 
 **Soft recovery for malformed tool JSON.** llama.cpp validates
 tool-call JSON server-side and 500s before the runner ever sees the
@@ -206,9 +203,9 @@ uncommon on overloaded local endpoints), the runner retries with
 exponential backoff rather than surfacing an opaque error.
 
 **`Truncator`.** Controls how tool results are trimmed before they
-enter the conversation. The default caps at 50KB / 2000 lines and
-spills the full output to disk — the model sees a tail summary with a
-path to the full file.
+enter the conversation. The default keeps up to 2000 lines within a
+200KB byte budget and spills the full output to disk when either limit is
+exceeded — the model sees a head/tail excerpt with a path to the full file.
 
 **`ToolGate`.** Run-scoped capability filtering. A `researcher` profile might
 hide every workspace-mutating `ToolSpec`; a deeper child might hide `agent_spawn`.

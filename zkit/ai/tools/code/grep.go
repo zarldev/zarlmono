@@ -52,7 +52,8 @@ func (t *GrepTool) Definition() tools.ToolSpec {
 		Description: "Search workspace contents with ripgrep. Hits are grouped by file as `LINE: text` rows " +
 			"under each path (set output=\"json\" for {pattern, path?, glob?, matches, truncated, max_results, hits:[{file,line,text}]}). " +
 			"Honors .gitignore by default. Use `glob` for path-only enumeration and `read` to fetch full file contents.",
-		Parameters: tools.SchemaFor[GrepArgs](),
+		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
+		Parameters:     tools.SchemaFor[GrepArgs](),
 	}
 }
 

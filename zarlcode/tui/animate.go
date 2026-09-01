@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,7 +17,24 @@ type frameMsg struct{}
 // mostly static pane.
 const frameInterval = 120 * time.Millisecond
 
+// oneShotTimerCmd returns a timer command that can only start once. Bubble Tea
+// may invoke the same command closure more than once while dispatching commands;
+// tea.Tick is not reusable and blocks forever on its drained timer when that
+// happens. Claiming the command before creating its timer prevents both the
+// blocked goroutine and duplicate tick loops.
+func oneShotTimerCmd(d time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+	var started atomic.Bool
+	return func() tea.Msg {
+		if started.Swap(true) {
+			return nil
+		}
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		return fn(<-timer.C)
+	}
+}
+
 // tick schedules the next animation frame.
 func tick() tea.Cmd {
-	return tea.Tick(frameInterval, func(time.Time) tea.Msg { return frameMsg{} })
+	return oneShotTimerCmd(frameInterval, func(time.Time) tea.Msg { return frameMsg{} })
 }

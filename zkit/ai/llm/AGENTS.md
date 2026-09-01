@@ -10,23 +10,25 @@ The provider-neutral language-model contract: the narrow `Provider` interface co
 
 ```go
 type Provider interface {
-    Complete(ctx context.Context, req CompletionRequest) (iter.Seq2[CompletionChunk, error], error)
+    Complete(ctx context.Context, req CompletionRequest) CompletionStream
     Name() string
 }
 ```
 
-That's the whole contract. Anything richer (model discovery, image generation, OAuth refresh) lives on a separate opt-in interface that consumers type-assert for. Don't widen `Provider`.
+`CompletionStream` is the named range-over-function stream itself. It is one-shot, non-concurrent, directly rangeable, and synchronous. That's the whole contract. Anything richer (model discovery, image generation, OAuth refresh) lives on a separate opt-in interface that consumers type-assert for. Don't widen `Provider`.
 
 ## Streaming contract
 
 Every provider's `Complete` MUST:
 
-1. Return an `iter.Seq2[CompletionChunk, error]` and own the goroutine backing it.
-2. Emit chunk errors on the sequence's second value (`for chunk, err := range seq`), not as a chunk field.
-3. Emit **exactly one** terminal chunk with `Done: true`. On success it carries final `Usage` and `FinishReason`; on error it carries the stream error plus `Done: true` — never an error without `Done`, because consumers key off `Done` for completion.
-4. Honour context cancellation: every blocking call inside the goroutine selects on `ctx.Done()` or is an SDK call that propagates context.
+1. Be fully lazy: calling `Complete` performs no validation, token refresh, I/O, transport/process setup, goroutine start, or other external work. All operational work and failures begin when the returned `CompletionStream` is invoked or ranged.
+2. Invoke and yield synchronously. Do not add chunk channels, producer goroutines, asynchronous forwarding, or buffering. Propagate downstream `false` immediately, clean up, and return silently.
+3. Treat request reference-backed state as borrowed until iteration returns, without mutation. Yielded reference-backed chunk state is borrowed only until downstream yield returns; retaining consumers clone with `CompletionChunk.Clone`.
+4. Use normal return/EOF for successful completion. A terminal failure is exactly one `(CompletionChunk{}, err)` yield followed immediately by return, with no later yields. There is no outer completion error and no `Done` or chunk-level error field.
+5. Treat finish reason and usage as optional ordinary metadata, not lifecycle sentinels. `UsageReported` distinguishes absent usage from a reported all-zero value.
+6. Honour context cancellation throughout token acquisition, transport/SDK setup, stream reads, decoders, and subprocess lifetime. Preserve `context.Cause`, close resources, and wait for provider-owned work before returning.
 
-`openai/provider.go` is the reference shape.
+`openai/provider.go` is the reference shape. Middleware obeys the same synchronous forwarding, borrowing, false-propagation, and terminal-error rules; it must not retain chunks or introduce a transport goroutine.
 
 ## CompletionRequest
 
@@ -66,7 +68,7 @@ llama.cpp is the **default zarlcode provider** when no provider is configured.
 2. Implement `llm.Provider`, following the streaming contract.
 3. Add the `LLMProvider` constant + parse case.
 4. Wire into `backends/registry.go` (a `buildX` function + the `Parse` switch). If OAuth, return `ErrOAuthRequired` and expose a typed `NewProvider(tokenSource, opts...)` callers use directly — see `claudecode/`, `openaicodex/`.
-5. Add `<name>/conformance_test.go` using `providertest.Suite` — the four canonical scenarios (cancellation, streaming-done, usage-on-final, tool-calls-surfaced) are the baseline.
+5. Add `<name>/conformance_test.go` using `providertest.Suite` — laziness, cancellation, successful EOF and terminal errors, usage/finish metadata, tool calls, and downstream early stop are the baseline.
 
 If the new backend is OAI-compatible, prefer a thin facade over `openai.NewProvider` (see `llamacpp/`, `ollama/`) — wire-format extensions slot in via options, not a separate streaming implementation.
 

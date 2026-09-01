@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 
@@ -39,23 +38,26 @@ type modelQuickPick struct {
 	meta          *modelInfoResolver
 }
 
-func newModelQuickPick(providers []string, models map[string][]string, activeProvider, activeModel string, onPick func(provider, model string), settings *engine.Settings) *modelQuickPick {
+func newModelQuickPick(providers []string, models map[string][]string, activeProvider, activeModel string, onPick func(provider, model string), settings *engine.Settings, ctx context.Context, onPersistError func(error)) *modelQuickPick {
 	onEffort := func(effort string) {
 		if settings == nil || settings.Svc == nil {
 			return
 		}
-		ctx := context.Background()
 		if effort == "" {
 			if err := settings.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, prefs.KeyCodexEffort); err != nil {
-				slog.WarnContext(ctx, "clear reasoning effort", "err", err)
+				if onPersistError != nil {
+					onPersistError(err)
+				}
 			}
 			return
 		}
 		if err := settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyCodexEffort, effort); err != nil {
-			slog.WarnContext(ctx, "persist reasoning effort", "err", err, "effort", effort)
+			if onPersistError != nil {
+				onPersistError(err)
+			}
 		}
 	}
-	return newModelQuickPickWithEffort(providers, models, activeProvider, activeModel, currentCodexEffort(settings), onPick, onEffort, settings)
+	return newModelQuickPickWithEffort(providers, models, activeProvider, activeModel, currentCodexEffort(ctx, settings), onPick, onEffort, settings)
 }
 
 func newModelQuickPickWithEffort(providers []string, models map[string][]string, activeProvider, activeModel, activeEffort string, onPick func(provider, model string), onEffort func(string), settings *engine.Settings) *modelQuickPick {
@@ -99,11 +101,11 @@ func (p *modelQuickPick) setModels(provider string, models []string) {
 	p.loading[provider] = false
 }
 
-func currentCodexEffort(settings *engine.Settings) string {
+func currentCodexEffort(ctx context.Context, settings *engine.Settings) string {
 	if settings == nil {
 		return ""
 	}
-	return settings.Setting(context.Background(), prefs.KeyCodexEffort, "")
+	return settings.Setting(ctx, prefs.KeyCodexEffort, "")
 }
 
 func (p *modelQuickPick) activeProvider() string {

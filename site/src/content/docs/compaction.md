@@ -54,13 +54,10 @@ it's a pure no-op with zero allocation.** Reasoning is preserved
 longest — it's the model's interpretive context for the next turn.
 The default choice for long sessions where pressure is occasional.
 
-### Adaptive — token-budget-driven
+### Adaptive keep sizing — token-budget-driven
 
-`compact.NewAdaptive(provider, model)` varies the keep count based
-on remaining token budget: tighter when the window is nearly full,
-looser when there's headroom. The adaptive strategy can also act as
-the `Prober` — it knows the budget and decides when compaction is
-worth the cost.
+Adaptive keep sizing is a runner policy rather than a compaction engine. See
+[Adaptive keep windows](#adaptive-keep-windows) below.
 
 ### Pressure — fraction-based trigger
 
@@ -116,8 +113,7 @@ the keep window to fit the target, clamped to the bounds. For a
 | do nothing until there's actual pressure | Tiered |
 | compressed narrative, exact bytes expendable | Summary |
 | a continuing coding agent's briefing | Executive |
-| token-budget-aware, only when worth it | Adaptive |
 | automatic trigger at a pressure threshold | Tiered + Pressure |
-All four implement the same interface; the runner takes whichever
+All four compaction engines implement the same interface; the runner takes whichever
 you hand it via `WithCompactor`, and swapping engines is a one-line
 change.

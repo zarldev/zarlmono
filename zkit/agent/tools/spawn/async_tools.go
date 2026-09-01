@@ -27,50 +27,30 @@ const defaultAwaitTimeout = 30 * time.Second
 
 // AsyncTool starts sub-agents owned by Group.
 type AsyncTool struct {
-	tool        *Tool
-	group       *Group
-	coordinator *tools.WorkspaceCoordinator
+	tool  *Tool
+	group *Group
 }
 
 // NewAsync returns an asynchronous agent_spawn protocol bound to group. The
 // caller owns group and must close it before its runners are released.
-func NewAsync(tool *Tool, group *Group, coordinators ...*tools.WorkspaceCoordinator) *AsyncTool {
-	var coordinator *tools.WorkspaceCoordinator
-	if len(coordinators) > 0 {
-		coordinator = coordinators[0]
-	}
-	return &AsyncTool{tool: tool, group: group, coordinator: coordinator}
+func NewAsync(tool *Tool, group *Group) *AsyncTool {
+	return &AsyncTool{tool: tool, group: group}
 }
 
-// Definition advertises the asynchronous agent_spawn start operation.
-func (*AsyncTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: ToolNameAgentSpawn, Description: "Start a focused sub-agent task and return immediately with its task_id. Use agent_await to collect its final summary, agent_status to inspect it, agent_stop to cancel it, and list_agent_tasks to inspect all tasks.", Parameters: tools.SchemaFor[Args]()}
+// Definition returns the agent_spawn schema shared with the synchronous tool.
+func (a *AsyncTool) Definition() tools.ToolSpec {
+	return a.tool.Definition()
 }
 
 // Execute validates and prepares a child using the same planner, depth, mode,
 // and policy rules as Tool, then starts it in the owned group.
 func (a *AsyncTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	if a.tool == nil || a.group == nil {
-		return tools.Failure(call.ID, tools.Fatal("agent_spawn", errors.New("async spawn tool is not configured"))), nil
-	}
 	inv, failure := prepare(ctx, call, a.tool)
 	if failure != nil {
 		return failure, nil
 	}
-	if a.coordinator != nil {
-		access := tools.WorkspaceAccesses.WRITE
-		if inv.mode == SpawnModeExplore || inv.mode == SpawnModeVerify {
-			access = tools.WorkspaceAccesses.READ
-		}
-		lease, err := a.coordinator.Acquire(tools.WorkspaceOwner(inv.spec.ID), access)
-		if err != nil {
-			return tools.Failure(call.ID, workspaceAdmissionError(err)), nil
-		}
-		inv.lease = lease
-	}
 	snapshot, err := a.group.Start(inv.ctx, inv)
 	if err != nil {
-		inv.lease.Release()
 		return tools.Failure(call.ID, spawnAdmissionError(err)), nil
 	}
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: taskData(snapshot), ExecutedAt: time.Now()}, nil
@@ -87,13 +67,6 @@ func spawnAdmissionError(err error) *tools.Error {
 	default:
 		return tools.Fatal("agent_spawn", err)
 	}
-}
-
-func workspaceAdmissionError(err error) *tools.Error {
-	if errors.Is(err, tools.ErrWorkspaceConflict) {
-		return tools.Budget("agent_spawn", err.Error())
-	}
-	return tools.Fatal("agent_spawn", fmt.Errorf("coordinate workspace: %w", err))
 }
 
 // AwaitTool waits for asynchronous tasks in group.

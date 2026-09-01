@@ -44,10 +44,10 @@ func TestProvider_Conformance(t *testing.T) {
 				Timeout:         3 * time.Second,
 			},
 			{
-				Name:    "StreamingDone_FinalChunkMarked",
+				Name:    "StreamingEOF_FinishMetadataReported",
 				Handler: openaiSimpleStream(),
 				Request: providertest.SimpleRequest("hi"),
-				Assert:  providertest.AssertStreamingDoneSet,
+				Assert:  providertest.AssertStreamingEOF,
 			},
 			{
 				Name:    "Usage_ReportedOnFinalChunk",
@@ -89,8 +89,8 @@ func openaiHangForever() http.HandlerFunc {
 	}
 }
 
-// openaiSimpleStream returns a handler that emits two short content
-// deltas + a stop. Used for streaming/done validation.
+// openaiSimpleStream emits two content deltas plus stop metadata. It validates
+// streaming and successful EOF.
 func openaiSimpleStream() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

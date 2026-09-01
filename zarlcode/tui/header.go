@@ -10,45 +10,6 @@ import (
 
 func (m *UI) toastExpiryCmd() tea.Cmd { return m.session.ToastExpiryCmd() }
 
-// headerMode delegates to Session.headerMode, keeping plan/build/chat logic
-// on the Session-owned run and mode state that panes also read.
-func (m *UI) headerMode() string { return m.session.headerMode() }
-
-func (m *UI) headerModeBadge() string {
-	mode := m.headerMode()
-	accent := palette.Assistant
-	switch mode {
-	case "build":
-		accent = palette.Tool
-	case "plan":
-		accent = palette.PlanMode
-	}
-	return bracketed(accent.On(mode))
-}
-
-func (m *UI) statusHint() string {
-	stopKey := "ctrl+c quit  ·  ctrl+q ctx"
-	if m.session.Run.Running {
-		stopKey = "esc stop  ·  ctrl+c quit  ·  ctrl+q ctx"
-	}
-	if m.session.CockpitExpanded {
-		return " tab/←→ switch  ·  ↑↓/jk scroll  ·  pgup/pgdn page  ·  home/end jump  ·  ctrl+l / esc / q close  ·  " + stopKey + "  ·  ctrl+g keys"
-	}
-	if m.timeline.browsing {
-		if m.timeline.selectionActive() {
-			return " VISUAL  ·  ↑↓/jk extend  ·  pgup/pgdn page  ·  y copy  ·  esc cancel  ·  " + stopKey + "  ·  ctrl+g keys"
-		}
-		return " ↑↓/jk move  ·  v select  ·  enter expand  ·  pgup/pgdn page  ·  esc/i compose  ·  " + stopKey + "  ·  ctrl+g keys"
-	}
-	if m.session.PlanMode {
-		return " enter submit  ·  shift+enter newline  ·  shift+tab build  ·  " + stopKey + "  ·  ctrl+g keys"
-	}
-	if hint := slashStatusHint(m.composer.text()); hint != "" {
-		return hint
-	}
-	return m.attachmentSummary() + "enter submit  ·  shift+enter newline  ·  @ file  ·  tab browse  ·  shift+tab plan mode  ·  " + stopKey + "  ·  ctrl+g keys"
-}
-
 // drawBar paints a single reverse-video bar across r, padded to the full
 // width so the whole row reads as one bar.
 

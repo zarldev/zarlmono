@@ -83,8 +83,3 @@ func diffLineColorizer(ln string) func(string) string {
 		return palette.Muted.On // context — de-emphasised
 	}
 }
-
-// colorizeDiffLine paints one whole unified-diff line by its prefix. Plain
-// ANSI, no lipgloss — the draw path is ANSI-aware (ansi.Truncate) so the
-// colours survive clipping.
-func colorizeDiffLine(ln string) string { return diffLineColorizer(ln)(ln) }

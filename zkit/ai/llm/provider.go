@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 )
 
 // ModelOptions holds semantic model configuration options as a
@@ -51,11 +50,20 @@ var (
 // generation, MCP, thinking-mode toggles) belongs on a separate
 // opt-in interface that consumers type-assert for when they need it.
 type Provider interface {
-	// Complete streams a completion as an iter.Seq2: each chunk is yielded
-	// with a nil error, and a mid-stream failure is the yield's second value
-	// (not a field on the chunk). The returned error is a pre-stream setup
-	// failure only. Consumers range it: `for chunk, err := range seq`.
-	Complete(ctx context.Context, req CompletionRequest) (iter.Seq2[CompletionChunk, error], error)
+	// Complete constructs a fully lazy, one-shot completion stream. Calling
+	// Complete performs no I/O, token refresh, validation, transport or process
+	// setup, goroutine start, or other external side effect; that work begins
+	// only when the returned stream is invoked or ranged.
+	//
+	// req, including all of its reference-backed fields, is borrowed until the
+	// stream invocation returns. Callers must not mutate it during that lifetime,
+	// and providers must not mutate it. Operational failures are yielded by the
+	// stream; Complete has no eager error result.
+	// The stream must stop promptly when ctx is canceled, close every owned
+	// transport/process/decoder resource, and wait for owned goroutines before
+	// returning. Consumers invoke streams synchronously and cannot safely repair
+	// a provider that ignores cancellation.
+	Complete(ctx context.Context, req CompletionRequest) CompletionStream
 	Name() string
 }
 
@@ -403,32 +411,25 @@ type ToolCallFunction struct {
 	Arguments string `json:"arguments"` // JSON string of arguments
 }
 
-// CompletionChunk represents a piece of streaming response.
+// CompletionChunk is one synchronous completion observation.
 //
-// Content and Thinking are the two output channels, and they are
-// disjoint by contract: for any given byte of model output, exactly
-// one of them carries it. Content holds the visible answer; Thinking
-// holds reasoning / extended-thinking / chain-of-thought, routed
-// out-of-band so consumers can render it in a dedicated surface.
-// Every provider (Anthropic extended thinking, DeepSeek/OpenAI
-// reasoning_content, Gemini thought parts, openaicodex reasoning
-// events) lands on this contract — there is no inline-tag escape
-// hatch at the provider boundary.
+// Content and Thinking are disjoint output channels: for any given byte of
+// model output, exactly one carries it. Content is visible output; Thinking is
+// reasoning surfaced out of band. ToolCalls, FinishReason, and UsageReported
+// may accompany output or form a meaningful metadata-only chunk. Metadata does
+// not signal stream completion, and an all-zero chunk remains an ordinary legal
+// observation.
+//
+// Reference-backed state is borrowed only until the downstream yield callback
+// returns. Consumers that retain a chunk must call [CompletionChunk.Clone]
+// before returning from yield.
 type CompletionChunk struct {
-	Content      string
-	Thinking     string
-	FinishReason string // "stop", "length", "error"
-	Done         bool
-	// Error is NOT the streaming error channel. Provider errors ride the
-	// iter.Seq2's second return value, which the consumer (runner drain)
-	// reads; this field is populated only by the conformance test harness
-	// (folding the yield error in for legacy assertions). A provider that
-	// sets it directly will have it silently ignored — don't.
-	Error     error
-	ToolCalls []ToolCall // Function calls made by the LLM (transport format)
-
-	// Usage information (only in final chunk)
-	Usage *Usage
+	Content       string
+	Thinking      string
+	ToolCalls     []ToolCall
+	FinishReason  FinishReason
+	Usage         Usage
+	UsageReported bool
 }
 
 // Usage tracks token usage.

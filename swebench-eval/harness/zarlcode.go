@@ -333,7 +333,7 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 		return Result{Err: fmt.Errorf("arm guardrails: %w", err), Duration: time.Since(start)}
 	}
 
-	prompt, err := renderSystemPrompt(root, reg)
+	prompt, err := RenderSystemPrompt(root, reg)
 	if err != nil {
 		return Result{Err: fmt.Errorf("render system prompt: %w", err), Duration: time.Since(start)}
 	}
@@ -399,7 +399,7 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 
 	spec := runner.TaskSpec{
 		ID:            taskscope.ID(uuid.NewString()),
-		Prompt:        taskPrompt(t),
+		Prompt:        t.Prompt(),
 		MaxIterations: d.MaxIter,
 	}
 
@@ -529,12 +529,12 @@ func (d *ZarlcodeDriver) failToPassGoal(parentCtx context.Context, root string, 
 			fmt.Fprintf(os.Stderr, "zarlcode driver: empty patch instance=%s attempt=%d tool_calls=%d head_moved=%t\n",
 				task.ID, attempt.Number, coderunner.ToolCallCount(attempt.Result.Messages), headMoved)
 			verdicts.record(AttemptVerdict{Attempt: attempt.Number, EmptyPatch: true})
-			return pursue.Retry(verifiedFeedback(task, attempt, "the patch is empty; no fail-to-pass tests can pass yet"))
+			return pursue.Retry(VerifiedFeedback(task, attempt.Number, "the patch is empty; no fail-to-pass tests can pass yet"))
 		}
 		verdict, err := d.verifyPatch(parentCtx, task.ID, attempt.Number, diff)
 		if err != nil {
 			verdicts.record(AttemptVerdict{Attempt: attempt.Number, Error: err.Error()})
-			return pursue.Retry(verifiedFeedback(task, attempt, fmt.Sprintf("the SWE-bench verifier could not run: %v", err)))
+			return pursue.Retry(VerifiedFeedback(task, attempt.Number, fmt.Sprintf("the SWE-bench verifier could not run: %v", err)))
 		}
 		verdicts.record(AttemptVerdict{Attempt: attempt.Number, Resolved: verdict.Resolved, Error: verdict.Reason()})
 		if verdict.Resolved {
@@ -544,7 +544,7 @@ func (d *ZarlcodeDriver) failToPassGoal(parentCtx context.Context, root string, 
 		if verdict.Err != nil {
 			reason += ": " + verdict.Reason()
 		}
-		return pursue.Retry(verifiedFeedback(task, attempt, reason))
+		return pursue.Retry(VerifiedFeedback(task, attempt.Number, reason))
 	}))
 }
 
@@ -561,7 +561,8 @@ func swebenchContextThreader(_ context.Context, _ pursue.Attempt, next runner.Ta
 	return next
 }
 
-func verifiedFeedback(task Task, attempt pursue.Attempt, reason string) string {
+// VerifiedFeedback formats the retry prompt after SWE-bench verification rejects a patch.
+func VerifiedFeedback(task Task, attempt int, reason string) string {
 	var b strings.Builder
 	// The original problem statement is restated so the model retains the task
 	// description when the threader drops the prior transcript.
@@ -571,7 +572,7 @@ func verifiedFeedback(task Task, attempt pursue.Attempt, reason string) string {
 		b.WriteString("\n\n## Hints\n\n")
 		b.WriteString(task.Hints)
 	}
-	fmt.Fprintf(&b, "\n\n## Verification after attempt %d\n\n", attempt.Number)
+	fmt.Fprintf(&b, "\n\n## Verification after attempt %d\n\n", attempt)
 	fmt.Fprintf(&b, "Result: %s.\n\n", reason)
 	b.WriteString("Revise the existing workspace patch. Focus on production/source files only; do not edit tests or fixtures. ")
 	b.WriteString("Use the verifier signal below as the target, inspect the code as needed, and then produce a corrected patch.\n")
@@ -708,11 +709,6 @@ func (d *ZarlcodeDriver) reportProvider() string {
 	return ""
 }
 
-// taskPrompt is the user turn handed to the agent: the problem
-// statement plus optional hints. Intentionally minimal — the agent
-// discovers test names, fixtures, and build status through tool use.
-// Appending FAIL_TO_PASS names here was observed to make the model
-// author new test fixtures, contaminating the grader's expected diff.
 // writeTranscript persists one task's full agent message history to
 // <dir>/<id>.json so empty or failed patches can be diagnosed after the
 // worktree is cleaned up. Best-effort: a failure logs and is otherwise
@@ -733,7 +729,10 @@ func writeTranscript(dir, id string, msgs []llm.Message) {
 	}
 }
 
-func taskPrompt(t Task) string {
+// Prompt formats the user turn handed to the agent: the problem statement plus
+// optional hints. It omits FAIL_TO_PASS names so the agent does not author test
+// fixtures that contaminate the grader's expected diff.
+func (t Task) Prompt() string {
 	var b strings.Builder
 	b.WriteString(t.Problem)
 	if t.Hints != "" {
@@ -764,7 +763,7 @@ var resetClient = &http.Client{
 // against an arbitrary host.
 func resetLlamacppSlot(ctx context.Context, rawURL string, allowRemote bool) error {
 	if !allowRemote {
-		if err := requireLoopbackURL(rawURL); err != nil {
+		if err := ValidateLlamacppResetURL(rawURL); err != nil {
 			return err
 		}
 	}
@@ -786,11 +785,8 @@ func resetLlamacppSlot(ctx context.Context, rawURL string, allowRemote bool) err
 	return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 }
 
-// requireLoopbackURL rejects a reset URL whose host is not loopback. A
-// bare hostname like "localhost" is allowed; an IP must sit in 127.0.0.0/8
-// or be ::1. Anything that resolves elsewhere (or doesn't parse) is
-// refused with an actionable message pointing at AllowRemoteResetURL.
-func requireLoopbackURL(rawURL string) error {
+// ValidateLlamacppResetURL rejects reset endpoints outside the loopback interface.
+func ValidateLlamacppResetURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("parse reset url: %w", err)

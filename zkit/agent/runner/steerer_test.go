@@ -21,7 +21,7 @@ type twoTurnProvider struct {
 	iter atomic.Int32
 }
 
-func (p *twoTurnProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *twoTurnProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		switch p.iter.Add(1) {
 		case 1:
@@ -35,7 +35,7 @@ func (p *twoTurnProvider) Complete(_ context.Context, _ llm.CompletionRequest) (
 		default:
 			yield(llm.CompletionChunk{Content: "done"}, nil)
 		}
-	}, nil
+	}
 }
 
 func (p *twoTurnProvider) Name() string { return "two-turn" }

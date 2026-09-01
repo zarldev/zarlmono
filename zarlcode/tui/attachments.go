@@ -66,14 +66,3 @@ func (m *UI) attachmentParts() []llm.ContentPart {
 	}
 	return parts
 }
-
-func (m *UI) attachmentSummary() string {
-	switch len(m.pendingAttachments) {
-	case 0:
-		return ""
-	case 1:
-		return " attached: " + m.pendingAttachments[0].Name + "  ·  "
-	default:
-		return fmt.Sprintf(" attached: %d files  ·  ", len(m.pendingAttachments))
-	}
-}

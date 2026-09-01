@@ -3,7 +3,6 @@ package runner_test
 import (
 	"context"
 	"errors"
-	"iter"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
@@ -16,19 +15,20 @@ type taskIDBlockingClient struct {
 	release chan struct{}
 }
 
-func (c *taskIDBlockingClient) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	select {
-	case c.started <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	select {
-	case <-c.release:
-		return func(yield func(llm.CompletionChunk, error) bool) {
-			yield(llm.CompletionChunk{Content: "done", Done: true}, nil)
-		}, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+func (c *taskIDBlockingClient) Complete(ctx context.Context, _ llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		select {
+		case c.started <- struct{}{}:
+		case <-ctx.Done():
+			yield(llm.CompletionChunk{}, context.Cause(ctx))
+			return
+		}
+		select {
+		case <-c.release:
+			yield(llm.CompletionChunk{Content: "done"}, nil)
+		case <-ctx.Done():
+			yield(llm.CompletionChunk{}, context.Cause(ctx))
+		}
 	}
 }
 

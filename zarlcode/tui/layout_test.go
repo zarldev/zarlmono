@@ -30,6 +30,15 @@ func TestLayout_WideShowsAllPanes(t *testing.T) {
 	}
 }
 
+func TestLayout_StandardWidthShowsCompactSidebar(t *testing.T) {
+	out := render(t, 120, 50)
+	for _, pane := range []string{"context", "idle", "build mode"} {
+		if !strings.Contains(out, pane) {
+			t.Errorf("standard layout is missing the %q pane:\n%s", pane, out)
+		}
+	}
+}
+
 func TestLayout_NarrowCollapsesSidebar(t *testing.T) {
 	out := render(t, 100, 50)
 	if strings.Contains(out, "state") {

@@ -13,7 +13,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zsync"
 )
 
-type completionEvidence struct {
+// CompletionEvidence records mutation and verification ordering across tool calls.
+type CompletionEvidence struct {
 	mu sync.Mutex
 
 	sequence            uint64
@@ -24,7 +25,8 @@ type completionEvidence struct {
 	mutatedPaths        *zsync.Set[string]
 }
 
-type completionEvidenceSnapshot struct {
+// CompletionEvidenceSnapshot is an immutable view of completion evidence.
+type CompletionEvidenceSnapshot struct {
 	LastMutation        uint64
 	LastVerification    uint64
 	VerificationPassed  bool
@@ -32,10 +34,13 @@ type completionEvidenceSnapshot struct {
 	MutatedPaths        []string
 }
 
-func newCompletionEvidence() *completionEvidence {
-	return &completionEvidence{mutatedPaths: zsync.NewSet[string]()}
+// NewCompletionEvidence returns empty completion evidence.
+func NewCompletionEvidence() *CompletionEvidence {
+	return &CompletionEvidence{mutatedPaths: zsync.NewSet[string]()}
 }
-func (e *completionEvidence) record(call tools.ToolCall, result *tools.ToolResult, dispatchErr error) {
+
+// Record adds the observable effects of one dispatched tool call.
+func (e *CompletionEvidence) Record(call tools.ToolCall, result *tools.ToolResult, dispatchErr error) {
 	if e == nil || dispatchErr != nil || result == nil {
 		return
 	}
@@ -63,7 +68,7 @@ func (e *completionEvidence) record(call tools.ToolCall, result *tools.ToolResul
 		return
 	}
 	command := strings.TrimSpace(call.Arguments.String("command", ""))
-	if !isVerificationCommand(command) {
+	if !IsVerificationCommand(command) {
 		return
 	}
 	for _, effect := range result.ProcessEffects() {
@@ -77,14 +82,15 @@ func (e *completionEvidence) record(call tools.ToolCall, result *tools.ToolResul
 	}
 }
 
-func (e *completionEvidence) snapshot() completionEvidenceSnapshot {
+// Snapshot returns the current completion evidence.
+func (e *CompletionEvidence) Snapshot() CompletionEvidenceSnapshot {
 	if e == nil {
-		return completionEvidenceSnapshot{}
+		return CompletionEvidenceSnapshot{}
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	paths := zsync.Ordered(e.mutatedPaths)
-	return completionEvidenceSnapshot{
+	return CompletionEvidenceSnapshot{
 		LastMutation:        e.lastMutation,
 		LastVerification:    e.lastVerification,
 		VerificationPassed:  e.verificationPassed,
@@ -93,7 +99,8 @@ func (e *completionEvidence) snapshot() completionEvidenceSnapshot {
 	}
 }
 
-func isVerificationCommand(command string) bool {
+// IsVerificationCommand reports whether command performs a recognized Go verification.
+func IsVerificationCommand(command string) bool {
 	fields := strings.Fields(command)
 	if len(fields) < 2 {
 		return false
@@ -121,10 +128,11 @@ func hasVerifiableCode(paths []string) bool {
 
 type evidenceSource struct {
 	inner    tools.Source
-	evidence *completionEvidence
+	evidence *CompletionEvidence
 }
 
-func newEvidenceSource(inner tools.Source, evidence *completionEvidence) tools.Source {
+// WithCompletionEvidence wraps a source and records its dispatched tool effects.
+func WithCompletionEvidence(inner tools.Source, evidence *CompletionEvidence) tools.Source {
 	return &evidenceSource{inner: inner, evidence: evidence}
 }
 
@@ -134,7 +142,7 @@ func (s *evidenceSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 
 func (s *evidenceSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
 	result, err := s.inner.Execute(ctx, call)
-	s.evidence.record(call, result, err)
+	s.evidence.Record(call, result, err)
 	return result, err
 }
 

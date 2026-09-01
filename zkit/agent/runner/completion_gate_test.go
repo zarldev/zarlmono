@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -55,11 +54,11 @@ type noEditProvider struct {
 	requests atomic.Int32
 }
 
-func (p *noEditProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *noEditProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	p.requests.Add(1)
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		yield(llm.CompletionChunk{Content: "All done — the fix looks correct."}, nil)
-	}, nil
+	}
 }
 
 func (p *noEditProvider) Name() string { return "no-edit" }
@@ -71,7 +70,7 @@ type editThenDoneProvider struct {
 	iter atomic.Int32
 }
 
-func (p *editThenDoneProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *editThenDoneProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		if p.iter.Add(1) == 1 {
 			yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{{
@@ -82,7 +81,7 @@ func (p *editThenDoneProvider) Complete(_ context.Context, _ llm.CompletionReque
 			return
 		}
 		yield(llm.CompletionChunk{Content: "Done — change applied."}, nil)
-	}, nil
+	}
 }
 
 func (p *editThenDoneProvider) Name() string { return "edit-then-done" }

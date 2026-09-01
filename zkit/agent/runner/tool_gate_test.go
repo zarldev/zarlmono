@@ -42,9 +42,8 @@ type toolNameCapturingProvider struct {
 	afterCall func(int)
 }
 
-func (p *toolNameCapturingProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *toolNameCapturingProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	names := make([]string, 0, len(req.Tools))
 	for _, t := range req.Tools {
 		names = append(names, t.Function.Name)
@@ -56,15 +55,14 @@ func (p *toolNameCapturingProvider) Complete(_ context.Context, req llm.Completi
 	if p.afterCall != nil {
 		p.afterCall(call)
 	}
+	p.mu.Unlock()
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		for _, c := range chunks {
-			err := c.Error
-			c.Error = nil
-			if !yield(c, err) {
+			if !yield(c, nil) {
 				return
 			}
 		}
-	}, nil
+	}
 }
 func (p *toolNameCapturingProvider) Name() string { return "capturing" }
 
@@ -85,8 +83,8 @@ func TestRun_ToolGateHidesAndRefuses(t *testing.T) {
 	t.Parallel()
 
 	provider := &toolNameCapturingProvider{turns: [][]llm.CompletionChunk{
-		{chunkToolCall("c1", "mutate", `{}`), chunkDone()}, // model calls the blocked tool
-		{chunkText("done"), chunkDone()},                   // then completes after the refusal
+		{chunkToolCall("c1", "mutate", `{}`)}, // model calls the blocked tool
+		{chunkText("done")},                   // then completes after the refusal
 	}}
 	mutate := &countingTool{name: "mutate"}
 	read := &countingTool{name: "read"}
@@ -122,8 +120,8 @@ func TestRun_ToolSurfaceEventsDescribeExactGatedSnapshot(t *testing.T) {
 	t.Parallel()
 
 	provider := &toolNameCapturingProvider{turns: [][]llm.CompletionChunk{
-		{chunkToolCall("c1", "read", `{}`), chunkDone()},
-		{chunkText("done"), chunkDone()},
+		{chunkToolCall("c1", "read", `{}`)},
+		{chunkText("done")},
 	}}
 	reg := newRegistry(&countingTool{name: "mutate"}, &countingTool{name: "read"})
 	sink := newRecordingSink()
@@ -163,8 +161,8 @@ func TestRun_ToolSurfaceEventReportsControlledChange(t *testing.T) {
 
 	reg := newRegistry(&countingTool{name: "read"})
 	provider := &toolNameCapturingProvider{turns: [][]llm.CompletionChunk{
-		{chunkToolCall("c1", "read", `{}`), chunkDone()},
-		{chunkText("done"), chunkDone()},
+		{chunkToolCall("c1", "read", `{}`)},
+		{chunkText("done")},
 	}}
 	provider.afterCall = func(call int) {
 		if call == 0 {
@@ -202,8 +200,8 @@ func TestRun_NoGateOffersAndRunsEverything(t *testing.T) {
 	t.Parallel()
 
 	provider := &toolNameCapturingProvider{turns: [][]llm.CompletionChunk{
-		{chunkToolCall("c1", "mutate", `{}`), chunkDone()},
-		{chunkText("done"), chunkDone()},
+		{chunkToolCall("c1", "mutate", `{}`)},
+		{chunkText("done")},
 	}}
 	mutate := &countingTool{name: "mutate"}
 	reg := newRegistry(mutate)
@@ -244,8 +242,8 @@ func TestRun_ToolGateFailsClosedOnWrapperSource(t *testing.T) {
 	t.Parallel()
 
 	provider := &toolNameCapturingProvider{turns: [][]llm.CompletionChunk{
-		{chunkToolCall("c1", "mutate", `{}`), chunkDone()}, // model calls the hidden mutating tool
-		{chunkText("done"), chunkDone()},                   // then completes after the refusal
+		{chunkToolCall("c1", "mutate", `{}`)}, // model calls the hidden mutating tool
+		{chunkText("done")},                   // then completes after the refusal
 	}}
 	mutate := &countingTool{name: "mutate", mutates: true}
 	read := &countingTool{name: "read"}

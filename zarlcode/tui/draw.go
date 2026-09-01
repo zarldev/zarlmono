@@ -76,54 +76,6 @@ type splitPaneLayout struct {
 	Footer  uv.Rectangle
 }
 
-// drawSplitPane paints the standard split-pane chrome and returns named content
-// regions for callers to fill. It is the shared base for file browser/settings/
-// saved-plan style overlays.
-func drawSplitPane(scr uv.Screen, area uv.Rectangle, label string, navW int) (splitPaneLayout, bool) {
-	return drawSplitPaneColored(scr, area, label, navW, palette.Border, palette.Primary)
-}
-
-// drawSplitPaneColored is drawSplitPane with explicit border + label colours.
-func drawSplitPaneColored(scr uv.Screen, area uv.Rectangle, label string, navW int, border, labelCol theme.Color) (splitPaneLayout, bool) {
-	inner := drawPaneFrameColored(scr, area, label, border, labelCol)
-	w, h := inner.Dx(), inner.Dy()
-	if w < 12 || h < 5 {
-		return splitPaneLayout{}, false
-	}
-	if navW > w/3 {
-		navW = w / 3
-	}
-	if navW < 4 || w-navW-1 < 4 {
-		return splitPaneLayout{}, false
-	}
-
-	x0, y0 := inner.Min.X, inner.Min.Y
-	contextY := y0
-	topRuleY := y0 + 1
-	bodyY := y0 + 2
-	footerY := inner.Max.Y - 1
-	bottomRuleY := footerY - 1
-	bodyH := bottomRuleY - bodyY
-	if bodyH < 1 {
-		return splitPaneLayout{}, false
-	}
-
-	drawPaneHRuleColored(scr, x0, topRuleY, w, navW, "┬", border)
-	drawPaneHRuleColored(scr, x0, bottomRuleY, w, navW, "┴", border)
-	for y := bodyY; y < bottomRuleY; y++ {
-		drawLine(scr, uv.Rect(x0+navW, y, 1, 1), border.On("│"))
-	}
-
-	return splitPaneLayout{
-		Inner:   inner,
-		Context: uv.Rect(x0, contextY, w, 1),
-		Body:    uv.Rect(x0, bodyY, w, bodyH),
-		Nav:     uv.Rect(x0+1, bodyY, navW-1, bodyH),
-		Detail:  uv.Rect(x0+navW+1, bodyY, w-navW-1, bodyH),
-		Footer:  uv.Rect(x0, footerY, w, 1),
-	}, true
-}
-
 // drawUtilitySplitPane lays out a full-screen utility surface without wrapping
 // it in a second box. A top utility row, one divider, a single nav/detail split,
 // and a contextual footer provide the shared hierarchy.
@@ -307,16 +259,4 @@ func drawBoxColored(scr uv.Screen, r uv.Rectangle, label string, border, labelCo
 // owns the inner styling.
 func bracketed(inner string) string {
 	return palette.Border.On("[") + inner + palette.Border.On("]")
-}
-
-// drawPaneHRule paints a standard horizontal divider inside a pane. jointAt is
-// an offset from x; pass -1 for a plain rule.
-func drawPaneHRuleColored(scr uv.Screen, x, y, w, jointAt int, joint string, col theme.Color) {
-	for i := range w {
-		ch := "─"
-		if i == jointAt {
-			ch = joint
-		}
-		drawLine(scr, uv.Rect(x+i, y, 1, 1), col.On(ch))
-	}
 }

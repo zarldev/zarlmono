@@ -5,7 +5,7 @@
 **The Go-native agent monorepo — zarlcode / zkit**
 
 [![ci](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zarldev/zarlmono/actions/workflows/ci.yml)
-[![Go 1.27](https://img.shields.io/badge/go-1.27-00ADD8.svg)](https://go.dev/)
+[![Go 1.27](https://img.shields.io/badge/Go-1.27-00ADD8.svg)](https://go.dev/)
 [![license MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-zarldev.github.io%2Fzarlmono-8B5CF6)](https://zarldev.github.io/zarlmono)
 
@@ -128,9 +128,9 @@ func main() {
 		runner.WithMaxIterations(8),
 	)
 
-	res := r.Run(context.Background(), runner.TaskSpec{Prompt: "What is the weather in Oslo?"})
-	if res.Err != nil {
-		log.Fatal(res.Err)
+	res, err := r.Run(context.Background(), runner.TaskSpec{Prompt: "What is the weather in Oslo?"})
+	if err != nil {
+		log.Fatal(err)
 	}
 	fmt.Println(res.FinalContent)
 }

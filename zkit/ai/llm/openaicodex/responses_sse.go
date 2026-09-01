@@ -65,8 +65,8 @@ type sseCompleted struct {
 }
 
 type sseResponse struct {
-	Status string   `json:"status"`
-	Usage  sseUsage `json:"usage"`
+	Status string    `json:"status"`
+	Usage  *sseUsage `json:"usage"`
 }
 
 type sseUsage struct {
@@ -103,16 +103,14 @@ type sseFailed struct {
 //   - function_call adds  → bootstraps a ToolCall with its CallID/Name;
 //     subsequent function_call_arguments.delta events accumulate args
 //     onto the same call.
-//   - response.completed  → emits a final chunk with Done=true,
-//     finish_reason, and Usage.
-//   - response.failed     → emits a chunk with Error set.
-//   - response.incomplete  → emits a truncated "length" Done chunk (not an error).
+//   - response.completed  → emits semantic finish and owned usage metadata.
+//   - response.failed     → returns one terminal stream error.
+//   - response.incomplete → emits truncated length metadata (not an error).
 //
-// The function returns nil when the stream completes cleanly; an error
-// when the connection drops mid-stream. SSE protocol errors (malformed
-// data lines) are surfaced as the yield error value and the parser
-// continues — one bad event shouldn't kill the whole response.
-func parseSSEStream(r io.Reader, yield func(llm.CompletionChunk, error) bool) error {
+// The returned stopped value is true when downstream returned false. Protocol,
+// response, and read failures are returned for Complete to yield exactly once as
+// a zero chunk.
+func parseSSEStream(r io.Reader, yield func(llm.CompletionChunk, error) bool) (bool, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	var dataBuf strings.Builder
@@ -136,7 +134,7 @@ func parseSSEStream(r io.Reader, yield func(llm.CompletionChunk, error) bool) er
 			}
 			debugSSE.WriteEvent(payload)
 			if state.dispatch(payload, yield) {
-				return nil
+				return state.stopped, state.err
 			}
 			continue
 		}
@@ -157,20 +155,23 @@ func parseSSEStream(r io.Reader, yield func(llm.CompletionChunk, error) bool) er
 		// we dispatch entirely on the JSON `type` field.
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("sse scan: %w", err)
+		return false, fmt.Errorf("sse scan: %w", err)
 	}
 	// A final event may sit in dataBuf with no trailing blank line —
 	// happens when the upstream closes the connection right after the
 	// last event payload. Dispatch it before flushing.
 	if dataBuf.Len() > 0 {
 		if state.dispatch(dataBuf.String(), yield) {
-			return nil
+			return state.stopped, state.err
 		}
 	}
-	// Stream ended without a response.completed — emit a synthetic
-	// Done chunk so downstream consumers don't hang.
-	state.flush(yield)
-	return nil
+	// An EOF without an explicit terminal event is a truncated successful
+	// response. Surface semantic length metadata; normal return remains the
+	// lifecycle signal.
+	if !yield(llm.CompletionChunk{FinishReason: llm.FinishReasons.LENGTH}, nil) {
+		return true, nil
+	}
+	return false, nil
 }
 
 // sseState carries the cross-event state the dispatcher needs: the
@@ -189,6 +190,8 @@ type sseState struct {
 	// delta of one part and the first of the next concatenate with no
 	// space ("...poll.Need check..."), running the whole summary together.
 	reasoningEmitted bool
+	stopped          bool
+	err              error
 }
 
 type pendingToolCall struct {
@@ -210,16 +213,19 @@ func newSSEState() *sseState {
 func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, error) bool) bool {
 	var env sseEventEnvelope
 	if err := json.Unmarshal([]byte(payload), &env); err != nil {
-		return !yield(llm.CompletionChunk{}, fmt.Errorf("sse decode envelope: %w", err))
+		s.err = fmt.Errorf("sse decode envelope: %w", err)
+		return true
 	}
 	switch env.Type {
 	case "response.output_text.delta":
 		var ev sseTextDelta
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, fmt.Errorf("sse output_text.delta: %w", err))
+			s.err = fmt.Errorf("sse output_text.delta: %w", err)
+			return true
 		}
 		if ev.Delta != "" {
 			if !yield(llm.CompletionChunk{Content: ev.Delta}, nil) {
+				s.stopped = true
 				return true
 			}
 		}
@@ -238,13 +244,15 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		"response.reasoning_summary.delta":
 		var ev sseReasoningDelta
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, fmt.Errorf("sse reasoning.delta: %w", err))
+			s.err = fmt.Errorf("sse reasoning.delta: %w", err)
+			return true
 		}
 		if ev.Delta == "" {
 			return false
 		}
 		s.reasoningEmitted = true
 		if !yield(llm.CompletionChunk{Thinking: ev.Delta}, nil) {
+			s.stopped = true
 			return true
 		}
 	// A new summary part begins. The summary is split into parts whose
@@ -257,6 +265,7 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 			return false
 		}
 		if !yield(llm.CompletionChunk{Thinking: "\n\n"}, nil) {
+			s.stopped = true
 			return true
 		}
 	case "response.reasoning_summary_text.done",
@@ -268,7 +277,8 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 	case "response.output_item.added":
 		var ev sseOutputItemAdded
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, fmt.Errorf("sse output_item.added: %w", err))
+			s.err = fmt.Errorf("sse output_item.added: %w", err)
+			return true
 		}
 		if ev.Item.Type != sseTypeFunctionCall {
 			return false
@@ -299,12 +309,14 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 				Arguments: ev.Item.Arguments,
 			},
 		}}}, nil) {
+			s.stopped = true
 			return true
 		}
 	case "response.function_call_arguments.delta":
 		var ev sseFunctionArgsDelta
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, fmt.Errorf("sse function_call_arguments.delta: %w", err))
+			s.err = fmt.Errorf("sse function_call_arguments.delta: %w", err)
+			return true
 		}
 		pc := s.pendingCall(ev.OutputIdx, ev.ItemID)
 		if pc == nil {
@@ -323,12 +335,14 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 				Arguments: ev.Delta,
 			},
 		}}}, nil) {
+			s.stopped = true
 			return true
 		}
 	case "response.function_call_arguments.done":
 		var ev sseFunctionArgsDone
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, fmt.Errorf("sse function_call_arguments.done: %w", err))
+			s.err = fmt.Errorf("sse function_call_arguments.done: %w", err)
+			return true
 		}
 		pc := s.pendingCall(ev.OutputIdx, ev.ItemID)
 		if pc == nil {
@@ -356,41 +370,40 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 				Arguments: remainder,
 			},
 		}}}, nil) {
+			s.stopped = true
 			return true
 		}
 	case "response.completed", "response.incomplete":
 		var ev sseCompleted
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return !yield(llm.CompletionChunk{}, fmt.Errorf("sse completed: %w", err))
+			s.err = fmt.Errorf("sse completed: %w", err)
+			return true
 		}
-		finish := "stop"
+		finish := llm.FinishReasons.STOP
 		if len(s.toolCallByIdx) > 0 {
-			finish = "tool_calls"
+			finish = llm.FinishReasons.TOOLCALLS
 		}
-		// response.incomplete is a normal terminal status, not an error: the
-		// model stopped before emitting a final turn (max output tokens, safety
-		// stop, or an early stop). Report it as a truncated "length" completion
-		// so the runner processes the partial content/tool calls instead of
-		// surfacing a spurious "codex response response.incomplete" terminal
-		// failure.
 		if ev.Type == "response.incomplete" || ev.Response.Status == "incomplete" {
-			finish = "length"
+			finish = llm.FinishReasons.LENGTH
 		}
-		yield(llm.CompletionChunk{
-			Done:         true,
-			FinishReason: finish,
-			Usage: &llm.Usage{
+		chunk := llm.CompletionChunk{FinishReason: finish}
+		if ev.Response.Usage != nil {
+			chunk.Usage = llm.Usage{
 				PromptTokens:     ev.Response.Usage.InputTokens,
 				CompletionTokens: ev.Response.Usage.OutputTokens,
 				TotalTokens:      ev.Response.Usage.TotalTokens,
 				CachedTokens:     ev.Response.Usage.InputTokensDetails.CachedTokens,
-			},
-		}, nil)
+			}
+			chunk.UsageReported = true
+		}
+		if !yield(chunk, nil) {
+			s.stopped = true
+		}
 		return true
 	case "response.failed":
 		var ev sseFailed
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			yield(llm.CompletionChunk{}, fmt.Errorf("sse failed: %w", err))
+			s.err = fmt.Errorf("sse failed: %w", err)
 			return true
 		}
 		msg := ev.Response.Error.Message
@@ -402,16 +415,10 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		// retries instead of terminating the turn. Quota/permanent codes
 		// deliberately fall through to the plain terminal error below.
 		if ev.Response.Error.Code == "rate_limited" {
-			yield(llm.CompletionChunk{
-				Done:         true,
-				FinishReason: finishReasonError,
-			}, &llm.RateLimitError{Message: "codex response failed: " + msg, Retryable: true})
+			s.err = &llm.RateLimitError{Message: "codex response failed: " + msg, Retryable: true}
 			return true
 		}
-		yield(llm.CompletionChunk{
-			Done:         true,
-			FinishReason: finishReasonError,
-		}, fmt.Errorf("codex response %s: %s", env.Type, msg))
+		s.err = fmt.Errorf("codex response %s: %s", env.Type, msg)
 		return true
 	default:
 		// Quietly ignore events we don't model (created, in_progress,
@@ -419,14 +426,6 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		// load-bearing for chunk emission.
 	}
 	return false
-}
-
-// flush emits a synthetic Done chunk when the stream ends without a
-// terminal event (truncated response, connection drop) so downstream
-// consumers move on. Reasoning lives on the out-of-band Thinking
-// channel as discrete deltas, so there's no dangling block to close.
-func (s *sseState) flush(yield func(llm.CompletionChunk, error) bool) {
-	yield(llm.CompletionChunk{Done: true, FinishReason: "length"}, nil)
 }
 
 // unemittedSuffix returns the part of full that hasn't been emitted yet, given

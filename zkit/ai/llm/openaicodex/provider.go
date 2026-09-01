@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,19 +17,19 @@ import (
 )
 
 const (
-	defaultBaseURL    = "https://chatgpt.com/backend-api"
-	defaultModel      = "gpt-5.6"
-	finishReasonError = "error"
+	defaultBaseURL = "https://chatgpt.com/backend-api"
+	defaultModel   = "gpt-5.6"
 )
 
 // Provider implements llm.Provider against OpenAI's Codex backend
 // using a ChatGPT-Plus/Pro OAuth credential. The provider is stateless
 // across requests; per-request state lives in the SSE parser.
 type Provider struct {
-	tokens  TokenSource
-	client  *zhttp.Client
-	baseURL string
-	model   string
+	tokens      TokenSource
+	client      *zhttp.Client
+	retryPolicy zhttp.RetryPolicy
+	baseURL     string
+	model       string
 
 	// defaultEffort is the user-pinned reasoning effort applied to
 	// requests where the resolved model leaves it unspecified (the
@@ -61,18 +59,16 @@ func newCodexClient(policy zhttp.RetryPolicy) *zhttp.Client {
 // returned llm.Provider is safe for concurrent use; the underlying
 // TokenSource is expected to serialise its own refresh.
 func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) (*Provider, error) {
-	if tokens == nil {
-		return nil, errors.New("openaicodex: TokenSource is required")
-	}
 	p := &Provider{
-		tokens:  tokens,
-		client:  newCodexClient(defaultRetryPolicy()),
-		baseURL: defaultBaseURL,
-		model:   defaultModel,
+		tokens:      tokens,
+		retryPolicy: defaultRetryPolicy(),
+		baseURL:     defaultBaseURL,
+		model:       defaultModel,
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
+	p.client = newCodexClient(p.retryPolicy)
 	return p, nil
 }
 
@@ -80,64 +76,52 @@ func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) (*Provide
 // still override per request via CompletionRequest model handling
 // (when that's added) or via Options.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }
 
-// WithDefaultReasoningEffort pins a default effort applied when the
-// resolved model carries none and the request doesn't override.
-// Empty string is a no-op (falls back to the model-name heuristic
-// in defaultReasoningEffort). Valid values: "low", "medium",
-// "high", "xhigh", "max" — case-sensitive to match the wire format.
+// WithDefaultReasoningEffort pins the effort applied when the resolved model
+// carries none and the request does not override it. Valid values are "low",
+// "medium", "high", "xhigh", and "max"; an empty value restores the
+// model-name heuristic in defaultReasoningEffort.
 func WithDefaultReasoningEffort(effort string) options.Option[Provider] {
-	return func(p *Provider) {
-		if effort != "" {
-			p.defaultEffort = reasoningEffort(effort)
-		}
-	}
+	return func(p *Provider) { p.defaultEffort = reasoningEffort(effort) }
 }
 
 // WithBaseURL points the provider at a different Codex endpoint. The
 // canonical value is the package default; this exists so tests can
 // drop in an httptest server.
 func WithBaseURL(baseURL string) options.Option[Provider] {
-	return func(p *Provider) {
-		if baseURL != "" {
-			p.baseURL = strings.TrimRight(baseURL, "/")
-		}
-	}
+	return func(p *Provider) { p.baseURL = strings.TrimRight(baseURL, "/") }
 }
 
 // Name implements llm.Provider.
 func (p *Provider) Name() string { return llm.LLMProviders.OPENAICODEX.String() }
 
-// Complete is the main entry point. It does the request build, fires
-// the POST, and streams SSE chunks as a native iter.Seq2 (errors as the
-// second value). The Codex Responses backend is always asked for
-// streaming output here even when the caller's generic
-// llm.CompletionRequest has Stream=false; keeping one wire shape avoids
-// a separate JSON response parser and preserves live reasoning/tool-call
-// events.
-func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+// Complete constructs a fully lazy Codex completion stream. Token acquisition,
+// request adaptation, HTTP setup, and response I/O begin only when the returned
+// stream is invoked.
+func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		if err := p.run(ctx, req, yield); err != nil {
-			yield(llm.CompletionChunk{Done: true, FinishReason: finishReasonError}, err)
+		if cause := context.Cause(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
 		}
-	}, nil
+		stopped, err := p.run(ctx, req, yield)
+		if err != nil && !stopped {
+			yield(llm.CompletionChunk{}, normalizeContextError(ctx, err))
+		}
+	}
 }
 
-// run does the work behind Complete. Returning a non-nil error here
-// causes Complete to emit a synthetic terminal error chunk.
-func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) error {
+// run does the work behind Complete. stopped reports that downstream returned
+// false, in which case Complete must return silently.
+func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) (bool, error) {
 	tok, err := p.tokens.Token(ctx)
 	if err != nil {
-		return fmt.Errorf("openaicodex: fetch token: %w", err)
+		return false, fmt.Errorf("openaicodex: fetch token: %w", err)
 	}
 	if tok.AccountID == "" {
-		return ErrNoAccountID
+		return false, ErrNoAccountID
 	}
 
 	// Resolve the model + reasoning effort from preset ids.
@@ -154,12 +138,11 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	if effort == "" && p.defaultEffort != "" {
 		effort = p.defaultEffort
 	}
+	request := req
 	if effort != "" {
-		if req.Options == nil {
-			req.Options = llm.ModelOptions{}
-		}
 		if _, set := req.Options["reasoning_effort"]; !set {
-			req.Options["reasoning_effort"] = string(effort)
+			request.Options = cloneModelOptions(req.Options)
+			request.Options["reasoning_effort"] = string(effort)
 		}
 	}
 
@@ -174,24 +157,21 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	// surface the model has, which differs from Codex CLI's. Adding a
 	// canned Codex prompt on top would tell the model to call tools
 	// (apply_patch, update_plan, etc.) we don't expose.
-	instructions, body := splitSystemMessages(req)
+	instructions, body := splitSystemMessages(request)
 	body.Messages = stripSystemMessages(body.Messages)
 	reqBody := buildRequest(body, baseModel, instructions)
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return fmt.Errorf("openaicodex: marshal request: %w", err)
+		return false, fmt.Errorf("openaicodex: marshal request: %w", err)
 	}
 
-	resp, err := p.postResponses(ctx, payload, tok, optionString(req.Options, "prompt_cache_key"))
+	resp, err := p.postResponses(ctx, payload, tok, optionString(request.Options, "prompt_cache_key"))
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 
-	// Always parse as SSE: buildRequest forces stream=true for this
-	// provider path and the Accept header asks the backend for
-	// text/event-stream.
 	return parseSSEStream(resp.Body, yield)
 }
 
@@ -284,6 +264,21 @@ func stripSystemMessages(msgs []llm.Message) []llm.Message {
 		out = append(out, m)
 	}
 	return out
+}
+
+func cloneModelOptions(options llm.ModelOptions) llm.ModelOptions {
+	clone := make(llm.ModelOptions, len(options)+1)
+	for key, value := range options {
+		clone[key] = value
+	}
+	return clone
+}
+
+func normalizeContextError(ctx context.Context, err error) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	return err
 }
 
 // codexErrorBody is the Codex JSON error envelope. The rate-limit window

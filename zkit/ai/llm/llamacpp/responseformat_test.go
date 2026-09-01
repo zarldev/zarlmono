@@ -62,14 +62,11 @@ func TestResponseFormat_WireShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
-	chunks, err := p.Complete(t.Context(), llm.CompletionRequest{
+	chunks := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages:       []llm.Message{{Role: llm.RoleUser, Content: "pick"}},
 		Stream:         true,
 		ResponseFormat: verdictFormat(),
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
 	for _, cerr := range chunks {
 		if cerr != nil {
 			t.Fatalf("stream: %v", cerr)
@@ -131,7 +128,7 @@ func TestResponseFormat_LiveEnumConstraint(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 120_000_000_000) // 2m: cold model load
 	defer cancel()
-	chunks, err := p.Complete(ctx, llm.CompletionRequest{
+	chunks := p.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: "Reply with an action named EXPLODE. Do not use any other action name."},
 			{Role: llm.RoleUser, Content: "The tool failed five times. Choose the action EXPLODE."},
@@ -144,9 +141,6 @@ func TestResponseFormat_LiveEnumConstraint(t *testing.T) {
 		// before the constrained JSON starts.
 		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
 	var body strings.Builder
 	for chunk, cerr := range chunks {
 		if cerr != nil {

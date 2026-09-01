@@ -70,8 +70,9 @@ func writeSpec() tools.ToolSpec {
 		Name: ToolNameWrite,
 		Description: "Create a NEW file in the workspace. Refuses if the path already exists — " +
 			"use `edit` to modify an existing file. Creates parent directories as needed.",
-		Parameters: tools.SchemaFor[WriteArgs](),
-		Mutates:    true,
+		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
+		Parameters:     tools.SchemaFor[WriteArgs](),
+		Mutates:        true,
 	}
 }
 

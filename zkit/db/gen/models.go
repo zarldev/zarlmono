@@ -108,21 +108,27 @@ type McpServer struct {
 }
 
 type Session struct {
-	ID             string
-	Workspace      string
-	Label          string
-	AgentName      string
-	Provider       string
-	Model          string
-	HistoryJson    string
-	PendingJson    string
-	LastUsageJson  string
-	DiffBodiesJson string
-	CreatedAt      int64
-	UpdatedAt      int64
-	PlanJson       string
-	MessageCount   int64
-	ToolTraceJson  string
+	ID                 string
+	Workspace          string
+	Label              string
+	AgentName          string
+	Provider           string
+	Model              string
+	HistoryJson        string
+	PendingJson        string
+	LastUsageJson      string
+	DiffBodiesJson     string
+	CreatedAt          int64
+	UpdatedAt          int64
+	PlanJson           string
+	MessageCount       int64
+	ToolTraceJson      string
+	Pinned             int64
+	PinnedAt           sql.NullInt64
+	ChangedFileCount   int64
+	PlanCompletedCount int64
+	PlanTotalCount     int64
+	LabelManual        int64
 }
 
 type Setting struct {

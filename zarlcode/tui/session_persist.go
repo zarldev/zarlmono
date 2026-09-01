@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
 
+	"github.com/zarldev/zarlmono/zarlcode/draft"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -28,13 +31,21 @@ type sessionSaveFailedMsg struct{ Error string }
 type sessionClearFailedMsg struct{ Error string }
 
 type sessionSummary struct {
-	ID        string
-	Label     string
-	Provider  string
-	Model     string
-	CreatedAt time.Time
-	SavedAt   time.Time
-	Messages  int
+	ID                 string
+	Label              string
+	LabelManual        bool
+	Provider           string
+	Model              string
+	CreatedAt          time.Time
+	SavedAt            time.Time
+	Pinned             bool
+	PinnedAt           time.Time
+	AgentName          string
+	ChangedFileCount   int
+	PlanCompletedCount int
+	PlanTotalCount     int
+	HasDraft           bool
+	Messages           int
 }
 
 var errSessionSnapshotEmpty = errors.New("session snapshot empty")
@@ -46,6 +57,7 @@ const (
 	sessionRestoreDiffBodiesCorrupt sessionRestoreDiagnostic = "diff bodies"
 	sessionRestoreUsageCorrupt      sessionRestoreDiagnostic = "usage"
 	sessionRestoreToolTraceCorrupt  sessionRestoreDiagnostic = "tool trace"
+	sessionRestoreDraftCorrupt      sessionRestoreDiagnostic = "draft"
 )
 
 type savedSession struct {
@@ -55,6 +67,7 @@ type savedSession struct {
 	Usage              SessionUsageSnapshot
 	ToolTraceRaw       []byte
 	History            []llm.Message
+	DraftText          string
 	restoreDiagnostics []sessionRestoreDiagnostic
 }
 
@@ -85,18 +98,22 @@ func listSavedSessions(ctx context.Context, store *db.Store, wsRoot string) ([]s
 }
 
 func savedSessionSummary(rec db.SessionRecord) sessionSummary {
-	label := rec.Label
-	if label == "" {
-		label = rec.CreatedAt.Format("2006-01-02 15:04")
-	}
 	return sessionSummary{
-		ID:        rec.ID,
-		Label:     label,
-		Provider:  rec.Provider,
-		Model:     rec.Model,
-		CreatedAt: rec.CreatedAt,
-		SavedAt:   rec.UpdatedAt,
-		Messages:  sessionMessageCount(rec, 0),
+		ID:                 rec.ID,
+		Label:              rec.Label,
+		LabelManual:        rec.LabelManual,
+		Provider:           rec.Provider,
+		Model:              rec.Model,
+		CreatedAt:          rec.CreatedAt,
+		SavedAt:            rec.UpdatedAt,
+		Pinned:             rec.Pinned,
+		PinnedAt:           rec.PinnedAt,
+		AgentName:          rec.AgentName,
+		ChangedFileCount:   rec.ChangedFileCount,
+		PlanCompletedCount: rec.PlanCompletedCount,
+		PlanTotalCount:     rec.PlanTotalCount,
+		HasDraft:           rec.HasDraft,
+		Messages:           sessionMessageCount(rec, 0),
 	}
 }
 
@@ -140,6 +157,12 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	}
 	if toolTraceMalformed(rec.ToolTraceJSON) {
 		s.addRestoreDiagnostic(sessionRestoreToolTraceCorrupt)
+	}
+	draftText, err := draft.Decode(rec.PendingJSON)
+	if err != nil {
+		s.addRestoreDiagnostic(sessionRestoreDraftCorrupt)
+	} else {
+		s.DraftText = draftText
 	}
 	return s, nil
 }
@@ -214,7 +237,11 @@ func (m *UI) dismissIntroFresh(prompt string) tea.Cmd {
 	if prompt == "" {
 		return nil
 	}
-	return m.submit(prompt)
+	cmd, accepted := m.acceptSubmit(prompt)
+	if !accepted {
+		return cmd
+	}
+	return tea.Batch(cmd, m.clearDraftCmd())
 }
 
 func (m *UI) resumeIntroSession(id string) tea.Cmd {
@@ -248,24 +275,26 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 		return nil
 	}
 	m.intro = nil
-	m.session.SetIdentity(s.ID, s.Label, s.CreatedAt)
+	m.session.SetIdentity(s.ID, s.Label, s.LabelManual, s.CreatedAt)
 	if m.live != nil {
 		m.live.RestoreHistory(s.History)
 	}
-	m.timeline.restoreMessages(s.History)
+	m.RestoreTranscript(s.History)
+	m.composer.setText(s.DraftText)
+	m.resetInputHistoryBrowse()
 	restoreToolTrace(m.timeline, s.ToolTraceRaw)
 	// Rehydrate the per-session working state so the plan overlay, Files
 	// dock + diff viewer, and cockpit totals reflect the resumed session.
 	m.session.Plan = s.Plan
 	m.session.workingSet().RestoreDiffBodies(s.DiffBodies, s.SavedAt)
 	m.session.Run.RestoreUsage(s.Usage)
-	notice := fmt.Sprintf("resumed session %q — %d message(s)", s.Label, len(s.History))
+	noticeLabel := introSessionDisplayLabel(s.sessionSummary)
+	notice := fmt.Sprintf("resumed session %q — %d message(s)", noticeLabel, len(s.History))
 	if !s.SavedAt.IsZero() {
 		notice += ", saved " + formatAgo(time.Since(s.SavedAt))
 	}
 	if useSavedTarget && s.Provider != "" && s.Model != "" {
 		notice += "; switching to saved target " + providerModelLabel(s.Provider, s.Model)
-		m.persistResumeTarget(s.Provider, s.Model)
 	}
 	diagnostics := s.consumeRestoreDiagnostics()
 	if len(diagnostics) > 0 {
@@ -277,8 +306,11 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	}
 	if m.settings.Svc != nil {
 		if err := m.settings.Svc.SetSetting(m.appContext(), prefs.ScopeWorkspace, activeSessionKey, s.ID); err != nil {
-			slog.WarnContext(m.appContext(), "persist active session", "err", err, "session", s.ID)
+			m.session.SetToastTone(notice+"; active session preference was not saved: "+err.Error(), toastWarn)
 		}
+	}
+	if useSavedTarget && s.Provider != "" && s.Model != "" {
+		m.persistResumeTarget(s.Provider, s.Model)
 	}
 	cmd := m.toastExpiryCmd()
 	if useSavedTarget {
@@ -294,7 +326,7 @@ func (m *UI) persistResumeTarget(provider, model string) {
 	ctx := m.appContext()
 	selection := prefs.ModelSelection{Provider: provider, Model: model}
 	if err := m.settings.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
-		slog.WarnContext(ctx, "persist resumed session target", "err", err, "provider", provider, "model", model)
+		m.session.SetErrorToast("resumed target: " + err.Error())
 	}
 }
 
@@ -328,25 +360,40 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode plan: %w", err)
 	}
+	pendingJSON, err := draft.Encode(m.composer.text())
+	if err != nil {
+		return nil, fmt.Errorf("encode draft: %w", err)
+	}
 	toolTraceJSON, err := encodeToolTraceJSON(m.timeline)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode tool trace: %w", err)
+	}
+	changedFileCount := len(m.session.WorkingSet.FilesChangedThisSession())
+	planCompletedCount := 0
+	for _, step := range m.session.Plan.Steps {
+		if step.Status == code.StepStatuses.COMPLETED {
+			planCompletedCount++
+		}
 	}
 
 	return &sessionSnapshot{record: db.SessionRecord{
-		ID:             m.session.ID,
-		Workspace:      m.settings.WorkspaceRoot(),
-		Label:          m.session.Label,
-		Provider:       m.session.Provider,
-		Model:          m.session.Model,
-		HistoryJSON:    historyJSON,
-		PendingJSON:    []byte("[]"),
-		LastUsageJSON:  usageJSON,
-		DiffBodiesJSON: diffBodiesJSON,
-		PlanJSON:       planJSON,
-		ToolTraceJSON:  toolTraceJSON,
-		MessageCount:   len(history),
-		CreatedAt:      m.session.CreatedAt,
+		ID:                 m.session.ID,
+		Workspace:          m.settings.WorkspaceRoot(),
+		Label:              m.session.Label,
+		LabelManual:        m.session.LabelManual,
+		Provider:           m.session.Provider,
+		Model:              m.session.Model,
+		HistoryJSON:        historyJSON,
+		PendingJSON:        pendingJSON,
+		LastUsageJSON:      usageJSON,
+		DiffBodiesJSON:     diffBodiesJSON,
+		PlanJSON:           planJSON,
+		ToolTraceJSON:      toolTraceJSON,
+		ChangedFileCount:   changedFileCount,
+		PlanCompletedCount: planCompletedCount,
+		PlanTotalCount:     len(m.session.Plan.Steps),
+		MessageCount:       len(history),
+		CreatedAt:          m.session.CreatedAt,
 	}}, nil
 }
 
@@ -371,24 +418,42 @@ func (m *UI) SaveSession(ctx context.Context) error {
 	return saveSessionSnapshot(ctx, m.settings, snapshot)
 }
 
-func (m *UI) saveSessionCmd() tea.Cmd {
-	snapshot, err := m.sessionSnapshot()
-	settings := m.settings
-	baseCtx := context.WithoutCancel(m.appContext())
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(baseCtx, sessionSaveCommandTTL)
-		defer cancel()
-		if errors.Is(err, errSessionSnapshotEmpty) {
-			return nil
+// FlushSessionPersistence completes queued writes in FIFO order, then writes
+// the final resumable snapshot. It is called after the Bubble Tea loop stops,
+// when no command can concurrently mutate the queue.
+func (m *UI) FlushSessionPersistence(ctx context.Context) error {
+	if m.sessionPersistRunning {
+		return errors.New("session persistence still running")
+	}
+	for _, op := range m.sessionPersistQueue {
+		var err error
+		switch op.kind {
+		case sessionPersistDraft:
+			err = m.settings.Store.SaveSessionDraft(ctx, op.draft)
+		case sessionPersistClearDraft:
+			err = m.settings.Store.ClearSessionDraft(ctx, op.oldID)
+		case sessionPersistFull:
+			err = saveSessionSnapshot(ctx, m.settings, op.snapshot)
+		case sessionPersistDelete:
+			err = clearPersistedSession(ctx, m.settings, op.oldID)
 		}
 		if err != nil {
-			return sessionSaveFailedMsg{Error: err.Error()}
+			return fmt.Errorf("flush queued persistence: %w", err)
 		}
-		if err := saveSessionSnapshot(ctx, settings, snapshot); err != nil {
-			return sessionSaveFailedMsg{Error: err.Error()}
-		}
+	}
+	m.sessionPersistQueue = nil
+	return m.SaveSession(ctx)
+}
+
+func (m *UI) saveSessionCmd() tea.Cmd {
+	snapshot, err := m.sessionSnapshot()
+	if errors.Is(err, errSessionSnapshotEmpty) {
 		return nil
 	}
+	if err != nil {
+		return func() tea.Msg { return sessionSaveFailedMsg{Error: err.Error()} }
+	}
+	return m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistFull, snapshot: snapshot})
 }
 
 func (m *UI) clearContextAndTimeline() tea.Cmd {
@@ -405,35 +470,29 @@ func (m *UI) clearContextAndTimeline() tea.Cmd {
 	m.session.Run.RestoreUsage(SessionUsageSnapshot{})
 	m.session.Plan = code.Plan{}
 	m.session.SetSuccessToast("conversation cleared")
-	return tea.Batch(m.toastExpiryCmd(), m.clearPersistedSessionCmd(oldID))
+	return tea.Batch(m.toastExpiryCmd(), m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete, oldID: oldID}))
 }
 
-func (m *UI) clearPersistedSessionCmd(oldID string) tea.Cmd {
-	return func() tea.Msg {
-		if m.settings == nil {
-			return nil
-		}
-		ctx := context.WithoutCancel(m.appContext())
-		var err error
-		if oldID != "" && m.settings.Store != nil {
-			if e := m.settings.Store.DeleteSession(ctx, oldID); e != nil {
-				err = fmt.Errorf("delete session: %w", e)
-			}
-		}
-		if m.settings.Svc != nil {
-			if e := m.settings.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, activeSessionKey); e != nil {
-				if err != nil {
-					err = fmt.Errorf("%w; clear active session: %w", err, e)
-				} else {
-					err = fmt.Errorf("clear active session: %w", e)
-				}
-			}
-		}
-		if err != nil {
-			return sessionClearFailedMsg{Error: err.Error()}
-		}
+func clearPersistedSession(ctx context.Context, settings *engine.Settings, oldID string) error {
+	if settings == nil {
 		return nil
 	}
+	var err error
+	if oldID != "" && settings.Store != nil {
+		if e := settings.Store.DeleteSession(ctx, oldID); e != nil {
+			err = fmt.Errorf("delete session: %w", e)
+		}
+	}
+	if settings.Svc != nil {
+		if e := settings.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, activeSessionKey); e != nil {
+			if err != nil {
+				err = fmt.Errorf("%w; clear active session: %w", err, e)
+			} else {
+				err = fmt.Errorf("clear active session: %w", e)
+			}
+		}
+	}
+	return err
 }
 
 func (tl *timeline) restoreMessages(history []llm.Message) {
@@ -448,23 +507,33 @@ func (tl *timeline) restoreMessages(history []llm.Message) {
 	tl.sel = 0
 	tl.selLocal = 0
 
+	var restoredThinking *thinkingItem
 	for _, h := range history {
 		switch h.Role {
 		case "user":
-			tl.addUser(h.Content)
-		case llm.RoleAssistant:
-			if strings.TrimSpace(h.Content) != "" || len(h.ToolCalls) > 0 {
-				asst := &assistantItem{content: h.Content, done: true}
-				if strings.TrimSpace(h.Content) == "" && len(h.ToolCalls) > 0 {
-					asst.status = "called " + strings.Join(toolCallNames(h.ToolCalls), ", ")
-				}
-				tl.appendItem(asst)
+			restoredThinking = nil
+			timelineText := restoredUserContent(h)
+			if strings.TrimSpace(timelineText) != "" {
+				tl.addUser(timelineText)
 			}
-			if strings.TrimSpace(h.ReasoningContent) != "" {
-				tl.appendItem(&thinkingItem{nested: true, text: h.ReasoningContent, done: true})
+		case llm.RoleAssistant:
+			if strings.TrimSpace(h.Content) != "" {
+				tl.appendItem(&assistantItem{content: h.Content, done: true})
+			}
+			if reasoning := strings.TrimSpace(h.ReasoningContent); reasoning != "" {
+				if restoredThinking == nil {
+					restoredThinking = &thinkingItem{nested: true, done: true}
+					tl.appendItem(restoredThinking)
+				}
+				if restoredThinking.text != "" {
+					restoredThinking.text += "\n\n"
+				}
+				restoredThinking.text += reasoning
+				restoredThinking.bump()
+				tl.invalidateItem(restoredThinking)
 			}
 			if len(h.ToolCalls) > 0 {
-				g := &groupItem{kind: groupTools, nested: true, closed: true}
+				g := tl.ensureToolGroup(0)
 				for _, tc := range h.ToolCalls {
 					name := tc.Function.Name
 					if name == "" {
@@ -475,9 +544,6 @@ func (tl *timeline) restoreMessages(history []llm.Message) {
 					if tc.ID != "" {
 						tl.toolIdx[tc.ID] = toolRef{group: g, tool: t}
 					}
-				}
-				if len(g.children) > 0 {
-					tl.appendItem(g)
 				}
 			}
 		case "tool":
@@ -498,19 +564,85 @@ func (tl *timeline) restoreMessages(history []llm.Message) {
 			tl.addNotice(palette.Muted.On("✓ tool — " + body))
 		}
 	}
+	tl.closeGroups()
 }
 
-func toolCallNames(calls []llm.ToolCall) []string {
-	names := make([]string, 0, len(calls))
-	for _, tc := range calls {
-		if tc.Function.Name != "" {
-			names = append(names, tc.Function.Name)
+// RestoreTranscript replaces the visible conversation with persisted message
+// history, including stable placeholders for multimodal user content.
+func (m *UI) RestoreTranscript(history []llm.Message) {
+	m.timeline.restoreMessages(history)
+}
+
+func restoredUserContent(message llm.Message) string {
+	blocks := make([]string, 0, 1+len(message.Parts))
+	content := strings.TrimSpace(message.Content)
+	if content != "" {
+		blocks = append(blocks, content)
+	}
+	for _, part := range message.Parts {
+		switch part.Type {
+		case llm.ContentTypeText:
+			text := strings.TrimSpace(part.Text)
+			if text != "" && text != content {
+				blocks = append(blocks, text)
+			}
+		case llm.ContentTypeImage:
+			blocks = append(blocks, restoredMediaPlaceholder("image", imagePartLabel(part.Image)))
+		case llm.ContentTypeAudio:
+			blocks = append(blocks, restoredMediaPlaceholder("audio", audioPartLabel(part.Audio)))
+		case llm.ContentTypeVideo:
+			blocks = append(blocks, restoredMediaPlaceholder("video", videoPartLabel(part.Video)))
+		default:
+			blocks = append(blocks, "[attachment]")
 		}
 	}
-	if len(names) == 0 {
-		return []string{"tool"}
+	return strings.Join(blocks, "\n\n")
+}
+
+func restoredMediaPlaceholder(kind, label string) string {
+	if label == "" {
+		return "[" + kind + "]"
 	}
-	return names
+	return "[" + kind + ": " + label + "]"
+}
+
+func imagePartLabel(image *llm.ImageData) string {
+	if image == nil {
+		return ""
+	}
+	if name := mediaURLName(image.URL); name != "" {
+		return name
+	}
+	return image.MIMEType
+}
+
+func audioPartLabel(audio *llm.AudioData) string {
+	if audio == nil {
+		return ""
+	}
+	return audio.Format
+}
+
+func videoPartLabel(video *llm.VideoData) string {
+	if video == nil {
+		return ""
+	}
+	if name := mediaURLName(video.URL); name != "" {
+		return name
+	}
+	return video.MIMEType
+}
+
+func mediaURLName(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	name := path.Base(parsed.Path)
+	if name == "." || name == "/" {
+		return ""
+	}
+	return name
 }
 
 func toolCallArgHint(tc llm.ToolCall) string {

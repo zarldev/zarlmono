@@ -247,16 +247,6 @@ func newContentLRU(capacity int) *contentLRU {
 	}
 }
 
-// reset clears the cache to a known-empty state at the current theme
-// generation. Used by tests that need a clean cache.
-func (c *contentLRU) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.gen = themeGen
-	c.ll.Init()
-	c.entries = make(map[contentRenderCacheKey]*list.Element)
-}
-
 // resetForGenLocked clears the cache when the theme generation changed.
 // Caller holds c.mu.
 func (c *contentLRU) resetForGenLocked() {

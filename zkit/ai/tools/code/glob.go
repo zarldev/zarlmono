@@ -96,7 +96,8 @@ func (t *GlobTool) Definition() tools.ToolSpec {
 			"and `grep` (searches contents). " +
 			"Bare basename patterns match anywhere recursively (`*.go` → every Go file in the tree). " +
 			"Path patterns are rooted against the workspace or the `root` arg (`pkg/**/*.go`).",
-		Parameters: tools.SchemaFor[GlobArgs](),
+		WorkspaceScope: tools.WorkspaceScopeArgument("root"),
+		Parameters:     tools.SchemaFor[GlobArgs](),
 	}
 }
 

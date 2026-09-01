@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
 	"math"
 	"time"
 
@@ -122,163 +121,159 @@ func (p *Provider) Name() string {
 	return llm.LLMProviders.GOOGLE.String()
 }
 
-// Complete generates a completion as a native iter.Seq2 — the stream's
-// chunks are yielded directly (errors as the second value), no channel.
-func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+// Complete constructs a fully lazy Gemini completion stream.
+func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		if req.Stream {
-			p.streamCompletion(ctx, req, yield)
-		} else {
-			p.nonStreamCompletion(ctx, req, yield)
+		if cause := context.Cause(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
 		}
-	}, nil
+		p.streamCompletion(ctx, req, yield)
+	}
 }
 
-// streamCompletion handles streaming responses using the SDK's
-// Models.GenerateContentStream — gives us access to the typed Parts
-// (Text + FunctionCall) which the chat session abstraction hides.
-//
-// Wraps the call in retry-on-429 with exponential backoff so transient
-// rate-limit hits don't kill an agent turn — Gemini's free-tier RPM is
-// low enough that a single turn doing many tool iterations can trip
-// it mid-flight.
+// streamCompletion handles both streaming and single-shot requests through the
+// SDK iterator so their cancellation, retry, and metadata semantics stay aligned.
 func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
+	// Request conversion remains inside iterator invocation: Complete itself is
+	// side-effect free and does not acquire an SDK stream.
 	config := p.buildConfig(req)
 	sys, contents := convertMessages(req.Messages)
 	if sys != nil {
 		config.SystemInstruction = sys
 	}
 	if len(contents) == 0 {
-		// Terminal error path. Yield Done:true so downstream readers
-		// see one canonical terminal chunk; returning then signals EOF
-		// to the consumer's range loop.
-		yield(llm.CompletionChunk{Done: true}, errors.New("no valid messages"))
+		yield(llm.CompletionChunk{}, errors.New("no valid messages"))
 		return
 	}
 
 	const maxRetries = 4
 	backoff := time.Second
-
 	for attempt := 0; ; attempt++ {
-		// Each attempt re-streams the whole response from scratch; runStream
-		// returns a fresh streamAttempt, so a failed prior attempt leaves no
-		// stale tool-call fragments behind.
-		st, streamErr, ok := p.runStream(ctx, contents, config, yield)
-		if !ok {
-			// Consumer broke out of the range — stop without yielding again.
+		usage, usageReported, finishReason, calls, accepted, streamErr, downstream :=
+			p.runStream(ctx, contents, config, yield)
+		if !downstream {
 			return
 		}
 		if streamErr == nil {
-			// Emit accumulated tool calls in arrival order, then close.
-			if len(st.order) > 0 {
-				calls := make([]llm.ToolCall, 0, len(st.order))
-				for _, id := range st.order {
-					calls = append(calls, st.calls[id])
-				}
+			if len(calls) > 0 {
 				if !yield(llm.CompletionChunk{ToolCalls: calls}, nil) {
 					return
 				}
 			}
-			yield(llm.CompletionChunk{Done: true, Usage: st.usage}, nil)
+			if finishReason != llm.FinishReasons.UNKNOWN || usageReported {
+				if !yield(llm.CompletionChunk{
+					FinishReason:  finishReason,
+					Usage:         usage,
+					UsageReported: usageReported,
+				}, nil) {
+					return
+				}
+			}
 			return
 		}
-		// Retry only a rate-limit, only within budget, and only if nothing
-		// visible was emitted this attempt — a re-stream would replay it, so
-		// once st.emitted is set the 429 is terminal, not retryable.
-		if !isRateLimit(streamErr) || attempt >= maxRetries || st.emitted {
-			yield(llm.CompletionChunk{Done: true}, rateLimitError(streamErr, fmt.Errorf("gemini stream: %w", streamErr)))
+
+		if cause := context.Cause(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
+		}
+		// Replaying a stream is safe only before downstream has accepted any
+		// event. Cancellation, downstream false, exhausted budget, and every
+		// non-rate-limit error are terminal.
+		if !isRateLimit(streamErr) || attempt >= maxRetries || accepted {
+			yield(llm.CompletionChunk{}, rateLimitError(streamErr, fmt.Errorf("gemini stream: %w", streamErr)))
 			return
 		}
 		wait := backoffWithRetryAfter(streamErr, backoff)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
-			yield(llm.CompletionChunk{Done: true}, ctx.Err())
+			timer.Stop()
+			yield(llm.CompletionChunk{}, context.Cause(ctx))
 			return
-		case <-time.After(wait):
+		case <-timer.C:
 		}
 		backoff *= 2
 	}
 }
 
-// streamAttempt is what one runStream pass accumulated: the latest usage
-// snapshot, tool calls in arrival order, and whether any visible chunk reached
-// the consumer (which makes a re-stream unsafe). Returning this beats threading
-// pointer out-params back through runStream.
-type streamAttempt struct {
-	usage   *llm.Usage
-	calls   map[string]llm.ToolCall
-	order   []string
-	emitted bool
-}
-
-// runStream consumes one full stream attempt and returns what it accumulated.
-// The error return is nil on clean completion, non-nil otherwise — including
-// RPM-cap 429s the caller may retry. The bool return is false when the consumer
-// broke out of the range (yield returned false): the caller must stop without
-// yielding or retrying.
+// runStream consumes one SDK attempt. accepted means at least one event was
+// synchronously accepted by downstream; false from downstream is returned
+// separately and must terminate the invocation silently.
 func (p *Provider) runStream(
 	ctx context.Context,
 	contents []*genai.Content,
 	config *genai.GenerateContentConfig,
 	yield func(llm.CompletionChunk, error) bool,
-) (streamAttempt, error, bool) {
-	// Gemini emits thought parts (part.Thought == true) interleaved
-	// with regular text. Route those bytes through the runner's
-	// out-of-band Thinking channel — Content stays the visible answer.
-	st := streamAttempt{calls: map[string]llm.ToolCall{}}
+) (llm.Usage, bool, llm.FinishReason, []llm.ToolCall, bool, error, bool) {
+	var usage llm.Usage
+	var usageReported bool
+	finishReason := llm.FinishReasons.UNKNOWN
+	callsByID := make(map[string]llm.ToolCall)
+	var order []string
+	accepted := false
+
 	for resp, err := range p.client.Models.GenerateContentStream(ctx, p.model, contents, config) {
 		if err != nil {
-			return st, err, true
+			return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, err, true
 		}
 		if resp.UsageMetadata != nil {
-			st.usage = &llm.Usage{
+			usage = llm.Usage{
 				PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
 				CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount),
 				TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
 				CachedTokens:     int(resp.UsageMetadata.CachedContentTokenCount),
 			}
+			usageReported = true
 		}
-		if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+		if len(resp.Candidates) == 0 {
 			continue
 		}
-		for _, part := range resp.Candidates[0].Content.Parts {
-			if !emitPart(part, &st, yield) {
-				return st, nil, false
+		candidate := resp.Candidates[0]
+		if candidate.FinishReason != "" {
+			finishReason = normalizeFinishReason(candidate.FinishReason)
+		}
+		if candidate.Content == nil {
+			continue
+		}
+		for _, part := range candidate.Content.Parts {
+			if !emitPart(part, callsByID, &order, yield) {
+				return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, nil, false
+			}
+			if part.Text != "" {
+				accepted = true
 			}
 		}
 	}
-	return st, nil, true
+	return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, nil, true
 }
 
-// emitPart routes a single genai.Part to the yield func: thought parts go to
-// the Thinking channel, non-thought text to Content, and function calls
-// accumulate into pendingCalls for runStream to flush. Returns false when
-// yield reports the consumer broke out of the range, so callers stop early.
-func emitPart(part *genai.Part, st *streamAttempt, yield func(llm.CompletionChunk, error) bool) bool {
+func emitPart(
+	part *genai.Part,
+	callsByID map[string]llm.ToolCall,
+	order *[]string,
+	yield func(llm.CompletionChunk, error) bool,
+) bool {
 	if part.Text != "" {
-		// Mark before yielding: any visible chunk reaching the consumer makes
-		// a subsequent re-stream unsafe (it would duplicate this content).
-		st.emitted = true
+		chunk := llm.CompletionChunk{Content: part.Text}
 		if part.Thought {
-			if !yield(llm.CompletionChunk{Thinking: part.Text}, nil) {
-				return false
-			}
-		} else {
-			if !yield(llm.CompletionChunk{Content: part.Text}, nil) {
-				return false
-			}
+			chunk.Content = ""
+			chunk.Thinking = part.Text
+		}
+		if !yield(chunk, nil) {
+			return false
 		}
 	}
 	if part.FunctionCall != nil {
 		id := part.FunctionCall.ID
 		if id == "" {
-			id = fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, len(st.order))
+			id = fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, len(*order))
 		}
 		argBytes, _ := json.Marshal(part.FunctionCall.Args)
-		if _, exists := st.calls[id]; !exists {
-			st.order = append(st.order, id)
+		if _, exists := callsByID[id]; !exists {
+			*order = append(*order, id)
 		}
-		st.calls[id] = llm.ToolCall{
+		callsByID[id] = llm.ToolCall{
 			ID:   id,
 			Type: "function",
 			Function: llm.ToolCallFunction{
@@ -290,68 +285,47 @@ func emitPart(part *genai.Part, st *streamAttempt, yield func(llm.CompletionChun
 	return true
 }
 
-// isRateLimit returns true when err carries a 429 from the genai SDK. It
-// keys off the typed APIError's HTTP status code — the authoritative signal —
-// rather than scanning the message text for "429"/"rate limit", which is
-// fragile (ordinary messages can contain those substrings).
-func isRateLimit(err error) bool {
-	if err == nil {
-		return false
+func orderedCalls(callsByID map[string]llm.ToolCall, order []string) []llm.ToolCall {
+	if len(order) == 0 {
+		return nil
 	}
-	apiErr, ok := errors.AsType[genai.APIError](err)
-	return ok && apiErr.Code == 429
+	calls := make([]llm.ToolCall, 0, len(order))
+	for _, id := range order {
+		calls = append(calls, callsByID[id])
+	}
+	return calls
 }
 
-// backoffWithRetryAfter returns the sleep duration to wait before the
-// next retry. Honours a Retry-After hint inside the genai APIError when
-// present; falls back to the caller-supplied exponential value.
-func backoffWithRetryAfter(err error, fallback time.Duration) time.Duration {
-	apiErr, ok := errors.AsType[genai.APIError](err)
-	if !ok {
-		return fallback
+func normalizeFinishReason(reason genai.FinishReason) llm.FinishReason {
+	switch reason {
+	case genai.FinishReasonStop:
+		return llm.FinishReasons.STOP
+	case genai.FinishReasonMaxTokens:
+		return llm.FinishReasons.LENGTH
+	case genai.FinishReasonSafety,
+		genai.FinishReasonRecitation,
+		genai.FinishReasonLanguage,
+		genai.FinishReasonBlocklist,
+		genai.FinishReasonProhibitedContent,
+		genai.FinishReasonSPII,
+		genai.FinishReasonImageSafety,
+		genai.FinishReasonImageProhibitedContent,
+		genai.FinishReasonImageRecitation:
+		return llm.FinishReasons.CONTENTFILTER
+	case genai.FinishReasonMalformedFunctionCall,
+		genai.FinishReasonUnexpectedToolCall,
+		genai.FinishReasonTooManyToolCalls:
+		return llm.FinishReasons.TOOLCALLS
+	default:
+		return llm.FinishReasons.UNKNOWN
 	}
-	for _, d := range apiErr.Details {
-		if t, ok := d["retryDelay"].(string); ok {
-			if dur, perr := time.ParseDuration(t); perr == nil && dur > 0 {
-				return dur
-			}
-		}
-	}
-	return fallback
-}
-
-// nonStreamCompletion is the same flow, single-shot. Delegates to the
-// streaming path under the hood — fewer surface-area divergence
-// surprises this way.
-func (p *Provider) nonStreamCompletion(
-	ctx context.Context,
-	req llm.CompletionRequest,
-	yield func(llm.CompletionChunk, error) bool,
-) {
-	p.streamCompletion(ctx, req, yield)
 }
 
 // buildConfig produces the GenerateContentConfig for one request.
-// Tools and system prompt are attached in streamCompletion since they
-// derive from per-call data.
-//
-// IncludeThoughts defaults to true on every request: Gemini's thinking
-// models (2.5-pro, 2.5-flash, 2.0-flash-thinking, …) silently emit
-// reasoning when asked. Forwarding the thoughts lets the cockpit's
-// live-reasoning pane surface them; non-thinking models silently
-// ignore the flag. Cost is unchanged either way — the bill is the
-// thoughtsTokenCount, and skipping IncludeThoughts only suppresses
-// the transmission, not the work.
 func (p *Provider) buildConfig(req llm.CompletionRequest) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{
-		ThinkingConfig: &genai.ThinkingConfig{
-			IncludeThoughts: true,
-		},
+		ThinkingConfig: &genai.ThinkingConfig{IncludeThoughts: true},
 	}
-	// Only set temperature when explicitly requested. The zero value would
-	// otherwise pin Gemini to a deterministic 0.0 instead of letting the
-	// server apply the model's own default — matching openai/anthropic,
-	// which both gate on Temperature > 0.
 	if req.Temperature > 0 {
 		cfg.Temperature = new(req.Temperature)
 	}
@@ -416,19 +390,36 @@ func WithModel(model string) options.Option[Provider] {
 // backend, credentials, and endpoint win — and NewProvider's apiKey may
 // be empty. This is the escape hatch for configurations the
 // constructors don't model: explicit Vertex credentials, custom
-// transports, or endpoint setups beyond WithBaseURL. A nil client is
-// ignored.
+// transports, or endpoint setups beyond WithBaseURL.
 func WithClient(client *genai.Client) options.Option[Provider] {
 	return func(p *Provider) {
-		if client != nil {
-			p.client = client
-		}
+		p.client = client
 	}
 }
 
 // rateLimitError wraps a genai stream error as a *llm.RateLimitError when
 // the error is a rate-limit (429), extracting the retry delay from the SDK's
 // APIError details. Otherwise returns fallback unchanged.
+func isRateLimit(err error) bool {
+	apiErr, ok := errors.AsType[genai.APIError](err)
+	return ok && apiErr.Code == 429
+}
+
+func backoffWithRetryAfter(err error, fallback time.Duration) time.Duration {
+	apiErr, ok := errors.AsType[genai.APIError](err)
+	if !ok {
+		return fallback
+	}
+	for _, detail := range apiErr.Details {
+		if delay, ok := detail["retryDelay"].(string); ok {
+			if duration, parseErr := time.ParseDuration(delay); parseErr == nil && duration > 0 {
+				return duration
+			}
+		}
+	}
+	return fallback
+}
+
 func rateLimitError(err error, fallback error) error {
 	if !isRateLimit(err) {
 		return fallback

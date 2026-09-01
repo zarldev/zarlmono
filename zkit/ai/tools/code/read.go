@@ -47,6 +47,7 @@ func (t *ReadTool) Definition() tools.ToolSpec {
 		Name:            ToolNameRead,
 		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description:     "Read a text file from the workspace. Returns line-numbered content. Refuses binary files and files larger than 10 MB.",
+		WorkspaceScope:  tools.WorkspaceScopeArgument("path"),
 		Parameters:      tools.SchemaFor[ReadArgs](),
 	}
 }

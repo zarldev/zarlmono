@@ -124,7 +124,7 @@ func TestRun_ConversationEndedCarriesReason(t *testing.T) {
 	t.Run("normal completion", func(t *testing.T) {
 		t.Parallel()
 		provider := &fakeProvider{turns: [][]llm.CompletionChunk{
-			{chunkText("the answer"), chunkDone()},
+			{chunkText("the answer")},
 		}}
 		sink := newRecordingSink()
 		r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
@@ -147,7 +147,7 @@ func TestRun_ConversationEndedCarriesReason(t *testing.T) {
 		t.Parallel()
 		turns := make([][]llm.CompletionChunk, 5)
 		for i := range turns {
-			turns[i] = []llm.CompletionChunk{chunkToolCall("loop", "echo", `{}`), chunkDone()}
+			turns[i] = []llm.CompletionChunk{chunkToolCall("loop", "echo", `{}`)}
 		}
 		provider := &fakeProvider{turns: turns}
 		sink := newRecordingSink()
@@ -181,7 +181,7 @@ func TestRun_SystemPromptInResult(t *testing.T) {
 	t.Run("with prompt source", func(t *testing.T) {
 		t.Parallel()
 		provider := &fakeProvider{
-			turns: [][]llm.CompletionChunk{{chunkText("ok"), chunkDone()}},
+			turns: [][]llm.CompletionChunk{{chunkText("ok")}},
 		}
 		prompt := runner.PromptFunc(func(context.Context, runner.PromptVars) (string, error) {
 			return sysText, nil
@@ -207,7 +207,7 @@ func TestRun_SystemPromptInResult(t *testing.T) {
 	t.Run("without prompt source", func(t *testing.T) {
 		t.Parallel()
 		provider := &fakeProvider{
-			turns: [][]llm.CompletionChunk{{chunkText("ok"), chunkDone()}},
+			turns: [][]llm.CompletionChunk{{chunkText("ok")}},
 		}
 		r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(newRegistry()),
 			runner.WithMaxIterations(3))
@@ -229,8 +229,8 @@ func TestRun_SystemPromptInResult(t *testing.T) {
 		// to system + tail — SystemPrompt must still be the original.
 		provider := &fakeProvider{
 			turns: [][]llm.CompletionChunk{
-				{chunkToolCall("c1", "echo", `{}`), chunkDone()},
-				{chunkText("done"), chunkDone()},
+				{chunkToolCall("c1", "echo", `{}`)},
+				{chunkText("done")},
 			},
 		}
 		prompt := runner.PromptFunc(func(context.Context, runner.PromptVars) (string, error) {

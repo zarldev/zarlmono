@@ -336,7 +336,12 @@ func (c *FileCache[K, V]) makeFilename(key K) string {
 
 // Healthy round-trips a probe file through the underlying filesystem.
 // Returns nil iff write, read, content match, and cleanup all succeed.
-func (c *FileCache[K, V]) Healthy() error {
+func (c *FileCache[K, V]) Healthy(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	const probe = ".health_check"
 	want := []byte("health_check")
 

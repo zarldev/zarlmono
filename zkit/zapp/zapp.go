@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,17 +24,11 @@ const (
 	// ExitPanic is the default process exit code for recovered panics.
 	ExitPanic = 2
 
-	defaultName            = "app"
 	defaultShutdownTimeout = 30 * time.Second
 )
 
-// Registration and lifecycle errors. All are programmer errors surfaced at
-// wire-up time except ErrClosed, which callers can race against
-// legitimately during shutdown.
+// Registration and lifecycle errors.
 var (
-	ErrNilProgram    = errors.New("zapp: nil program")
-	ErrEmptyName     = errors.New("zapp: empty resource name")
-	ErrNilCloser     = errors.New("zapp: nil closer")
 	ErrDuplicateName = errors.New("zapp: duplicate resource name")
 	ErrClosed        = errors.New("zapp: app is closing or closed")
 )
@@ -59,11 +52,8 @@ type PanicHandler func(appName string, recovered any)
 // local adapter types.
 type CloseFunc func() error
 
-// Close invokes f. A nil CloseFunc is a no-op.
+// Close invokes f.
 func (f CloseFunc) Close() error {
-	if f == nil {
-		return nil
-	}
 	return f()
 }
 
@@ -77,11 +67,8 @@ type ContextCloser interface {
 // ContextCloseFunc adapts a context-aware cleanup function to [ContextCloser].
 type ContextCloseFunc func(context.Context) error
 
-// Close invokes f. A nil ContextCloseFunc is a no-op.
+// Close invokes f.
 func (f ContextCloseFunc) Close(ctx context.Context) error {
-	if f == nil {
-		return nil
-	}
 	return f(ctx)
 }
 
@@ -106,14 +93,11 @@ type App[T any] struct {
 
 // New creates an App for program using sensible defaults.
 func New[T any](program Program[T], opts ...options.Option[App[T]]) *App[T] {
-	app := &App[T]{program: program}
-	app.normaliseDefaults()
-
-	if program != nil {
-		if name := strings.TrimSpace(program.Name()); name != "" {
-			app.name = name
-		}
+	app := &App[T]{
+		name:    program.Name(),
+		program: program,
 	}
+	app.normaliseDefaults()
 
 	for _, opt := range opts {
 		opt(app)
@@ -124,18 +108,11 @@ func New[T any](program Program[T], opts ...options.Option[App[T]]) *App[T] {
 
 // Name returns the app's normalized program name.
 func (a *App[T]) Name() string {
-	if a == nil || strings.TrimSpace(a.name) == "" {
-		return defaultName
-	}
 	return a.name
 }
 
 // Run creates and runs the program, then always attempts cleanup.
 func (a *App[T]) Run(ctx context.Context) int {
-	if a == nil {
-		return ExitFailure
-	}
-
 	code := a.run(ctx)
 	if err := a.closeWithTimeout(); err != nil && code == ExitOK {
 		code = a.cleanupFailureCode
@@ -161,19 +138,9 @@ func (a *App[T]) run(ctx context.Context) int {
 }
 
 func (a *App[T]) runProgram(ctx context.Context) int {
-	if a.program == nil {
-		return a.createFailureCode
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if len(a.signals) > 0 {
-		var stop context.CancelFunc
-		ctx, stop = signal.NotifyContext(ctx, a.signals...)
-		defer stop()
-	}
+	var stop context.CancelFunc
+	ctx, stop = signal.NotifyContext(ctx, a.signals...)
+	defer stop()
 
 	instance, err := a.program.Create(ctx, a)
 	if err != nil {
@@ -188,18 +155,6 @@ func (a *App[T]) runProgram(ctx context.Context) int {
 
 // AddCloser registers a named resource for cleanup.
 func (a *App[T]) AddCloser(name string, closer io.Closer) error {
-	if a == nil {
-		return ErrNilProgram
-	}
-
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ErrEmptyName
-	}
-	if closer == nil {
-		return ErrNilCloser
-	}
-
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -210,24 +165,15 @@ func (a *App[T]) AddCloser(name string, closer io.Closer) error {
 		return fmt.Errorf("%w: %q", ErrDuplicateName, name)
 	}
 
-	a.closers[name] = registeredCloser{closer: closer}
+	a.closers[name] = registeredCloser{
+		close: func(context.Context) error { return closer.Close() },
+	}
 	a.order = append(a.order, name)
 	return nil
 }
 
 // AddContextCloser registers a named context-aware resource for cleanup.
 func (a *App[T]) AddContextCloser(name string, closer ContextCloser) error {
-	if a == nil {
-		return ErrNilProgram
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ErrEmptyName
-	}
-	if closer == nil {
-		return ErrNilCloser
-	}
-
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closing {
@@ -236,44 +182,40 @@ func (a *App[T]) AddContextCloser(name string, closer ContextCloser) error {
 	if _, exists := a.closers[name]; exists {
 		return fmt.Errorf("%w: %q", ErrDuplicateName, name)
 	}
-	a.closers[name] = registeredCloser{contextCloser: closer}
+	a.closers[name] = registeredCloser{close: closer.Close}
 	a.order = append(a.order, name)
 	return nil
 }
 
 // Close closes all registered resources in reverse registration order.
 func (a *App[T]) Close(ctx context.Context) error {
-	if a == nil {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	entries := a.drainClosers()
 	var errs []error
 	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("%s: close %q context: %w", a.Name(), entry.name, err))
-		}
-		if err := entry.close(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("%s: close %q: %w", a.Name(), entry.name, err))
+		if err := a.closeEntry(ctx, entry); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
 	return errors.Join(errs...)
 }
 
-func (a *App[T]) handlePanic(recovered any) {
-	if a.panicHandler == nil {
-		return
+func (a *App[T]) closeEntry(ctx context.Context, entry closerEntry) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%s: close %q context: %w", a.Name(), entry.name, err)
 	}
+	if err := entry.close(ctx); err != nil {
+		return fmt.Errorf("%s: close %q: %w", a.Name(), entry.name, err)
+	}
+	return nil
+}
+
+func (a *App[T]) handlePanic(recovered any) {
 	defer func() { _ = recover() }()
 	a.panicHandler(a.Name(), recovered)
 }
 
 func (a *App[T]) normaliseDefaults() {
-	a.name = defaultName
 	a.closers = make(map[string]registeredCloser)
 	a.shutdownTimeout = defaultShutdownTimeout
 	a.signals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
@@ -283,15 +225,7 @@ func (a *App[T]) normaliseDefaults() {
 }
 
 type registeredCloser struct {
-	closer        io.Closer
-	contextCloser ContextCloser
-}
-
-func (c registeredCloser) close(ctx context.Context) error {
-	if c.contextCloser != nil {
-		return c.contextCloser.Close(ctx)
-	}
-	return c.closer.Close()
+	close func(context.Context) error
 }
 
 type closerEntry struct {
@@ -317,10 +251,7 @@ func (a *App[T]) drainClosers() []closerEntry {
 	entries := make([]closerEntry, 0, len(a.order))
 	for i := len(a.order) - 1; i >= 0; i-- {
 		name := a.order[i]
-		closer, ok := a.closers[name]
-		if !ok {
-			continue
-		}
+		closer := a.closers[name]
 		entries = append(entries, closerEntry{name: name, registeredCloser: closer})
 	}
 
@@ -332,26 +263,21 @@ func (a *App[T]) drainClosers() []closerEntry {
 // WithShutdownTimeout configures the maximum time allowed for cleanup.
 func WithShutdownTimeout[T any](timeout time.Duration) options.Option[App[T]] {
 	return func(app *App[T]) {
-		if timeout > 0 {
-			app.shutdownTimeout = timeout
-		}
+		app.shutdownTimeout = timeout
 	}
 }
 
-// WithSignals configures the signals that cancel the run context. Passing no
-// signals disables signal handling.
+// WithSignals configures the signals passed to [signal.NotifyContext].
 func WithSignals[T any](signals ...os.Signal) options.Option[App[T]] {
 	return func(app *App[T]) {
-		app.signals = append([]os.Signal(nil), signals...)
+		app.signals = signals
 	}
 }
 
 // WithCreateFailureExitCode configures the exit code returned when Create fails.
 func WithCreateFailureExitCode[T any](code int) options.Option[App[T]] {
 	return func(app *App[T]) {
-		if code != ExitOK {
-			app.createFailureCode = code
-		}
+		app.createFailureCode = code
 	}
 }
 
@@ -359,18 +285,14 @@ func WithCreateFailureExitCode[T any](code int) options.Option[App[T]] {
 // fails after an otherwise successful run.
 func WithCleanupFailureExitCode[T any](code int) options.Option[App[T]] {
 	return func(app *App[T]) {
-		if code != ExitOK {
-			app.cleanupFailureCode = code
-		}
+		app.cleanupFailureCode = code
 	}
 }
 
 // WithPanicExitCode configures the exit code returned when Run recovers a panic.
 func WithPanicExitCode[T any](code int) options.Option[App[T]] {
 	return func(app *App[T]) {
-		if code != ExitOK {
-			app.panicCode = code
-		}
+		app.panicCode = code
 	}
 }
 

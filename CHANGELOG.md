@@ -5,7 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zarlcode/v0.16.0] — 2026-09-01
+
+### Changed
+
+- Completed a repository-wide design and style conformance pass across all Go modules.
+- Migrated owned tests to external black-box packages and enforced the policy in CI.
+- Unified session and draft persistence ordering, surfaced preference persistence errors, and restored grouped tool-call rendering when resuming conversations.
+- Tightened context propagation, goroutine/process ownership, queue cancellation, cache health checks, and evaluation driver validation.
+- Expanded release, provider wire-contract, MCP cancellation/redaction, and deterministic concurrency coverage.
+
+### Fixed
+
+- Prevented stale draft, clear, and full-session writes from racing during session transitions and shutdown.
+- Fixed restored conversations rendering each tool call as a separate assistant message instead of one tool collection.
+- Removed unmanaged background shell execution and joined evaluation/example server goroutines.
+
 ## [Unreleased]
+
+### Added
+
+- Added a searchable `Ctrl+K` command palette, session naming and Markdown export, one-key copying of the latest assistant response, and transcript visual selection with clipboard yanking.
+- Added durable composer drafts plus richer saved-session management with generated or manual names, search, pinning, rename, delete confirmation, and at-a-glance session metadata.
+- Added configurable completion and plan-progress terminal bells, and best-effort operating-system sleep inhibition while interactive or headless turns are active.
+
+### Changed
+
+- Hardened module releases with shared semantic-version/changelog validation, isolated dependency checks, atomic annotated tags, deterministic archives/checksums, and exact Homebrew formula verification.
+- Aligned the root workspace, published modules, documentation, and release gate on Go 1.27.0 so the declared minimum and exact-toolchain validation cannot drift.
+
+### Fixed
+
+- Prevented no-op publish runs, duplicate or ambiguous publisher dispatches, workspace-contaminated release binaries, and archives with an invalid `dist/zarlcode` layout.
 
 
 ## [zarlcode/v0.15.0] — 2026-08-28

@@ -66,7 +66,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			m.timeline.startTurn(e.TaskID, 0)
 		case e.Depth > 0:
-			m.timeline.startSubAgent(e.TaskID, e.Depth, e.AgentName, e.Prompt)
+			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, e.AgentName, e.Prompt, e.ParentToolCallID)
 		}
 
 	case teasink.ContentMsg:
@@ -80,7 +80,19 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	case teasink.ToolStartedMsg:
 		m.session.applyToolStarted(e)
 		m.timeline.startToolWithParent(e.TaskID, e.Depth, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters), e.ParentToolID, e.Sequence)
+		if e.ToolName == "agent_spawn" {
+			agent, _ := e.Parameters["agent"].(string)
+			prompt, _ := e.Parameters["prompt"].(string)
+			m.timeline.reserveSubAgent(e.ToolID, e.Depth, agent, prompt)
+		}
 		m.notePRRelevantTool(e.ToolName, e.Parameters)
+	case teasink.WorkspaceWaitStartedMsg:
+		m.session.applyWorkspaceWaitStarted(e)
+		m.timeline.waitTool(e.ToolID, e.Access, e.Paths)
+
+	case teasink.WorkspaceWaitEndedMsg:
+		m.session.applyWorkspaceWaitEnded(e)
+		m.timeline.resumeTool(e.ToolID, e.Duration)
 
 	case teasink.ToolCompletedMsg:
 		effect := m.session.applyToolCompleted(e)
@@ -92,14 +104,19 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	case teasink.ToolFailedMsg:
 		m.session.applyToolFailed(e)
 		m.timeline.finishTool(e.ToolID, e.Error, nil, e.Duration, true, e.Kind, effectSummaries(e.Effects)...)
+		if e.ToolName == "agent_spawn" {
+			m.timeline.failSubAgentSpawn(e.ToolID, e.Error)
+		}
 
 	case teasink.DiffMsg:
 		m.session.applyDiff(e)
 		m.timeline.addDiff(e.Path, e.Diff)
 
 	case teasink.PlanUpdatedMsg:
+		before := m.session.Plan
 		m.session.applyPlanUpdated(e)
 		m.timeline.addPlanUpdate(e.Plan)
+		cmd = tea.Batch(cmd, planProgressSoundCmd(m.appContext(), m.settings, before, e.Plan))
 
 	case teasink.PromptDiagnosticsMsg:
 		for _, diag := range e.Diagnostics {
@@ -170,9 +187,6 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			m.timeline.endTurn(e.TaskID)
 			if failed {
 				m.timeline.closeGroups()
-				if effect.Notice != "" {
-					m.timeline.addNotice(effect.Notice)
-				}
 				if effect.ToastChanged {
 					cmd = m.toastExpiryCmd()
 				}
@@ -185,6 +199,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			// Re-resolve the PR after the turn settles: catches an agent
 			// checkout (branch change) or a git/gh tool that opened/pushed a PR.
+			if !failed && e.Reason == runner.TerminalCompleted {
+				cmd = tea.Batch(cmd, completionSoundCmd(m.appContext(), m.settings))
+			}
 			cmd = tea.Batch(cmd, m.refreshPRCmd())
 		}
 

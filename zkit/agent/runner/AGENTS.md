@@ -54,7 +54,17 @@ Recoverable operational decisions—retries, corrective injections, compaction o
 
 ## Why `ClientFromProvider` exists
 
-The wider `llm.Provider` interface has many consumers across the monorepo. The runner's `Client` is a *narrower* view — single method, streaming-only — so `Provider` implementations don't need to change. `ClientFromProvider` adapts an `llm.Provider` to satisfy `Client`. The runner depends on `Client`, not `llm.Provider`. Don't grow `Client`; new LLM methods go elsewhere.
+The runner's `Client` is the consumer-owned one-method view of completion. Its `Complete` method returns `llm.CompletionStream`, matching `llm.Provider`; `ClientFromProvider` keeps the narrowing seam explicit while the runner depends on `Client`, not the provider's identifying `Name` method. Don't grow `Client`; new LLM capabilities go elsewhere.
+
+## Completion stream protocol
+
+`Complete` only constructs a fully lazy, one-shot stream. No validation, token refresh, I/O, transport/process setup, goroutine start, or operational failure occurs until the runner invokes or ranges it. The runner consumes it directly and synchronously—never through a chunks channel or producer goroutine.
+
+Normal return/EOF is success. A terminal provider failure is one zero-chunk error yield followed by return; there is no outer error, `Done` chunk, or chunk-level error field. Finish reason and usage are ordinary optional metadata, not completion signals. The runner must stop immediately on an error or downstream `false` and retain reference-backed chunk data only by cloning it during yield.
+
+The request is borrowed until iteration returns, and each yielded chunk is borrowed until the runner's yield callback returns. Middleware must synchronously forward downstream's boolean unchanged, without buffering, asynchronous yield, or retention.
+
+Cancellation is enforced at the provider boundary: token acquisition, setup, reads, decoders, and subprocesses all observe the supplied context and preserve its cause. The runner's iteration and idle wrappers may own a watchdog goroutine only with an explicit stop and join path; it observes upstream wait time but never transports chunks. Time spent inside downstream yield is not stream idle.
 
 ## Why Compactor is a runner concern
 
@@ -105,7 +115,7 @@ Read-only after construction (safe to share): client, tools, prompt, template, m
 Three independent budgets, each resetting on any successful iteration:
 
 - **Tool-call JSON repair** (limit 3). On malformed tool-call JSON from the provider, `llm/repair` extracts a best-effort call before the runner marks a hard failure. After three failed repairs in a row, the error goes terminal.
-- **Empty-stream retry** (limit 3). When the provider opens a stream but delivers nothing (a gateway timeout on heavy prefill is the canonical case), the runner backs off and retries; three retries cover transient cuts without spinning against a down backend.
+- **Empty-stream retry** (limit 3). When a provider invocation reaches successful EOF without yielding an observation (a gateway cut during heavy prefill is the canonical case), the runner backs off and retries; three retries cover transient cuts without spinning against a down backend.
 - **Turn-quality correction** (bounded by the hook). The optional `TurnQuality` hook injects synthetic user messages when a turn is degenerate (e.g. thinking consumed all tokens), with its own per-run limit.
 
 ## Optional hooks

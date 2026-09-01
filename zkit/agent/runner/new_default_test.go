@@ -16,7 +16,7 @@ import (
 func TestNew_DefaultsToEmptyToolSource(t *testing.T) {
 	t.Parallel()
 	provider := &fakeProvider{turns: [][]llm.CompletionChunk{
-		{chunkText("done"), chunkDone()},
+		{chunkText("done")},
 	}}
 	r := runner.New(runner.ClientFromProvider(provider)) // no WithTools
 

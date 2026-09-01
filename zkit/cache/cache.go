@@ -50,5 +50,5 @@ type ReadWriter[K comparable, V any] interface {
 // Cache combines all common cache operations.
 type Cache[K comparable, V any] interface {
 	ReadWriter[K, V]
-	Healthy() error
+	Healthy(ctx context.Context) error
 }

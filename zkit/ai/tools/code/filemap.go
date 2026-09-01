@@ -49,7 +49,8 @@ func (t *FileMapTool) Definition() tools.ToolSpec {
 		Description: "Build a deterministic syntax-aware map of source files so the model can understand code structure without reading full bodies. " +
 			"Go files use go/parser+go/ast and include package, imports, top-level const/var/type declarations, funcs, methods, line ranges, and signatures. " +
 			"This is a read-only alternative to LSP symbols; it does not require a language server.",
-		Parameters: tools.SchemaFor[FileMapArgs](),
+		WorkspaceScope: tools.WorkspaceScopeArgument("root"),
+		Parameters:     tools.SchemaFor[FileMapArgs](),
 	}
 }
 

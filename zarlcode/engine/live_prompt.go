@@ -145,6 +145,14 @@ func BuildPromptStack(name, body, rendered string, skills []catalog.Skill, agent
 	return buildPromptStackWithSources(name, body, rendered, promptStackSources{}, skills, agents, instructionDocs)
 }
 
+// BuildPromptStackWithUserPreferences reports prompt fragments including user preferences and their source.
+func BuildPromptStackWithUserPreferences(name, body, rendered, userPreferences, userPreferencesSource string, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document) prompts.Stack {
+	return buildPromptStackWithSources(name, body, rendered, promptStackSources{
+		UserPreferences:       userPreferences,
+		UserPreferencesSource: userPreferencesSource,
+	}, skills, agents, instructionDocs)
+}
+
 func buildPromptStackWithSources(name, body, rendered string, sources promptStackSources, skills []catalog.Skill, agents []catalog.Agent, instructionDocs []instructions.Document) prompts.Stack {
 	kind := prompts.FragmentSystem
 	source := sources.BodySource

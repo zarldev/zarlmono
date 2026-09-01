@@ -43,19 +43,11 @@ func (p testProgram) Run(ctx context.Context, app *zapp.App[*testInstance], inst
 	return p.runCode
 }
 
-func TestNameUsesProgramName(t *testing.T) {
+func TestNameReturnsProgramNameUnchanged(t *testing.T) {
 	app := zapp.New(testProgram{name: " test-app "})
 
-	if got := app.Name(); got != "test-app" {
-		t.Fatalf("Name() = %q, want %q", got, "test-app")
-	}
-}
-
-func TestNameFallsBackForEmptyProgramName(t *testing.T) {
-	app := zapp.New(testProgram{name: "   "})
-
-	if got := app.Name(); got != "app" {
-		t.Fatalf("Name() = %q, want %q", got, "app")
+	if got := app.Name(); got != " test-app " {
+		t.Fatalf("Name() = %q, want %q", got, " test-app ")
 	}
 }
 
@@ -184,6 +176,18 @@ func TestCloseRunsInReverseRegistrationOrder(t *testing.T) {
 	}
 }
 
+func TestRunWithEmptySignalSet(t *testing.T) {
+	t.Parallel()
+
+	program := testProgram{name: "test-app", createFn: func(context.Context, *zapp.App[*testInstance]) (*testInstance, error) {
+		return &testInstance{}, nil
+	}, runFn: func(context.Context, *zapp.App[*testInstance], *testInstance) int { return zapp.ExitOK }}
+	app := zapp.New(program, zapp.WithSignals[*testInstance]())
+	if got := app.Run(t.Context()); got != zapp.ExitOK {
+		t.Fatalf("Run() = %d, want %d", got, zapp.ExitOK)
+	}
+}
+
 func TestContextCloserReceivesShutdownDeadline(t *testing.T) {
 	app := zapp.New(testProgram{name: "test-app"})
 	var sawDeadline bool
@@ -243,16 +247,10 @@ func TestCloseErrorIncludesAppAndResourceName(t *testing.T) {
 	}
 }
 
-func TestAddCloserValidation(t *testing.T) {
+func TestAddCloserRejectsDuplicateName(t *testing.T) {
 	app := zapp.New(testProgram{name: "test-app"})
 	closer := zapp.CloseFunc(func() error { return nil })
 
-	if err := app.AddCloser("", closer); !errors.Is(err, zapp.ErrEmptyName) {
-		t.Fatalf("empty name error = %v, want %v", err, zapp.ErrEmptyName)
-	}
-	if err := app.AddCloser("nil", nil); !errors.Is(err, zapp.ErrNilCloser) {
-		t.Fatalf("nil closer error = %v, want %v", err, zapp.ErrNilCloser)
-	}
 	if err := app.AddCloser("dup", closer); err != nil {
 		t.Fatalf("AddCloser first dup: %v", err)
 	}
@@ -339,13 +337,6 @@ func TestCloseContextCancellationBetweenClosers(t *testing.T) {
 	}
 	if count := strings.Count(err.Error(), context.Canceled.Error()); count != 2 {
 		t.Fatalf("context cancellation count = %d, want 2; error: %v", count, err)
-	}
-}
-
-func TestNilProgramReturnsCreateFailureCode(t *testing.T) {
-	code := zapp.New(nil, zapp.WithCreateFailureExitCode[*testInstance](8)).Run(t.Context())
-	if code != 8 {
-		t.Fatalf("Run() = %d, want %d", code, 8)
 	}
 }
 

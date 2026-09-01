@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,7 +76,7 @@ type emptyTurnProvider struct {
 	iter atomic.Int32
 }
 
-func (p *emptyTurnProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *emptyTurnProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		switch p.iter.Add(1) {
 		case 1:
@@ -86,7 +85,7 @@ func (p *emptyTurnProvider) Complete(_ context.Context, _ llm.CompletionRequest)
 		default:
 			yield(llm.CompletionChunk{Content: "done now"}, nil)
 		}
-	}, nil
+	}
 }
 
 func (p *emptyTurnProvider) Name() string { return "empty-turn" }
@@ -97,7 +96,7 @@ type recordingEmptyTurnProvider struct {
 	iter     int
 }
 
-func (p *recordingEmptyTurnProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *recordingEmptyTurnProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	p.mu.Lock()
 	p.requests = append(p.requests, req)
 	p.iter++
@@ -110,7 +109,7 @@ func (p *recordingEmptyTurnProvider) Complete(_ context.Context, req llm.Complet
 			return
 		}
 		yield(llm.CompletionChunk{Content: "visible summary"}, nil)
-	}, nil
+	}
 }
 
 func (p *recordingEmptyTurnProvider) Name() string { return "recording-empty-turn" }

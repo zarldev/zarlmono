@@ -32,6 +32,10 @@ const (
 // exceeds [qdrantResponseCapBytes].
 var ErrResponseTooLarge = errors.New("qdrant: response exceeded size cap")
 
+// ErrEmptyVector is returned when a search vector or an upserted point vector
+// has no coordinates.
+var ErrEmptyVector = errors.New("qdrant: vector is empty")
+
 // Payload carries Qdrant point metadata. The underlying representation remains
 // JSON-shaped for Qdrant compatibility, but the semantic type keeps payloads
 // distinct from arbitrary option/argument maps in zkit APIs.
@@ -48,7 +52,7 @@ func (p Payload) Get(key string) (any, bool) {
 
 // Point is a vector with an ID and optional metadata.
 type Point struct {
-	ID      string
+	ID      PointID
 	Vector  []float32
 	Payload Payload
 }
@@ -83,87 +87,56 @@ type MatchValue struct {
 // backoff with jitter. Bodies are constructed from *bytes.Reader so
 // retries can replay the JSON payload across attempts.
 //
-// URL construction goes through a parsed [*url.URL] base; each
-// request path is joined via JoinPath rather than raw string
-// concatenation. Earlier shape did `c.baseURL + path` — a baseURL
-// with a trailing path, query string, or missing trailing-slash
-// produced surprising endpoints (and unescaped query characters in a
-// path component would have changed the request shape entirely).
+// URL construction starts from a validated [Endpoint]. Request path segments
+// are escaped before they are joined to the endpoint path.
 type Client struct {
 	baseURL *url.URL
 	http    *zhttp.Client
 }
 
-// NewClient creates a Qdrant client backed by the default
-// [zhttp.Client] — 30 s per-request timeout, 3-attempt retry on
-// transient failures. An invalid baseURL becomes a parse-time error
-// rather than failing on first request.
-func NewClient(baseURL string) *Client {
-	c, err := newClient(baseURL, zhttp.NewClient())
-	if err != nil {
-		// Preserve the previous always-construct-something behaviour;
-		// callers that handed in junk will see request-time errors.
-		return &Client{http: zhttp.NewClient()}
-	}
-	return c
+// NewClient creates a Qdrant client backed by the default [zhttp.Client] —
+// 30 s per-request timeout and 3-attempt retry on transient failures.
+func NewClient(endpoint Endpoint) *Client {
+	return NewClientWithZHTTP(endpoint, zhttp.NewClient())
 }
 
-// NewClientWithZHTTP creates a Qdrant client backed by a caller-
-// supplied [zhttp.Client]. Useful when the caller needs a custom
+// NewClientWithZHTTP creates a Qdrant client backed by a caller-supplied
+// [zhttp.Client]. This constructor is useful when the caller needs a custom
 // retry policy, longer timeout, or a stub transport for tests.
-func NewClientWithZHTTP(baseURL string, h *zhttp.Client) *Client {
-	c, err := newClient(baseURL, h)
-	if err != nil {
-		return &Client{http: h}
-	}
-	return c
+func NewClientWithZHTTP(endpoint Endpoint, h *zhttp.Client) *Client {
+	baseURL := endpoint.url
+	return &Client{baseURL: &baseURL, http: h}
 }
 
-// collectionURL composes the full Qdrant URL for a collection-rooted
-// path. The collection name and any trailing segments are passed
-// individually to url.URL.JoinPath which URL-escapes each one — so
-// slashes / spaces / "?" / "#" / "%" / etc. in an attacker-influenced
-// name can't reshape the request URL.
-//
-// Earlier shape concatenated raw `baseURL + "/collections/" + PathEscape(name)`,
-// which dropped baseURL semantics (trailing path, query, fragment)
-// and meant any trailing segment passed by the caller had to be
-// pre-escaped at the call site (which it wasn't).
-func (c *Client) collectionURL(name string, trailing ...string) string {
-	parts := append([]string{"collections", name}, trailing...)
+func (c *Client) collectionURL(name CollectionName, trailing ...string) string {
+	parts := append([]string{"collections", string(name)}, trailing...)
 	return c.buildURL(parts...)
 }
 
-// collectionURLWithQuery is collectionURL with an explicit query
-// string. The query is set verbatim — callers responsible for
-// composing it safely (only used internally with hard-coded values
-// like "wait=true").
-func (c *Client) collectionURLWithQuery(name, query string, trailing ...string) string {
-	base := c.collectionURL(name, trailing...)
-	if u, err := url.Parse(base); err == nil {
-		u.RawQuery = query
-		return u.String()
-	}
-	return base + "?" + query
+func (c *Client) collectionURLWithQuery(name CollectionName, query string, trailing ...string) string {
+	parts := append([]string{"collections", string(name)}, trailing...)
+	u := c.joinPath(parts...)
+	u.RawQuery = query
+	return u.String()
 }
 
-func newClient(baseURL string, h *zhttp.Client) (*Client, error) {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse qdrant baseURL %q: %w", baseURL, err)
-	}
-	return &Client{baseURL: u, http: h}, nil
-}
-
-// buildURL joins path segments onto the base URL. Each segment is
-// passed individually to url.URL.JoinPath so reserved characters in
-// a (possibly attacker-influenced) segment get escaped instead of
-// reshaping the request URL.
+// buildURL joins path segments onto the validated endpoint and escapes each
+// segment exactly once.
 func (c *Client) buildURL(segments ...string) string {
-	if c.baseURL == nil {
-		return strings.Join(segments, "/")
+	return c.joinPath(segments...).String()
+}
+
+func (c *Client) joinPath(segments ...string) *url.URL {
+	u := *c.baseURL
+	pathParts := append([]string{strings.TrimSuffix(u.Path, "/")}, segments...)
+	escapedParts := make([]string, len(segments)+1)
+	escapedParts[0] = strings.TrimSuffix(u.EscapedPath(), "/")
+	for index, segment := range segments {
+		escapedParts[index+1] = url.PathEscape(segment)
 	}
-	return c.baseURL.JoinPath(segments...).String()
+	u.Path = strings.Join(pathParts, "/")
+	u.RawPath = strings.Join(escapedParts, "/")
+	return &u
 }
 
 func (c *Client) do(ctx context.Context, method, urlStr string, body any) (*http.Response, error) {
@@ -219,9 +192,18 @@ func decodeResponse(resp *http.Response, out any) error {
 	return nil
 }
 
-// EnsureCollection creates the collection if it does not exist.
-// Idempotent — a second call with the same name is a no-op.
-func (c *Client) EnsureCollection(ctx context.Context, name string, vectorSize int) error {
+type createCollectionRequest struct {
+	Vectors vectorConfig `json:"vectors"`
+}
+
+type vectorConfig struct {
+	Size     Dimension `json:"size"`
+	Distance Distance  `json:"distance"`
+}
+
+// EnsureCollectionExists creates the collection when it does not exist. It does
+// not inspect or reconcile an existing collection's configuration.
+func (c *Client) EnsureCollectionExists(ctx context.Context, name CollectionName, config CollectionConfig) error {
 	resp, err := c.do(ctx, http.MethodGet, c.collectionURL(name), nil)
 	if err != nil {
 		return fmt.Errorf("check collection: %w", err)
@@ -230,18 +212,23 @@ func (c *Client) EnsureCollection(ctx context.Context, name string, vectorSize i
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-
-	payload := map[string]any{
-		"vectors": map[string]any{
-			"size":     vectorSize,
-			"distance": "Cosine",
-		},
+	if resp.StatusCode != http.StatusNotFound {
+		if err := checkStatus(resp); err != nil {
+			return fmt.Errorf("check collection: %w", err)
+		}
 	}
-	resp, err = c.do(ctx, http.MethodPut, c.collectionURL(name), payload)
+
+	body := createCollectionRequest{
+		Vectors: vectorConfig{Size: config.Dimension, Distance: config.Distance},
+	}
+	resp, err = c.do(ctx, http.MethodPut, c.collectionURL(name), body)
 	if err != nil {
 		return fmt.Errorf("create collection: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil
+	}
 	if err := checkStatus(resp); err != nil {
 		return fmt.Errorf("create collection: %w", err)
 	}
@@ -249,18 +236,27 @@ func (c *Client) EnsureCollection(ctx context.Context, name string, vectorSize i
 }
 
 type wirePoint struct {
-	ID      string    `json:"id"`
+	ID      PointID   `json:"id"`
 	Vector  []float32 `json:"vector"`
 	Payload Payload   `json:"payload,omitempty"`
 }
 
+type upsertRequest struct {
+	Points []wirePoint `json:"points"`
+}
+
 // Upsert inserts or updates points in the collection.
-func (c *Client) Upsert(ctx context.Context, collection string, points []Point) error {
+func (c *Client) Upsert(ctx context.Context, collection CollectionName, points []Point) error {
 	wps := make([]wirePoint, len(points))
+	for _, point := range points {
+		if len(point.Vector) == 0 {
+			return ErrEmptyVector
+		}
+	}
 	for i, p := range points {
 		wps[i] = wirePoint(p)
 	}
-	body := map[string]any{"points": wps}
+	body := upsertRequest{Points: wps}
 
 	resp, err := c.do(ctx, http.MethodPut, c.collectionURL(collection, "points"), body)
 	if err != nil {
@@ -273,16 +269,17 @@ func (c *Client) Upsert(ctx context.Context, collection string, points []Point) 
 	return nil
 }
 
-type searchRequest struct {
+type searchWireRequest struct {
 	Vector      []float32 `json:"vector"`
-	Limit       int       `json:"limit"`
+	Limit       Limit     `json:"limit"`
 	WithPayload bool      `json:"with_payload"`
+	WithVector  bool      `json:"with_vector"`
 	Filter      *Filter   `json:"filter,omitempty"`
 }
 
 type searchResult struct {
 	Result []struct {
-		ID      string    `json:"id"`
+		ID      PointID   `json:"id"`
 		Score   float32   `json:"score"`
 		Payload Payload   `json:"payload"`
 		Vector  []float32 `json:"vector"`
@@ -293,18 +290,22 @@ type searchResult struct {
 // optional; nil means no filtering. New fields land here without
 // breaking callers.
 type SearchRequest struct {
-	Collection string
+	Collection CollectionName
 	Vector     []float32
 	Filter     *Filter
-	Limit      int
+	Limit      Limit
 }
 
 // Search returns the top req.Limit nearest neighbours to req.Vector.
 func (c *Client) Search(ctx context.Context, req SearchRequest) ([]ScoredPoint, error) {
-	body := searchRequest{
+	if len(req.Vector) == 0 {
+		return nil, ErrEmptyVector
+	}
+	body := searchWireRequest{
 		Vector:      req.Vector,
 		Limit:       req.Limit,
 		WithPayload: true,
+		WithVector:  true,
 		Filter:      req.Filter,
 	}
 
@@ -332,12 +333,20 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) ([]ScoredPoint, 
 	return out, nil
 }
 
+type deleteRequest struct {
+	Filter Filter `json:"filter"`
+}
+
+type deleteByIDRequest struct {
+	Points []PointID `json:"points"`
+}
+
 // Delete removes all points matching filter from the collection.
 // wait=true forces Qdrant to apply the operation before returning —
 // without it the default is async and a subsequent search can still
 // return the "deleted" point for up to a few seconds.
-func (c *Client) Delete(ctx context.Context, collection string, filter Filter) error {
-	body := map[string]any{"filter": filter}
+func (c *Client) Delete(ctx context.Context, collection CollectionName, filter Filter) error {
+	body := deleteRequest{Filter: filter}
 	resp, err := c.do(ctx, http.MethodPost,
 		c.collectionURLWithQuery(collection, "wait=true", "points", "delete"), body)
 	if err != nil {
@@ -352,8 +361,8 @@ func (c *Client) Delete(ctx context.Context, collection string, filter Filter) e
 
 // DeleteByID removes a single point by its ID. See Delete for why
 // wait=true is passed.
-func (c *Client) DeleteByID(ctx context.Context, collection, id string) error {
-	body := map[string]any{"points": []string{id}}
+func (c *Client) DeleteByID(ctx context.Context, collection CollectionName, id PointID) error {
+	body := deleteByIDRequest{Points: []PointID{id}}
 	resp, err := c.do(ctx, http.MethodPost,
 		c.collectionURLWithQuery(collection, "wait=true", "points", "delete"), body)
 	if err != nil {
@@ -366,41 +375,40 @@ func (c *Client) DeleteByID(ctx context.Context, collection, id string) error {
 	return nil
 }
 
-type scrollRequest struct {
-	Filter      *Filter `json:"filter,omitempty"`
-	Limit       int     `json:"limit"`
-	Offset      any     `json:"offset,omitempty"`
-	WithPayload bool    `json:"with_payload"`
-	WithVector  bool    `json:"with_vector"`
+type scrollWireRequest struct {
+	Filter      *Filter       `json:"filter,omitempty"`
+	Limit       Limit         `json:"limit"`
+	Offset      *ScrollCursor `json:"offset,omitempty"`
+	WithPayload bool          `json:"with_payload"`
+	WithVector  bool          `json:"with_vector"`
 }
 
 type scrollResult struct {
 	Result struct {
 		Points []struct {
-			ID      string  `json:"id"`
+			ID      PointID `json:"id"`
 			Payload Payload `json:"payload"`
 		} `json:"points"`
-		NextPageOffset any `json:"next_page_offset"`
+		NextPageOffset *ScrollCursor `json:"next_page_offset"`
 	} `json:"result"`
 }
 
-// ScrollRequest captures every knob a Scroll call takes. Filter is
-// optional (nil = no filtering). Offset is nil on the first call;
-// pass the previous response's next-page offset to continue.
+// ScrollRequest captures every knob a Scroll call takes. Filter and Cursor are
+// optional; pass the previous response's non-nil cursor to continue.
 type ScrollRequest struct {
-	Collection string
+	Collection CollectionName
 	Filter     *Filter
-	Limit      int
-	Offset     any
+	Limit      Limit
+	Cursor     *ScrollCursor
 }
 
 // Scroll pages through points in a collection without a query vector.
-// Returns the points, next-page offset (nil when exhausted), and an error.
-func (c *Client) Scroll(ctx context.Context, req ScrollRequest) ([]Point, any, error) {
-	body := scrollRequest{
+// It returns the points, a nil cursor when exhausted, and an error.
+func (c *Client) Scroll(ctx context.Context, req ScrollRequest) ([]Point, *ScrollCursor, error) {
+	body := scrollWireRequest{
 		Filter:      req.Filter,
 		Limit:       req.Limit,
-		Offset:      req.Offset,
+		Offset:      req.Cursor,
 		WithPayload: true,
 		WithVector:  false,
 	}

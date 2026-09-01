@@ -14,8 +14,8 @@ type liveComputer struct {
 	owner *LiveRunner
 
 	mu         sync.Mutex
-	session    computerSession
-	newSession computerSessionFactory
+	session    ComputerSession
+	newSession ComputerSessionFactory
 }
 
 func (c *liveComputer) Observe(ctx context.Context, req model.ObserveRequest) (model.Observation, error) {
@@ -26,16 +26,29 @@ func (c *liveComputer) Observe(ctx context.Context, req model.ObserveRequest) (m
 	return s.Observe(ctx, req)
 }
 
-type computerSession interface {
+// ComputerSession is the reusable browser session owned by a LiveRunner.
+// Implementations must support observation, actions, and deterministic cleanup.
+type ComputerSession interface {
 	model.Observer
 	model.Actor
 	Close() error
 }
 
-type computerSessionFactory func(context.Context, ...browser.Option) (computerSession, error)
+// ComputerSessionFactory starts a browser session for a LiveRunner.
+type ComputerSessionFactory func(context.Context, ...browser.Option) (ComputerSession, error)
 
-func newBrowserSession(ctx context.Context, opts ...browser.Option) (computerSession, error) {
+func newBrowserSession(ctx context.Context, opts ...browser.Option) (ComputerSession, error) {
 	return browser.New(ctx, opts...)
+}
+
+// ComputerObserve observes the reusable browser session owned by the runner.
+func (l *LiveRunner) ComputerObserve(ctx context.Context, req model.ObserveRequest) (model.Observation, error) {
+	return l.computer.Observe(ctx, req)
+}
+
+// ComputerAct performs an action in the reusable browser session owned by the runner.
+func (l *LiveRunner) ComputerAct(ctx context.Context, req model.ActionRequest) (model.Observation, error) {
+	return l.computer.Act(ctx, req)
 }
 
 func (c *liveComputer) Act(ctx context.Context, req model.ActionRequest) (model.Observation, error) {
@@ -60,7 +73,7 @@ func (c *liveComputer) Close() error {
 	return nil
 }
 
-func (c *liveComputer) sessionFor(ctx context.Context) (computerSession, error) {
+func (c *liveComputer) sessionFor(ctx context.Context) (ComputerSession, error) {
 	if c == nil || c.owner == nil {
 		return nil, errors.New("computer browser backend is not configured")
 	}

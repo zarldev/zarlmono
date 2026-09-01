@@ -184,13 +184,13 @@ func (t *taskRun) errored(ctx context.Context, err error) TaskResult {
 //   - upstream malformed-JSON under budget: inject a corrective user turn so
 //     the model re-emits with valid escaping, and retry.
 //   - otherwise: terminal, wrapping streamErr with the failed iteration.
-func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskResult {
+func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error, accepted bool) *TaskResult {
 	if errors.Is(streamErr, ErrCancelled) {
 		tr := t.cancelled(ctx, streamErr)
 		return &tr
 	}
 	var rle *llm.RateLimitError
-	if errors.As(streamErr, &rle) && rle.Retryable && !rle.Permanent && t.st.rateLimitRetries < rateLimitRetryLimit {
+	if !accepted && errors.As(streamErr, &rle) && rle.Retryable && !rle.Permanent && t.st.rateLimitRetries < rateLimitRetryLimit {
 		t.st.rateLimitRetries++
 		backoff := rle.RetryAfter
 		if backoff <= 0 {
@@ -199,21 +199,21 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 		t.r.publishDiagnostic(t.spec, "rate_limit_retry", "provider rate limited; retrying", t.st.rateLimitRetries, rateLimitRetryLimit, backoff, streamErr)
 		select {
 		case <-ctx.Done():
-			tr := t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, ctx.Err()))
+			tr := t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, context.Cause(ctx)))
 			return &tr
 		case <-time.After(backoff):
 		}
 		return nil
 	}
 
-	if errors.Is(streamErr, ErrEmptyStream) && t.st.emptyStreamRetries < emptyStreamRetryLimit {
+	if !accepted && errors.Is(streamErr, ErrEmptyStream) && t.st.emptyStreamRetries < emptyStreamRetryLimit {
 		t.st.emptyStreamRetries++
 		backoff := t.r.emptyStreamBackoff << (t.st.emptyStreamRetries - 1)
 		t.r.publishDiagnostic(t.spec, "empty_stream_retry", "provider returned an empty stream; retrying", t.st.emptyStreamRetries, emptyStreamRetryLimit, backoff, streamErr)
 		if backoff > 0 {
 			select {
 			case <-ctx.Done():
-				tr := t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, ctx.Err()))
+				tr := t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, context.Cause(ctx)))
 				return &tr
 			case <-time.After(backoff):
 			}
@@ -221,7 +221,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 		return nil
 	}
 
-	if errors.Is(streamErr, ErrThinkingBudget) && t.st.thinkingBudgetCuts < thinkingBudgetRecoverLimit {
+	if !accepted && errors.Is(streamErr, ErrThinkingBudget) && t.st.thinkingBudgetCuts < thinkingBudgetRecoverLimit {
 		t.st.thinkingBudgetCuts++
 		t.r.publishDiagnostic(t.spec, "thinking_budget_recovery", "thinking budget exceeded; injecting correction", t.st.thinkingBudgetCuts, thinkingBudgetRecoverLimit, 0, streamErr)
 		t.messages = append(t.messages, llm.Message{
@@ -231,7 +231,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error) *TaskRe
 		return nil
 	}
 
-	if isUpstreamToolCallJSONError(streamErr) && t.st.toolCallJSONRecovers < toolCallJSONRecoverLimit {
+	if !accepted && isUpstreamToolCallJSONError(streamErr) && t.st.toolCallJSONRecovers < toolCallJSONRecoverLimit {
 		t.st.toolCallJSONRecovers++
 		t.r.publishDiagnostic(t.spec, "tool_call_json_recovery", "upstream rejected tool-call JSON; injecting correction", t.st.toolCallJSONRecovers, toolCallJSONRecoverLimit, 0, streamErr)
 		t.messages = append(t.messages, llm.Message{

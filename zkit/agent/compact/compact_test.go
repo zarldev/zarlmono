@@ -3,7 +3,6 @@ package compact_test
 import (
 	"context"
 	"errors"
-	"iter"
 	"strings"
 	"testing"
 
@@ -85,10 +84,10 @@ type fakeProvider struct {
 	out          string
 }
 
-func (f fakeProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (f fakeProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		yield(llm.CompletionChunk{Content: f.out}, nil)
-	}, nil
+	}
 }
 
 // Regression: the naive tail-cut put a tool message at the head of
@@ -181,10 +180,10 @@ type errorProvider struct {
 	llm.Provider
 }
 
-func (errorProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (errorProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		yield(llm.CompletionChunk{}, errors.New("simulated stream failure"))
-	}, nil
+	}
 }
 
 func TestSummary_ProviderFailurePropagates(t *testing.T) {
@@ -201,6 +200,20 @@ func TestSummary_ProviderFailurePropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "simulated stream failure") {
 		t.Errorf("error didn't propagate provider message: %v", err)
+	}
+}
+
+func TestSummary_EmptySuccessErrors(t *testing.T) {
+	t.Parallel()
+	c := compact.NewSummary(fakeProvider{}, "tiny-llm")
+	_, err := c.Compact(t.Context(), []llm.Message{
+		{Role: "user", Content: "a"},
+		{Role: "assistant", Content: "b"},
+		{Role: "user", Content: "c"},
+		{Role: "assistant", Content: "d"},
+	}, 1)
+	if err == nil || !strings.Contains(err.Error(), "empty summary") {
+		t.Fatalf("Compact error = %v, want empty summary error", err)
 	}
 }
 

@@ -59,8 +59,9 @@ func (t *WriteAppendTool) Definition() tools.ToolSpec {
 			"Use this for files larger than the write cap (256KB by default): scaffold with write(path, \"\"), then " +
 			"call write_append repeatedly with chunks under the cap. No chunk indices or finalize step — each call " +
 			"independently appends.",
-		Parameters: tools.SchemaFor[WriteAppendArgs](),
-		Mutates:    true,
+		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
+		Parameters:     tools.SchemaFor[WriteAppendArgs](),
+		Mutates:        true,
 	}
 }
 

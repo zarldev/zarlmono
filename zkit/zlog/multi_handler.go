@@ -10,6 +10,12 @@ type multiHandler struct {
 	handlers []slog.Handler
 }
 
+// NewMultiHandler returns a handler that dispatches each record to every enabled child.
+// Errors returned by child handlers are joined.
+func NewMultiHandler(handlers ...slog.Handler) slog.Handler {
+	return multiHandler{handlers: handlers}
+}
+
 var _ slog.Handler = multiHandler{}
 
 func (h multiHandler) Enabled(ctx context.Context, level slog.Level) bool {

@@ -7,12 +7,14 @@ description: One streaming interface, adapters for the providers that matter, a 
 cares about is one method:
 
 ```go
-Complete(ctx context.Context, req CompletionRequest) (iter.Seq2[CompletionChunk, error], error)
+Complete(ctx context.Context, req CompletionRequest) CompletionStream
 ```
-Everything streams. `runner.ClientFromProvider` narrows a full
-provider down to exactly this — and the narrowing is the point: new
-capabilities go on new interfaces, not on the one the loop depends
-on.
+
+`CompletionStream` is a named range-over-function stream. Calling `Complete` only constructs a one-shot invocation: request preparation, token refresh, transport/process setup, I/O, and operational failures begin when it is ranged. Consumption is direct and synchronous, with no chunks channel or producer goroutine.
+
+Normal return/EOF is success. A terminal failure is exactly one zero-chunk error yield followed by return; there is no outer error or `Done` chunk. Finish reason and usage are optional ordinary metadata. Request reference-backed state is borrowed until iteration returns, and yielded reference-backed chunk state only until the callback returns, so retaining consumers clone synchronously. Providers propagate cancellation through setup, reads, decoders, and subprocess cleanup.
+
+`runner.ClientFromProvider` narrows a full provider down to exactly this — and the narrowing is the point: new capabilities go on new interfaces, not on the one the loop depends on.
 
 ## Adapters
 
@@ -87,10 +89,4 @@ Failure handling lives where the failure happens:
 
 ## Conformance testing
 
-`zkit/ai/llm/providertest` is a shared test suite every adapter
-runs. It covers cancellation, streaming-done signalling, usage
-reporting, and tool-call fragment accumulation — so "streams
-content", "honours ctx cancellation", and "accumulates tool-call
-fragments" mean the same thing across every provider. Adding a
-new adapter means running the suite; no guesswork about whether
-the streaming contract is satisfied.
+`zkit/ai/llm/providertest` supplies shared scenarios and canonical assertions for full laziness, successful EOF and terminal errors, cancellation before and during iteration, downstream early stop, usage/finish metadata, and tool-call fragment accumulation. Each adapter runs the scenarios relevant to its wire protocol; provider-local tests cover transport-specific retry, parsing, and cleanup details. Adding an adapter means selecting the shared scenarios deliberately rather than inventing incompatible streaming semantics.

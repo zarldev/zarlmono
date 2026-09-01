@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -112,14 +111,7 @@ func (d *providersDialog) footerHint() string {
 	}
 }
 
-func newProvidersDialog(s *engine.Settings) *providersDialog {
-	return newProvidersDialogWithContext(context.Background(), s)
-}
-
-func newProvidersDialogWithContext(ctx context.Context, s *engine.Settings) *providersDialog {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func newProvidersDialog(ctx context.Context, s *engine.Settings) *providersDialog {
 	d := &providersDialog{ctx: ctx, s: s, hasKey: map[string]bool{}}
 	d.refresh()
 	return d
@@ -344,7 +336,8 @@ func (d *providersDialog) submitAdd() {
 	// re-enter the key under the new name.
 	if d.editOrig != "" && d.editOrig != name {
 		if err := d.s.Registry.Delete(d.ctx, d.editOrig); err != nil {
-			slog.WarnContext(d.ctx, "drop renamed provider's old row", "err", err, "old", d.editOrig, "new", name)
+			d.status = "saved " + name + ", but old provider cleanup failed: " + err.Error()
+			return
 		}
 	}
 	verb := "added"

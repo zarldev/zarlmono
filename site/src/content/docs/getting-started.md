@@ -98,9 +98,9 @@ import (
 
 client := runnertest.NewClient([][]llm.CompletionChunk{
 	// turn 1: the model calls the tool
-	{runnertest.ChunkToolCall("c1", "current_time", `{}`), runnertest.ChunkDone()},
-	// turn 2: the model answers and stops
-	{runnertest.ChunkText("It is teatime."), runnertest.ChunkDone()},
+	{runnertest.ChunkToolCall("c1", "current_time", `{}`)},
+	// turn 2: the model answers; normal iterator return ends the turn
+	{runnertest.ChunkText("It is teatime.")},
 })
 
 r := runner.New(client, runner.WithTools(reg))

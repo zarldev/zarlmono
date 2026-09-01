@@ -19,20 +19,3 @@ func UseTheme(t theme.Theme) {
 	palette = t
 	themeGen++
 }
-
-// semanticThemeComplete reports whether every UI role needed by the transcript,
-// input, overlays, and state surfaces has an explicit colour. Theme loaders may
-// still supply fallbacks, but built-ins should always satisfy this contract.
-func semanticThemeComplete(t theme.Theme) bool {
-	roles := []theme.Color{
-		t.Bg, t.Fg, t.Primary, t.Secondary, t.User, t.Assistant,
-		t.Tool, t.Success, t.Error, t.Warning, t.Muted, t.Subtle,
-		t.Border, t.BorderFocus, t.Highlight, t.Info, t.PlanMode,
-	}
-	for _, role := range roles {
-		if role == "" {
-			return false
-		}
-	}
-	return true
-}

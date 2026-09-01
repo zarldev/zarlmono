@@ -84,15 +84,18 @@ func (c *RedisCache[K, V]) Set(ctx context.Context, key K, value V) error {
 
 	redisKey, err := c.makeKey(key)
 	if err != nil {
-		return err
+		return fmt.Errorf("make cache key: %w", err)
 	}
 
 	data, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode cache value: %w", err)
 	}
 
-	return c.client.Set(ctx, redisKey, data, c.ttl).Err()
+	if err := c.client.Set(ctx, redisKey, data, c.ttl).Err(); err != nil {
+		return fmt.Errorf("set cache value: %w", err)
+	}
+	return nil
 }
 
 // Get retrieves the value associated with the given key from Redis.
@@ -108,7 +111,7 @@ func (c *RedisCache[K, V]) Get(ctx context.Context, key K) (V, error) {
 	redisKey, err := c.makeKey(key)
 	if err != nil {
 		var zero V
-		return zero, err
+		return zero, fmt.Errorf("make cache key: %w", err)
 	}
 
 	result, err := c.client.Get(ctx, redisKey).Result()
@@ -117,13 +120,13 @@ func (c *RedisCache[K, V]) Get(ctx context.Context, key K) (V, error) {
 		if errors.Is(err, redis.Nil) {
 			return zero, ErrNotFound
 		}
-		return zero, err
+		return zero, fmt.Errorf("get cache value: %w", err)
 	}
 
 	var value V
 	if err := json.Unmarshal([]byte(result), &value); err != nil {
 		var zero V
-		return zero, err
+		return zero, fmt.Errorf("decode cache value: %w", err)
 	}
 
 	return value, nil
@@ -140,12 +143,12 @@ func (c *RedisCache[K, V]) Delete(ctx context.Context, key K) (bool, error) {
 
 	redisKey, err := c.makeKey(key)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("make cache key: %w", err)
 	}
 
 	result, err := c.client.Del(ctx, redisKey).Result()
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("delete cache value: %w", err)
 	}
 
 	return result > 0, nil
@@ -194,7 +197,7 @@ func (c *RedisCache[K, V]) Clear(ctx context.Context) error {
 			return nil
 		}
 		if err := c.client.Del(ctx, batch...).Err(); err != nil {
-			return err
+			return fmt.Errorf("delete cache keys: %w", err)
 		}
 		batch = batch[:0]
 		return nil
@@ -210,7 +213,7 @@ func (c *RedisCache[K, V]) Clear(ctx context.Context) error {
 	}
 
 	if err := iter.Err(); err != nil {
-		return err
+		return fmt.Errorf("scan cache keys: %w", err)
 	}
 	return flush()
 }
@@ -233,7 +236,7 @@ func (c *RedisCache[K, V]) Len(ctx context.Context) (int, error) {
 	}
 
 	if err := iter.Err(); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("scan cache keys: %w", err)
 	}
 
 	return count, nil
@@ -255,8 +258,7 @@ func (c *RedisCache[K, V]) makeKey(key K) (string, error) {
 }
 
 // Healthy checks if Redis is accessible by pinging it.
-func (c *RedisCache[K, V]) Healthy() error {
-	ctx := context.Background()
+func (c *RedisCache[K, V]) Healthy(ctx context.Context) error {
 	result := c.client.Ping(ctx)
 	if err := result.Err(); err != nil {
 		return fmt.Errorf("ping redis: %w", err)

@@ -44,9 +44,23 @@ package compact
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
+
+// collectContent drains a completion stream synchronously and returns trimmed
+// visible content. Reference-backed chunk state is consumed within each yield.
+func collectContent(stream llm.CompletionStream, operation string) (string, error) {
+	var content strings.Builder
+	for chunk, err := range stream {
+		if err != nil {
+			return "", fmt.Errorf("compact.%s: stream: %w", operation, err)
+		}
+		content.WriteString(chunk.Content)
+	}
+	return strings.TrimSpace(content.String()), nil
+}
 
 // Engine labels for the built-in compactors, as reported on
 // CompactionApplied events. Structural and Tiered are model-free; Summary

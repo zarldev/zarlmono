@@ -33,7 +33,9 @@ func safeInt(v uint64) int {
 
 const maxInt = int(^uint(0) >> 1)
 
-type lineRingBuffer struct {
+// LineRingBuffer retains the newest newline-delimited output lines and supports
+// incremental reads with dropped-line reporting. It is safe for concurrent use.
+type LineRingBuffer struct {
 	mu      sync.Mutex
 	cap     int
 	lines   [][]byte
@@ -43,15 +45,13 @@ type lineRingBuffer struct {
 	dropped uint64 // count of lines that rotated out (cursor - count)
 }
 
-// newLineRingBuffer constructs a buffer with the supplied capacity.
-// cap ≤ 0 falls back to a sane default (1024) rather than erroring —
-// the caller is internal and a misconfiguration shouldn't break the
-// process-manager spin-up path.
-func newLineRingBuffer(bufCap int) *lineRingBuffer {
+// NewLineRingBuffer constructs a buffer with the supplied capacity. A capacity
+// less than one uses the default capacity of 1024 lines.
+func NewLineRingBuffer(bufCap int) *LineRingBuffer {
 	if bufCap <= 0 {
 		bufCap = 1024
 	}
-	return &lineRingBuffer{
+	return &LineRingBuffer{
 		cap:   bufCap,
 		lines: make([][]byte, bufCap),
 	}
@@ -61,7 +61,7 @@ func newLineRingBuffer(bufCap int) *lineRingBuffer {
 // oldest entry rotates out and the dropped counter increments — the
 // caller never blocks. line is copied so the caller can reuse its
 // scratch buffer immediately after returning.
-func (b *lineRingBuffer) Append(line []byte) {
+func (b *LineRingBuffer) Append(line []byte) {
 	cp := make([]byte, len(line))
 	copy(cp, line)
 	b.mu.Lock()
@@ -85,7 +85,7 @@ func (b *lineRingBuffer) Append(line []byte) {
 // a gap the agent should know about.
 //
 // max ≤ 0 returns everything available since the cursor.
-func (b *lineRingBuffer) ReadSince(cursor uint64, maxLines int) ([][]byte, uint64, uint64) {
+func (b *LineRingBuffer) ReadSince(cursor uint64, maxLines int) ([][]byte, uint64, uint64) {
 	var droppedSince uint64
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -124,7 +124,7 @@ func (b *lineRingBuffer) ReadSince(cursor uint64, maxLines int) ([][]byte, uint6
 
 // Snapshot returns the current state: line count, total appended,
 // total dropped. Useful for list_processes and tests; cheap.
-func (b *lineRingBuffer) Snapshot() (int, uint64, uint64) {
+func (b *LineRingBuffer) Snapshot() (int, uint64, uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.count, b.cursor, b.dropped

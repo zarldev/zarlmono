@@ -52,7 +52,7 @@ The default depth ceiling is one delegation hop. A separate per-task fan-out gua
 - `verify` — review and bounded verification without file-edit tools;
 - `implement` — full tool surface.
 
-Explore and verify children hold a shared workspace READ lease for their lifetime. Implement children hold an exclusive WRITE lease. Parent and child tool calls acquire short-lived leases under their task IDs; conflicts return recoverable failures rather than blocking or racing.
+Workspace scopes are inferred automatically for every tool call: file tools use `path` or `root`, `apply_patch` coordinates all patch paths, and plan tools use `.zarlcode/plans`. Disjoint paths execute concurrently; overlapping calls wait in fair arrival order until the conflicting call completes. Cancellation removes a queued call cleanly. Opaque operations such as bash, and calls with missing or unsafe paths, conservatively cover the whole workspace.
 
 ## Named agents
 

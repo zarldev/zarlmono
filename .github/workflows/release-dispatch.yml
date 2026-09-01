@@ -1,20 +1,12 @@
 name: release-dispatch
 
-# Manual release orchestrator.
-#
-# This workflow is the operator-facing release button. It validates the version,
-# computes which module tags will be created, checks for obvious release
-# blockers, and either prints the plan (dry-run) or creates/pushes the tags.
-#
-# zarlcode's tagged release pipeline remains tag-driven: pushing `zarlcode/vX.Y.Z`
-# triggers `.github/workflows/release.yml`, which publishes binaries, checksums,
-# and the Homebrew tap update.
-
+# Canonical operator-facing release orchestrator. zkit is always released before
+# consumers so go.work cannot hide an unpublished module dependency.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version (vX.Y.Z)
+        description: Canonical version (vX.Y.Z or a valid prerelease)
         required: true
         type: string
       scope:
@@ -22,15 +14,9 @@ on:
         required: true
         type: choice
         default: zarlcode
-        options:
-          - zkit
-          - zarlcode
-          - swebench-eval
-          - examples
-          - all
-          - custom
+        options: [zkit, zarlcode, swebench-eval, examples, custom]
       custom_modules:
-        description: Comma-separated modules for scope=custom (zkit,zarlcode,swebench-eval,examples)
+        description: Comma-separated consumers; zkit must be released alone
         required: false
         type: string
       mode:
@@ -38,19 +24,15 @@ on:
         required: true
         type: choice
         default: dry-run
-        options:
-          - dry-run
-          - publish
+        options: [dry-run, publish]
+
 concurrency:
-  group: release-dispatch-${{ github.ref }}
+  group: release-dispatch-main
   cancel-in-progress: false
 
 permissions:
   contents: write
-  # The "verify zarlcode release workflow" step calls `gh workflow run
-  # release.yml`, which the GITHUB_TOKEN can only do with actions: write.
-  # Without it that dispatch returns HTTP 403 (Resource not accessible by
-  # integration) and the publisher never runs off a dispatch.
+  # GITHUB_TOKEN tag pushes do not trigger workflows, so dispatch the publisher.
   actions: write
 
 jobs:
@@ -61,14 +43,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - name: setup go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: validate inputs and build tag plan
+      - name: validate repository and build release plan
         id: plan
         env:
           VERSION: ${{ inputs.version }}
@@ -78,126 +59,62 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-
-          case "$VERSION" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "version must look like vX.Y.Z (got '$VERSION')" >&2; exit 2 ;;
-          esac
-
-          case "$MODE" in
-            dry-run|publish) ;;
-            *) echo "mode must be dry-run or publish (got '$MODE')" >&2; exit 2 ;;
-          esac
-
           if [ "$REF_NAME" != "main" ]; then
             echo "release-dispatch must run from main (got '$REF_NAME')" >&2
             exit 1
           fi
-
-          if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "checkout is not clean; aborting" >&2
+          remote_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          if [ -z "$remote_main" ] || [ "$remote_main" != "$GITHUB_SHA" ]; then
+            echo "release-dispatch must run at current origin/main ($remote_main), got $GITHUB_SHA" >&2
             exit 1
           fi
 
+          plan_file="$RUNNER_TEMP/release-plan.json"
+          go run ./tools/releasecheck/cmd/releasecheck \
+            -version "$VERSION" -scope "$SCOPE" \
+            -custom-modules "$CUSTOM_MODULES" > "$plan_file"
 
-          resolve_modules() {
-            case "$SCOPE" in
-              zkit|zarlcode|swebench-eval|examples)
-                printf '%s\n' "$SCOPE"
-                ;;
-              all)
-                printf '%s\n' zkit zarlcode swebench-eval examples
-                ;;
-              custom)
-                if [ -z "${CUSTOM_MODULES// }" ]; then
-                  echo "custom_modules is required when scope=custom" >&2
-                  exit 1
-                fi
-                printf '%s' "$CUSTOM_MODULES" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d'
-                ;;
-              *)
-                echo "unknown scope: $SCOPE" >&2
-                exit 1
-                ;;
-            esac
-          }
-
-          valid_module() {
-            case "$1" in
-              zkit|zarlcode|swebench-eval|examples) return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-
-          mapfile -t raw_modules < <(resolve_modules)
-          if [ "${#raw_modules[@]}" -eq 0 ]; then
-            echo "no modules selected" >&2
-            exit 1
-          fi
-
-          modules=()
-          seen=''
-          for module in "${raw_modules[@]}"; do
-            if ! valid_module "$module"; then
-              echo "unsupported module: $module" >&2
-              exit 1
-            fi
-            case ",$seen," in
-              *",$module,"*) ;;
-              *) modules+=("$module"); seen="$seen,$module" ;;
-            esac
-          done
-
-          tags=()
-          for module in "${modules[@]}"; do
-            tag="$module/$VERSION"
-            if git rev-parse "$tag" >/dev/null 2>&1; then
+          mapfile -t tags < <(jq -r '.tags[]' "$plan_file")
+          for tag in "${tags[@]}"; do
+            if git show-ref --verify --quiet "refs/tags/$tag" || \
+               git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
               echo "tag already exists: $tag" >&2
               exit 1
             fi
-            tags+=("$tag")
           done
 
-          for module in "${modules[@]}"; do
-            if ! grep -Eq "\\[($VERSION|$module/$VERSION)\\]" CHANGELOG.md; then
-              echo "CHANGELOG.md does not contain an entry for $VERSION or $module/$VERSION" >&2
+          while IFS=$'\t' read -r consumer path version; do
+            [ -n "$path" ] || continue
+            echo "verifying $consumer pins published $path@$version"
+            GOPROXY=https://proxy.golang.org GOWORK=off go list -m "$path@$version" >/dev/null || {
+              echo "$consumer pins unpublished internal module $path@$version" >&2
               exit 1
-            fi
-          done
+            }
+          done < <(jq -r '.pins[] | [.consumer, .path, .version] | @tsv' "$plan_file")
 
-          if printf '%s\n' "${modules[@]}" | grep -qx 'zarlcode'; then
-            if ! grep -q 'github.com/zarldev/zarlmono/zkit v' zarlcode/go.mod; then
-              echo "zarlcode/go.mod does not contain a pinned zkit dependency" >&2
-              exit 1
-            fi
-          fi
-
-          summary_file="$RUNNER_TEMP/release-summary.md"
+          modules=$(jq -r '.modules | join(",")' "$plan_file")
+          tags_csv=$(jq -r '.tags | join(",")' "$plan_file")
+          {
+            printf 'version=%s\n' "$VERSION"
+            printf 'modules=%s\n' "$modules"
+            printf 'tags=%s\n' "$tags_csv"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "## Release plan"
             echo
-            echo "- Version: \\`$VERSION\\`"
-            echo "- Scope: \\`$SCOPE\\`"
-            echo "- Mode: \\`$MODE\\`"
-            echo "- Modules: \\`${modules[*]}\\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Version: \`$VERSION\`"
+            echo "- Mode: \`$MODE\`"
+            echo "- Modules: \`$modules\`"
             echo
             echo "### Tags"
-            for tag in "${tags[@]}"; do
-              echo "- \\`$tag\\`"
-            done
-            echo
-            if printf '%s\n' "${modules[@]}" | grep -qx 'zarlcode'; then
-              echo "Pushing \\`zarlcode/$VERSION\\` will trigger the tag-driven publish workflow for binaries, checksums, and Homebrew tap updates."
+            jq -r '.tags[] | "- `" + . + "`"' "$plan_file"
+            if [ "$(jq '.pins | length' "$plan_file")" -gt 0 ]; then
+              echo
+              echo "### Published internal dependency pins"
+              jq -r '.pins[] | "- `" + .consumer + "` → `" + .path + "@" + .version + "`"' "$plan_file"
             fi
-          } > "$summary_file"
-          cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
-
-          {
-            printf 'version=%s\n' "$VERSION"
-            printf 'mode=%s\n' "$MODE"
-            printf 'modules=%s\n' "$(IFS=,; echo "${modules[*]}")"
-            printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")"
-          } >> "$GITHUB_OUTPUT"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: preflight build, vet, test, and lint
         env:
@@ -206,11 +123,16 @@ jobs:
           set -euo pipefail
           IFS=',' read -r -a modules <<< "$MODULES"
           for module in "${modules[@]}"; do
-            echo "::group::go build ${module} ./..."
+            echo "::group::release checks ($module)"
+            GOWORK=off go mod verify -C "$module"
             go build -C "$module" ./...
             go vet -C "$module" ./...
             go test -C "$module" -count=1 ./...
             go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "./$module/..."
+            if [ "$module" = zkit ]; then
+              GOWORK=off go test -C zkit -race -count=1 ./...
+              GOTOOLCHAIN=go1.26.0 GOWORK=off go test -C zkit -run '^$' ./...
+            fi
             echo "::endgroup::"
           done
 
@@ -218,7 +140,7 @@ jobs:
         if: ${{ inputs.mode == 'dry-run' }}
         run: echo "dry-run complete; no tags were created"
 
-      - name: create and push tags
+      - name: create and push annotated tags
         if: ${{ inputs.mode == 'publish' }}
         env:
           TAGS: ${{ steps.plan.outputs.tags }}
@@ -227,41 +149,45 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           IFS=',' read -r -a tags <<< "$TAGS"
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "release plan produced no tags" >&2
+            exit 1
+          fi
           for tag in "${tags[@]}"; do
             module="${tag%%/*}"
             git tag -a "$tag" -m "$module $VERSION"
+            [ "$(git cat-file -t "$tag")" = tag ] || exit 1
           done
           git push origin "${tags[@]}"
-          {
-            echo
-            echo "## Release published"
-            echo
-            for tag in "${tags[@]}"; do
-              echo "- pushed \\`$tag\\`"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: verify zarlcode release workflow
+          printf '\n## Tags published\n' >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- `%s`\n' "${tags[@]}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: dispatch and verify zarlcode publisher
         if: ${{ inputs.mode == 'publish' && contains(steps.plan.outputs.modules, 'zarlcode') }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
           tag="zarlcode/${VERSION}"
-          echo "dispatching release.yml for ${tag}…"
-          gh workflow run release.yml --ref main -f tag="${tag}"
-          for i in $(seq 1 30); do
+          dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          run_started=$(date -u -d "$dispatched_at - 5 seconds" +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run release.yml --ref main -f tag="$tag"
+          for attempt in $(seq 1 30); do
             sleep 10
-            run_id=$(gh api               "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?per_page=10&event=workflow_dispatch"               --jq '.workflow_runs[0].id'               2>/dev/null || true)
-            if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
-              echo "found run ${run_id} — waiting for completion"
-              gh run watch "$run_id" --exit-status &&                 echo "release.yml completed successfully" &&                 exit 0
-              echo "release.yml failed" >&2
-              exit 1
+            source_sha=$(git rev-list -n1 "refs/tags/$tag")
+            run_id=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?per_page=30&event=workflow_dispatch" \
+              --jq ".workflow_runs[] | select(.created_at >= \"$run_started\" and .head_sha == \"$source_sha\" and .display_title == \"release\") | .id" \
+              2>/dev/null | head -1 || true)
+            if [ -n "$run_id" ]; then
+              run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+              echo "publisher run: $run_url" | tee -a "$GITHUB_STEP_SUMMARY"
+              gh run watch "$run_id" --exit-status
+              exit 0
             fi
-            echo "waiting for workflow to appear… (${i}/30)"
+            echo "waiting for publisher run ($attempt/30)"
           done
-          echo "timed out waiting for release.yml dispatch for ${tag}" >&2
+          echo "timed out waiting for release.yml dispatch for $tag" >&2
           exit 1

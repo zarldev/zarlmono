@@ -17,6 +17,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zarlcode/sleepinhibit"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	agentmcp "github.com/zarldev/zarlmono/zkit/agent/mcp"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
@@ -142,10 +143,10 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	// with a warning — the guardrail chain still applies either way.
 	var sb code.Sandboxer
 	sbPolicy := sandbox.DefaultPolicy(ws.Root())
-	var askpassSrv *askpassServer
+	var askpassSrv *AskpassServer
 	var toolEnv map[string]string
 	if !p.Headless && settings.SudoAskpass(ctx) {
-		askpassSrv, err = newAskpassServer(ctx, root)
+		askpassSrv, err = NewAskpassServer(ctx, root)
 		if err != nil {
 			slog.WarnContext(ctx, "askpass: sudo integration unavailable", "err", err)
 		} else {
@@ -340,6 +341,12 @@ func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) in
 			defer f.Close()
 			report = f
 		}
+		inhibitor, err := sleepinhibit.Acquire(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "sleep inhibition unavailable", "err", err)
+		} else {
+			defer inhibitor.Close()
+		}
 		return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter, report)
 	}
 	prog := tea.NewProgram(z.model, tea.WithContext(ctx))
@@ -359,7 +366,7 @@ func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) in
 	// so a large history's json.Marshal can't hang the shell after exit.
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err := z.model.SaveSession(saveCtx); err != nil {
+	if err := z.model.FlushSessionPersistence(saveCtx); err != nil {
 		fmt.Fprintln(os.Stderr, "session save:", err)
 	}
 	return zapp.ExitOK
@@ -574,11 +581,10 @@ func peekTheme(ctx context.Context, wsRoot string) theme.Theme {
 		return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))
 	}
 	defer store.Close()
-	if name, err := store.GetSetting(ctx, wsRoot, prefs.KeyTheme); err == nil && name != "" {
-		return selectThemeByName(name)
-	}
-	if name, err := store.GetSetting(ctx, "", prefs.KeyTheme); err == nil && name != "" {
-		return selectThemeByName(name)
+	svc := prefs.NewService(store, nil, wsRoot)
+	setting, err := svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyTheme)
+	if err == nil && setting.Value != "" {
+		return selectThemeByName(setting.Value)
 	}
 	return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))
 }

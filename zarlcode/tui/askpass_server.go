@@ -16,7 +16,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/filesystem"
 )
 
-type askpassServer struct {
+type AskpassServer struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	ln     net.Listener
@@ -39,7 +39,7 @@ type askpassPromptMsg struct {
 	Reply  chan askpass.Response
 }
 
-func newAskpassServer(ctx context.Context, root string) (*askpassServer, error) {
+func NewAskpassServer(ctx context.Context, root string) (*AskpassServer, error) {
 	runDir := filepath.Join(root, ".zarlcode", "run")
 	if err := os.MkdirAll(runDir, filesystem.ModePrivateDir); err != nil {
 		return nil, fmt.Errorf("askpass run dir: %w", err)
@@ -68,7 +68,7 @@ func newAskpassServer(ctx context.Context, root string) (*askpassServer, error) 
 		return nil, fmt.Errorf("askpass helper: %w", err)
 	}
 	childCtx, cancel := context.WithCancel(ctx)
-	s := &askpassServer{
+	s := &AskpassServer{
 		ctx: childCtx, cancel: cancel, ln: ln, sock: sock, script: script,
 		serveDone: make(chan struct{}),
 		conns:     make(map[net.Conn]struct{}),
@@ -77,13 +77,13 @@ func newAskpassServer(ctx context.Context, root string) (*askpassServer, error) 
 	return s, nil
 }
 
-func (s *askpassServer) SetSend(send func(tea.Msg)) {
+func (s *AskpassServer) SetSend(send func(tea.Msg)) {
 	s.mu.Lock()
 	s.send = send
 	s.mu.Unlock()
 }
 
-func (s *askpassServer) Env() map[string]string {
+func (s *AskpassServer) Env() map[string]string {
 	if s == nil {
 		return nil
 	}
@@ -93,7 +93,7 @@ func (s *askpassServer) Env() map[string]string {
 	}
 }
 
-func (s *askpassServer) Close() error {
+func (s *AskpassServer) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -115,7 +115,7 @@ func (s *askpassServer) Close() error {
 	return s.closeErr
 }
 
-func (s *askpassServer) serve() {
+func (s *AskpassServer) serve() {
 	defer close(s.serveDone)
 	for {
 		conn, err := s.ln.Accept()
@@ -136,7 +136,7 @@ func (s *askpassServer) serve() {
 	}
 }
 
-func (s *askpassServer) closeConnections() {
+func (s *AskpassServer) closeConnections() {
 	s.connMu.Lock()
 	defer s.connMu.Unlock()
 	for conn := range s.conns {
@@ -144,7 +144,7 @@ func (s *askpassServer) closeConnections() {
 	}
 }
 
-func (s *askpassServer) handle(conn net.Conn) {
+func (s *AskpassServer) handle(conn net.Conn) {
 	defer func() {
 		s.connMu.Lock()
 		delete(s.conns, conn)

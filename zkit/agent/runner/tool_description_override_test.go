@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"sync"
 	"testing"
 
@@ -16,7 +15,7 @@ type recordingToolSpecProvider struct {
 	requests []llm.CompletionRequest
 }
 
-func (p *recordingToolSpecProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *recordingToolSpecProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	p.mu.Lock()
 	p.requests = append(p.requests, req)
 	p.mu.Unlock()
@@ -25,10 +24,10 @@ func (p *recordingToolSpecProvider) Complete(_ context.Context, req llm.Completi
 		if !yield(llm.CompletionChunk{Content: "done"}, nil) {
 			return
 		}
-		if !yield(llm.CompletionChunk{Done: true}, nil) {
+		if !yield(llm.CompletionChunk{}, nil) {
 			return
 		}
-	}, nil
+	}
 }
 
 func (p *recordingToolSpecProvider) Name() string { return "recording" }

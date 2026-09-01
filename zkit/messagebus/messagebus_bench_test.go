@@ -2,6 +2,7 @@ package messagebus_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,9 +63,9 @@ func BenchmarkMemoryBus(b *testing.B) {
 		defer bus.Close()
 
 		ctx := b.Context()
-		received := 0
+		var delivered sync.WaitGroup
 		handler := func(ctx context.Context, msg messagebus.Message[TestEvent]) error {
-			received++
+			delivered.Done()
 			return nil
 		}
 
@@ -75,11 +76,15 @@ func BenchmarkMemoryBus(b *testing.B) {
 
 		b.ResetTimer()
 		for b.Loop() {
-			bus.Publish(ctx, "bench.throughput", event)
+			delivered.Add(1)
+			if err := bus.Publish(ctx, "bench.throughput", event); err != nil {
+				delivered.Done()
+				b.Fatal(err)
+			}
 		}
 
-		// Wait for messages to be processed
-		time.Sleep(10 * time.Millisecond)
+		b.StopTimer()
+		delivered.Wait()
 	})
 
 	b.Run("RequestReply", func(b *testing.B) {

@@ -123,10 +123,7 @@ func liveComplete(t *testing.T, p llm.Provider, req llm.CompletionRequest) []llm
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	seq, err := p.Complete(ctx, req)
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
+	seq := p.Complete(ctx, req)
 	var chunks []llm.CompletionChunk
 	for chunk, err := range seq {
 		if err != nil {

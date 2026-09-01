@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -33,10 +34,25 @@ func (actionQuit) isAction()         {}
 func (actionClearContext) isAction() {}
 func (actionCompactNow) isAction()   {}
 
+// actionRunCommand dispatches one command-palette selection.
+type actionRunCommand struct{ id CommandID }
+
+func (actionRunCommand) isAction() {}
+
 // actionSetTheme switches the active colour theme by name.
 type actionSetTheme struct{ name string }
 
 func (actionSetTheme) isAction() {}
+
+// actionSetSessionLabel applies a user-authored session label.
+type actionSetSessionLabel struct{ label string }
+
+func (actionSetSessionLabel) isAction() {}
+
+// actionDeleteSession permanently deletes one saved session after confirmation.
+type actionDeleteSession struct{ id string }
+
+func (actionDeleteSession) isAction() {}
 
 // actionPush opens a nested dialog over the current one (e.g. the providers
 // manager from the settings overlay, or the add-provider form from there).
@@ -176,6 +192,18 @@ func (o *overlay) draw(scr uv.Screen, area uv.Rectangle) {
 	}
 }
 
+// dismissConversationDialogs closes the active conversation action and any
+// confirmation layered over it without disturbing an unrelated parent overlay.
+func (m *UI) dismissConversationDialogs() {
+	m.overlay.pop()
+	for m.overlay.active() {
+		if _, ok := m.overlay.top().(*conversationActionsDialog); !ok {
+			return
+		}
+		m.overlay.pop()
+	}
+}
+
 // handleAction translates a dialog's intent into a model effect.
 func (m *UI) handleAction(a action) tea.Cmd {
 	switch a := a.(type) {
@@ -197,10 +225,10 @@ func (m *UI) handleAction(a action) tea.Cmd {
 		m.cancelLiveTurnForQuit()
 		return tea.Quit
 	case actionClearContext:
-		m.overlay.pop()
+		m.dismissConversationDialogs()
 		return m.clearContextAndTimeline()
 	case actionCompactNow:
-		m.overlay.pop()
+		m.dismissConversationDialogs()
 		return m.compactNowCmd()
 	case actionSetTheme:
 		if t, ok := theme.ByName(a.name); ok {
@@ -214,6 +242,19 @@ func (m *UI) handleAction(a action) tea.Cmd {
 				return m.fileViewerInitialCmd(viewer)
 			}
 		}
+	case actionSetSessionLabel:
+		m.overlay.pop()
+		return m.setSessionLabel(a.label)
+	case actionRunCommand:
+		m.overlay.pop()
+		entry, ok := commandEntry(a.id)
+		if !ok {
+			return nil
+		}
+		return entry.run(m)
+	case actionDeleteSession:
+		m.overlay.pop()
+		return m.deleteIntroSession(a.id)
 	case actionFileViewerEntries:
 		return fileViewerEntriesCmd(a)
 	case actionFileViewerPreview:
@@ -278,8 +319,6 @@ type helpDialog struct {
 	scroll   int
 	viewport int
 }
-
-func newHelpDialog() *helpDialog { return &helpDialog{sections: composeHelpSections()} }
 
 func (m *UI) newHelpDialog() *helpDialog {
 	switch {
@@ -357,7 +396,7 @@ func composeHelpSections() []helpSection {
 			title: "compose",
 			rows: [][]keyHint{
 				{{"enter", "submit prompt"}, {"shift+enter", "newline"}, {"@", "attach file"}},
-				{{"tab", "browse transcript"}, {"ctrl+r", "transcript reader"}, {"ctrl+a", "agent activity"}},
+				{{"tab", "browse transcript"}, {"ctrl+r", "transcript reader"}, {"ctrl+k", "command palette"}},
 				{{"shift+tab", "plan ⇄ build"}, {"ctrl+l", "context dashboard"}, {"esc", "stop current turn"}},
 			},
 		},
@@ -366,15 +405,13 @@ func composeHelpSections() []helpSection {
 			rows: [][]keyHint{
 				{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
 				{{"ctrl+p", "plan pane"}, {"ctrl+w", "working set"}, {"ctrl+o", "inspector"}},
-				{{"ctrl+h", "tool history"}, {"ctrl+t", "theme"}, {"ctrl+y", "execution tray"}},
-				{{"ctrl+b", "toggle state bar"}},
+				{{"ctrl+h", "tool history"}, {"ctrl+t", "theme"}, {"ctrl+n", "name session"}},
+				{{"ctrl+y", "execution tray"}, {"ctrl+b", "toggle state bar"}},
 			},
 		},
 		{
 			title: "slash commands",
-			rows: [][]keyHint{
-				slashCommandHints(),
-			},
+			rows:  slashCommandRows(),
 		},
 		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+q", "conversation"}, {"ctrl+c", "quit"}}}}}
 }
@@ -426,12 +463,12 @@ type helpSection struct {
 	rows  [][]keyHint
 }
 
-func slashCommandHints() []keyHint {
-	hints := make([]keyHint, 0, len(slashCommands))
+func slashCommandRows() [][]keyHint {
+	rows := make([][]keyHint, 0, len(slashCommands))
 	for _, c := range slashCommands {
-		hints = append(hints, keyHint{key: c.name, label: c.desc})
+		rows = append(rows, []keyHint{{key: c.name, label: c.desc}})
 	}
-	return hints
+	return rows
 }
 
 func helpLines(sections []helpSection) []string {
@@ -550,4 +587,35 @@ func (clearContextConfirmDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		palette.Muted.On("This clears the transcript and what the next turn remembers."),
 		palette.Muted.On("It does not revert files or stop background processes."),
 	}, keyLegend(keyHint{"y / enter", "confirm"}, keyHint{"any other key", "cancel"}), 76)
+}
+
+// deleteSessionConfirmDialog asks before permanently deleting a saved session.
+type deleteSessionConfirmDialog struct {
+	id    string
+	label string
+}
+
+func newDeleteSessionConfirmDialog(id, label string) *deleteSessionConfirmDialog {
+	return &deleteSessionConfirmDialog{id: id, label: label}
+}
+
+func (d deleteSessionConfirmDialog) handleKey(msg tea.KeyPressMsg) action {
+	switch msg.String() {
+	case "y", "Y", "enter":
+		return actionDeleteSession{id: d.id}
+	default:
+		return actionClose{}
+	}
+}
+
+func (d deleteSessionConfirmDialog) draw(scr uv.Screen, area uv.Rectangle) {
+	label := strings.TrimSpace(d.label)
+	if label == "" {
+		label = "Unnamed session"
+	}
+	drawActionDialog(scr, area, "delete session", "confirm", []string{
+		palette.Warning.On("permanently delete this session?"),
+		palette.Primary.On(truncateRunes(label, 64)),
+		palette.Muted.On("The saved conversation cannot be recovered."),
+	}, keyLegend(keyHint{"y / enter", "delete"}, keyHint{"any other key", "cancel"}), 76)
 }

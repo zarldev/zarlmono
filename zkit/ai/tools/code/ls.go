@@ -148,7 +148,8 @@ func lsSpec() tools.ToolSpec {
 			"(one entry per line, with size and type); set output=\"json\" for a [{name, type, size}] array " +
 			"instead. Dotfiles are excluded unless `show_hidden: true`. Use `glob` for recursive path " +
 			"enumeration and `read` to fetch contents.",
-		Parameters: tools.SchemaFor[LsArgs](),
+		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
+		Parameters:     tools.SchemaFor[LsArgs](),
 	}
 }
 

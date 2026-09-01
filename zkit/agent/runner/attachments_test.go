@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
@@ -13,11 +12,11 @@ type attachmentRecordingProvider struct {
 	req llm.CompletionRequest
 }
 
-func (p *attachmentRecordingProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *attachmentRecordingProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	p.req = req
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		yield(llm.CompletionChunk{Content: "ok", Done: true}, nil)
-	}, nil
+		yield(llm.CompletionChunk{Content: "ok"}, nil)
+	}
 }
 
 func (p *attachmentRecordingProvider) Name() string { return "attachment-recording" }

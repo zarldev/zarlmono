@@ -57,15 +57,15 @@ Run `zarlcode keys --help` for credential commands. Supported providers include
 
 zarlcode configures model endpoints but does not start model servers. Start
 Ollama, llama.cpp, LM Studio, or another OpenAI-compatible server yourself, then
-launch zarlcode and select or add the provider in **Settings → Providers**
-(`Ctrl+S`) or the model picker (`Ctrl+E`).
+launch zarlcode and select or add the provider through the `Ctrl+K` command palette:
+choose **Settings** for endpoint configuration or **Select model** to switch models.
 
 ### The loop to try first
 
 1. Start in **Plan** mode and ask for a design before mutation.
 2. Press `Shift+Tab` to switch to **Build** when you want edits or shell commands.
 3. Watch tool calls, command output, changed files, and diffs in the timeline and working set.
-4. Press `Ctrl+E` to switch provider/model without leaving the session.
+4. Open **Select model** from `Ctrl+K` to switch provider/model without leaving the session.
 5. Quit and resume later with `zarlcode -continue` from the same workspace.
 6. For eval-like or scripted work, run the same task headlessly:
 

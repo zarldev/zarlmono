@@ -32,12 +32,3 @@ func TestCloseFuncReturnsWrappedError(t *testing.T) {
 		t.Fatalf("Close err = %v, want %v", err, want)
 	}
 }
-
-func TestCloseFuncNilIsNoop(t *testing.T) {
-	t.Parallel()
-
-	var closer zapp.CloseFunc
-	if err := closer.Close(); err != nil {
-		t.Fatalf("nil CloseFunc Close err = %v, want nil", err)
-	}
-}

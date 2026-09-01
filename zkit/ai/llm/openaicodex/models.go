@@ -5,14 +5,15 @@ import (
 )
 
 const (
-	modelGPT56      = "gpt-5.6"
-	modelGPT56Sol   = "gpt-5.6-sol"
-	modelGPT56Terra = "gpt-5.6-terra"
-	modelGPT56Luna  = "gpt-5.6-luna"
-	modelGPT55      = "gpt-5.5"
-	modelGPT54      = "gpt-5.4"
-	modelGPT54Mini  = "gpt-5.4-mini"
-	modelGPT53Spark = "gpt-5.3-codex-spark"
+	modelGPT56         = "gpt-5.6"
+	modelGPT56Sol      = "gpt-5.6-sol"
+	modelGPT56Terra    = "gpt-5.6-terra"
+	modelGPT56Luna     = "gpt-5.6-luna"
+	gpt56ContextWindow = 1_050_000
+	modelGPT55         = "gpt-5.5"
+	modelGPT54         = "gpt-5.4"
+	modelGPT54Mini     = "gpt-5.4-mini"
+	modelGPT53Spark    = "gpt-5.3-codex-spark"
 )
 
 // modelPreset describes one selectable model id and the reasoning
@@ -52,13 +53,13 @@ type modelPreset struct {
 // openai-codex backend uses ChatGPT OAuth.
 var presetModels = []modelPreset{
 	// gpt-5.6 alias (OpenAI's recommended Codex CLI shorthand for Sol)
-	{ID: modelGPT56, BaseModel: modelGPT56, Description: "GPT-5.6 (recommended)", ContextWindow: DefaultContextWindow},
+	{ID: modelGPT56, BaseModel: modelGPT56, Description: "GPT-5.6 (recommended)", ContextWindow: gpt56ContextWindow},
 	// gpt-5.6-sol (strongest coding/research/cybersecurity model)
-	{ID: modelGPT56Sol, BaseModel: modelGPT56Sol, Description: "GPT-5.6 Sol (flagship)", ContextWindow: DefaultContextWindow},
+	{ID: modelGPT56Sol, BaseModel: modelGPT56Sol, Description: "GPT-5.6 Sol (flagship)", ContextWindow: gpt56ContextWindow},
 	// gpt-5.6-terra (balanced everyday workhorse)
-	{ID: modelGPT56Terra, BaseModel: modelGPT56Terra, Description: "GPT-5.6 Terra (balanced)", ContextWindow: DefaultContextWindow},
+	{ID: modelGPT56Terra, BaseModel: modelGPT56Terra, Description: "GPT-5.6 Terra (balanced)", ContextWindow: gpt56ContextWindow},
 	// gpt-5.6-luna (fast, affordable, repeatable tasks)
-	{ID: modelGPT56Luna, BaseModel: modelGPT56Luna, Description: "GPT-5.6 Luna (fast/efficient)", ContextWindow: DefaultContextWindow},
+	{ID: modelGPT56Luna, BaseModel: modelGPT56Luna, Description: "GPT-5.6 Luna (fast/efficient)", ContextWindow: gpt56ContextWindow},
 	// gpt-5.5 (previous-generation frontier)
 	{ID: modelGPT55, BaseModel: modelGPT55, Description: "GPT-5.5 (previous frontier)", ContextWindow: DefaultContextWindow},
 	// gpt-5.3-codex-spark (text-only, ChatGPT Pro only — real-time iteration)

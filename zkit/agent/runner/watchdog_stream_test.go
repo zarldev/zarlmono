@@ -3,7 +3,6 @@ package runner_test
 import (
 	"context"
 	"errors"
-	"iter"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -23,7 +22,7 @@ type streamForeverProvider struct{ thinkingOnly bool }
 
 func (p streamForeverProvider) Name() string { return "stream-forever" }
 
-func (p streamForeverProvider) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p streamForeverProvider) Complete(ctx context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
@@ -41,7 +40,7 @@ func (p streamForeverProvider) Complete(ctx context.Context, _ llm.CompletionReq
 			case <-ticker.C:
 			}
 		}
-	}, nil
+	}
 }
 
 func TestRunner_IterationTimeoutBoundsStreamingGeneration(t *testing.T) {
@@ -59,6 +58,7 @@ func TestRunner_IterationTimeoutBoundsStreamingGeneration(t *testing.T) {
 		go func() {
 			done <- r.Run(t.Context(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
 		}()
+		// Advance synctest's fake clock to the configured iteration deadline.
 		time.Sleep(200 * time.Millisecond)
 		synctest.Wait()
 		res := <-done
@@ -93,7 +93,7 @@ type thinkThenAnswerProvider struct{ calls atomic.Int32 }
 
 func (p *thinkThenAnswerProvider) Name() string { return "think-then-answer" }
 
-func (p *thinkThenAnswerProvider) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *thinkThenAnswerProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		p.calls.Add(1)
 		for range 5 {
@@ -102,7 +102,7 @@ func (p *thinkThenAnswerProvider) Complete(_ context.Context, _ llm.CompletionRe
 			}
 		}
 		yield(llm.CompletionChunk{Content: "here is the answer"}, nil)
-	}, nil
+	}
 }
 
 // TestRunner_ThinkingBudgetSparesHealthyTurn confirms a turn that reasons

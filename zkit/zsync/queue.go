@@ -76,36 +76,38 @@ func (q *Queue[T]) PopContext(ctx context.Context) (T, error) {
 	}
 
 	q.mu.Lock()
-	defer q.mu.Unlock()
 
 	if len(q.items) > 0 || q.closed {
-		return q.popLocked()
+		item, err := q.popLocked()
+		q.mu.Unlock()
+		return item, err
 	}
 
-	// Spin up a single watcher for the lifetime of this Pop. When ctx
-	// fires it broadcasts on the cond so we wake and re-check. This
-	// wakes other waiters too — they re-check their own ctx and go
-	// back to sleep.
-	stop := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			q.mu.Lock()
-			q.cond.Broadcast()
-			q.mu.Unlock()
-		case <-stop:
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		q.mu.Lock()
+		q.cond.Broadcast()
+		q.mu.Unlock()
+		close(done)
+	})
+	finish := func() {
+		q.mu.Unlock()
+		if !stop() {
+			<-done
 		}
-	}()
-	defer close(stop)
+	}
 
 	for len(q.items) == 0 && !q.closed {
 		if err := ctx.Err(); err != nil {
 			var zero T
+			finish()
 			return zero, err
 		}
 		q.cond.Wait()
 	}
-	return q.popLocked()
+	item, err := q.popLocked()
+	finish()
+	return item, err
 }
 
 // TryPop returns immediately. Errors with ErrQueueEmpty when no item

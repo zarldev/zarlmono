@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"testing"
 	"time"
 
@@ -14,21 +13,23 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-type silentProvider struct{}
+type silentProvider struct{ returned chan struct{} }
 
 func (silentProvider) Name() string { return "silent" }
 
-func (silentProvider) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	return func(yield func(llm.CompletionChunk, error) bool) {
+func (p silentProvider) Complete(ctx context.Context, _ llm.CompletionRequest) llm.CompletionStream {
+	return func(func(llm.CompletionChunk, error) bool) {
 		<-ctx.Done()
-	}, nil
+		close(p.returned)
+	}
 }
 
 func TestRun_StreamIdleCause(t *testing.T) {
 	t.Parallel()
 
+	returned := make(chan struct{})
 	r := runner.New(
-		runner.ClientFromProvider(silentProvider{}),
+		runner.ClientFromProvider(silentProvider{returned: returned}),
 		runner.WithTools(tools.NewRegistry()),
 		runner.WithMaxIterations(1),
 		runner.WithIterationTimeout(time.Second),
@@ -40,5 +41,10 @@ func TestRun_StreamIdleCause(t *testing.T) {
 	})
 	if res.Cause != runner.TerminalCauseStreamIdle {
 		t.Errorf("Cause = %q, want %q", res.Cause, runner.TerminalCauseStreamIdle)
+	}
+	select {
+	case <-returned:
+	default:
+		t.Error("Run returned before the idle-canceled provider exited")
 	}
 }

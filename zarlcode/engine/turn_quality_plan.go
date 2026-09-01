@@ -15,6 +15,9 @@ const finalizePlanCorrection = "Have you marked the plan correctly before callin
 
 const verifyAfterChangeCorrection = "The workspace changed after the latest successful verification. Run the narrowest relevant check for the changed code, or explain in the final answer why no executable check applies."
 
+// FinalizePlanCorrection is the corrective prompt used for incomplete updated plans.
+const FinalizePlanCorrection = finalizePlanCorrection
+
 // planAwareTurnQuality composes the production empty-response detector with a
 // zarlcode-specific completion guardrail: if the agent updated the structured
 // plan during this run and then tries to finish with steps still pending or
@@ -28,7 +31,7 @@ type planAwareTurnQuality struct {
 	store        *livePlanStore
 	isPlan       func() bool
 	startVersion uint64
-	evidence     *completionEvidence
+	evidence     *CompletionEvidence
 
 	malformedCorrectionSent bool
 	emptyCorrectionSent     bool
@@ -36,14 +39,12 @@ type planAwareTurnQuality struct {
 	evidenceCorrectionSent  bool
 }
 
-func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool, evidence ...*completionEvidence) runner.TurnQuality {
+// NewPlanAwareTurnQualityWithStore applies plan and completion-evidence quality
+// checks against a structured plan store.
+func NewPlanAwareTurnQualityWithStore(store *LivePlanStore, isPlan func() bool, evidence *CompletionEvidence) runner.TurnQuality {
 	var startVersion uint64
 	if store != nil {
 		_, startVersion = store.Snapshot()
-	}
-	var runEvidence *completionEvidence
-	if len(evidence) > 0 {
-		runEvidence = evidence[0]
 	}
 	return &planAwareTurnQuality{
 		base:         coderunner.DefaultEmptyResponseDetector(),
@@ -51,8 +52,16 @@ func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool, evidence 
 		store:        store,
 		isPlan:       isPlan,
 		startVersion: startVersion,
-		evidence:     runEvidence,
+		evidence:     evidence,
 	}
+}
+
+func newPlanAwareTurnQuality(store *livePlanStore, isPlan func() bool, evidence ...*CompletionEvidence) runner.TurnQuality {
+	var runEvidence *CompletionEvidence
+	if len(evidence) > 0 {
+		runEvidence = evidence[0]
+	}
+	return NewPlanAwareTurnQualityWithStore(store, isPlan, runEvidence)
 }
 
 func (q *planAwareTurnQuality) Inspect(content string, toolCalls []llm.ToolCall) runner.TurnQualityDecision {
@@ -93,7 +102,7 @@ func (q *planAwareTurnQuality) inspectEvidence() runner.TurnQualityDecision {
 	if q.isPlan != nil && q.isPlan() {
 		return runner.TurnQualityDecision{}
 	}
-	snapshot := q.evidence.snapshot()
+	snapshot := q.evidence.Snapshot()
 	if snapshot.LastMutation == 0 || !hasVerifiableCode(snapshot.MutatedPaths) {
 		return runner.TurnQualityDecision{}
 	}
@@ -142,3 +151,14 @@ func planHasIncompleteSteps(plan code.Plan) bool {
 	}
 	return false
 }
+
+// PlanHasIncompleteSteps reports whether any structured plan step is unfinished.
+func PlanHasIncompleteSteps(plan code.Plan) bool { return planHasIncompleteSteps(plan) }
+
+// NewPlanAwareTurnQuality applies plan and completion-evidence quality checks.
+func NewPlanAwareTurnQuality(isPlan func() bool, evidence *CompletionEvidence) runner.TurnQuality {
+	return newPlanAwareTurnQuality(nil, isPlan, evidence)
+}
+
+// VerifyAfterChangeCorrection is the corrective prompt used when code changes lack verification.
+const VerifyAfterChangeCorrection = verifyAfterChangeCorrection

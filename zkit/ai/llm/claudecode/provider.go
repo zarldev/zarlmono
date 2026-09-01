@@ -2,12 +2,12 @@ package claudecode
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"os"
 	"os/exec"
 	"strings"
@@ -30,7 +30,10 @@ const (
 
 // toolCallTypeFunction is the OpenAI-style tool-call discriminator the
 // provider stamps on every emitted tool call.
-const toolCallTypeFunction = "function"
+const (
+	toolCallTypeFunction = "function"
+	claudeToolUseType    = "tool_use"
+)
 
 const (
 	defaultModel   = "sonnet"
@@ -125,45 +128,42 @@ func WithTimeout(timeout time.Duration) options.Option[Provider] {
 // string of llm.LLMProviders.CLAUDECODE.
 func (p *Provider) Name() string { return llm.LLMProviders.CLAUDECODE.String() }
 
-// Complete generates a completion as a native iter.Seq2 — the stream's
-// chunks are yielded directly (errors as the second value), no channel.
-func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+// Complete constructs a fully lazy Claude Code completion stream. OAuth token
+// acquisition, prompt rendering, pipe setup, and process start occur only when
+// the stream is invoked.
+func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
-		stopped := false
-		safeYield := func(chunk llm.CompletionChunk, err error) bool {
-			if stopped {
-				return false
-			}
-			if !yield(chunk, err) {
-				stopped = true
-				return false
-			}
-			return true
+		if cause := context.Cause(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
 		}
-		if err := p.run(ctx, req, safeYield); err != nil && !stopped {
-			safeYield(llm.CompletionChunk{Done: true, FinishReason: "error"}, err)
+		stopped, err := p.run(ctx, req, yield)
+		if err != nil && !stopped {
+			yield(llm.CompletionChunk{}, err)
 		}
-	}, nil
+	}
 }
 
-func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) error {
+func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) (bool, error) {
 	tok, err := p.tokens.Token(ctx)
 	if err != nil {
-		return fmt.Errorf("claudecode: fetch token: %w", err)
+		return false, fmt.Errorf("claudecode: fetch token: %w", err)
 	}
 	if tok.Access == "" {
-		return errors.New("claudecode: empty OAuth token")
+		return false, errors.New("claudecode: empty OAuth token")
 	}
 
 	prompt := buildPrompt(req)
 	if strings.TrimSpace(prompt) == "" {
-		return errors.New("claudecode: empty prompt")
+		return false, errors.New("claudecode: empty prompt")
 	}
 
-	runCtx := ctx
-	cancel := func() {}
+	var runCtx context.Context
+	var cancel context.CancelFunc
 	if p.timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, p.timeout)
+	} else {
+		runCtx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
 
@@ -194,50 +194,54 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("claudecode: stdout pipe: %w", err)
+		return false, fmt.Errorf("claudecode: stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("claudecode: stderr pipe: %w", err)
-	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("claudecode: start %q: %w", p.binaryPath, err)
+		return false, fmt.Errorf("claudecode: start %q: %w", p.binaryPath, err)
 	}
-	stderrDone := readAllAsync(stderr)
 	toolCallState := newToolCallState()
 	usage, ok, parseErr := parseStream(stdout, yield, toolCallState, len(req.Tools) > 0)
+	if !ok || parseErr != nil {
+		cancel()
+	}
 	waitErr := cmd.Wait()
-	stderrText := strings.TrimSpace(string(<-stderrDone))
-	// The consumer broke / cancelled mid-stream; don't yield or report a
-	// terminal subprocess error. Range-over-func panics if iteration continues
-	// after yield returns false, and cmd.Wait may report the cancellation that
-	// was caused by that same early stop.
+	stderrText := strings.TrimSpace(stderr.String())
 	if !ok {
-		return nil
+		return true, nil
+	}
+	if cause := context.Cause(runCtx); cause != nil {
+		return false, cause
 	}
 	if parseErr != nil {
-		return parseErr
+		return false, parseErr
 	}
 	if waitErr != nil {
 		if stderrText != "" {
 			if rle := claudeRateLimitFromStderr(waitErr, stderrText); rle != nil {
-				return rle
+				return false, rle
 			}
-			return fmt.Errorf("claudecode: claude exited: %w: %s", waitErr, stderrText)
+			return false, fmt.Errorf("claudecode: claude exited: %w: %s", waitErr, stderrText)
 		}
-		return fmt.Errorf("claudecode: claude exited: %w", waitErr)
+		return false, fmt.Errorf("claudecode: claude exited: %w", waitErr)
 	}
-	yield(llm.CompletionChunk{Done: true, FinishReason: "stop", Usage: usage}, nil)
-	return nil
-}
-
-func readAllAsync(r io.Reader) <-chan []byte {
-	ch := make(chan []byte, 1)
-	go func() {
-		b, _ := io.ReadAll(r)
-		ch <- b
-	}()
-	return ch
+	finishReason := llm.FinishReasons.STOP
+	if toolCallState.finishReported {
+		finishReason = toolCallState.finishReason
+	}
+	if len(toolCallState.emitted) > 0 {
+		finishReason = llm.FinishReasons.TOOLCALLS
+	}
+	chunk := llm.CompletionChunk{FinishReason: finishReason}
+	if usage != nil {
+		chunk.Usage = *usage
+		chunk.UsageReported = true
+	}
+	if !yield(chunk, nil) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func buildPrompt(req llm.CompletionRequest) string {
@@ -513,8 +517,10 @@ type partialToolCall struct {
 }
 
 type toolCallState struct {
-	byIndex map[int]partialToolCall
-	emitted map[string]bool
+	byIndex        map[int]partialToolCall
+	emitted        map[string]bool
+	finishReason   llm.FinishReason
+	finishReported bool
 }
 
 func newToolCallState() *toolCallState {
@@ -529,7 +535,17 @@ func (s *toolCallState) toolCallsFromLine(line string) []llm.ToolCall {
 	if err := json.Unmarshal([]byte(line), &m); err != nil {
 		return nil
 	}
+	if msg, _ := m["message"].(map[string]any); msg != nil {
+		if raw, ok := msg["stop_reason"].(string); ok {
+			s.finishReason = normalizeClaudeFinishReason(raw)
+			s.finishReported = true
+		}
+	}
 	if m["type"] == eventTypeStreamEvent {
+		ev, _ := m["event"].(map[string]any)
+		if ev == nil {
+			return nil
+		}
 		return s.toolCallsFromStreamEvent(m)
 	}
 	if m["type"] == eventTypeAssistant {
@@ -550,7 +566,7 @@ func (s *toolCallState) toolCallsFromStreamEvent(m map[string]any) []llm.ToolCal
 	switch ev["type"] {
 	case "content_block_start":
 		cb, _ := ev["content_block"].(map[string]any)
-		if cb == nil || cb["type"] != "tool_use" {
+		if cb == nil || cb["type"] != claudeToolUseType {
 			return nil
 		}
 		pt := partialToolCall{
@@ -606,7 +622,7 @@ func (s *toolCallState) toolCallsFromContent(v any) []llm.ToolCall {
 	var calls []llm.ToolCall
 	for i, part := range parts {
 		pm, _ := part.(map[string]any)
-		if pm == nil || pm["type"] != "tool_use" {
+		if pm == nil || pm["type"] != claudeToolUseType {
 			continue
 		}
 		pt := partialToolCall{
@@ -648,6 +664,21 @@ func (s *toolCallState) emit(pt partialToolCall) []llm.ToolCall {
 func stringValue(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func normalizeClaudeFinishReason(reason string) llm.FinishReason {
+	switch reason {
+	case "end_turn", "stop_sequence", "stop":
+		return llm.FinishReasons.STOP
+	case "max_tokens", "model_context_window_exceeded":
+		return llm.FinishReasons.LENGTH
+	case claudeToolUseType, "tool_calls":
+		return llm.FinishReasons.TOOLCALLS
+	case "refusal":
+		return llm.FinishReasons.CONTENTFILTER
+	default:
+		return llm.FinishReasons.UNKNOWN
+	}
 }
 
 func intValue(v any) int {

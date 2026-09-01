@@ -1,33 +1,29 @@
 name: release
 
-# Publishes versioned zarlcode binaries after a `zarlcode/vX.Y.Z` tag is pushed.
-# The canonical operator entrypoint is `.github/workflows/release-dispatch.yml`,
-# which validates inputs and pushes the release tags. This workflow remains the
-# downstream tag-driven publisher for zarlcode assets, checksums, and Homebrew.
-#
-# zarlcode is its own Go module (github.com/zarldev/zarlmono/zarlcode), so it is
-# versioned with submodule-prefixed tags `zarlcode/vX.Y.Z`. The build strips the
-# `zarlcode/` prefix for the binary version and archive names.
-#
-# The archive name is the contract `zarlcode upgrade` relies on:
-#   zarlcode_<version>_<goos>_<goarch>.tar.gz   (unix)
-# using raw GOOS/GOARCH so the client matcher needs no os/arch translation.
+# Publishes zarlcode from an existing annotated zarlcode/vX.Y.Z tag. Manual
+# dispatch is the recovery path when publication infrastructure fails.
 on:
   push:
     tags: ["zarlcode/v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "zarlcode tag to publish, e.g. zarlcode/v0.1.3"
+        description: Existing annotated zarlcode tag, e.g. zarlcode/v0.16.0
         required: true
         type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  GOWORK: "off"
 
 jobs:
   build:
@@ -45,34 +41,43 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag || github.ref }}
-
+          fetch-depth: 0
       - name: setup go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
-      # zarlcode is pure Go (it lives in the non-CGO CI matrix), so every target
-      # cross-compiles from this one linux runner with CGO disabled.
+      - name: validate tagged source
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^zarlcode/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$ ]]; then
+            echo "invalid zarlcode release tag: $TAG" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/$TAG^{tag}" >/dev/null
+          test "$(git rev-list -n1 "$TAG")" = "$(git rev-parse HEAD)"
+          go run ./tools/releasecheck/cmd/releasecheck \
+            -version "${TAG#zarlcode/}" -scope zarlcode >/tmp/release-plan.json
+          while IFS=$'\t' read -r path version; do
+            GOPROXY=https://proxy.golang.org go list -m "$path@$version" >/dev/null
+          done < <(jq -r '.pins[] | [.path, .version] | @tsv' /tmp/release-plan.json)
       - name: build and package
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#zarlcode/}"   # zarlcode/v1.2.3 -> v1.2.3
-          ldflags="-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version=${VERSION}"
-          bin="zarlcode"
-          mkdir -p dist
-          go build -trimpath -ldflags "${ldflags}" -o "dist/${bin}" ./zarlcode/cmd
-
-          base="zarlcode_${VERSION}_${GOOS}_${GOARCH}"
-          archive="${base}.tar.gz"
-          tar -czf "dist/${archive}" "dist/${bin}"
-          ( cd dist && sha256sum "${archive}" > "${archive}.sha256" )
-          echo "packaged dist/${archive}"
+          version="${TAG#zarlcode/}"
+          ldflags="-s -w -X github.com/zarldev/zarlmono/zarlcode/version.version=${version}"
+          package_dir="dist/package"
+          mkdir -p "$package_dir"
+          go build -C zarlcode -trimpath -ldflags "$ldflags" \
+            -o "$GITHUB_WORKSPACE/$package_dir/zarlcode" ./cmd
+          archive="zarlcode_${version}_${GOOS}_${GOARCH}.tar.gz"
+          tar -C "$package_dir" -czf "dist/$archive" zarlcode
+          (cd dist && sha256sum "$archive" > "$archive.sha256")
+          test "$(tar -tzf "dist/$archive")" = zarlcode
       - name: upload build artifact
         uses: actions/upload-artifact@v7
         with:
@@ -95,61 +100,120 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
       - name: setup go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
+      - name: validate tagged source
+        run: |
+          set -euo pipefail
+          git rev-parse --verify "refs/tags/$TAG^{tag}" >/dev/null
+          test "$(git rev-list -n1 "$TAG")" = "$(git rev-parse HEAD)"
       - name: download build artifacts
         uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
-
-      # Aggregate the per-target sha256 lines into a single checksums.txt that
-      # the upgrade client downloads to verify whichever archive it pulled.
-      - name: assemble checksums
+      - name: validate artifacts and assemble checksums
         run: |
           set -euo pipefail
           cd artifacts
-          cat *.sha256 > checksums.txt
-          rm -f *.sha256
-          echo "release assets:"
-          ls -1
+          version="${TAG#zarlcode/}"
+          expected=(
+            "zarlcode_${version}_darwin_amd64.tar.gz"
+            "zarlcode_${version}_darwin_arm64.tar.gz"
+            "zarlcode_${version}_linux_amd64.tar.gz"
+            "zarlcode_${version}_linux_arm64.tar.gz"
+          )
+          mapfile -t archives < <(printf '%s\n' *.tar.gz | sort)
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${archives[@]}")
+          for archive in "${archives[@]}"; do
+            test -f "$archive.sha256"
+            test "$(tar -tzf "$archive")" = zarlcode
+            grep -Fx "$(sha256sum "$archive")" "$archive.sha256" >/dev/null
+          done
+          cat ./*.sha256 | sort -k2 > checksums.txt
+          test "$(wc -l < checksums.txt)" -eq 4
+          test "$(awk '{print $2}' checksums.txt | sort -u | wc -l)" -eq 4
+          rm ./*.sha256
 
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          tar -xzf "zarlcode_${version}_linux_amd64.tar.gz" -C "$tmpdir"
+          test "$("$tmpdir/zarlcode" -version)" = "$version"
+      - name: attest release artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            artifacts/*.tar.gz
       - name: publish github release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The release keeps the full submodule tag; the title is the bare version.
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --clobber \
-              artifacts/*.tar.gz \
-              artifacts/checksums.txt
+          expected_names=$(printf '%s\n' artifacts/*.tar.gz artifacts/checksums.txt | xargs -n1 basename | sort)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            actual_names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' | sort)
+            unexpected=$(comm -13 <(printf '%s\n' "$expected_names") <(printf '%s\n' "$actual_names"))
+            if [ -n "$unexpected" ]; then
+              echo "existing release contains unexpected assets:" >&2
+              echo "$unexpected" >&2
+              exit 1
+            fi
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+              artifacts/*.tar.gz artifacts/checksums.txt
           else
-            gh release create "${TAG}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "zarlcode ${TAG#zarlcode/}" \
-              --generate-notes \
-              artifacts/*.tar.gz \
-              artifacts/checksums.txt
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "zarlcode ${TAG#zarlcode/}" --generate-notes \
+              artifacts/*.tar.gz artifacts/checksums.txt
           fi
-
-      - name: generate homebrew formula
+          body=$(awk -v heading="## [$TAG]" '
+            index($0, heading) == 1 { capture=1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md)
+          if [ -z "${body//[[:space:]]/}" ]; then
+            echo "missing changelog body for $TAG" >&2
+            exit 1
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$body"
+          release_url=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
+          printf '## GitHub release\n\n- %s\n' "$release_url" >> "$GITHUB_STEP_SUMMARY"
+      - name: verify published assets
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$tmpdir"
+          diff -u artifacts/checksums.txt "$tmpdir/checksums.txt"
+          version="${TAG#zarlcode/}"
+          expected=$(printf '%s\n' \
+            checksums.txt \
+            "zarlcode_${version}_darwin_amd64.tar.gz" \
+            "zarlcode_${version}_darwin_arm64.tar.gz" \
+            "zarlcode_${version}_linux_amd64.tar.gz" \
+            "zarlcode_${version}_linux_arm64.tar.gz" | sort)
+          actual=$(find "$tmpdir" -maxdepth 1 -type f -printf '%f\n' | sort)
+          diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual")
+          (cd "$tmpdir" && sha256sum -c checksums.txt)
+          for archive in "$tmpdir"/*.tar.gz; do
+            test "$(tar -tzf "$archive")" = zarlcode
+          done
+          tar -xzf "$tmpdir/zarlcode_${version}_linux_amd64.tar.gz" -C "$tmpdir"
+          test "$("$tmpdir/zarlcode" -version)" = "$version"
+      - name: generate homebrew formula
         run: |
           set -euo pipefail
           go run ./tools/genformula/cmd/genformula \
             --version "${TAG#zarlcode/}" \
             --checksums artifacts/checksums.txt \
             --output homebrew/zarlcode.rb
-
       - name: create homebrew tap app token
         id: homebrew-app-token
         if: ${{ env.HOMEBREW_APP_ID != '' && env.HOMEBREW_APP_PRIVATE_KEY != '' }}
@@ -165,34 +229,28 @@ jobs:
         if: ${{ steps.homebrew-app-token.outcome == 'success' && steps.homebrew-app-token.outputs.token != '' }}
         continue-on-error: true
         env:
-          HOMEBREW_TAP_APP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
         run: |
           set -euo pipefail
-          repo_url="https://x-access-token:${HOMEBREW_TAP_APP_TOKEN}@github.com/zarldev/homebrew-tap.git"
-          tmpdir="$(mktemp -d)"
+          tmpdir=$(mktemp -d)
           trap 'rm -rf "$tmpdir"' EXIT
-          git clone "$repo_url" "$tmpdir"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/zarldev/homebrew-tap.git" "$tmpdir"
           mkdir -p "$tmpdir/Formula"
           cp homebrew/zarlcode.rb "$tmpdir/Formula/zarlcode.rb"
-          if git -C "$tmpdir" diff --quiet -- Formula/zarlcode.rb; then
-            echo "homebrew tap already up to date"
-            exit 0
-          fi
+          git -C "$tmpdir" diff --quiet -- Formula/zarlcode.rb && exit 0
           git -C "$tmpdir" config user.name "github-actions[bot]"
           git -C "$tmpdir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$tmpdir" add Formula/zarlcode.rb
           git -C "$tmpdir" commit -m "zarlcode ${TAG#zarlcode/}"
           git -C "$tmpdir" push
-
       - name: update homebrew tap with deploy key
+        id: update-homebrew-tap-key
         if: ${{ steps.update-homebrew-tap-app.outcome != 'success' && env.HOMEBREW_TAP_SSH_KEY != '' }}
-        env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+        continue-on-error: true
         run: |
           set -euo pipefail
-          tmpdir="$(mktemp -d)"
-          keyfile="$tmpdir/homebrew_tap_key"
+          tmpdir=$(mktemp -d)
+          keyfile="$tmpdir/tap_key"
           trap 'rm -rf "$tmpdir"' EXIT
           printf '%s\n' "$HOMEBREW_TAP_SSH_KEY" > "$keyfile"
           chmod 600 "$keyfile"
@@ -200,12 +258,33 @@ jobs:
           git clone git@github.com:zarldev/homebrew-tap.git "$tmpdir/tap"
           mkdir -p "$tmpdir/tap/Formula"
           cp homebrew/zarlcode.rb "$tmpdir/tap/Formula/zarlcode.rb"
-          if git -C "$tmpdir/tap" diff --quiet -- Formula/zarlcode.rb; then
-            echo "homebrew tap already up to date"
-            exit 0
-          fi
+          git -C "$tmpdir/tap" diff --quiet -- Formula/zarlcode.rb && exit 0
           git -C "$tmpdir/tap" config user.name "github-actions[bot]"
           git -C "$tmpdir/tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$tmpdir/tap" add Formula/zarlcode.rb
           git -C "$tmpdir/tap" commit -m "zarlcode ${TAG#zarlcode/}"
           git -C "$tmpdir/tap" push
+      - name: verify homebrew tap publication
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ steps.update-homebrew-tap-app.outcome }}" != "success" ] && \
+             [ "${{ steps.update-homebrew-tap-key.outcome }}" != "success" ]; then
+            echo "neither Homebrew publication path succeeded" >&2
+            exit 1
+          fi
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            gh api repos/zarldev/homebrew-tap/contents/Formula/zarlcode.rb \
+              --jq .content | base64 -d > "$RUNNER_TEMP/remote-zarlcode.rb"
+            if cmp -s homebrew/zarlcode.rb "$RUNNER_TEMP/remote-zarlcode.rb"; then
+              printf '\n## Homebrew\n\n- tap formula matches the generated release formula\n' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Homebrew tap formula does not match this release" >&2
+          echo "app outcome: ${{ steps.update-homebrew-tap-app.outcome }}" >&2
+          echo "key outcome: ${{ steps.update-homebrew-tap-key.outcome }}" >&2
+          exit 1

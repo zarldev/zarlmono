@@ -82,9 +82,9 @@ Use `runnertest.NewClient` for deterministic, fast tests that don't need an LLM.
 func TestFoo(t *testing.T) {
     client := runnertest.NewClient([][]llm.CompletionChunk{
         // Turn 1: The model calls tool A
-        {runnertest.ChunkToolCall("c1", string(ToolA), `{}`), runnertest.ChunkDone()},
+        {runnertest.ChunkToolCall("c1", string(ToolA), `{}`)},
         // Turn 2: The model calls tool B
-        {runnertest.ChunkToolCall("c2", string(ToolB), `{"arg": "value"}`), runnertest.ChunkDone()},
+        {runnertest.ChunkToolCall("c2", string(ToolB), `{"arg": "value"}`)},
     })
     // ... run harness with client
 }

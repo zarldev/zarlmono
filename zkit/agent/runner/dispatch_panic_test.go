@@ -2,7 +2,6 @@ package runner_test
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,7 +42,7 @@ type panicSeqProvider struct {
 	sawPanicMsg bool
 }
 
-func (p *panicSeqProvider) Complete(_ context.Context, req llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (p *panicSeqProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		switch p.iter.Add(1) {
 		case 1:
@@ -62,7 +61,7 @@ func (p *panicSeqProvider) Complete(_ context.Context, req llm.CompletionRequest
 			}
 			yield(llm.CompletionChunk{Content: "recovered, moving on"}, nil)
 		}
-	}, nil
+	}
 }
 
 func (p *panicSeqProvider) Name() string { return "panic-seq" }

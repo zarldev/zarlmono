@@ -136,7 +136,7 @@ func (s *operationalState) recordStatus(sequence uint64, call tools.ToolCall, re
 	defer s.statusMu.Unlock()
 	if call.ToolName == code.ToolNameBash && result != nil {
 		command := strings.TrimSpace(call.Arguments.String("command", ""))
-		if isVerificationCommand(command) {
+		if IsVerificationCommand(command) {
 			for _, effect := range result.ProcessEffects() {
 				if effect.Background {
 					continue

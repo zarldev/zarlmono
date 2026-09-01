@@ -170,35 +170,62 @@ func (s *Store) ListAPIKeyProviders(ctx context.Context, workspace string) ([]st
 
 func sessionSummaryRowToRecord(r gen.ListSessionSummariesByWorkspaceRow) SessionRecord {
 	return SessionRecord{
-		ID:           r.ID,
-		Label:        r.Label,
-		Provider:     r.Provider,
-		Model:        r.Model,
-		MessageCount: int(r.MessageCount),
-		CreatedAt:    time.Unix(r.CreatedAt, 0),
-		UpdatedAt:    time.Unix(r.UpdatedAt, 0),
+		ID:                 r.ID,
+		Label:              r.Label,
+		Provider:           r.Provider,
+		Model:              r.Model,
+		AgentName:          r.AgentName,
+		LabelManual:        r.LabelManual != 0,
+		MessageCount:       int(r.MessageCount),
+		CreatedAt:          time.Unix(r.CreatedAt, 0),
+		UpdatedAt:          time.Unix(r.UpdatedAt, 0),
+		ChangedFileCount:   int(r.ChangedFileCount),
+		PlanCompletedCount: int(r.PlanCompletedCount),
+		PlanTotalCount:     int(r.PlanTotalCount),
+		Pinned:             r.Pinned != 0,
+		PinnedAt:           unixTime(r.PinnedAt.Int64),
+		HasDraft:           r.HasDraft != 0,
 	}
 }
 
 // toSessionRecord maps a generated row to the domain transport type.
 func toSessionRecord(r gen.Session) SessionRecord {
 	return SessionRecord{
-		ID:             r.ID,
-		Workspace:      r.Workspace,
-		Label:          r.Label,
-		AgentName:      r.AgentName,
-		Provider:       r.Provider,
-		Model:          r.Model,
-		HistoryJSON:    []byte(r.HistoryJson),
-		PendingJSON:    []byte(r.PendingJson),
-		LastUsageJSON:  []byte(r.LastUsageJson),
-		DiffBodiesJSON: []byte(r.DiffBodiesJson),
-		PlanJSON:       []byte(r.PlanJson),
-		ToolTraceJSON:  []byte(r.ToolTraceJson),
-		MessageCount:   int(r.MessageCount),
-		CreatedAt:      time.Unix(r.CreatedAt, 0),
-		UpdatedAt:      time.Unix(r.UpdatedAt, 0),
+		ID:                 r.ID,
+		Workspace:          r.Workspace,
+		Label:              r.Label,
+		LabelManual:        r.LabelManual != 0,
+		AgentName:          r.AgentName,
+		Provider:           r.Provider,
+		Model:              r.Model,
+		HistoryJSON:        []byte(r.HistoryJson),
+		PendingJSON:        []byte(r.PendingJson),
+		LastUsageJSON:      []byte(r.LastUsageJson),
+		DiffBodiesJSON:     []byte(r.DiffBodiesJson),
+		PlanJSON:           []byte(r.PlanJson),
+		ToolTraceJSON:      []byte(r.ToolTraceJson),
+		MessageCount:       int(r.MessageCount),
+		CreatedAt:          time.Unix(r.CreatedAt, 0),
+		UpdatedAt:          time.Unix(r.UpdatedAt, 0),
+		ChangedFileCount:   int(r.ChangedFileCount),
+		PlanCompletedCount: int(r.PlanCompletedCount),
+		PlanTotalCount:     int(r.PlanTotalCount),
+		Pinned:             r.Pinned != 0,
+		PinnedAt:           unixTime(r.PinnedAt.Int64),
 	}
+}
+func boolToInt64(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func unixTime(seconds int64) time.Time {
+	if seconds == 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
 }
 
 // orEmpty returns b when non-empty, otherwise the JSON-safe fallback.

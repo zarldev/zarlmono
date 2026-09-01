@@ -1,19 +1,27 @@
 // Package llm defines zkit's provider-neutral language-model contract.
 //
-// The core abstraction is Provider: a deliberately narrow interface with one
-// streaming completion method and one name method. Provider implementations live
-// in subpackages such as openai, anthropic, google, ollama, llamacpp, deepseek,
-// claudecode, and openaicodex. Consumers should depend on this package's
-// request, response, tool-call, response-format, and streaming types rather than
-// on provider SDK DTOs.
+// [Provider] is deliberately narrow: it constructs a fully lazy
+// [CompletionStream] and reports its name. Calling Provider.Complete performs no
+// I/O or other external work; all request preparation, resource acquisition,
+// and operational failures begin only when the returned stream is invoked.
+// Streams are synchronous, directly rangeable, one-shot, and non-concurrent by
+// contract.
 //
-// Streaming providers must own and close the returned channel and emit exactly
-// one terminal CompletionChunk with Done set. On success the terminal chunk
-// carries final usage/finish metadata when available. On failure the terminal
-// chunk carries Error and Done. This lets runners and shells treat stream
-// completion consistently across providers.
+// Requests and their reference-backed fields are borrowed until stream
+// invocation returns. Yielded reference-backed chunk fields are borrowed only
+// until the yield callback returns; retaining consumers use
+// [CompletionChunk.Clone]. Providers and middleware forward synchronously and
+// stop immediately when downstream returns false.
+//
+// Normal stream return is successful completion. A terminal failure is one
+// yield of a zero [CompletionChunk] and a non-nil error, followed immediately by
+// return. No completion chunk contains lifecycle Done or Error fields. Finish
+// reason and usage are optional ordinary metadata, including meaningful
+// metadata-only chunks, and never indicate end-of-stream. Usage presence is
+// represented by CompletionChunk.UsageReported so a reported all-zero value is
+// distinguishable from absence.
 //
 // Richer capabilities, such as model discovery or OAuth-backed construction,
-// should remain separate opt-in interfaces or backend helpers rather than
-// widening Provider.
+// remain separate opt-in interfaces or backend helpers rather than widening
+// Provider.
 package llm

@@ -61,10 +61,11 @@ func NewEditTool(ws Workspace) *EditTool { return &EditTool{ws: ws} }
 // successful edit rewrites the file in place.
 func (t *EditTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameEdit,
-		Description: "Replace exact text in a workspace file. By default old_string must occur exactly once. Set replace_all to substitute every occurrence.",
-		Parameters:  tools.SchemaFor[EditArgs](),
-		Mutates:     true,
+		Name:           ToolNameEdit,
+		Description:    "Replace exact text in a workspace file. By default old_string must occur exactly once. Set replace_all to substitute every occurrence.",
+		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
+		Parameters:     tools.SchemaFor[EditArgs](),
+		Mutates:        true,
 	}
 }
 

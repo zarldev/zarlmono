@@ -152,7 +152,7 @@ func TestRequest_ResponseFormatInjection(t *testing.T) {
 				ResponseFormat: tc.format,
 			}
 
-			seq, err := provider.Complete(t.Context(), req)
+			seq := provider.Complete(t.Context(), req)
 			if err != nil {
 				t.Fatalf("Complete: %v", err)
 			}
@@ -187,7 +187,7 @@ func TestRequest_ReasoningEffortWithToolsDisabledForChatCompletions(t *testing.T
 		t.Fatalf("NewProvider: %v", err)
 	}
 
-	seq, err := provider.Complete(t.Context(), llm.CompletionRequest{
+	seq := provider.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},
 		Stream:   true,
 		Thinking: llm.ThinkingConfig{Enabled: true},
@@ -200,9 +200,6 @@ func TestRequest_ReasoningEffortWithToolsDisabledForChatCompletions(t *testing.T
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
 	for range seq {
 	}
 

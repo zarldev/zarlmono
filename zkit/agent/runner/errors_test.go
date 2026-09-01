@@ -56,8 +56,8 @@ func TestErr_Compact_IsErrCompact(t *testing.T) {
 	// the compactor is consulted), then text-only.
 	prov := &fakeProvider{
 		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("a", "echo", `{}`), chunkDone()},
-			{chunkText("ok"), chunkDone()},
+			{chunkToolCall("a", "echo", `{}`)},
+			{chunkText("ok")},
 		},
 	}
 	reg := newRegistry(stubTool{name: "echo"})

@@ -68,11 +68,7 @@ func TestTraceHook_FiresForEveryRetryAttempt(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	traces := make(chan zhttp.TraceTimings, 2)
-	p := zhttp.DefaultRetryPolicy()
-	p.MaxAttempts = 2
-	p.InitialBackoff = time.Millisecond
-	p.MaxBackoff = time.Millisecond
-	p.JitterFactor = 0
+	p := zhttp.NewRetryPolicy(2, time.Millisecond, time.Millisecond, zhttp.NoRetryJitter)
 	c := zhttp.NewClient(
 		zhttp.WithRetryPolicy(p),
 		zhttp.WithTraceHook(func(_ context.Context, _ *http.Request, timing zhttp.TraceTimings) {

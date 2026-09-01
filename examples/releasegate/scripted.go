@@ -7,29 +7,29 @@ import (
 
 // defaultScript returns the canned tool-call turns for -scripted mode.
 // Each entry is one runner iteration: the tool call(s) the model would
-// emit followed by a terminal chunk.  The script intentionally makes
+// emit before that iteration ends. The script intentionally makes
 // mistakes (early publish, missing field, weak notes) so the guardrails
 // can demonstrate their corrective behavior.
 func defaultScript() [][]llm.CompletionChunk {
 	return [][]llm.CompletionChunk{
 		// 1. The model tries the dangerous action first. release_ready blocks it.
-		{runnertest.ChunkToolCall("c1", ToolPublish.String(), `{"channel":"production"}`), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c1", ToolPublish.String(), `{"channel":"production"}`)},
 		// 2. The model supplies malformed JSON-shaped args. schema blocks it.
-		{runnertest.ChunkToolCall("c2", ToolSetCheck.String(), `{"name":"tests","ok":true}`), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c2", ToolSetCheck.String(), `{"name":"tests","ok":true}`)},
 		// 3. The model fixes the missing evidence field.
-		{runnertest.ChunkToolCall("c3", ToolSetCheck.String(), `{"name":"tests","ok":true,"evidence":"go test ./... passed"}`), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c3", ToolSetCheck.String(), `{"name":"tests","ok":true,"evidence":"go test ./... passed"}`)},
 		// 4. A post-call guardrail rejects weak notes after the tool writes them.
-		{runnertest.ChunkToolCall("c4", ToolWriteNotes.String(), `{"summary":"ok","risk":"low","rollback":"revert"}`), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c4", ToolWriteNotes.String(), `{"summary":"ok","risk":"low","rollback":"revert"}`)},
 		// 5-6. Finish the release checklist.
-		{runnertest.ChunkToolCall("c5", ToolSetCheck.String(), `{"name":"changelog","ok":true,"evidence":"CHANGELOG.md has v1.2.3 section"}`), runnertest.ChunkDone()},
-		{runnertest.ChunkToolCall("c6", ToolSetCheck.String(), `{"name":"rollback_plan","ok":true,"evidence":"tag previous release and redeploy if needed"}`), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c5", ToolSetCheck.String(), `{"name":"changelog","ok":true,"evidence":"CHANGELOG.md has v1.2.3 section"}`)},
+		{runnertest.ChunkToolCall("c6", ToolSetCheck.String(), `{"name":"rollback_plan","ok":true,"evidence":"tag previous release and redeploy if needed"}`)},
 		// 7. Good notes pass the post-call guardrail and become approved.
-		{runnertest.ChunkToolCall("c7", ToolWriteNotes.String(), `{"summary":"Ships the guarded runner documentation example.","risk":"Low risk because it is documentation-only.","rollback":"Remove the docs page and keep the previous release."}`), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c7", ToolWriteNotes.String(), `{"summary":"Ships the guarded runner documentation example.","risk":"Low risk because it is documentation-only.","rollback":"Remove the docs page and keep the previous release."}`)},
 		// 8. Now the pre-call release gate allows publish; the harness oracle stops.
-		{runnertest.ChunkToolCall("c8", ToolPublish.String(), `{"channel":"production"}`), runnertest.ChunkDone()},
+		{runnertest.ChunkToolCall("c8", ToolPublish.String(), `{"channel":"production"}`)},
 		// 9. If the watcher does not win the race against this fast scripted
 		// runner, let the attempt complete naturally so the oracle can still
 		// verify the published world state.
-		{runnertest.ChunkText("release published to production"), runnertest.ChunkDone()},
+		{runnertest.ChunkText("release published to production")},
 	}
 }

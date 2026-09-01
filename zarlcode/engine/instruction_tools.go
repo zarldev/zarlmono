@@ -94,6 +94,7 @@ func (t *loadInstructionTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:            ToolNameLoadInstruction,
 		WorkspaceAccess: tools.WorkspaceAccesses.READ,
+		WorkspaceScope:  tools.WorkspaceScopeArgument("path"),
 		Description: "Load a nested AGENTS.md / CLAUDE.md instruction file's full body by its " +
 			"workspace-relative path. Use this only when the user asks about a specific module's " +
 			"guidance or after listing instructions to choose one; do not guess paths and do not " +

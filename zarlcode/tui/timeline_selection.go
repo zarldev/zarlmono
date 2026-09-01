@@ -14,20 +14,47 @@ type transcriptSelection struct {
 
 func (tl *timeline) selectionActive() bool { return tl.selection.active }
 
-func (tl *timeline) startSelection() bool {
+func (tl *timeline) startSelection() {
 	if len(tl.items) == 0 {
-		return false
+		return
 	}
 	tl.enterBrowse()
 	line := tl.selectedAbsLine()
 	total := tl.totalLines(tl.lwidth())
 	if total == 0 {
-		return false
+		return
 	}
-	line = clampNonNegative(line, total-1)
+	line = tl.nearestCopyableLine(clampNonNegative(line, total-1), total)
 	tl.selection = transcriptSelection{active: true, anchor: line, head: line}
 	tl.keepSelectionHeadVisible(total)
-	return true
+}
+
+func (tl *timeline) nearestCopyableLine(line, total int) int {
+	starts, _, _ := tl.layoutIndex(tl.lwidth())
+	copyable := func(abs int) bool {
+		for index, it := range tl.items {
+			local := abs - starts[index]
+			if local < 0 {
+				return false
+			}
+			lines := tl.renderItem(it, tl.lwidth())
+			if local < len(lines) {
+				return strings.TrimSpace(cleanTranscriptCopyLine(it, lines[local])) != ""
+			}
+		}
+		return false
+	}
+	for offset := range total {
+		if candidate := line + offset; candidate < total && copyable(candidate) {
+			return candidate
+		}
+		if offset > 0 {
+			if candidate := line - offset; candidate >= 0 && copyable(candidate) {
+				return candidate
+			}
+		}
+	}
+	return line
 }
 
 func (tl *timeline) cancelSelection() { tl.selection = transcriptSelection{} }
@@ -167,7 +194,15 @@ func stripTranscriptRail(line string) string {
 		line = strings.TrimPrefix(line, "⇢ ")
 	}
 	line = strings.TrimPrefix(line, "◷ queued ")
-	return strings.TrimPrefix(line, "▌ ")
+	line = strings.TrimPrefix(line, "▌ ")
+	line = strings.TrimPrefix(line, "│ ")
+	if line == "└─" || line == "├─" {
+		return ""
+	}
+	if strings.HasPrefix(line, "[you]") || strings.HasPrefix(line, "[zarl]") {
+		return ""
+	}
+	return line
 }
 
 func trimBlankEdges(lines []string) []string {
@@ -189,4 +224,42 @@ func clampNonNegative(n, hi int) int {
 		return hi
 	}
 	return n
+}
+
+func transcriptItemText(it item) string {
+	var text string
+	switch value := it.(type) {
+	case *userItem:
+		text = value.text
+	case *queuedUserItem:
+		text = value.text
+	case *assistantItem:
+		text = value.content
+	case *thinkingItem:
+		text = value.text
+	case *noticeItem:
+		text = ansi.Strip(value.text)
+	case *toolItem:
+		text = transcriptToolText(value)
+	case *diffItem:
+		text = value.diff
+	default:
+		lines := it.render(maxTranscriptWidth)
+		for index := range lines {
+			lines[index] = cleanTranscriptCopyLine(it, lines[index])
+		}
+		text = strings.Join(lines, "\n")
+	}
+	return strings.TrimSpace(text)
+}
+
+func transcriptToolText(tool *toolItem) string {
+	header := tool.name
+	if tool.arg != "" {
+		header += " " + tool.arg
+	}
+	if tool.result == "" {
+		return header
+	}
+	return header + "\n\n" + tool.result
 }

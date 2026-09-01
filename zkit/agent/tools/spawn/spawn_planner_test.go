@@ -190,6 +190,20 @@ func TestLLMSpawnPlanner_StripsThinking(t *testing.T) {
 	}
 }
 
+func TestLLMSpawnPlanner_RejectsEmptySuccess(t *testing.T) {
+	srv := httptest.NewServer(rawStreamHandler(""))
+	defer srv.Close()
+
+	planner := newTestPlanner(t, srv.URL)
+	_, err := planner.Plan(t.Context(), spawn.SpawnPlanInput{
+		Prompt:          "x",
+		AvailableAgents: []spawn.AgentCandidate{{Name: "researcher"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "empty response") {
+		t.Fatalf("Plan error = %v, want empty response error", err)
+	}
+}
+
 // TestLLMSpawnPlanner_RejectsEmptyAgentList guards against the
 // nonsensical "constrain me to nothing" call. spawn.Tool gates this
 // out before calling Plan, but the planner defends in depth.

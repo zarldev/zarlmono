@@ -8,7 +8,6 @@ package tui
 
 import (
 	"context"
-	"log/slog"
 	"maps"
 	"strings"
 
@@ -80,7 +79,7 @@ type UI struct {
 
 	// askpass serves sudo -A password requests from bash subprocesses. Nil when
 	// the sudo_askpass setting is off.
-	askpass *askpassServer
+	askpass *AskpassServer
 
 	// prRefreshPending marks that a git/gh tool ran during the live turn, so the
 	// PR card is re-fetched when the turn ends rather than per tool call.
@@ -103,6 +102,16 @@ type UI struct {
 	startupReady       bool
 	startupPrompt      string
 	startupAttachments []llm.ContentPart
+
+	// Draft persistence is driven entirely by the Bubble Tea update loop. Each
+	// composer mutation advances the generation so stale debounce messages are
+	// ignored; at most one store command is in flight at a time.
+	draftGeneration         uint64
+	draftScheduleSuppressed bool
+	sessionPersistQueue     []sessionPersistOp
+	sessionPersistRunning   bool
+	sessionPersistCurrent   *sessionPersistOp
+	sessionPersistDone      chan sessionPersistedMsg
 }
 
 type contextViewTab int
@@ -257,17 +266,26 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 			ctx := m.appContext()
 			selection := prefs.ModelSelection{Provider: prov, Model: model}
 			if err := m.settings.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
-				slog.WarnContext(ctx, "persist model selection", "err", err, "provider", prov, "model", model)
+				m.session.SetErrorToast("model selection: " + err.Error())
+				return
 			}
 		}
 
 		m.session.SetToast("switching to " + prov + " / " + model + "…")
-	}, m.settings)
+	}, m.settings, m.appContext(), func(err error) {
+		m.session.SetErrorToast("reasoning effort: " + err.Error())
+	})
 	m.overlay.push(picker)
 	if _, ok := m.session.ModelCache[current.Name]; !ok {
 		return m.fetchModelsCmd(current.Name)
 	}
 	return nil
+}
+
+// SetModelChoices seeds the model picker's in-memory choices for a provider.
+// Embedders can use it when model discovery has already completed elsewhere.
+func (m *UI) SetModelChoices(provider string, models []string) {
+	m.session.CacheModels(provider, models)
 }
 
 // SetSettings wires the persistence handle so the settings overlay (ctrl+s)
@@ -349,6 +367,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if cmd, ok := m.handleDraftPersistenceMsg(msg); ok {
+		return m, cmd
+	}
 	if _, ok := msg.(mainToastMsg); ok {
 		return m, nil // redraw so the status-bar toast ages out
 	}
@@ -379,11 +400,43 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.toastExpiryCmd()
 	case processKillResultMsg:
 		return m, m.handleProcessKillResult(msg)
+	case introSessionRenamedMsg:
+		m.applyIntroSessionRenamed(msg)
+		return m, nil
+	case introSessionPinnedMsg:
+		m.applyIntroSessionPinned(msg)
+		return m, nil
+	case introSessionDeletedMsg:
+		m.applyIntroSessionDeleted(msg)
+		return m, nil
+	case introSessionDeleteFailedMsg:
+		if m.intro != nil {
+			m.intro.err = msg.Error
+		}
+		return m, nil
+	case introSessionRenameFailedMsg:
+		if m.intro != nil {
+			m.intro.err = msg.Error
+		}
+		return m, nil
+	case introSessionPinFailedMsg:
+		if m.intro != nil {
+			m.intro.err = msg.Error
+		}
+		return m, nil
 	case sessionSaveFailedMsg:
 		m.session.SetErrorToast("session save: " + msg.Error)
 		return m, m.toastExpiryCmd()
 	case sessionClearFailedMsg:
 		m.session.SetErrorToast("clear: " + msg.Error)
+		return m, m.toastExpiryCmd()
+	case clipboardWriteResultMsg:
+		return m, m.applyClipboardWriteResult(msg)
+	case sessionExportedMsg:
+		m.session.SetSuccessToast("exported " + msg.Path)
+		return m, m.toastExpiryCmd()
+	case sessionExportFailedMsg:
+		m.session.SetErrorToast("export: " + msg.Error)
 		return m, m.toastExpiryCmd()
 	case startupReadyMsg:
 		if msg.modelChanged && msg.provider != nil && m.live != nil {
@@ -429,10 +482,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.handleRepointMsg(msg) {
 		return m, m.toastExpiryCmd()
 	}
+	if cmd, ok := m.handleComposerInputMsg(msg); ok {
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		oldTimelineWidth := m.timeline.viewWidth
 		m.width, m.height = msg.Width, msg.Height
 		m.recomputeLayout()
+		m.timeline.reflowBrowse(oldTimelineWidth, m.layout.main.Dx()-scrollbarWidth, m.layout.main.Dy()-2)
 	case tea.ModeReportMsg:
 		// Mirror bubbletea's renderer: when the terminal reports mode 2027
 		// (Unicode core) support, both it and the renderer use grapheme
@@ -443,16 +501,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.widthMethod = ansi.GraphemeWidth
 			}
 		}
-	case tea.KeyPressMsg:
-		cmd := m.handleKey(msg)
-		m.recomputeLayout()
-		return m, cmd
-	case tea.PasteMsg:
-		m.handlePaste(msg.Content)
-		m.recomputeLayout()
-	case tea.ClipboardMsg:
-		m.handlePaste(msg.Content)
-		m.recomputeLayout()
 	}
 	return m, nil
 }

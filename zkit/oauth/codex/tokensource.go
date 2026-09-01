@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
+	"github.com/zarldev/zarlmono/zkit/options"
 	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
@@ -75,21 +76,32 @@ func credFromToken(t openaicodex.Token) Cred {
 // occasional double refreshes don't break anything (each refresh
 // returns a fresh token bundle).
 type tokenSource struct {
-	svc *prefs.Service
+	svc     *prefs.Service
+	refresh func(context.Context, string) (openaicodex.Token, error)
 
 	mu sync.Mutex
+}
+
+// WithTokenRefresh configures the OAuth refresh flow used for expired tokens.
+// It is useful when routing refreshes through a custom OAuth service.
+func WithTokenRefresh(refresh func(context.Context, string) (openaicodex.Token, error)) options.Option[tokenSource] {
+	return func(src *tokenSource) { src.refresh = refresh }
 }
 
 // NewTokenSource constructs the source. The service's wsRoot
 // determines which workspace's row the read prefers; the GLOBAL row
 // is the fallback if the workspace has no pin. Writes go back to the
 // scope the read resolved from.
-//
-// The HTTP client used for token refresh lives inside the
-// [openaicodex] package — tests redirect auth.openai.com via
-// [openaicodex.SetOAuthClientForTesting].
-func NewTokenSource(svc *prefs.Service) *tokenSource {
-	return &tokenSource{svc: svc}
+func NewTokenSource(svc *prefs.Service, opts ...options.Option[tokenSource]) *tokenSource {
+	src := &tokenSource{svc: svc, refresh: refreshAccessToken}
+	for _, opt := range opts {
+		opt(src)
+	}
+	return src
+}
+
+func refreshAccessToken(ctx context.Context, refresh string) (openaicodex.Token, error) {
+	return openaicodex.RefreshAccessToken(ctx, refresh)
 }
 
 // Token implements openaicodex.TokenSource.
@@ -118,7 +130,7 @@ func (s *tokenSource) Token(ctx context.Context) (openaicodex.Token, error) {
 	if tok.Refresh == "" {
 		return openaicodex.Token{}, errors.New("openaicodex: stored credential has no refresh token — re-auth required")
 	}
-	refreshed, err := openaicodex.RefreshAccessToken(ctx, tok.Refresh)
+	refreshed, err := s.refresh(ctx, tok.Refresh)
 	if err != nil {
 		return openaicodex.Token{}, fmt.Errorf("openaicodex: refresh: %w", err)
 	}

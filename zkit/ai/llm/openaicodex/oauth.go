@@ -27,28 +27,28 @@ import (
 	"github.com/zarldev/zarlmono/zkit/zhttp"
 )
 
-// oauthClient is the [zhttp.Client] every token-form POST in this
-// package goes through. zhttp's defaults are right for OAuth token
-// endpoints: 30s whole-request timeout (token POSTs are quick),
-// transport-level dial / TLS / response-header timeouts, and retry
-// with Retry-After honouring on 408 / 429 / 5xx — auth.openai.com
-// emits 429 + Retry-After under throttling, which the previous
-// http.DefaultClient call sites silently dropped.
-//
-// Tests swap this via [SetOAuthClientForTesting] to redirect
-// auth.openai.com onto an httptest server. Don't reassign outside of
-// tests — production code should treat it as effectively const.
-var oauthClient = zhttp.NewClient()
+type oauthConfig struct {
+	client   *zhttp.Client
+	tokenURL string
+}
 
-// SetOAuthClientForTesting replaces the package-level OAuth client and
-// returns a restore func the caller must defer. Test-only — tests
-// build a [zhttp.Client] with [zhttp.WithTransport] pointed at their
-// httptest server so the OAuth token endpoint round-trips through the
-// fake. Production code should never call this.
-func SetOAuthClientForTesting(c *zhttp.Client) func() {
-	prev := oauthClient
-	oauthClient = c
-	return func() { oauthClient = prev }
+// OAuthOption configures OAuth token exchange behavior.
+type OAuthOption func(*oauthConfig)
+
+// WithOAuthEndpoint points OAuth token exchanges at tokenURL using client.
+// It is intended for callers that need a custom OAuth transport or endpoint.
+func WithOAuthEndpoint(client *zhttp.Client, tokenURL string) OAuthOption {
+	return func(config *oauthConfig) {
+		config.client = client
+		config.tokenURL = tokenURL
+	}
+}
+
+func defaultOAuthConfig() oauthConfig {
+	return oauthConfig{
+		client:   zhttp.NewClient(),
+		tokenURL: TokenURL,
+	}
 }
 
 // OAuth constants. These mirror the values the official Codex CLI
@@ -70,6 +70,8 @@ const (
 	// originator marks the request as coming from the rust Codex CLI.
 	// auth.openai.com requires this for the simplified-flow path.
 	originatorCodex = "codex_cli_rs"
+
+	maxTokenResponseSize = 1 << 20 // 1 MiB
 )
 
 // Token is the credential bundle returned by a successful OAuth
@@ -211,42 +213,52 @@ type tokenResponse struct {
 // AccountID is extracted from the access token's JWT body — that
 // extraction is the most likely point of failure for ChatGPT-free
 // OpenAI accounts.
-func ExchangeAuthorizationCode(ctx context.Context, code, verifier string) (Token, error) {
+func ExchangeAuthorizationCode(ctx context.Context, code, verifier string, opts ...OAuthOption) (Token, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("client_id", ClientID)
 	form.Set("code", code)
 	form.Set("code_verifier", verifier)
 	form.Set("redirect_uri", RedirectURI)
-	return postTokenForm(ctx, form)
+	return postTokenForm(ctx, form, opts...)
 }
 
 // RefreshAccessToken trades a refresh token for a new access+refresh
 // pair. The TokenSource layer calls this opportunistically when the
 // current access token is near its expiry.
-func RefreshAccessToken(ctx context.Context, refresh string) (Token, error) {
+func RefreshAccessToken(ctx context.Context, refresh string, opts ...OAuthOption) (Token, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refresh)
 	form.Set("client_id", ClientID)
-	return postTokenForm(ctx, form)
+	return postTokenForm(ctx, form, opts...)
 }
 
 // postTokenForm is the shared POST-and-decode body for both the
 // authorization_code and refresh_token grants. Both endpoints accept
 // the same content-type and return the same response shape.
-func postTokenForm(ctx context.Context, form url.Values) (Token, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, TokenURL, strings.NewReader(form.Encode()))
+func postTokenForm(ctx context.Context, form url.Values, opts ...OAuthOption) (Token, error) {
+	config := defaultOAuthConfig()
+	for _, opt := range opts {
+		opt(&config)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return Token{}, fmt.Errorf("build token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := oauthClient.Do(ctx, req)
+	resp, err := config.client.Do(ctx, req)
 	if err != nil {
 		return Token{}, fmt.Errorf("post token request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponseSize+1))
+	if err != nil {
+		return Token{}, fmt.Errorf("read token response: %w", err)
+	}
+	if len(body) > maxTokenResponseSize {
+		return Token{}, fmt.Errorf("%w: response exceeds 1 MiB", ErrTokenExchange)
+	}
 	if resp.StatusCode/100 != 2 {
 		return Token{}, fmt.Errorf("%w: status %d: %s", ErrTokenExchange, resp.StatusCode, strings.TrimSpace(string(body)))
 	}

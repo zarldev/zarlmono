@@ -522,9 +522,8 @@ func (d *inspector) drawFooter(scr uv.Screen, r uv.Rectangle) {
 
 // BuildInspectorSnapshot builds a read-only snapshot of the runner's state for
 // the inspector overlay. It does not start a run or mutate persistent state.
-func BuildInspectorSnapshot(session *Session, live *engine.LiveRunner, catalog *engine.RuntimeCatalog) InspectorSnapshot {
+func BuildInspectorSnapshot(ctx context.Context, session *Session, live *engine.LiveRunner, catalog *engine.RuntimeCatalog) InspectorSnapshot {
 	s := InspectorSnapshot{}
-	ctx := context.Background()
 	if session != nil && session.EventLog != nil {
 		s.EventLog = session.EventLog.Snapshot()
 		s.ToolSurface = session.Run.toolSurface

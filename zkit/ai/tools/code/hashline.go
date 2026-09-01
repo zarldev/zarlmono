@@ -68,7 +68,8 @@ func (t *ReadFileHLTool) Definition() tools.ToolSpec {
 		WorkspaceAccess: tools.WorkspaceAccesses.READ,
 		Description: "Read a text file with stable line anchors for anchored edits. " +
 			"Each row is LINE:HASH|text, where HASH is a 3/4-character base64 SHA-256 prefix of the displayed line content.",
-		Parameters: tools.SchemaFor[ReadFileHLArgs](),
+		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
+		Parameters:     tools.SchemaFor[ReadFileHLArgs](),
 	}
 }
 
@@ -148,10 +149,11 @@ func NewEditFileHLTool(ws Workspace) *EditFileHLTool { return &EditFileHLTool{ws
 // Definition advertises edit as a mutating line-anchor edit tool.
 func (t *EditFileHLTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameEdit,
-		Description: "Atomically edit one workspace file with line/hash anchors from read. Supports replace/delete and insert before/after. Re-read after a stale-anchor error.",
-		Parameters:  tools.SchemaFor[EditFileHLArgs](),
-		Mutates:     true,
+		Name:           ToolNameEdit,
+		Description:    "Atomically edit one workspace file with line/hash anchors from read. Supports replace/delete and insert before/after. Re-read after a stale-anchor error.",
+		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
+		Parameters:     tools.SchemaFor[EditFileHLArgs](),
+		Mutates:        true,
 	}
 }
 

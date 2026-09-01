@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -43,10 +42,11 @@ type Session struct {
 	ModelCache map[string][]string
 
 	// Persisted session identity.
-	StartedAt time.Time // when this TUI session launched
-	ID        string    // persisted session id, empty until first save
-	Label     string
-	CreatedAt time.Time
+	StartedAt   time.Time // when this TUI session launched
+	ID          string    // persisted session id, empty until first save
+	Label       string
+	LabelManual bool
+	CreatedAt   time.Time
 
 	// Runtime modes and telemetry.
 	PlanMode           bool // PLAN mode (shift+tab): read-only tools, planning prompt
@@ -214,12 +214,14 @@ func (s *Session) CacheModels(provider string, models []string) {
 func (s *Session) ClearIdentity() {
 	s.ID = ""
 	s.Label = ""
+	s.LabelManual = false
 	s.CreatedAt = time.Time{}
 }
 
-func (s *Session) SetIdentity(id, label string, createdAt time.Time) {
+func (s *Session) SetIdentity(id, label string, labelManual bool, createdAt time.Time) {
 	s.ID = id
 	s.Label = label
+	s.LabelManual = labelManual
 	s.CreatedAt = createdAt
 }
 
@@ -227,9 +229,6 @@ func (s *Session) EnsureIdentity(id string, now time.Time) {
 	if s.ID == "" {
 		s.ID = id
 		s.CreatedAt = now
-	}
-	if s.Label == "" {
-		s.Label = s.CreatedAt.Format("2006-01-02 15:04")
 	}
 }
 
@@ -262,20 +261,16 @@ func (s *Session) SetActiveModel(model string) {
 // *backends.ProviderRegistry. Defined consumer-side so the cockpit stays
 // decoupled from the registry's full surface.
 type modelMeta interface {
-	// ResolveCost returns the per-1k USD (input, output) rate, consulting
-	// the live models.dev snapshot between the per-provider override and
-	// the static table; ok=false when the backend isn't metered per token
-	// (local / subscription / unknown).
-	ResolveCost(ctx context.Context, provider, model string) (float64, float64, bool)
+	// ResolveCostCached returns the per-1k USD (input, output) rate without
+	// performing I/O on the Bubble Tea update path.
+	ResolveCostCached(provider, model string) (float64, float64, bool)
 	IsLocal(provider string) bool
 	IsSubscription(provider string) bool
 }
 
-// SetModelMeta wires the registry-backed resolver and refreshes the basis.
-// Called once when settings open; nil leaves the cost basis at its defaults.
+// SetModelMeta wires model metadata for cost resolution and pricing display.
 func (s *Session) SetModelMeta(m modelMeta) {
 	s.meta = m
-	s.refreshCostBasis()
 }
 
 // refreshCostBasis recomputes the cockpit's per-token cost and provider
@@ -288,15 +283,7 @@ func (s *Session) refreshCostBasis() {
 	}
 	s.Run.local = s.meta.IsLocal(s.Provider)
 	s.Run.subscription = s.meta.IsSubscription(s.Provider)
-	// The models.dev snapshot is pre-warmed and file-cached at startup, so
-	// this is normally an instant cache hit. The short timeout is a
-	// cold-start backstop: if the very first refresh races the warm
-	// goroutine, we degrade to an unmetered basis rather than block the UI
-	// on an HTTP fetch — the next refresh (on a provider/model change)
-	// picks up the now-warm cache.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if in, out, ok := s.meta.ResolveCost(ctx, s.Provider, s.Model); ok {
+	if in, out, ok := s.meta.ResolveCostCached(s.Provider, s.Model); ok {
 		s.Run.inCostPer1k, s.Run.outCostPer1k = in, out
 	} else {
 		s.Run.inCostPer1k, s.Run.outCostPer1k = 0, 0
@@ -305,12 +292,10 @@ func (s *Session) refreshCostBasis() {
 
 func (s *Session) SetProviderDisplay(name string) {
 	s.Provider = name
-	s.refreshCostBasis()
 }
 
 func (s *Session) ApplyModelPricing(model string) {
 	s.Model = model
-	s.refreshCostBasis()
 }
 
 func (s *Session) SetPricing(inPer1k, outPer1k float64) {
@@ -340,7 +325,7 @@ func (s *Session) ToastExpiryCmd() tea.Cmd {
 	if s.Toast == "" {
 		return nil
 	}
-	return tea.Tick(mainToastTTL, func(time.Time) tea.Msg { return mainToastMsg{} })
+	return oneShotTimerCmd(mainToastTTL, func(time.Time) tea.Msg { return mainToastMsg{} })
 }
 
 func (s *Session) checkpoints() *Checkpoints {

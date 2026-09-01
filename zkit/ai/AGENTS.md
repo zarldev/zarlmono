@@ -42,7 +42,7 @@ Deliberately narrow:
 
 ```go
 type Provider interface {
-    Complete(ctx context.Context, req CompletionRequest) (iter.Seq2[CompletionChunk, error], error)
+    Complete(ctx context.Context, req CompletionRequest) CompletionStream
     Name() string
 }
 ```
@@ -55,17 +55,19 @@ Repository style, applied throughout:
 
 - **Errors tell a story.** Wrap at every failure point: `fmt.Errorf("context: %w", err)`. Never "failed to …". Log once at the boundary.
 - **Small, emergent interfaces.** Consumer-defined, not design-first. The narrow `Provider` is the model — additions must justify themselves.
-- **No fire-and-forget.** Every goroutine has a defined lifecycle. Streaming providers own the channel they emit on and close it on return.
+- **No fire-and-forget.** Every goroutine has a defined owner, stop condition, and wait path. Completion streams remain synchronous iterators; do not add chunk channels or producer goroutines.
 - **Fakes over mocks.** Use `zkit/ai/llm/providertest` for new provider tests — it bundles the conformance harness and canonical assertions.
 
 ## Tools
 
 Tool handlers take a typed-parameter struct (`tools.SchemaFor[Args]` + `args, err := tools.DecodeArgs[Args](call.Arguments)`) or, for new tools, `tools.NewTyped` so handler logic receives `Args` and returns a typed result — don't reach for `map[string]any` unless the args are genuinely unconstrained. `tools.Error` carries a `Kind` (`Validation`, `NotFound`, `Permission`, `Budget`, `Fatal`); downstream policy (guardrail decomposition, escalation) routes on `Kind`, so tag errors correctly via the constructors. Visibility and execution flow through three interfaces: `Iterable` (enumerate, cheap, no I/O), `Executor` (dispatch a call), and `Source` (both).
 
+Workspace-aware tools declare both `WorkspaceAccess` and a typed `WorkspaceScope`. Use `WorkspaceScopeArgument` for a trusted relative `path`/`root` argument, `WorkspaceScopePatch` for Codex patches, and `WorkspaceScopeFixed` for host-chosen directories. Leave scope at its zero value for opaque or external tools so coordination conservatively covers the workspace root; do not infer scope behavior from tool names or shell text. Coordinated calls wait cancellably with FIFO fairness among overlapping scopes.
+
 ## Testing
 
 - Black-box (`package_test`), table-driven with `t.Run`, `t.Context()` not `context.Background()`.
-- Use `providertest.Suite` + `providertest.Scenario` for a new provider — it covers cancellation, streaming-done, usage reporting, and tool-call surfacing.
+- Use `providertest.Suite` + `providertest.Scenario` for a new provider — it covers full laziness, cancellation, successful EOF and terminal errors, usage/finish metadata, tool-call surfacing, and downstream early stop.
 
 ```bash
 go test -C zkit ./ai/...

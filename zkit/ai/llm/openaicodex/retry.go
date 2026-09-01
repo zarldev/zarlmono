@@ -16,40 +16,20 @@ import (
 // tests with `Retry-After: 0` are deterministic — the production
 // cost on a single-backend retry budget is negligible).
 func defaultRetryPolicy() zhttp.RetryPolicy {
-	policy := zhttp.DefaultRetryPolicy()
-	policy.MaxAttempts = 4
-	policy.InitialBackoff = time.Second
-	policy.MaxBackoff = 30 * time.Second
-	policy.JitterFactor = 0
-	return policy
+	return zhttp.NewRetryPolicy(4, time.Second, 30*time.Second, zhttp.NoRetryJitter)
 }
 
-// WithRetryPolicy tunes how aggressively the provider retries
-// transient HTTP failures. maxAttempts <= 1 disables retries; values
-// over 8 are clamped to 8 to keep a runaway server-side outage from
-// pinning a goroutine for minutes. Retryable status codes follow
-// the [zhttp] defaults: 408, 429, 500, 502, 503, 504 — the
-// principled "transient" set rather than blanket 5xx (501 / 505 are
-// non-transient configuration faults and shouldn't be retried).
+// WithRetryPolicy tunes how aggressively the provider retries transient HTTP
+// failures. maxAttempts must be between 1 and 8 inclusive, base must be
+// positive, and baseCap must be at least base. Invalid values panic when the
+// option is applied. Retryable status codes follow the [zhttp] defaults: 408,
+// 429, 500, 502, 503, and 504.
 func WithRetryPolicy(maxAttempts int, base, baseCap time.Duration) options.Option[Provider] {
 	return func(p *Provider) {
-		if maxAttempts < 1 {
-			maxAttempts = 1
-		}
 		if maxAttempts > 8 {
-			maxAttempts = 8
+			panic("openaicodex: retry policy max attempts must not exceed 8")
 		}
-		if base <= 0 {
-			base = time.Second
-		}
-		if baseCap < base {
-			baseCap = base
-		}
-		policy := defaultRetryPolicy()
-		policy.MaxAttempts = maxAttempts
-		policy.InitialBackoff = base
-		policy.MaxBackoff = baseCap
-		p.client = newCodexClient(policy)
+		p.retryPolicy = zhttp.NewRetryPolicy(maxAttempts, base, baseCap, zhttp.NoRetryJitter)
 	}
 }
 
@@ -57,5 +37,5 @@ func WithRetryPolicy(maxAttempts int, base, baseCap time.Duration) options.Optio
 // immediately. Tests use this to avoid waiting through exponential
 // backoff when the failure is the point of the test.
 func WithNoRetry() options.Option[Provider] {
-	return func(p *Provider) { p.client = newCodexClient(zhttp.NoRetry()) }
+	return func(p *Provider) { p.retryPolicy = zhttp.RetryPolicy{} }
 }

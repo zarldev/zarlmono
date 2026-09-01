@@ -7,7 +7,7 @@
 // Typical use:
 //
 //	client := runnertest.NewClient([][]llm.CompletionChunk{
-//	    {runnertest.ChunkText("done"), runnertest.ChunkDone()},
+//	    {runnertest.ChunkText("done")},
 //	})
 //	sink := runnertest.NewSink()
 //	r := runner.New(client, registry, runner.WithSink(sink))
@@ -24,7 +24,6 @@ package runnertest
 import (
 	"context"
 	"fmt"
-	"iter"
 	"sync"
 	"time"
 
@@ -54,23 +53,25 @@ func NewClient(turns [][]llm.CompletionChunk) *Client {
 // Complete replays the next scripted turn's chunks in order; once the
 // script is exhausted it errors with the call number, so a runaway loop
 // fails loudly instead of hanging.
-func (c *Client) Complete(_ context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
-	c.mu.Lock()
-	if c.calls >= len(c.turns) {
-		c.mu.Unlock()
-		return nil, fmt.Errorf("runnertest.Client: out of scripted turns (call #%d)", c.calls+1)
-	}
-	chunks := c.turns[c.calls]
-	c.calls++
-	c.mu.Unlock()
-
+func (c *Client) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
+		c.mu.Lock()
+		if c.calls >= len(c.turns) {
+			call := c.calls + 1
+			c.mu.Unlock()
+			yield(llm.CompletionChunk{}, fmt.Errorf("runnertest.Client: out of scripted turns (call #%d)", call))
+			return
+		}
+		chunks := c.turns[c.calls]
+		c.calls++
+		c.mu.Unlock()
+
 		for _, ch := range chunks {
 			if !yield(ch, nil) {
 				return
 			}
 		}
-	}, nil
+	}
 }
 
 // CallCount returns the number of Complete calls made so far. Useful
@@ -83,8 +84,7 @@ func (c *Client) CallCount() int {
 
 // --- Chunk constructors ---
 
-// ChunkText returns a CompletionChunk carrying the given content
-// (Done: false). Use for streamed-text turns.
+// ChunkText returns a CompletionChunk carrying the given content.
 func ChunkText(text string) llm.CompletionChunk {
 	return llm.CompletionChunk{Content: text}
 }
@@ -103,11 +103,6 @@ func ChunkToolCall(id, name, args string) llm.CompletionChunk {
 			},
 		}},
 	}
-}
-
-// ChunkDone returns a terminal CompletionChunk (Done: true).
-func ChunkDone() llm.CompletionChunk {
-	return llm.CompletionChunk{Done: true}
 }
 
 // --- Tool ---
@@ -154,6 +149,8 @@ type Sink struct {
 	mu          sync.Mutex
 	contents    []runner.Content
 	starts      []runner.ToolStarted
+	waitStarts  []runner.WorkspaceWaitStarted
+	waitEnds    []runner.WorkspaceWaitEnded
 	completes   []runner.ToolCompleted
 	fails       []runner.ToolFailed
 	convStart   []runner.ConversationStarted
@@ -178,6 +175,20 @@ func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.starts = append(s.starts, e)
+}
+
+// OnWorkspaceWaitStarted appends e to the wait-start slice under the mutex.
+func (s *Sink) OnWorkspaceWaitStarted(e runner.WorkspaceWaitStarted) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.waitStarts = append(s.waitStarts, e)
+}
+
+// OnWorkspaceWaitEnded appends e to the wait-end slice under the mutex.
+func (s *Sink) OnWorkspaceWaitEnded(e runner.WorkspaceWaitEnded) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.waitEnds = append(s.waitEnds, e)
 }
 
 // OnToolCompleted appends e to the completes slice under the mutex.
@@ -244,6 +255,40 @@ func (s *Sink) ContentText() string {
 		sb = append(sb, c.Delta...)
 	}
 	return string(sb)
+}
+
+// WorkspaceWaitStartedCount returns the number of wait-start events received.
+func (s *Sink) WorkspaceWaitStartedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.waitStarts)
+}
+
+// WorkspaceWaitEndedCount returns the number of wait-end events received.
+func (s *Sink) WorkspaceWaitEndedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.waitEnds)
+}
+
+// FirstWorkspaceWaitStarted returns the first wait-start event, if any.
+func (s *Sink) FirstWorkspaceWaitStarted() (runner.WorkspaceWaitStarted, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.waitStarts) == 0 {
+		return runner.WorkspaceWaitStarted{}, false
+	}
+	return s.waitStarts[0], true
+}
+
+// FirstWorkspaceWaitEnded returns the first wait-end event, if any.
+func (s *Sink) FirstWorkspaceWaitEnded() (runner.WorkspaceWaitEnded, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.waitEnds) == 0 {
+		return runner.WorkspaceWaitEnded{}, false
+	}
+	return s.waitEnds[0], true
 }
 
 // ToolStartedCount returns the number of OnToolStarted events received.

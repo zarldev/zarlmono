@@ -122,7 +122,7 @@ out, state, err := run.InvokeState(ctx, input)
 
 Conditional routes can loop or branch, and compiled workflows can be
 wrapped as tools for an agent. `Runnable.Sink` emits workflow lifecycle
-and per-node events for UIs and trace exporters.
+and per-node events for UIs and other observers.
 
 ## Checkpoints and HITL
 

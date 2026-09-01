@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"testing"
 
@@ -57,13 +56,13 @@ type qualityBlockingClient struct {
 	release chan struct{}
 }
 
-func (c *qualityBlockingClient) Complete(ctx context.Context, _ llm.CompletionRequest) (iter.Seq2[llm.CompletionChunk, error], error) {
+func (c *qualityBlockingClient) Complete(ctx context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
 		close(c.started)
 		select {
 		case <-c.release:
-			yield(llm.CompletionChunk{Content: "summary", Done: true}, nil)
+			yield(llm.CompletionChunk{Content: "summary"}, nil)
 		case <-ctx.Done():
 		}
-	}, nil
+	}
 }

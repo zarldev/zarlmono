@@ -62,7 +62,6 @@ type invocation struct {
 	agentLoaded bool
 	notices     []string
 	mode        SpawnMode
-	lease       tools.WorkspaceLease
 }
 
 type task struct {
@@ -128,13 +127,7 @@ func WithMaxRuntime(timeout time.Duration) options.Option[Group] {
 
 // Start records inv as RUNNING before starting its owned goroutine.
 func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error) {
-	if inv.target == nil {
-		return TaskSnapshot{}, errors.New("agent task target is nil")
-	}
 	id := TaskID(inv.spec.ID)
-	if id == "" {
-		return TaskSnapshot{}, errors.New("agent task id is empty")
-	}
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -180,8 +173,9 @@ func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error)
 
 func (g *Group) run(t *task, ctx context.Context, inv invocation) {
 	defer g.wg.Done()
-	defer inv.lease.Release()
-	defer t.cancel()
+	defer func() {
+		t.cancel()
+	}()
 	res := runChild(ctx, inv)
 
 	summary := strings.TrimSpace(res.FinalContent)
@@ -260,6 +254,23 @@ func (g *Group) Await(ctx context.Context, taskID TaskID) (TaskSnapshot, error) 
 	select {
 	case <-t.done:
 		return g.observeTask(t, taskID)
+	case <-ctx.Done():
+		return TaskSnapshot{}, ctx.Err()
+	}
+}
+
+// Wait waits for taskID to reach a terminal state without marking its result
+// observed. Cancelling ctx interrupts only the wait; it never cancels the task.
+func (g *Group) Wait(ctx context.Context, taskID TaskID) (TaskSnapshot, error) {
+	g.mu.RLock()
+	t, ok := g.tasks[taskID]
+	g.mu.RUnlock()
+	if !ok {
+		return TaskSnapshot{}, fmt.Errorf("%w: %q", ErrTaskNotFound, taskID)
+	}
+	select {
+	case <-t.done:
+		return g.Peek(taskID)
 	case <-ctx.Done():
 		return TaskSnapshot{}, ctx.Err()
 	}
@@ -430,13 +441,12 @@ func resolveTaskID(group *Group, args tools.ToolParameters, preferRunning bool) 
 	if preferRunning {
 		var running TaskID
 		for _, task := range tasks {
-			if task.State != AgentTaskStates.RUNNING {
-				continue
+			if task.State == AgentTaskStates.RUNNING {
+				if running != "" {
+					return "", tools.Validation("agent task", "task_id is required because multiple tasks are running; call list_agent_tasks to recover it")
+				}
+				running = task.ID
 			}
-			if running != "" {
-				return "", tools.Validation("agent task", "task_id is required because multiple tasks are running; call list_agent_tasks to recover it")
-			}
-			running = task.ID
 		}
 		if running != "" {
 			return running, nil
