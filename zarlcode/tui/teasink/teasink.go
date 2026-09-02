@@ -10,6 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -67,10 +69,11 @@ type Sink struct {
 	// Pump state. msgs is the buffered hand-off channel; the pump
 	// goroutine reads from msgs and calls the current send function.
 	// stop signals the pump to exit. started gates pump creation
-	// (set true on the first non-nil SetSend), closeOnce protects
+	// done closes when the owned pump goroutine exits; closeOnce protects
 	// Close from double-close panic.
 	msgs      chan tea.Msg
 	stop      chan struct{}
+	done      chan struct{}
 	started   atomic.Bool
 	closeOnce sync.Once
 
@@ -125,6 +128,7 @@ func New(send func(tea.Msg)) *Sink {
 		pending: make(map[contentKey]string),
 		msgs:    make(chan tea.Msg, pumpBuffer),
 		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 	if send != nil {
 		s.SetSend(send)
@@ -146,14 +150,18 @@ func (s *Sink) SetSend(send func(tea.Msg)) {
 	s.startPump()
 }
 
-// Close shuts down the pump goroutine. Idempotent. Callers should
-// invoke Close after the bubbletea program has exited so the pump
-// can drain any remaining messages and exit cleanly. After Close,
-// subsequent event methods silently drop their input.
+// Close shuts down the pump goroutine and waits for it to exit. Idempotent.
+// Pending messages are intentionally discarded because Close runs only after
+// the bubbletea program has exited; callers that need delivery use [Sink.Drain]
+// before program teardown. Subsequent event methods silently drop their input.
 func (s *Sink) Close() {
 	s.closeOnce.Do(func() {
 		close(s.stop)
+		if !s.started.Load() {
+			close(s.done)
+		}
 	})
+	<-s.done
 }
 
 func (s *Sink) startPump() {
@@ -168,6 +176,7 @@ func (s *Sink) startPump() {
 // during program teardown) is recovered so a single bad dispatch
 // can't kill the pump and back up subsequent events.
 func (s *Sink) pump() {
+	defer close(s.done)
 	for {
 		select {
 		case <-s.stop:
@@ -382,7 +391,7 @@ func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 		Depth:        e.Depth,
 		ToolID:       e.ToolID,
 		ToolName:     e.ToolName,
-		Parameters:   e.Parameters,
+		Parameters:   tools.CloneParameters(e.Parameters),
 		ParentToolID: e.ParentToolID,
 		Sequence:     e.Sequence,
 	})
@@ -408,7 +417,7 @@ func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 		ToolName:        e.ToolName,
 		Result:          e.Result,
 		FormattedResult: e.FormattedResult,
-		Effects:         e.Effects,
+		Effects:         cloneEffects(e.Effects),
 		Duration:        e.Duration,
 		ParentToolID:    e.ParentToolID,
 		Sequence:        e.Sequence,
@@ -428,7 +437,7 @@ func (s *Sink) OnToolFailed(e runner.ToolFailed) {
 		Abandoned:    e.Abandoned,
 		ParentToolID: e.ParentToolID,
 		Sequence:     e.Sequence,
-		Effects:      e.Effects,
+		Effects:      cloneEffects(e.Effects),
 		Duration:     e.Duration,
 	})
 }
@@ -464,7 +473,7 @@ func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
 		Reason:           e.Reason,
 		Cause:            e.Cause,
 		Error:            e.Error,
-		RateLimit:        e.RateLimit,
+		RateLimit:        cloneRateLimitError(e.RateLimit),
 		Duration:         e.Duration,
 		Iterations:       e.Iterations,
 		TotalUsage:       e.TotalUsage,
@@ -495,7 +504,7 @@ func (s *Sink) OnSteerInjected(e runner.SteerInjected) {
 	s.dispatch(SteerInjectedMsg{
 		TaskID:   string(e.TaskID),
 		Depth:    e.Depth,
-		Messages: e.Messages,
+		Messages: cloneMessages(e.Messages),
 	})
 }
 
@@ -512,6 +521,63 @@ func (s *Sink) OnCompactionApplied(e runner.CompactionApplied) {
 	})
 }
 
+func cloneEffects(effects []tools.Effect) []tools.Effect {
+	if effects == nil {
+		return nil
+	}
+	cloned := make([]tools.Effect, len(effects))
+	for i, effect := range effects {
+		cloned[i] = effect
+		if effect.File != nil {
+			file := *effect.File
+			cloned[i].File = &file
+		}
+		if effect.Process != nil {
+			process := *effect.Process
+			cloned[i].Process = &process
+		}
+	}
+	return cloned
+}
+
+func cloneRateLimitError(rateLimit *llm.RateLimitError) *llm.RateLimitError {
+	if rateLimit == nil {
+		return nil
+	}
+	cloned := *rateLimit
+	return &cloned
+}
+
+func cloneMessages(messages []llm.Message) []llm.Message {
+	if messages == nil {
+		return nil
+	}
+	cloned := make([]llm.Message, len(messages))
+	for i, message := range messages {
+		cloned[i] = message
+		cloned[i].ToolCalls = append([]llm.ToolCall(nil), message.ToolCalls...)
+		if message.Parts != nil {
+			cloned[i].Parts = make([]llm.ContentPart, len(message.Parts))
+			for j, part := range message.Parts {
+				cloned[i].Parts[j] = part
+				if part.Image != nil {
+					image := *part.Image
+					cloned[i].Parts[j].Image = &image
+				}
+				if part.Audio != nil {
+					audio := *part.Audio
+					cloned[i].Parts[j].Audio = &audio
+				}
+				if part.Video != nil {
+					video := *part.Video
+					cloned[i].Parts[j].Video = &video
+				}
+			}
+		}
+	}
+	return cloned
+}
+
 // OnDiagnostic intentionally keeps recovery diagnostics out of the transcript.
 func (s *Sink) OnDiagnostic(runner.Diagnostic) {}
 
@@ -519,9 +585,9 @@ func (s *Sink) OnDiagnostic(runner.Diagnostic) {}
 // PlanStore. Not a runner event — the tool calls it directly — but it flushes
 // pending content first so the plan lands ordered with the surrounding tool
 // events rather than overtaking the streamed text before them.
-func (s *Sink) PlanUpdated(p code.Plan) {
+func (s *Sink) PlanUpdated(taskID string, plan code.Plan) {
 	s.flush()
-	s.dispatch(PlanUpdatedMsg{Plan: p})
+	s.dispatch(PlanUpdatedMsg{TaskID: taskID, Plan: plan})
 }
 
 // PromptDiagnostics forwards prompt resolution diagnostics. Not a runner event;

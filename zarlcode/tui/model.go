@@ -97,21 +97,23 @@ type UI struct {
 	// startupCmd holds non-critical initialization that should begin only after
 	// Bubble Tea can render the first frame. The command is owned and cancelled
 	// by the program context.
-	startupCmd         tea.Cmd
-	startupMCPCmd      tea.Cmd
-	startupReady       bool
-	startupPrompt      string
-	startupAttachments []llm.ContentPart
+	startupCmd                tea.Cmd
+	startupMCPCmd             tea.Cmd
+	startupReady              bool
+	startupPrompt             string
+	startupAttachments        []llm.ContentPart
+	startupAttachmentMetadata []attachmentMetadata
 
 	// Draft persistence is driven entirely by the Bubble Tea update loop. Each
 	// composer mutation advances the generation so stale debounce messages are
 	// ignored; at most one store command is in flight at a time.
 	draftGeneration         uint64
+	transcriptGeneration    uint64
+	transcriptPersisted     uint64
 	draftScheduleSuppressed bool
 	sessionPersistQueue     []sessionPersistOp
 	sessionPersistRunning   bool
 	sessionPersistCurrent   *sessionPersistOp
-	sessionPersistDone      chan sessionPersistedMsg
 }
 
 type contextViewTab int
@@ -344,13 +346,21 @@ func New() *UI {
 // Init implements tea.Model. Non-critical startup work runs as Bubble Tea
 // commands so the first frame is not blocked by external services.
 func (m *UI) Init() tea.Cmd {
-	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd)
+	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd, m.transcriptPersistenceCmd())
 }
 
 // Update implements tea.Model. Resize recomputes the layout rects; esc stops
 // a running turn while ctrl+c handles quitting. Runner events (teasink
 // messages) are handled here too.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	if persist := m.transcriptPersistenceCmd(); persist != nil {
+		cmd = tea.Batch(cmd, persist)
+	}
+	return model, cmd
+}
+
+func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(frameMsg); ok {
 		m.frame++
 		if m.session.Run.Running {
@@ -454,6 +464,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.startupPrompt != "" && m.live != nil {
 			prompt, attachments := m.startupPrompt, m.startupAttachments
 			m.startupPrompt, m.startupAttachments = "", nil
+			m.session.SetSubmittedAttachments(m.startupAttachmentMetadata)
+			m.startupAttachmentMetadata = nil
 			return m, RunFnWithAttachments(m.appContext(), m.live, prompt, attachments)
 		}
 		return m, nil

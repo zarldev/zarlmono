@@ -11,6 +11,8 @@ import (
 	. "github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -252,6 +254,32 @@ func TestSink_Close(t *testing.T) {
 	})
 }
 
+func TestSink_CloseWaitsForPump(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	s := New(func(tea.Msg) {
+		close(entered)
+		<-release
+	})
+	s.OnToolStarted(runner.ToolStarted{TaskID: taskscope.ID("task"), ToolID: "tool", ToolName: "read"})
+	<-entered
+	closed := make(chan struct{})
+	go func() {
+		s.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("Close returned before pump exited")
+	default:
+	}
+	close(release)
+	<-closed
+	s.Close()
+}
+
 func TestSink_Overflows(t *testing.T) {
 	t.Run("increments when pump buffer is full", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -468,7 +496,7 @@ func TestSink_PlanUpdated(t *testing.T) {
 		defer s.Close()
 
 		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "pre-plan"})
-		s.PlanUpdated(code.Plan{
+		s.PlanUpdated("task1", code.Plan{
 			Steps:       []code.PlanStep{{Text: "step1", Status: code.StepStatuses.PENDING}},
 			Explanation: "test plan",
 		})
@@ -485,6 +513,72 @@ func TestSink_PlanUpdated(t *testing.T) {
 			t.Errorf("msg[1]: expected PlanUpdatedMsg, got %T", msgs[1])
 		}
 	})
+}
+
+func TestSink_QueuedEventsOwnMutableValues(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+	send, snap := recordingSend()
+	s := New(func(msg tea.Msg) {
+		once.Do(func() {
+			close(entered)
+			<-release
+		})
+		send(msg)
+	})
+	defer s.Close()
+
+	// Occupy the pump so every event below remains queued while producer-owned
+	// values are mutated after their callbacks return.
+	s.OnThinking(runner.Thinking{TaskID: taskscope.ID("block"), Delta: "block"})
+	<-entered
+
+	args := tools.ToolParameters{"nested": map[string]any{"items": []any{"original"}}}
+	completedEffects := []tools.Effect{tools.NewFileEffect(tools.FileModify, "original.go")}
+	failedEffects := []tools.Effect{tools.NewProcessEffect("original", 0)}
+	rateLimit := &llm.RateLimitError{Message: "original"}
+	messages := []llm.Message{{
+		Content:   "original",
+		ToolCalls: []llm.ToolCall{{ID: "original"}},
+		Parts:     []llm.ContentPart{llm.ImagePartFromURL("original")},
+	}}
+
+	s.OnToolStarted(runner.ToolStarted{Parameters: args})
+	s.OnToolCompleted(runner.ToolCompleted{Effects: completedEffects})
+	s.OnToolFailed(runner.ToolFailed{Effects: failedEffects})
+	s.OnConversationEnded(runner.ConversationEnded{RateLimit: rateLimit})
+	s.OnSteerInjected(runner.SteerInjected{Messages: messages})
+
+	args["nested"].(map[string]any)["items"].([]any)[0] = "mutated"
+	completedEffects[0].File.Path = "mutated.go"
+	failedEffects[0].Process.Command = "mutated"
+	rateLimit.Message = "mutated"
+	messages[0].Content = "mutated"
+	messages[0].ToolCalls[0].ID = "mutated"
+	messages[0].Parts[0].Image.URL = "mutated"
+
+	close(release)
+	s.Drain()
+	msgs := snap()
+	if got := msgs[1].(ToolStartedMsg).Parameters["nested"].(map[string]any)["items"].([]any)[0]; got != "original" {
+		t.Errorf("ToolStarted parameters = %q, want original", got)
+	}
+	if got := msgs[2].(ToolCompletedMsg).Effects[0].File.Path; got != "original.go" {
+		t.Errorf("ToolCompleted effect path = %q, want original.go", got)
+	}
+	if got := msgs[3].(ToolFailedMsg).Effects[0].Process.Command; got != "original" {
+		t.Errorf("ToolFailed effect command = %q, want original", got)
+	}
+	if got := msgs[4].(ConversationEndedMsg).RateLimit.Message; got != "original" {
+		t.Errorf("rate-limit message = %q, want original", got)
+	}
+	steer := msgs[5].(SteerInjectedMsg).Messages[0]
+	if steer.Content != "original" || steer.ToolCalls[0].ID != "original" || steer.Parts[0].Image.URL != "original" {
+		t.Errorf("SteerInjected message retained producer mutation: %#v", steer)
+	}
 }
 
 func TestSink_TimerCoalesceWindow(t *testing.T) {

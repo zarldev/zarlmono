@@ -32,6 +32,27 @@ change to guardrails or tool dispatch is exercised in both an interactive
 TUI and a headless eval harness. The interfaces stay honest because they
 have more than one consumer.
 
+## Build and version
+
+```bash
+go tool task sweeval
+nix/bin/sweeval -version
+```
+
+Release builds report the module tag. Source installs made with `go install ...@version`
+use Go module build metadata; local builds fall back to the VCS revision.
+
+## Verified re-drive telemetry
+
+`--zarlcode-verified-attempts N` with `N > 1` verifies each candidate patch and
+re-drives rejected attempts. The eval database records whether the in-run goal accepted
+an attempt, how many attempts were consumed, and the ordered JSON verifier verdicts.
+
+Rows created before migration `00004` have zero/empty defaults. Those values mean
+verification telemetry was not recorded for the historical row; they must not be
+reported as a newly verified failure. The detailed commands and migration notes live in
+[`swebench-eval/README.md`](https://github.com/zarldev/zarlmono/tree/main/swebench-eval#readme).
+
 ## Where to find it
 
 The source lives at [`swebench-eval/`](https://github.com/zarldev/zarlmono/tree/main/swebench-eval).

@@ -56,7 +56,7 @@ func TestTranscriptReader_RestoreResizeAndScrollKeepsConversationContext(t *test
 			llm.Message{Role: llm.RoleAssistant, ReasoningContent: fmt.Sprintf("reasoning %02d after tool", i), Content: fmt.Sprintf("restored answer %02d", i)},
 		)
 	}
-	ui.RestoreTranscript(history)
+	ui.AddTranscriptMessages(history)
 	var model tea.Model = ui
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	model, _ = model.Update(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'r'})

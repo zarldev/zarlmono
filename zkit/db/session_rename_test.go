@@ -18,7 +18,7 @@ func TestStoreRenameSessionPreservesRecord(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	record := db.SessionRecord{
 		ID: "rename-me", Workspace: "/workspace", Label: "old label",
-		HistoryJSON: []byte(`[{"role":"user","content":"keep me"}]`), MessageCount: 3,
+		ContextJSON: []byte(`[{"role":"user","content":"keep me"}]`), MessageCount: 3,
 		CreatedAt: time.Now().Add(-time.Hour),
 	}
 	if err := store.SaveSession(t.Context(), record); err != nil {
@@ -35,7 +35,7 @@ func TestStoreRenameSessionPreservesRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Label != "" || !after.LabelManual || after.MessageCount != before.MessageCount || string(after.HistoryJSON) != string(before.HistoryJSON) || !after.UpdatedAt.Equal(before.UpdatedAt) {
+	if after.Label != "" || !after.LabelManual || after.MessageCount != before.MessageCount || string(after.ContextJSON) != string(before.ContextJSON) || !after.UpdatedAt.Equal(before.UpdatedAt) {
 		t.Fatalf("renamed session = %#v; before = %#v", after, before)
 	}
 }

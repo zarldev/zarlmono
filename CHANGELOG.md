@@ -5,6 +5,80 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [zkit/v0.18.0] — 2026-09-02
+
+### Added
+
+- Added canonical session transcript persistence with ordered typed entries, monotonic revisions, checksums, atomic SQLite reads and writes, strict integrity validation, interrupted-lifecycle recovery, and cascade deletion.
+- Added repository-managed SQLC `v1.31.1`; regenerate committed database code with `cd zkit/db && go tool sqlc generate` after query or migration changes.
+
+### Changed
+
+- Separated renderer-independent transcript history from compactable provider context, and propagated task/turn ownership through plan and diff events.
+- Tightened context, plan, and Tea sink ownership: compactor and event handoffs are cloned, and the sink now owns and joins its pump goroutine on shutdown.
+- Normalized session storage from `history_json` to `context_json`; session queries explicitly omit the retired `tool_trace_json` column so normalized and mixed historical schemas can be read safely.
+
+### Fixed
+
+- Fixed session resume after migration when the local database no longer contains `tool_trace_json`.
+- Fixed transcript payload and revision validation so malformed or contradictory updates fail atomically.
+
+## [zarlcode/v0.18.0] — 2026-09-02
+
+### Added
+
+- Added a canonical, renderer-independent transcript for user/assistant text, reasoning, tools, diffs, plans, skills, compaction notices, and nested sub-agent lifecycle events.
+- Added durable composer drafts, transcript-backed Markdown export, richer saved-session search/rename/pin/delete controls, command-palette and clipboard actions, terminal notifications, and best-effort sleep inhibition.
+
+### Changed
+
+- Resume verifies transcript revision, checksum, ordering, parent links, and lifecycle states, recovers interrupted entries, then rebuilds the TUI from canonical records. Provider context remains separately compactable.
+- Transcript persistence uses immediate semantic-boundary writes, debounced streaming updates, and save/delete barriers.
+
+### Fixed
+
+- Fixed resumed sessions losing tool activity and other rich timeline state by restoring directly from canonical transcript entries.
+- Fixed session creation followed by resume against normalized databases that do not expose `tool_trace_json`.
+
+### Removed
+
+- Removed the legacy history/tool-trace reconstruction path. Sessions with missing, empty, or corrupt canonical transcripts are rejected rather than resumed with partial reconstructed history.
+
+### Migration notes
+
+- Opening an existing state database applies migrations `00025` and `00026`. Back up `~/.zarlcode/state.db` before first launch if binary rollback may be required; older binaries cannot open the newer schema without restoring that backup.
+
+## [swebench-eval/v0.4.0] — 2026-09-02
+
+### Added
+
+- Added verified re-drive controls with optional prior-thread carryover, official verifier feedback, and persisted `verified`, `attempts`, and ordered `attempt_verdicts` telemetry.
+- Added `sweeval -version` with release ldflags, module metadata, and VCS fallbacks.
+
+### Changed
+
+- Reports distinguish final grader resolution from in-run verified success and label evaluator errors, resolved/unresolved scoring, verified attempts, and unverified attempts deterministically.
+- Historical rows with zero/empty verification fields mean telemetry was not recorded; they do not represent a newly verified failure.
+
+### Fixed
+
+- Fixed result loading so persisted verification telemetry round-trips through `ListResultsForRun`.
+
+### Migration notes
+
+- Migration `00004` adds verification telemetry with backward-compatible defaults. Downgrading removes those columns and their recorded data.
+
+## [examples/v0.5.0] — 2026-09-02
+
+### Added
+
+- Added deterministic runnable examples for application-owned HITL/workflow checkpoint-resume, local MCP discovery/calls/notifications, dynamic tool lifecycle, skill discovery, notification drain, Linux Landlock sandboxing, and JSONL runner/workflow tracing.
+- Added a feature-to-example coverage matrix linking every advertised major capability to runnable code and deeper documentation.
+
+### Changed
+
+- Corrected example commands and clarified which examples need providers, browsers, external services, or Linux Landlock.
+
 ## [zkit/v0.17.0] — 2026-09-01
 
 ### Changed

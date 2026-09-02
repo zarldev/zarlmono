@@ -9,7 +9,7 @@ import (
 
 func TestTimeline_ShowsDiff(t *testing.T) {
 	out := drive(t,
-		teasink.DiffMsg{Path: "parser.go", Diff: "@@ -1,2 +1,2 @@\n-old code\n+new code\n"},
+		teasink.DiffMsg{TaskID: "turn", Path: "parser.go", Diff: "@@ -1,2 +1,2 @@\n-old code\n+new code\n"},
 	)
 	// diffs collapse into a per-iteration edit-group summary by default.
 	if !strings.Contains(out, "edits (1 file)") {

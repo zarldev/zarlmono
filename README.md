@@ -67,7 +67,7 @@ Supported providers: **Anthropic**, **OpenAI**, **DeepSeek**, **Gemini**, **Vert
 | **Plan** | Read-only | Investigate the codebase, propose a strategy — no edits, no shell. |
 | **Build** | Full tool surface | Read, edit, patch, bash, web, MCP, plans, sub-agents — subject to guardrails. |
 
-The TUI streams everything live: model output, tool calls, command results, diffs, plan state, and the file-change log. Sessions persist locally — `zarlcode -continue` picks up right where you left off.
+The TUI streams everything live: model output, tool calls, command results, diffs, plan state, and the file-change log. Sessions persist locally — `zarlcode -continue` picks up right where you left off. Canonical transcripts remain separate from compactable provider context, so compaction does not remove earlier timeline or export content.
 
 See the [interface tour](https://zarldev.github.io/zarlmono/zarlcode-interface/) →
 

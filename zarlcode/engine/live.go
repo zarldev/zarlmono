@@ -21,6 +21,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -44,18 +45,18 @@ const (
 type LiveSink interface {
 	runner.EventSink
 	DiffEvent(diffrecorder.DiffEvent)
-	PlanUpdated(code.Plan)
+	PlanUpdated(taskID string, plan code.Plan)
 }
 
 // planEmitter is the slice of LiveSink the plan store needs.
 type planEmitter interface {
-	PlanUpdated(code.Plan)
+	PlanUpdated(taskID string, plan code.Plan)
 }
 
 type nopLiveSink struct{ runner.NopSink }
 
 func (nopLiveSink) DiffEvent(diffrecorder.DiffEvent) {}
-func (nopLiveSink) PlanUpdated(code.Plan)            {}
+func (nopLiveSink) PlanUpdated(string, code.Plan)    {}
 
 var _ LiveSink = nopLiveSink{}
 
@@ -68,13 +69,13 @@ var _ LiveSink = nopLiveSink{}
 // and the diff recorder — the same core assembly swebench drives, so that
 // shared behaviour can't drift. The surrounding tool surface and the
 // advisory-vs-strict test-edit policy are configured per consumer (interactive
-// is advisory; headless/eval is strict). A conversation threads history across
+// is advisory; headless/eval is strict). A context cache threads model messages across
 // turns, and a pressure-gated compactor keeps long chats inside the window.
 type LiveRunner struct {
-	ws    code.Workspace
-	sink  LiveSink
-	conv  Conversation
-	queue *queueState
+	ws      code.Workspace
+	sink    LiveSink
+	context ContextCache
+	queue   *queueState
 
 	// mu guards the hot-swappable run target. A turn snapshots target under the
 	// lock at start, so an update takes effect on the next turn.
@@ -201,12 +202,13 @@ type LivePlanStore = livePlanStore
 // NewLivePlanStore returns an empty structured plan store.
 func NewLivePlanStore() *LivePlanStore { return newLivePlanStore() }
 
-func (p *livePlanStore) SetPlan(pl code.Plan) {
+func (p *livePlanStore) SetPlan(ctx context.Context, pl code.Plan) {
 	p.mu.Lock()
 	p.plan = clonePlan(pl)
 	p.version++
+	taskID := string(taskscope.IDFrom(ctx))
 	p.mu.Unlock()
-	p.sink.PlanUpdated(pl)
+	p.sink.PlanUpdated(taskID, clonePlan(pl))
 }
 
 func (p *livePlanStore) GetPlan() code.Plan {
@@ -512,29 +514,28 @@ func (l *LiveRunner) popQueuedInput() (llm.Message, bool) {
 	return l.queue.Pop()
 }
 
-// History snapshots the conversation context for persistence.
-func (l *LiveRunner) History() []llm.Message {
+// ContextSnapshot returns a copy of the compactable LLM context cache.
+func (l *LiveRunner) ContextSnapshot() []llm.Message {
 	if l == nil {
 		return nil
 	}
-	return l.conv.Snapshot()
+	return l.context.Snapshot()
 }
 
-// RestoreHistory replaces the conversation context when the intro resumes a
-// saved session (or starts fresh with an empty history).
-func (l *LiveRunner) RestoreHistory(history []llm.Message) {
+// RestoreContext replaces the compactable LLM context cache.
+func (l *LiveRunner) RestoreContext(contextCache []llm.Message) {
 	if l == nil {
 		return
 	}
-	l.conv.restore(history)
+	l.context.restore(contextCache)
 }
 
-// ClearHistory clears the conversation context threaded into the next turn.
-func (l *LiveRunner) ClearHistory() {
+// ClearContext clears the LLM context threaded into the next turn.
+func (l *LiveRunner) ClearContext() {
 	if l == nil {
 		return
 	}
-	l.conv.restore(nil)
+	l.context.restore(nil)
 }
 
 // SetPlanMode toggles PLAN mode on the next dispatch / turn. PLAN restricts
@@ -1105,7 +1106,7 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 		engineName = settings.CompactEngine(ctx)
 		compactProv, compactModel = settings.CompactorProvider(ctx, prov, model)
 	}
-	return l.conv.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l, l.ws.Root()), l.sink)
+	return l.context.compactNow(ctx, buildLiveCompactor(engineName, window, compactProv, compactModel, l, l.ws.Root()), l.sink)
 }
 
 func (l *LiveRunner) RunTurn(ctx context.Context, prompt string) error {
@@ -1143,7 +1144,7 @@ func (l *LiveRunner) beginTurn(ctx context.Context) (context.Context, func(), er
 }
 
 func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, attachments []llm.ContentPart) error {
-	return l.conv.transition(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
+	return l.context.transition(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
 		runCtx, finish, err := l.beginTurn(ctx)
 		if err != nil {
 			return nil, err

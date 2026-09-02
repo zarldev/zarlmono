@@ -80,7 +80,7 @@ func (t *UpdatePlanTool) Definition() tools.ToolSpec {
 // the first empty step or unknown status fails the whole call. On
 // success it replaces the stored plan wholesale and returns per-status
 // counts.
-func (t *UpdatePlanTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+func (t *UpdatePlanTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
 	args, derr := tools.DecodeArgs[UpdatePlanArgs](call.Arguments)
 	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
@@ -106,7 +106,7 @@ func (t *UpdatePlanTool) Execute(_ context.Context, call tools.ToolCall) (*tools
 	}
 
 	plan := Plan{Steps: steps, Explanation: strings.TrimSpace(args.Explanation)}
-	t.store.SetPlan(plan)
+	t.store.SetPlan(ctx, plan)
 
 	// Summary for the tool result: counts per status. Concise — the
 	// model is going to call this often and a fat success message

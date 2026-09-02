@@ -112,6 +112,9 @@ type Session struct {
 	// SkipStartedPrompt suppresses the ConversationStarted user row for a
 	// queued input already rendered while the previous turn was live.
 	SkipStartedPrompt string
+	// SubmittedAttachments carries the human-visible metadata for the next
+	// top-level prompt. Provider payload bytes remain on the runner path.
+	SubmittedAttachments []attachmentMetadata
 }
 
 type toastTone int
@@ -187,6 +190,16 @@ func (s *Session) TogglePlanMode() bool {
 
 func (s *Session) SetSkipStartedPrompt(prompt string) {
 	s.SkipStartedPrompt = prompt
+}
+
+func (s *Session) SetSubmittedAttachments(attachments []attachmentMetadata) {
+	s.SubmittedAttachments = append([]attachmentMetadata(nil), attachments...)
+}
+
+func (s *Session) TakeSubmittedAttachments() []attachmentMetadata {
+	attachments := s.SubmittedAttachments
+	s.SubmittedAttachments = nil
+	return attachments
 }
 
 func (s *Session) SetConfirmQuit(confirm bool) {

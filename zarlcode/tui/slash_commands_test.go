@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -46,11 +47,11 @@ func TestSubmitSlashClearClearsTimelineAndContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	live := engine.NewLiveRunner(nil, ws, "")
-	live.RestoreHistory([]llm.Message{{Role: "user", Content: "remember this"}})
+	live.RestoreContext([]llm.Message{{Role: "user", Content: "remember this"}})
 	m.SetLiveRunner(live)
 	m.SetSessionIdentity("session-id", "label", true, time.Now())
 	typeAndEnter(t, m, "/clear")
-	if len(live.History()) != 0 {
+	if len(live.ContextSnapshot()) != 0 {
 		t.Fatal("history not cleared")
 	}
 	if m.SessionIdentity() != "" {
@@ -60,6 +61,32 @@ func TestSubmitSlashClearClearsTimelineAndContext(t *testing.T) {
 		t.Fatal("toast missing")
 	}
 }
+func TestClearCancelsStartupSubmissionAndAttachments(t *testing.T) {
+	root := t.TempDir()
+	path := root + "/context.txt"
+	if err := os.WriteFile(path, []byte("context"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := code.NewWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := tui.New()
+	m.SetLiveRunner(engine.NewLiveRunner(nil, ws, "test-model"))
+	m.SetStartupReady(false)
+	if err := m.AttachFile(path); err != nil {
+		t.Fatal(err)
+	}
+	m.Submit("later")
+	m.Submit("/clear")
+	if cmd := m.ApplyStartupReady(); cmd != nil {
+		t.Fatal("clear left a startup turn to launch")
+	}
+	if m.StartupPrompt() != "" || !m.CanonicalThread().IsEmpty() {
+		t.Fatalf("clear left pending submission: prompt=%q entries=%#v", m.StartupPrompt(), m.CanonicalThread().Entries())
+	}
+}
+
 func TestSubmitUnknownSlashCommandDoesNotStartRun(t *testing.T) {
 	m := tui.New()
 	called := false

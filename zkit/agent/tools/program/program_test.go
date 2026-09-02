@@ -301,3 +301,48 @@ func TestProgramInvalidEscapeSuggestsRawString(t *testing.T) {
 		t.Fatalf("error = %q, want corrective raw-string guidance", res.Error)
 	}
 }
+
+func TestProgramDescriptionIncludesAllowedToolSignatures(t *testing.T) {
+	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
+		"file_map": {spec: tools.ToolSpec{
+			Name: "file_map",
+			Parameters: tools.SchemaFor[struct {
+				Root    string `json:"root,omitempty"`
+				Pattern string `json:"pattern,omitempty"`
+			}](),
+		}},
+		"grep": {spec: tools.ToolSpec{
+			Name: "grep",
+			Parameters: tools.SchemaFor[struct {
+				Pattern string `json:"pattern"`
+				Path    string `json:"path,omitempty"`
+			}](),
+		}},
+		"write": {spec: tools.ToolSpec{Name: "write", Mutates: true}},
+	}}
+	src, err := program.NewSource(inner, program.WithPolicy(func(spec tools.ToolSpec) bool {
+		return spec.Name == "file_map" || spec.Name == "grep"
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var description string
+	for tool := range src.Tools(t.Context()) {
+		if tool.Definition().Name == program.ToolName {
+			description = tool.Definition().Description
+		}
+	}
+	for _, want := range []string{
+		"Inner tool signatures:",
+		"- file_map(pattern?: string, root?: string)",
+		"- grep(path?: string, pattern: string)",
+	} {
+		if !strings.Contains(description, want) {
+			t.Errorf("description missing %q:\n%s", want, description)
+		}
+	}
+	if strings.Contains(description, "- write(") {
+		t.Fatalf("description exposes denied tool:\n%s", description)
+	}
+}

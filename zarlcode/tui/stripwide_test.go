@@ -13,7 +13,7 @@ import (
 
 func TestTranscriptFallbackStripsWideGraphemes(t *testing.T) {
 	ui := tui.New()
-	ui.RestoreTranscript([]llm.Message{{Role: llm.RoleAssistant, Content: "🌤️ Partly Cloudy\ndone 🎉\n• 19°C\n▌ ✓ ✗ │ ◌ ▎"}})
+	ui.AddTranscriptMessages([]llm.Message{{Role: llm.RoleAssistant, Content: "🌤️ Partly Cloudy\ndone 🎉\n• 19°C\n▌ ✓ ✗ │ ◌ ▎"}})
 	var model tea.Model = ui
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	out := ansi.Strip(model.View().Content)

@@ -13,7 +13,7 @@ import (
 
 func TestAssistantTranscriptRendersMarkdown(t *testing.T) {
 	ui := tui.New()
-	ui.RestoreTranscript([]llm.Message{{
+	ui.AddTranscriptMessages([]llm.Message{{
 		Role:    llm.RoleAssistant,
 		Content: "## Section\n\nsome **bold** words in a paragraph",
 	}})

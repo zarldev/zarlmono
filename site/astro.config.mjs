@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'zarlmono/zkit',
 			description:
-				'A Go toolkit for building AI agents: the runner loop, tools, guardrails, compaction, retrieval, workflows, HITL, and tracing.',
+				'A Go-native agent toolkit and local terminal coding agent: runner, tools, guardrails, compaction, durable SQLite sessions, and canonical transcripts.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/zarldev/zarlmono' },
 			],
@@ -80,11 +80,13 @@ export default defineConfig({
 					],
 				},
 				{ label: 'Examples', slug: 'examples' },
+				{ label: 'Feature coverage', slug: 'feature-coverage' },
 				{
 					label: 'Built with zkit',
 					items: [
 						{ label: 'zarlcode', slug: 'zarlcode' },
 						{ label: 'zarlcode interface', slug: 'zarlcode-interface' },
+						{ label: 'Sessions and transcripts', slug: 'sessions-transcripts' },
 						{ label: 'swebench-eval', slug: 'swebench-eval' },
 					],
 				},

@@ -1,6 +1,7 @@
 package code_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ type recordingStore struct {
 	plans []code.Plan
 }
 
-func (r *recordingStore) SetPlan(p code.Plan) { r.plans = append(r.plans, p) }
+func (r *recordingStore) SetPlan(_ context.Context, p code.Plan) { r.plans = append(r.plans, p) }
 func (r *recordingStore) GetPlan() code.Plan {
 	if len(r.plans) == 0 {
 		return code.Plan{}
@@ -220,6 +221,22 @@ func TestParseStepStatus_Aliases(t *testing.T) {
 		})
 	}
 }
+func TestMemoryPlanStoreOwnsPlanValues(t *testing.T) {
+	t.Parallel()
+
+	store := code.NewMemoryPlanStore()
+	plan := code.Plan{Steps: []code.PlanStep{{Text: "original", Status: code.StepStatuses.PENDING}}}
+	store.SetPlan(t.Context(), plan)
+	plan.Steps[0].Text = "mutated input"
+	got := store.GetPlan()
+	if got.Steps[0].Text != "original" {
+		t.Fatalf("stored plan aliased input: %#v", got)
+	}
+	got.Steps[0].Text = "mutated output"
+	if store.GetPlan().Steps[0].Text != "original" {
+		t.Fatalf("stored plan aliased output: %#v", store.GetPlan())
+	}
+}
 
 func TestMemoryPlanStore_RoundTrip(t *testing.T) {
 	t.Parallel()
@@ -227,7 +244,7 @@ func TestMemoryPlanStore_RoundTrip(t *testing.T) {
 	if !s.GetPlan().IsEmpty() {
 		t.Errorf("fresh store should be empty")
 	}
-	s.SetPlan(code.Plan{Steps: []code.PlanStep{{Text: "x", Status: code.StepStatuses.PENDING}}})
+	s.SetPlan(t.Context(), code.Plan{Steps: []code.PlanStep{{Text: "x", Status: code.StepStatuses.PENDING}}})
 	if s.GetPlan().IsEmpty() {
 		t.Errorf("after SetPlan, should not be empty")
 	}

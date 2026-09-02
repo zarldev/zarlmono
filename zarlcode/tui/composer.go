@@ -571,13 +571,16 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 	m.generateFirstPromptLabel(text)
 	if m.live != nil {
 		attachments := m.attachmentParts()
+		attachmentMetadata := attachmentMetadataOf(m.pendingAttachments)
 		m.pendingAttachments = nil
 		if !m.startupReady {
 			m.startupPrompt = text
 			m.startupAttachments = attachments
+			m.startupAttachmentMetadata = attachmentMetadata
 			m.session.SetToast("finishing startup before the first turn…")
 			return m.toastExpiryCmd(), true
 		}
+		m.session.SetSubmittedAttachments(attachmentMetadata)
 		return RunFnWithAttachments(m.appContext(), m.live, text, attachments), true
 	}
 	if m.runFn != nil {

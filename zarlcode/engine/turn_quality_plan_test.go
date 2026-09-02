@@ -15,7 +15,7 @@ func TestPlanAwareTurnQuality_IgnoresCompletedPlan(t *testing.T) {
 	t.Parallel()
 	store := NewLivePlanStore()
 	q := NewPlanAwareTurnQualityWithStore(store, func() bool { return false }, nil)
-	store.SetPlan(code.Plan{Steps: []code.PlanStep{{Text: "done", Status: code.StepStatuses.COMPLETED}}})
+	store.SetPlan(t.Context(), code.Plan{Steps: []code.PlanStep{{Text: "done", Status: code.StepStatuses.COMPLETED}}})
 
 	if got := q.Inspect("final answer", nil); got.Correction != "" {
 		t.Fatalf("completed plan should not trigger correction, got %q", got.Correction)
@@ -26,7 +26,7 @@ func TestPlanAwareTurnQuality_InjectsWhenRunUpdatedPlanButLeftStepsOpen(t *testi
 	t.Parallel()
 	store := NewLivePlanStore()
 	q := NewPlanAwareTurnQualityWithStore(store, func() bool { return false }, nil)
-	store.SetPlan(code.Plan{Steps: []code.PlanStep{{Text: "work", Status: code.StepStatuses.INPROGRESS}}})
+	store.SetPlan(t.Context(), code.Plan{Steps: []code.PlanStep{{Text: "work", Status: code.StepStatuses.INPROGRESS}}})
 
 	got := q.Inspect("final answer", nil)
 	if got.Correction == "" {
@@ -43,7 +43,7 @@ func TestPlanAwareTurnQuality_InjectsWhenRunUpdatedPlanButLeftStepsOpen(t *testi
 func TestPlanAwareTurnQuality_IgnoresStaleIncompletePlanFromEarlierTurn(t *testing.T) {
 	t.Parallel()
 	store := NewLivePlanStore()
-	store.SetPlan(code.Plan{Steps: []code.PlanStep{{Text: "old", Status: code.StepStatuses.PENDING}}})
+	store.SetPlan(t.Context(), code.Plan{Steps: []code.PlanStep{{Text: "old", Status: code.StepStatuses.PENDING}}})
 	q := NewPlanAwareTurnQualityWithStore(store, func() bool { return false }, nil)
 
 	if got := q.Inspect("final answer", nil); got.Correction != "" {
@@ -55,7 +55,7 @@ func TestPlanAwareTurnQuality_DisabledInPlanMode(t *testing.T) {
 	t.Parallel()
 	store := NewLivePlanStore()
 	q := NewPlanAwareTurnQualityWithStore(store, func() bool { return true }, nil)
-	store.SetPlan(code.Plan{Steps: []code.PlanStep{{Text: "plan step", Status: code.StepStatuses.PENDING}}})
+	store.SetPlan(t.Context(), code.Plan{Steps: []code.PlanStep{{Text: "plan step", Status: code.StepStatuses.PENDING}}})
 
 	if got := q.Inspect("## Plan", nil); got.Correction != "" {
 		t.Fatalf("plan mode should not trigger build-mode completion correction, got %q", got.Correction)

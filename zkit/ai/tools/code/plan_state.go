@@ -1,5 +1,7 @@
 package code
 
+import "context"
+
 // StepStatus marks where a plan step is in its lifecycle — three states
 // mirroring Codex's update_plan API. The type, its String()/JSON wire
 // form ("pending" / "in_progress" / "completed"), and ParseStepStatus
@@ -42,7 +44,7 @@ type PlanStore interface {
 	// to broadcast the change to any listeners (typically the TUI)
 	// before returning, so the user sees the new state immediately
 	// after the tool call completes.
-	SetPlan(p Plan)
+	SetPlan(ctx context.Context, p Plan)
 	// GetPlan returns the current plan (zero-value Plan when none).
 	GetPlan() Plan
 }
@@ -60,5 +62,10 @@ type memoryPlanStore struct {
 // from multiple tool invocations can't happen.
 func NewMemoryPlanStore() *memoryPlanStore { return &memoryPlanStore{} }
 
-func (m *memoryPlanStore) SetPlan(p Plan) { m.plan = p }
-func (m *memoryPlanStore) GetPlan() Plan  { return m.plan }
+func (m *memoryPlanStore) SetPlan(_ context.Context, p Plan) { m.plan = clonePlan(p) }
+func (m *memoryPlanStore) GetPlan() Plan                     { return clonePlan(m.plan) }
+
+func clonePlan(plan Plan) Plan {
+	plan.Steps = append([]PlanStep(nil), plan.Steps...)
+	return plan
+}

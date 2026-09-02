@@ -42,6 +42,7 @@ type DiffSink func(path, diff string)
 // produce it. Consumers that only need display can keep using [DiffSink]; richer
 // consumers (checkpoints/rollback) can use [EventSink].
 type DiffEvent struct {
+	TaskID        string
 	Path          string
 	Diff          string
 	Before        []byte
@@ -136,12 +137,9 @@ func (r *Recorder) Execute(ctx context.Context, call tools.ToolCall) (*tools.Too
 		diff := unifiedDiff(rel, before, beforeMissing, after, afterMissing)
 		if diff != "" {
 			r.onEvent(DiffEvent{
-				Path:          rel,
-				Diff:          diff,
-				Before:        before,
-				BeforeMissing: beforeMissing,
-				After:         after,
-				AfterMissing:  afterMissing,
+				TaskID: string(taskscope.IDFrom(ctx)), Path: rel, Diff: diff,
+				Before: before, BeforeMissing: beforeMissing,
+				After: after, AfterMissing: afterMissing,
 			})
 		}
 	}
@@ -196,12 +194,9 @@ func (r *Recorder) executeMultiPath(
 			diff := unifiedDiff(p.rel, p.body, p.missing, after, afterMissing)
 			if diff != "" {
 				r.onEvent(DiffEvent{
-					Path:          p.rel,
-					Diff:          diff,
-					Before:        p.body,
-					BeforeMissing: p.missing,
-					After:         after,
-					AfterMissing:  afterMissing,
+					TaskID: string(taskscope.IDFrom(ctx)), Path: p.rel, Diff: diff,
+					Before: p.body, BeforeMissing: p.missing,
+					After: after, AfterMissing: afterMissing,
 				})
 			}
 		}

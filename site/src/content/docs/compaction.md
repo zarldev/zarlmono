@@ -39,6 +39,11 @@ Byte-level rules over everything older than the keep window: user
 messages never touched (load-bearing intent), long assistant
 narrative truncated, long tool results replaced with an elision
 marker ("re-run to recover"), tool-call linkage always preserved.
+For zarlcode specifically, this history is the compactable model context—not the
+durable visible session. Its canonical transcript remains unchanged when compaction
+rewrites provider history, so resume and Markdown export retain earlier timeline events.
+See [Sessions and transcripts](/zarlmono/sessions-transcripts/).
+
 Milliseconds per call. The blunt instrument.
 
 ### Tiered — progressive, no LLM

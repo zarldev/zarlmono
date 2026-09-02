@@ -14,8 +14,10 @@ func populatedCockpit(t *testing.T) *tui.UI {
 	t.Helper()
 	m := tui.New()
 	step(t, m, teasink.ConversationStartedMsg{TaskID: "task", Prompt: "test"})
-	step(t, m, teasink.ToolCompletedMsg{TaskID: "task", ToolName: "read"})
-	step(t, m, teasink.ToolCompletedMsg{TaskID: "task", ToolName: "bash"})
+	step(t, m, teasink.ToolStartedMsg{TaskID: "task", ToolID: "read", ToolName: "read"})
+	step(t, m, teasink.ToolCompletedMsg{TaskID: "task", ToolID: "read", ToolName: "read"})
+	step(t, m, teasink.ToolStartedMsg{TaskID: "task", ToolID: "bash", ToolName: "bash"})
+	step(t, m, teasink.ToolCompletedMsg{TaskID: "task", ToolID: "bash", ToolName: "bash"})
 	step(t, m, teasink.IterationCompletedMsg{TaskID: "task", Iter: 1, Usage: &llm.Usage{PromptTokens: 8000, CompletionTokens: 1200, CachedTokens: 2000}})
 	return m
 }

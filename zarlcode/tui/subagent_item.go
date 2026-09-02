@@ -37,6 +37,7 @@ type subAgentItem struct {
 	spawnToolID  string             // parent agent_spawn ToolID; set before child TaskID is known
 	pending      bool               // true between agent_spawn start and child ConversationStarted
 	launchFailed bool
+	interrupted  bool
 }
 
 func newSubAgentItem(depth int, agentName, prompt, taskID string) *subAgentItem {
@@ -137,6 +138,8 @@ func (sa *subAgentItem) render(width int) []string {
 		summary += "  " + palette.Warning.On("starting")
 	case sa.launchFailed:
 		summary += "  " + palette.Error.On("failed")
+	case sa.interrupted:
+		summary += "  " + palette.Warning.On("interrupted")
 	case !sa.closed:
 		summary += "  " + palette.Warning.On("running")
 	}

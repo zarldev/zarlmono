@@ -15,7 +15,7 @@ func TestStoreSetSessionPinnedPreservesSession(t *testing.T) {
 		ID:           "pin-me",
 		Workspace:    "/workspace",
 		Label:        "keep label",
-		HistoryJSON:  []byte(`[{"role":"user","content":"keep history"}]`),
+		ContextJSON:  []byte(`[{"role":"user","content":"keep history"}]`),
 		MessageCount: 1,
 	}
 	if err := store.SaveSession(t.Context(), record); err != nil {
@@ -90,7 +90,7 @@ func TestStoreListSessionSummariesOrdersPinsBeforeRecentSessions(t *testing.T) {
 
 func assertSessionPinPreserved(t *testing.T, before, after db.SessionRecord) {
 	t.Helper()
-	if after.Label != before.Label || string(after.HistoryJSON) != string(before.HistoryJSON) || after.MessageCount != before.MessageCount || !after.UpdatedAt.Equal(before.UpdatedAt) {
+	if after.Label != before.Label || string(after.ContextJSON) != string(before.ContextJSON) || after.MessageCount != before.MessageCount || !after.UpdatedAt.Equal(before.UpdatedAt) {
 		t.Fatalf("pin changed session content: before = %#v; after = %#v", before, after)
 	}
 }

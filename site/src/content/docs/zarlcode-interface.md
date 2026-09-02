@@ -32,9 +32,11 @@ press `Enter` to start fresh, or pick a prior session to resume. (The
 overlay shortcuts below only activate once you're past the intro, in
 the main UI.)
 
-Saved-session rows are ordered with pinned sessions first, then by recent activity. Focus the session list and press `/` to search, `p` to pin or unpin, `Ctrl+N` to rename, or `d` to delete after confirmation. Rows also summarize message, plan, changed-file, model/agent, and pending-draft state.
+Saved-session rows are ordered with pinned sessions first, then by recent activity. Focus the session list and press `/` to search, `p` to pin or unpin, `Ctrl+N` to rename, or `d` to permanently delete that local session—including its canonical transcript and saved draft—after confirmation. Rows also summarize message, plan, changed-file, model/agent, and pending-draft state.
 
-Composer text is saved as a debounced local draft. If you quit before submitting, resume that session to continue editing where you left off; an accepted submission clears the saved draft.
+Composer text is a debounced, session-local draft in SQLite. If you quit before submitting, resume that session to continue editing; an accepted submission clears the draft, and deleting the session removes it.
+
+Resume requires a valid canonical transcript. If it is missing, empty, or fails integrity validation, zarlcode refuses to resume instead of falling back to compacted model context or showing a partial reconstruction.
 
 ## The timeline
 
@@ -50,6 +52,12 @@ kinds include:
   `[+]` toggle,
 - **sub-agents** — a spawned run nested inline,
 - **diffs**, **plans**, and **notices** (e.g. a compaction marker).
+
+These items are projected from a canonical, renderer-independent transcript stored in
+local SQLite. The transcript—not the current widget tree—is the source used for resume
+and Markdown export. Model context is stored separately and may be compacted without
+removing earlier visible timeline events. See [Sessions and transcripts](/zarlmono/sessions-transcripts/).
+Resuming rebuilds plans, diffs, tool activity/results, and nested sub-agent activity from these records; compactable model context is restored separately for the next provider request.
 
 Press **`Tab`** to enter **browse mode**: the view freezes, arrow keys
 move the selection item-by-item, and `Space`/`Enter` collapse or expand
@@ -126,7 +134,7 @@ plans (the latter persist under `.zarlcode/plans/`).
   copying the latest assistant response, and Markdown session export.
 - **`Ctrl+N`** names or renames the active session; `/name <label>` does the same.
 - **`Ctrl+Shift+C`** copies the latest assistant response. `/export [path]` writes
-  the conversation as Markdown; without a path it uses `.zarlcode/exports/` in
+  the canonical transcript as Markdown; without a path it uses `.zarlcode/exports/` in
   the current workspace and never overwrites an existing export.
 - **Settings → interface → notification sounds** controls terminal bells: `off`,
   `completion` (the default), or `all` to also ring as plan steps complete.

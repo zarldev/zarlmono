@@ -32,6 +32,28 @@ A capability is complete only when its provider, registration/definition, and co
 - **Snapshots cross boundaries.** Catalogs, tool lists, prompt inputs, and UI events are copied or immutable snapshots. A reload replaces a snapshot atomically; malformed entries are reported without discarding valid entries.
 - **Profiles are composition, not forks.** Settings and explicit run targets should select capability clusters and policies. Do not create a second agent loop for a different surface.
 
+## Session persistence
+
+The visible timeline and the provider-facing context have different ownership:
+
+- `transcript.Thread` is the canonical, renderer-independent session record. Typed
+  events update it before the TUI projects entries into timeline widgets.
+- `engine.ContextCache` owns the `[]llm.Message` history sent to providers. Compaction
+  may replace this history without changing the canonical transcript.
+- `zkit/db` persists transcript metadata plus ordered entries under one revision and
+  checksum. Reads and writes use SQLite transactions so metadata and rows are observed
+  atomically.
+
+Resume validates the canonical transcript, recovers interrupted lifecycle entries, and
+then rebuilds the timeline. Missing or corrupt canonical transcripts are errors; model
+context is not used to synthesize user-visible history. Markdown export also renders the
+canonical thread directly rather than scraping the TUI.
+
+Transcript event persistence is explicit: semantic boundaries use immediate writes,
+streaming text uses a debounce, and queue barriers flush saves before shutdown or delete.
+Deletion cascades transcript rows and prevents stale queued saves from recreating the
+session.
+
 ## Composition checklist
 
 Before adding a capability:

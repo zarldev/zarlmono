@@ -1,5 +1,5 @@
-# Regenerate generated code with `sqlc generate` (sqlc v1.31.1) after changing
-# queries/ or migrations/. The gen/ directory is committed.
+# Regenerate generated code with `go tool sqlc generate` (sqlc v1.31.1) after
+# changing queries/ or migrations/. The gen/ directory is committed.
 version: "2"
 sql:
   - engine: "sqlite"

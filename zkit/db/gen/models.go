@@ -114,7 +114,7 @@ type Session struct {
 	AgentName          string
 	Provider           string
 	Model              string
-	HistoryJson        string
+	ContextJson        string
 	PendingJson        string
 	LastUsageJson      string
 	DiffBodiesJson     string
@@ -129,6 +129,25 @@ type Session struct {
 	PlanCompletedCount int64
 	PlanTotalCount     int64
 	LabelManual        int64
+}
+
+type SessionTranscript struct {
+	SessionID   string
+	Revision    int64
+	Checksum    string
+	CreatedAtMs int64
+	UpdatedAtMs int64
+}
+
+type SessionTranscriptEntry struct {
+	SessionID   string
+	Sequence    int64
+	EntryID     string
+	ParentID    string
+	TurnID      string
+	Kind        string
+	PayloadJson string
+	Revision    int64
 }
 
 type Setting struct {

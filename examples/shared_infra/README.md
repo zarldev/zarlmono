@@ -6,8 +6,8 @@ around the runner:
 - `zkit/ai/retrieval`: chunk/embed/index/search documents with an in-memory vector store.
 - `zkit/agent/retrieval`: format retrieved documents for an agent prompt.
 - `zkit/agent/workflow`: compose deterministic steps into a graph.
-- `zkit/agent/checkpoint`: snapshot workflow state before a risky action.
-- `zkit/agent/hitl`: defer medium-risk actions to a human reviewer.
+- `zkit/agent/checkpoint`: save workflow state before a risky action.
+- `zkit/agent/hitl`: represent a medium-risk review request and apply a deterministic example decision.
 
 Run it:
 

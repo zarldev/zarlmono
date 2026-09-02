@@ -47,8 +47,8 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	switch e := msg.(type) {
 	case turnSetupFailedMsg:
 		effect := m.session.applyTurnSetupFailed(e)
-		if effect.PromptToRender != "" {
-			m.timeline.addUser(effect.PromptToRender)
+		if effect.PromptToRender != "" || len(effect.Attachments) > 0 {
+			m.timeline.addUserWithAttachments(effect.PromptToRender, effect.Attachments)
 		}
 		if effect.ToastChanged {
 			cmd = m.toastExpiryCmd()
@@ -61,12 +61,16 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		switch {
 		case e.Depth == 0:
 			m.timeline.closeGroups()
-			if effect.PromptToRender != "" {
-				m.timeline.addUser(effect.PromptToRender)
+			if effect.PromptToRender != "" || len(effect.Attachments) > 0 {
+				m.timeline.addUserWithAttachments(effect.PromptToRender, effect.Attachments)
 			}
 			m.timeline.startTurn(e.TaskID, 0)
 		case e.Depth > 0:
-			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, e.AgentName, e.Prompt, e.ParentToolCallID)
+			agentName := e.AgentName
+			if agentName == "" {
+				agentName = "agent"
+			}
+			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, agentName, e.Prompt, e.ParentToolCallID)
 		}
 
 	case teasink.ContentMsg:
@@ -82,6 +86,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.timeline.startToolWithParent(e.TaskID, e.Depth, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters), e.ParentToolID, e.Sequence)
 		if e.ToolName == "agent_spawn" {
 			agent, _ := e.Parameters["agent"].(string)
+			if agent == "" {
+				agent = "agent"
+			}
 			prompt, _ := e.Parameters["prompt"].(string)
 			m.timeline.reserveSubAgent(e.ToolID, e.Depth, agent, prompt)
 		}
@@ -110,12 +117,12 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 
 	case teasink.DiffMsg:
 		m.session.applyDiff(e)
-		m.timeline.addDiff(e.Path, e.Diff)
+		m.timeline.addDiff(e.TaskID, e.Path, e.Diff)
 
 	case teasink.PlanUpdatedMsg:
 		before := m.session.Plan
 		m.session.applyPlanUpdated(e)
-		m.timeline.addPlanUpdate(e.Plan)
+		m.timeline.addPlanUpdate(e.TaskID, e.Plan)
 		cmd = tea.Batch(cmd, planProgressSoundCmd(m.appContext(), m.settings, before, e.Plan))
 
 	case teasink.PromptDiagnosticsMsg:
@@ -156,7 +163,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 				continue
 			}
 			if sa := m.timeline.subAgent(e.TaskID); sa != nil {
-				sa.addNotice("↳ injected: " + firstLine(msg.Content))
+				m.timeline.addNoticeForTurn(e.TaskID, "↳ injected: "+firstLine(msg.Content))
 			}
 		}
 		if e.Depth == 0 && injected > 0 {
@@ -169,6 +176,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		// max-iter / cancelled) gets the normal end-of-turn treatment plus
 		// a notice for the non-clean reasons.
 		effect := m.session.applyConversationEnded(e, time.Now())
+		if !effect.Accepted {
+			return true, nil
+		}
 		failed := e.Reason == runner.TerminalError
 		if e.Depth > 0 {
 			if sa := m.timeline.subAgent(e.TaskID); sa != nil {
@@ -177,9 +187,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 					if e.RateLimit != nil {
 						detail = formatRateLimit(e.RateLimit)
 					}
-					sa.addNotice("✗ " + detail)
+					m.timeline.addNoticeForTurn(e.TaskID, "✗ "+detail)
 				} else if notice := terminalNotice(e.Reason, e.Iterations); notice != "" {
-					sa.addNotice(notice)
+					m.timeline.addNoticeForTurn(e.TaskID, notice)
 				}
 			}
 			m.timeline.finishSubAgent(e.TaskID)

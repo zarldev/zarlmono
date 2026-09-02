@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/pressly/goose/v3"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -69,26 +71,84 @@ func TestSessionMigrationsBackfillAndRollback(t *testing.T) {
 	if messageCount != 2 {
 		t.Fatalf("message_count = %d, want 2", messageCount)
 	}
+}
 
+func TestCanonicalTranscriptMigrationPreservesExistingSessions(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "canonical-transcript.db")
+	d, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	provider, err := goose.NewProvider(goose.DialectSQLite3, d, os.DirFS("migrations"))
+	if err != nil {
+		t.Fatalf("new migration provider: %v", err)
+	}
+	ctx := t.Context()
+	if _, err := provider.UpTo(ctx, 25); err != nil {
+		t.Fatalf("migrate to 25: %v", err)
+	}
+	if _, err := d.ExecContext(ctx, `
+		INSERT INTO sessions (id, workspace, history_json, pending_json, created_at, updated_at)
+		VALUES
+			('legacy', '/workspace', '[{"role":"user","content":"old"}]', '[]', 1, 1),
+			('draft', '/workspace', '[]', '{"text":"unfinished prompt"}', 1, 1),
+			('empty-draft', '/workspace', '[]', '{"text":"   "}', 1, 1),
+			('null-draft', '/workspace', '[]', '{"text":null}', 1, 1),
+			('canonical', '/workspace', '[]', '[]', 1, 1);
+		INSERT INTO session_transcripts (session_id, revision, checksum, created_at_ms, updated_at_ms)
+		VALUES ('canonical', 1, 'checksum', 1, 1);
+		INSERT INTO session_transcript_entries
+			(session_id, sequence, entry_id, parent_id, turn_id, kind, payload_json, revision)
+		VALUES ('canonical', 1, 'e1', '', '', 'user_message', '{"text":"new"}', 1)`); err != nil {
+		t.Fatalf("seed pre-canonical sessions: %v", err)
+	}
 	if _, err := provider.UpByOne(ctx); err != nil {
-		t.Fatalf("apply tool-trace migration: %v", err)
-	}
-	if _, err := d.ExecContext(ctx, `UPDATE sessions SET tool_trace_json = '[{"id":"tool-1"}]' WHERE id = 'session-1'`); err != nil {
-		t.Fatalf("write tool trace: %v", err)
-	}
-	if _, err := provider.Down(ctx); err != nil {
-		t.Fatalf("roll back tool-trace migration: %v", err)
+		t.Fatalf("apply canonical normalization migration: %v", err)
 	}
 
-	var history string
-	if err := d.QueryRowContext(ctx, "SELECT history_json, message_count FROM sessions WHERE id = 'session-1'").Scan(&history, &messageCount); err != nil {
-		t.Fatalf("read session after rollback: %v", err)
+	rows, err := d.QueryContext(ctx, "SELECT id FROM sessions ORDER BY id")
+	if err != nil {
+		t.Fatalf("query migrated sessions: %v", err)
 	}
-	if history == "" || messageCount != 2 {
-		t.Fatalf("session data after rollback: history=%q message_count=%d", history, messageCount)
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan migrated session: %v", err)
+		}
+		got = append(got, id)
 	}
-	if _, err := d.ExecContext(ctx, "SELECT tool_trace_json FROM sessions"); err == nil {
-		t.Fatal("tool_trace_json still exists after rollback")
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migrated sessions: %v", err)
+	}
+	if diff := cmp.Diff([]string{"canonical", "draft", "empty-draft", "legacy", "null-draft"}, got); diff != "" {
+		t.Fatalf("migrated session IDs mismatch (-want +got):\n%s", diff)
+	}
+	var legacyContext string
+	if err := d.QueryRowContext(ctx, "SELECT context_json FROM sessions WHERE id = 'legacy'").Scan(&legacyContext); err != nil {
+		t.Fatalf("read preserved legacy session: %v", err)
+	}
+	if legacyContext != `[{"role":"user","content":"old"}]` {
+		t.Fatalf("preserved legacy context = %s", legacyContext)
+	}
+	if _, err := d.ExecContext(ctx, "ALTER TABLE sessions DROP COLUMN tool_trace_json"); err != nil {
+		t.Fatalf("drop retired tool trace column: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("close migrated database: %v", err)
+	}
+	store, err := db.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatalf("open normalized store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.GetSession(ctx, "legacy"); err != nil {
+		t.Fatalf("get session without retired tool trace column: %v", err)
 	}
 }
 
@@ -182,13 +242,12 @@ func TestStore_SessionRoundtrip(t *testing.T) {
 		AgentName:      "default",
 		Provider:       "anthropic",
 		Model:          "claude-opus-4-7",
-		HistoryJSON:    []byte(`[{"role":"user","content":"hi"}]`),
+		ContextJSON:    []byte(`[{"role":"user","content":"hi"}]`),
 		PendingJSON:    []byte(`[]`),
 		LastUsageJSON:  []byte(`{"input":10,"output":5}`),
 		DiffBodiesJSON: []byte(`{"foo.go":"--- a\n+++ b\n"}`),
 		PlanJSON:       []byte(`{"title":"do the thing","steps":[{"text":"step one","status":"done"}]}`),
-		MessageCount:   1,
-		ToolTraceJSON:  []byte(`[{"id":"tool-1","name":"read","success":true}]`)}
+		MessageCount:   1}
 	if err := s.SaveSession(ctx, in); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -197,7 +256,7 @@ func TestStore_SessionRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if out.Label != "first" || string(out.HistoryJSON) != string(in.HistoryJSON) {
+	if out.Label != "first" || string(out.ContextJSON) != string(in.ContextJSON) {
 		t.Errorf("roundtrip mismatch: %+v", out)
 	}
 	if string(out.DiffBodiesJSON) != string(in.DiffBodiesJSON) {
@@ -205,13 +264,9 @@ func TestStore_SessionRoundtrip(t *testing.T) {
 	}
 	if string(out.PlanJSON) != string(in.PlanJSON) {
 		t.Errorf("plan dropped: %q", out.PlanJSON)
-
-		if out.MessageCount != in.MessageCount {
-			t.Errorf("message count = %d, want %d", out.MessageCount, in.MessageCount)
-		}
-		if string(out.ToolTraceJSON) != string(in.ToolTraceJSON) {
-			t.Errorf("tool trace dropped: %q", out.ToolTraceJSON)
-		}
+	}
+	if out.MessageCount != in.MessageCount {
+		t.Errorf("message count = %d, want %d", out.MessageCount, in.MessageCount)
 	}
 	if out.CreatedAt.IsZero() || out.UpdatedAt.IsZero() {
 		t.Errorf("timestamps not populated: created=%v updated=%v", out.CreatedAt, out.UpdatedAt)
@@ -226,7 +281,7 @@ func TestStore_SaveActiveSession(t *testing.T) {
 	if err := s.SetSetting(ctx, "ws", "active_session", "previous"); err != nil {
 		t.Fatalf("seed active session: %v", err)
 	}
-	record := db.SessionRecord{ID: "current", Workspace: "ws", HistoryJSON: []byte(`[]`)}
+	record := db.SessionRecord{ID: "current", Workspace: "ws", ContextJSON: []byte(`[]`)}
 	if err := s.SaveActiveSession(ctx, record); err != nil {
 		t.Fatalf("save active session: %v", err)
 	}
@@ -320,7 +375,7 @@ func TestStore_ListSessionSummariesOmitsLargeBlobs(t *testing.T) {
 		ID:             "large",
 		Workspace:      "ws",
 		Label:          "big history",
-		HistoryJSON:    []byte(`[{"role":"user","content":"one"},{"role":"assistant","content":"two"}]`),
+		ContextJSON:    []byte(`[{"role":"user","content":"one"},{"role":"assistant","content":"two"}]`),
 		PendingJSON:    []byte(`[{"large":"pending"}]`),
 		LastUsageJSON:  []byte(`{"turns": 2}`),
 		DiffBodiesJSON: []byte(`{"foo.go":"diff"}`),
@@ -338,8 +393,8 @@ func TestStore_ListSessionSummariesOmitsLargeBlobs(t *testing.T) {
 	if got[0].ID != "large" || got[0].MessageCount != 2 {
 		t.Fatalf("summary metadata = %+v", got[0])
 	}
-	if len(got[0].HistoryJSON) != 0 || len(got[0].DiffBodiesJSON) != 0 || len(got[0].PlanJSON) != 0 {
-		t.Fatalf("summary loaded blobs: history=%d diff=%d plan=%d", len(got[0].HistoryJSON), len(got[0].DiffBodiesJSON), len(got[0].PlanJSON))
+	if len(got[0].ContextJSON) != 0 || len(got[0].DiffBodiesJSON) != 0 || len(got[0].PlanJSON) != 0 {
+		t.Fatalf("summary loaded blobs: history=%d diff=%d plan=%d", len(got[0].ContextJSON), len(got[0].DiffBodiesJSON), len(got[0].PlanJSON))
 	}
 }
 
@@ -453,7 +508,7 @@ func TestStore_DeleteEmptySessionIgnoresContent(t *testing.T) {
 	mustSave(t, s, db.SessionRecord{
 		ID:          "with-content",
 		Workspace:   "ws",
-		HistoryJSON: []byte(`[{"role":"user","content":"x"}]`),
+		ContextJSON: []byte(`[{"role":"user","content":"x"}]`),
 	})
 	mustSave(t, s, db.SessionRecord{ID: "empty", Workspace: "ws"})
 

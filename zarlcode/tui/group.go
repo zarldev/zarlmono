@@ -105,17 +105,35 @@ func (g *groupItem) summary() string {
 	case groupEdits:
 		return fmt.Sprintf("edits (%d %s)", len(g.children), plural(len(g.children), "file", "files"))
 	case groupAgents:
-		return fmt.Sprintf("agents (%d)", len(g.children))
+		interrupted := 0
+		for _, child := range g.children {
+			if agent, ok := child.(*subAgentItem); ok && agent.interrupted {
+				interrupted++
+			}
+		}
+		summary := fmt.Sprintf("agents (%d)", len(g.children))
+		if interrupted > 0 {
+			summary += fmt.Sprintf("  %d interrupted", interrupted)
+		}
+		return summary
 	}
-	failed := 0
+	failed, interrupted := 0, 0
 	for _, c := range g.children {
-		if t, ok := c.(*toolItem); ok && t.state == toolFailed {
-			failed++
+		if t, ok := c.(*toolItem); ok {
+			switch t.state {
+			case toolFailed:
+				failed++
+			case toolInterrupted:
+				interrupted++
+			}
 		}
 	}
 	s := fmt.Sprintf("tools (%d)", len(g.children))
 	if failed > 0 {
 		s += fmt.Sprintf("  %d failed", failed)
+	}
+	if interrupted > 0 {
+		s += fmt.Sprintf("  %d interrupted", interrupted)
 	}
 	return s
 }

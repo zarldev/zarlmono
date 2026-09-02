@@ -459,3 +459,25 @@ func TestSchemaGuardrail_RejectsAdditionalProperty(t *testing.T) {
 		t.Error("undeclared field with additionalProperties:false: want rejection")
 	}
 }
+
+func TestSchemaGuardrail_ErrorIncludesExpectedArguments(t *testing.T) {
+	iter := stubIter{all: []tools.Tool{specTool{spec: bashSpec()}}}
+	g := guardrails.NewSchemaGuardrail(iter)
+
+	tests := []struct {
+		name string
+		args tools.ToolParameters
+		want string
+	}{
+		{name: "missing", args: tools.ToolParameters{}, want: `missing required field "command"; expected arguments {command: string, timeout_seconds?: integer}`},
+		{name: "unexpected", args: tools.ToolParameters{"command": "ls", "path": "."}, want: `unexpected field "path"; expected arguments {command: string, timeout_seconds?: integer}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := g.Before(t.Context(), tools.ToolCall{ID: "x", ToolName: "bash", Arguments: tt.args})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want corrective signature %q", err, tt.want)
+			}
+		})
+	}
+}

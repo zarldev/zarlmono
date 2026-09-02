@@ -288,7 +288,9 @@ func (s *Store) ListResultsForRun(ctx context.Context, runID string) ([]ResultRe
 		SELECT run_id, instance_id, driver_name, language, worktree_path,
 		       diff, duration_ms, iterations, tool_calls,
 		       tokens_in, tokens_out, terminal_reason, error,
-		       resolved, evaluator_error, provider, model, created_at
+		       resolved, evaluator_error, provider, model,
+		       guardrail_rejections, verified, attempts, attempt_verdicts,
+		       created_at
 		FROM eval_results
 		WHERE run_id = ?
 		ORDER BY instance_id, driver_name
@@ -307,7 +309,9 @@ func (s *Store) ListResultsForRun(ctx context.Context, runID string) ([]ResultRe
 			&r.RunID, &r.InstanceID, &r.DriverName, &r.Language, &r.WorktreePath,
 			&r.Diff, &r.DurationMs, &r.Iterations, &r.ToolCalls,
 			&r.TokensIn, &r.TokensOut, &r.TerminalReason, &r.Error,
-			&resolved, &r.EvaluatorError, &r.Provider, &r.Model, &createdAt,
+			&resolved, &r.EvaluatorError, &r.Provider, &r.Model,
+			&r.GuardrailRejections, &r.Verified, &r.Attempts, &r.AttemptVerdicts,
+			&createdAt,
 		); err != nil {
 			return nil, err
 		}

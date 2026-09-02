@@ -6,7 +6,9 @@ vars:
   ZARLCODE: '{{.BIN_DIR}}/zarlcode'
   SWEEVAL: '{{.BIN_DIR}}/sweeval'
   ZARLCODE_VERSION:
-    sh: 'printf "%s+%s" "$(git describe --tags --match "zarlcode/v*" --dirty --always 2>/dev/null || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
+    sh: 'printf "%s+%s" "$(git describe --tags --match "zarlcode/v*" --dirty --always 2>/dev/null | sed "s#^zarlcode/##" || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
+  SWEEVAL_VERSION:
+    sh: git describe --tags --always --dirty --match 'swebench-eval/v*' | sed 's#^swebench-eval/##'
 
 tasks:
   release-check:
@@ -195,7 +197,7 @@ tasks:
     desc: Build and install the SWE-bench eval tool
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -C swebench-eval -trimpath -o {{.SWEEVAL}} ./cmd/eval
+      - go build -C swebench-eval -trimpath -ldflags="-s -w -X github.com/zarldev/zarlmono/swebench-eval/version.version={{.SWEEVAL_VERSION}}" -o {{.SWEEVAL}} ./cmd/eval
       - echo "installed{{":"}} {{.SWEEVAL}}"
   sweeval:install:
     desc: Alias for sweeval

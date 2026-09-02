@@ -114,12 +114,7 @@ func Console(w io.Writer, r runner.Results) {
 	for _, lang := range sortedKeys(byLang) {
 		fmt.Fprintf(w, "language: %s (%d records)\n", lang, len(byLang[lang]))
 		for _, rec := range byLang[lang] {
-			status := "ok"
-			if rec.Result.Err != nil {
-				status = "ERR: " + rec.Result.Err.Error()
-			} else if rec.Result.Diff == "" {
-				status = "no-change"
-			}
+			status := taskStatus(rec)
 			fmt.Fprintf(w, "  [%-12s] %-50s %12s  iter=%-3d tools=%-3d  %s\n",
 				rec.DriverName, rec.InstanceID,
 				formatDur(int64(rec.Result.Duration)),
@@ -127,6 +122,25 @@ func Console(w io.Writer, r runner.Results) {
 				status)
 		}
 		fmt.Fprintln(w)
+	}
+}
+
+func taskStatus(rec runner.TaskResult) string {
+	switch {
+	case rec.Result.Err != nil:
+		return "ERR: " + rec.Result.Err.Error()
+	case rec.EvaluatorError != "":
+		return "evaluator-error: " + rec.EvaluatorError
+	case rec.Resolved != nil && *rec.Resolved:
+		return "resolved"
+	case rec.Resolved != nil:
+		return "unresolved"
+	case rec.Result.Diff == "":
+		return "unscored/no-change"
+	case rec.Result.Verified:
+		return "unscored/verified-attempt"
+	default:
+		return "unscored/unverified-attempt"
 	}
 }
 

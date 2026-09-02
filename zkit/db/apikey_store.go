@@ -185,11 +185,12 @@ func sessionSummaryRowToRecord(r gen.ListSessionSummariesByWorkspaceRow) Session
 		Pinned:             r.Pinned != 0,
 		PinnedAt:           unixTime(r.PinnedAt.Int64),
 		HasDraft:           r.HasDraft != 0,
+		HasTranscript:      r.HasTranscript != 0,
 	}
 }
 
 // toSessionRecord maps a generated row to the domain transport type.
-func toSessionRecord(r gen.Session) SessionRecord {
+func toSessionRecord(r gen.GetSessionRow) SessionRecord {
 	return SessionRecord{
 		ID:                 r.ID,
 		Workspace:          r.Workspace,
@@ -198,12 +199,11 @@ func toSessionRecord(r gen.Session) SessionRecord {
 		AgentName:          r.AgentName,
 		Provider:           r.Provider,
 		Model:              r.Model,
-		HistoryJSON:        []byte(r.HistoryJson),
+		ContextJSON:        []byte(r.ContextJson),
 		PendingJSON:        []byte(r.PendingJson),
 		LastUsageJSON:      []byte(r.LastUsageJson),
 		DiffBodiesJSON:     []byte(r.DiffBodiesJson),
 		PlanJSON:           []byte(r.PlanJson),
-		ToolTraceJSON:      []byte(r.ToolTraceJson),
 		MessageCount:       int(r.MessageCount),
 		CreatedAt:          time.Unix(r.CreatedAt, 0),
 		UpdatedAt:          time.Unix(r.UpdatedAt, 0),
@@ -212,6 +212,7 @@ func toSessionRecord(r gen.Session) SessionRecord {
 		PlanTotalCount:     int(r.PlanTotalCount),
 		Pinned:             r.Pinned != 0,
 		PinnedAt:           unixTime(r.PinnedAt.Int64),
+		HasDraft:           r.PendingJson != "[]",
 	}
 }
 func boolToInt64(value bool) int64 {

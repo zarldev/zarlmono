@@ -21,11 +21,11 @@ func (q *Queries) ClearSessionDraft(ctx context.Context, id string) error {
 
 const deleteEmptySession = `-- name: DeleteEmptySession :exec
 DELETE FROM sessions
-WHERE id = ? AND history_json = '[]' AND pending_json = '[]'
+WHERE id = ? AND context_json = '[]' AND pending_json = '[]'
 `
 
-// Empty == default history/pending. Used to clean up a session that
-// the user opened but never sent a turn to.
+// Empty == default context/pending. Used to clean up a draft-only session
+// whose composer content was cleared before any canonical turn was persisted.
 func (q *Queries) DeleteEmptySession(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, deleteEmptySession, id)
 	return err
@@ -41,12 +41,36 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual FROM sessions WHERE id = ?
+SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual
+FROM sessions WHERE id = ?
 `
 
-func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
+type GetSessionRow struct {
+	ID                 string
+	Workspace          string
+	Label              string
+	AgentName          string
+	Provider           string
+	Model              string
+	ContextJson        string
+	PendingJson        string
+	LastUsageJson      string
+	DiffBodiesJson     string
+	CreatedAt          int64
+	UpdatedAt          int64
+	PlanJson           string
+	MessageCount       int64
+	Pinned             int64
+	PinnedAt           sql.NullInt64
+	ChangedFileCount   int64
+	PlanCompletedCount int64
+	PlanTotalCount     int64
+	LabelManual        int64
+}
+
+func (q *Queries) GetSession(ctx context.Context, id string) (GetSessionRow, error) {
 	row := q.db.QueryRowContext(ctx, getSession, id)
-	var i Session
+	var i GetSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.Workspace,
@@ -54,7 +78,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.AgentName,
 		&i.Provider,
 		&i.Model,
-		&i.HistoryJson,
+		&i.ContextJson,
 		&i.PendingJson,
 		&i.LastUsageJson,
 		&i.DiffBodiesJson,
@@ -62,7 +86,6 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.UpdatedAt,
 		&i.PlanJson,
 		&i.MessageCount,
-		&i.ToolTraceJson,
 		&i.Pinned,
 		&i.PinnedAt,
 		&i.ChangedFileCount,
@@ -76,7 +99,8 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 const listSessionSummariesByWorkspace = `-- name: ListSessionSummariesByWorkspace :many
 SELECT id, label, label_manual, agent_name, provider, model, created_at, updated_at, message_count,
        pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count,
-       CASE WHEN pending_json IS NOT NULL AND TRIM(pending_json) NOT IN ('', '[]', 'null') THEN 1 ELSE 0 END AS has_draft
+       CASE WHEN pending_json IS NOT NULL AND TRIM(pending_json) NOT IN ('', '[]', 'null') THEN 1 ELSE 0 END AS has_draft,
+       CASE WHEN EXISTS (SELECT 1 FROM session_transcripts st WHERE st.session_id = sessions.id) THEN 1 ELSE 0 END AS has_transcript
 FROM sessions
 WHERE workspace = ?
 ORDER BY pinned DESC, pinned_at DESC, updated_at DESC
@@ -98,6 +122,7 @@ type ListSessionSummariesByWorkspaceRow struct {
 	PlanCompletedCount int64
 	PlanTotalCount     int64
 	HasDraft           int64
+	HasTranscript      int64
 }
 
 func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace string) ([]ListSessionSummariesByWorkspaceRow, error) {
@@ -125,6 +150,7 @@ func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace
 			&i.PlanCompletedCount,
 			&i.PlanTotalCount,
 			&i.HasDraft,
+			&i.HasTranscript,
 		); err != nil {
 			return nil, err
 		}
@@ -140,20 +166,44 @@ func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace
 }
 
 const listSessionsByWorkspace = `-- name: ListSessionsByWorkspace :many
-SELECT id, workspace, label, agent_name, provider, model, history_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, tool_trace_json, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual FROM sessions
+SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual
+FROM sessions
 WHERE workspace = ?
 ORDER BY updated_at DESC
 `
 
-func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string) ([]Session, error) {
+type ListSessionsByWorkspaceRow struct {
+	ID                 string
+	Workspace          string
+	Label              string
+	AgentName          string
+	Provider           string
+	Model              string
+	ContextJson        string
+	PendingJson        string
+	LastUsageJson      string
+	DiffBodiesJson     string
+	CreatedAt          int64
+	UpdatedAt          int64
+	PlanJson           string
+	MessageCount       int64
+	Pinned             int64
+	PinnedAt           sql.NullInt64
+	ChangedFileCount   int64
+	PlanCompletedCount int64
+	PlanTotalCount     int64
+	LabelManual        int64
+}
+
+func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string) ([]ListSessionsByWorkspaceRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSessionsByWorkspace, workspace)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Session{}
+	items := []ListSessionsByWorkspaceRow{}
 	for rows.Next() {
-		var i Session
+		var i ListSessionsByWorkspaceRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Workspace,
@@ -161,7 +211,7 @@ func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string)
 			&i.AgentName,
 			&i.Provider,
 			&i.Model,
-			&i.HistoryJson,
+			&i.ContextJson,
 			&i.PendingJson,
 			&i.LastUsageJson,
 			&i.DiffBodiesJson,
@@ -169,7 +219,6 @@ func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string)
 			&i.UpdatedAt,
 			&i.PlanJson,
 			&i.MessageCount,
-			&i.ToolTraceJson,
 			&i.Pinned,
 			&i.PinnedAt,
 			&i.ChangedFileCount,
@@ -209,12 +258,12 @@ func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) er
 const saveSessionDraft = `-- name: SaveSessionDraft :exec
 INSERT INTO sessions (
     id, workspace, label, label_manual, agent_name, provider, model,
-    history_json, pending_json, last_usage_json, diff_bodies_json, plan_json,
-    message_count, tool_trace_json, created_at, updated_at
+    context_json, pending_json, last_usage_json, diff_bodies_json, plan_json,
+    message_count, created_at, updated_at
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?,
     '[]', ?, '{}', '{}', '{}',
-    0, '[]', ?, ?
+    0, ?, ?
 )
 ON CONFLICT(id) DO UPDATE SET
     pending_json = excluded.pending_json
@@ -269,10 +318,10 @@ func (q *Queries) SetSessionPinned(ctx context.Context, arg SetSessionPinnedPara
 const upsertSession = `-- name: UpsertSession :exec
 INSERT INTO sessions (
     id, workspace, label, label_manual, agent_name, provider, model,
-    history_json, pending_json, last_usage_json, diff_bodies_json, plan_json, message_count, tool_trace_json,
+    context_json, pending_json, last_usage_json, diff_bodies_json, plan_json, message_count,
     created_at, updated_at, changed_file_count, plan_completed_count, plan_total_count
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?
 )
@@ -282,12 +331,11 @@ ON CONFLICT (id) DO UPDATE SET
     agent_name       = excluded.agent_name,
     provider         = excluded.provider,
     model            = excluded.model,
-    history_json     = excluded.history_json,
+    context_json     = excluded.context_json,
     pending_json     = excluded.pending_json,
     last_usage_json  = excluded.last_usage_json,
     diff_bodies_json = excluded.diff_bodies_json,
     plan_json        = excluded.plan_json,
-    tool_trace_json  = excluded.tool_trace_json,
     message_count    = excluded.message_count,
     updated_at           = excluded.updated_at,
     changed_file_count   = excluded.changed_file_count,
@@ -303,13 +351,12 @@ type UpsertSessionParams struct {
 	AgentName          string
 	Provider           string
 	Model              string
-	HistoryJson        string
+	ContextJson        string
 	PendingJson        string
 	LastUsageJson      string
 	DiffBodiesJson     string
 	PlanJson           string
 	MessageCount       int64
-	ToolTraceJson      string
 	CreatedAt          int64
 	UpdatedAt          int64
 	ChangedFileCount   int64
@@ -326,18 +373,69 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) er
 		arg.AgentName,
 		arg.Provider,
 		arg.Model,
-		arg.HistoryJson,
+		arg.ContextJson,
 		arg.PendingJson,
 		arg.LastUsageJson,
 		arg.DiffBodiesJson,
 		arg.PlanJson,
 		arg.MessageCount,
-		arg.ToolTraceJson,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.ChangedFileCount,
 		arg.PlanCompletedCount,
 		arg.PlanTotalCount,
+	)
+	return err
+}
+
+const upsertSessionTranscriptMetadata = `-- name: UpsertSessionTranscriptMetadata :exec
+INSERT INTO sessions (
+    id, workspace, label, label_manual, agent_name, provider, model,
+    context_json, pending_json, last_usage_json, diff_bodies_json, plan_json,
+    message_count, created_at, updated_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?,
+    '[]', '[]', 'null', '{}', 'null',
+    ?, ?, ?
+)
+ON CONFLICT(id) DO UPDATE SET
+    label         = excluded.label,
+    label_manual  = excluded.label_manual,
+    agent_name    = excluded.agent_name,
+    provider      = excluded.provider,
+    model         = excluded.model,
+    message_count = excluded.message_count,
+    updated_at    = excluded.updated_at
+`
+
+type UpsertSessionTranscriptMetadataParams struct {
+	ID           string
+	Workspace    string
+	Label        string
+	LabelManual  int64
+	AgentName    string
+	Provider     string
+	Model        string
+	MessageCount int64
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
+// A transcript-only save may create the parent row, but on conflict it updates
+// only metadata derived from the canonical human thread. Context, draft,
+// workspace state, pinning, and terminal context metadata are preserved.
+func (q *Queries) UpsertSessionTranscriptMetadata(ctx context.Context, arg UpsertSessionTranscriptMetadataParams) error {
+	_, err := q.db.ExecContext(ctx, upsertSessionTranscriptMetadata,
+		arg.ID,
+		arg.Workspace,
+		arg.Label,
+		arg.LabelManual,
+		arg.AgentName,
+		arg.Provider,
+		arg.Model,
+		arg.MessageCount,
+		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
 	return err
 }

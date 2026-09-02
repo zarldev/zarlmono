@@ -22,11 +22,9 @@ func TestSavedSessionSearchAcceptsLetterP(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := store.SaveActiveSession(ctx, db.SessionRecord{
-		ID:        "session-1",
-		Workspace: workspace,
-		Label:     "parser cleanup",
-		CreatedAt: time.Now(),
+	if err := store.UpdateActiveTranscript(ctx, db.TranscriptUpdate{
+		SessionID: "session-1", Workspace: workspace, Label: "parser cleanup", Revision: 1, CreatedAt: time.Now(),
+		Entries: []db.TranscriptEntry{{Sequence: 1, EntryID: "e1", Kind: "user_message", PayloadJSON: []byte(`{"Text":"prompt"}`), Revision: 1}},
 	}); err != nil {
 		t.Fatalf("save session: %v", err)
 	}

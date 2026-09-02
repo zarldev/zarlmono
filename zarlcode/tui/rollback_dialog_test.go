@@ -34,6 +34,7 @@ func TestWorkingSetPane_RollbackRestoresSelectedFile(t *testing.T) {
 	stepUI(t, m, tea.WindowSizeMsg{Width: 140, Height: 36})
 	stepUI(t, m, teasink.ConversationStartedMsg{TaskID: "turn-1"})
 	stepUI(t, m, teasink.DiffMsg{
+		TaskID: "turn-1",
 		Path:   "file.txt",
 		Diff:   "@@\n-before\n+after",
 		Before: []byte("before\n"),
@@ -70,6 +71,7 @@ func TestWorkingSetPane_RollbackConflictIsRefused(t *testing.T) {
 	stepUI(t, m, tea.WindowSizeMsg{Width: 140, Height: 36})
 	stepUI(t, m, teasink.ConversationStartedMsg{TaskID: "turn-1"})
 	stepUI(t, m, teasink.DiffMsg{
+		TaskID: "turn-1",
 		Path:   "file.txt",
 		Diff:   "@@\n-before\n+after",
 		Before: []byte("before\n"),
@@ -109,6 +111,7 @@ func TestDiffBrowser_RollbackSelectedTurn(t *testing.T) {
 	stepUI(t, m, tea.WindowSizeMsg{Width: 140, Height: 36})
 	stepUI(t, m, teasink.ConversationStartedMsg{TaskID: "turn-1"})
 	stepUI(t, m, teasink.DiffMsg{
+		TaskID: "turn-1",
 		Path:   "file.txt",
 		Diff:   "@@\n-before\n+after",
 		Before: []byte("before\n"),

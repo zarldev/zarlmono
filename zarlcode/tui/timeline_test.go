@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -105,6 +106,24 @@ func TestTimeline_LoadedSkillAndAgentStayInNestedToolGroup(t *testing.T) {
 	}
 }
 
+func TestTranscriptSideChannelsKeepOwningTurn(t *testing.T) {
+	t.Parallel()
+
+	ui := tui.New()
+	ui.ReplayTranscriptEvents(
+		transcript.TurnStarted{TurnID: "turn"},
+		transcript.DiffAdded{TurnID: "turn", Path: "main.go", Diff: "+owned"},
+		transcript.PlanUpdated{TurnID: "turn", Plan: code.Plan{Steps: []code.PlanStep{{Text: "ship", Status: code.StepStatuses.INPROGRESS}}}},
+		transcript.TurnFinished{TurnID: "turn"},
+	)
+	entries := ui.CanonicalThread().Entries()
+	for _, entry := range entries {
+		if (entry.Kind == transcript.EntryKinds.ENTRYDIFF || entry.Kind == transcript.EntryKinds.ENTRYPLAN) && entry.TurnID != "turn" {
+			t.Fatalf("entry %s turn = %q, want turn", entry.Kind, entry.TurnID)
+		}
+	}
+}
+
 func TestTimeline_PlanUpdateIsCollapsibleInline(t *testing.T) {
 	p := code.Plan{
 		Steps: []code.PlanStep{
@@ -115,7 +134,7 @@ func TestTimeline_PlanUpdateIsCollapsibleInline(t *testing.T) {
 	}
 	var m tea.Model = tui.New()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
-	m, _ = m.Update(teasink.PlanUpdatedMsg{Plan: p})
+	m, _ = m.Update(teasink.PlanUpdatedMsg{TaskID: "turn", Plan: p})
 
 	out := ansi.Strip(m.View().Content)
 	if !strings.Contains(out, "[+] plan updated · 1/2 done") {
@@ -153,8 +172,8 @@ func TestTimeline_PlanUpdatesReuseInlineRow(t *testing.T) {
 	}
 
 	out := drive(t,
-		teasink.PlanUpdatedMsg{Plan: first},
-		teasink.PlanUpdatedMsg{Plan: latest},
+		teasink.PlanUpdatedMsg{TaskID: "turn", Plan: first},
+		teasink.PlanUpdatedMsg{TaskID: "turn", Plan: latest},
 	)
 	if got := strings.Count(out, "plan updated ·"); got != 1 {
 		t.Fatalf("plan updates should reuse a single timeline row, got %d rows:\n%s", got, out)

@@ -3,6 +3,7 @@ package guardrails
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -72,7 +73,7 @@ func validateAt(schema llm.Schema, value any, path string) error {
 func validateObject(schema llm.Schema, obj map[string]any, path string) error {
 	for _, k := range schema.Required {
 		if _, present := obj[k]; !present {
-			return fmt.Errorf("missing required field %q", joinPath(path, k))
+			return fmt.Errorf("missing required field %q; expected arguments %s", joinPath(path, k), schemaArguments(schema))
 		}
 	}
 	for name, sub := range schema.Properties {
@@ -87,11 +88,50 @@ func validateObject(schema llm.Schema, obj map[string]any, path string) error {
 	if allow, ok := schema.AdditionalProperties.(bool); ok && !allow && schema.Properties != nil {
 		for name := range obj {
 			if _, declared := schema.Properties[name]; !declared {
-				return fmt.Errorf("unexpected field %q", joinPath(path, name))
+				return fmt.Errorf("unexpected field %q; expected arguments %s", joinPath(path, name), schemaArguments(schema))
 			}
 		}
 	}
 	return nil
+}
+
+func schemaArguments(schema llm.Schema) string {
+	if len(schema.Properties) == 0 {
+		return "{}"
+	}
+	required := make(map[string]struct{}, len(schema.Required))
+	for _, name := range schema.Required {
+		required[name] = struct{}{}
+	}
+	names := make([]string, 0, len(schema.Properties))
+	for name := range schema.Properties {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	fields := make([]string, 0, len(names))
+	for _, name := range names {
+		field := name
+		if _, ok := required[name]; !ok {
+			field += "?"
+		}
+		field += ": " + schemaTypeName(schema.Properties[name])
+		fields = append(fields, field)
+	}
+	return "{" + strings.Join(fields, ", ") + "}"
+}
+
+func schemaTypeName(schema llm.Schema) string {
+	if len(schema.Enum) > 0 {
+		values := make([]string, len(schema.Enum))
+		for i, value := range schema.Enum {
+			values[i] = fmt.Sprintf("%q", value)
+		}
+		return strings.Join(values, "|")
+	}
+	if schema.Type == "" {
+		return "value"
+	}
+	return schema.Type
 }
 
 func checkType(want string, value any, path string) error {

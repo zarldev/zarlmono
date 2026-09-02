@@ -9,6 +9,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -23,12 +24,15 @@ import (
 // renders enough items from the bottom to fill the viewport, so cost is
 // O(viewport) regardless of history length.
 type timeline struct {
+	thread          *transcript.Reducer
+	pendingPersist  transcript.Persistence
 	items           []item
 	toolIdx         map[string]toolRef            // ToolID -> its row + the group it lives in
 	turns           map[string]*openTurn          // TaskID -> in-progress turn (split think/answer)
 	cache           map[item]cacheEntry           // per-item render cache, keyed (width, version)
 	pendingChildren map[string][]pendingToolChild // Parent ToolID -> children that arrived first
-	queued          []*queuedUserItem             // FIFO user inputs waiting for SteerInjected
+	queued          []*queuedUserItem
+	queuedEntries   []string // FIFO user inputs waiting for SteerInjected
 
 	// subAgents tracks in-progress sub-agent runs by TaskID. Depth>0
 	// events route into the matching subAgentItem instead of the flat
@@ -120,12 +124,14 @@ type pendingToolChild struct {
 // Clear resets the timeline to empty, discarding all items, turns, caches,
 // and queued inputs. Does not affect the current run — only the transcript.
 func (tl *timeline) Clear() {
+	tl.applyTranscript(transcript.Clear{})
 	tl.clearItems()
 	tl.toolIdx = make(map[string]toolRef)
 	tl.pendingChildren = make(map[string][]pendingToolChild)
 	tl.turns = make(map[string]*openTurn)
 	tl.cache = make(map[item]cacheEntry)
 	tl.queued = nil
+	tl.queuedEntries = nil
 	tl.subAgents = make(map[string]*subAgentItem)
 	tl.subAgentsBySpawn = make(map[string]*subAgentItem)
 	tl.agents = nil
@@ -141,6 +147,7 @@ func (tl *timeline) Clear() {
 
 func newTimeline() *timeline {
 	return &timeline{
+		thread:           transcript.NewReducer(),
 		toolIdx:          make(map[string]toolRef),
 		pendingChildren:  make(map[string][]pendingToolChild),
 		turns:            make(map[string]*openTurn),
@@ -214,6 +221,7 @@ type assistantItem struct {
 	content     string // accumulated visible answer (the turn headline)
 	status      string // live placeholder shown while content == "" (e.g. "working…")
 	done        bool
+	interrupted bool
 	md          streamingMarkdown
 	hasActivity bool // supporting activity follows the response body
 }
@@ -221,6 +229,9 @@ type assistantItem struct {
 func (a *assistantItem) render(width int) []string {
 	if a.content == "" {
 		status := a.status
+		if a.interrupted {
+			status = "interrupted"
+		}
 		if status == "" {
 			status = "working…"
 		}
@@ -234,6 +245,9 @@ func (a *assistantItem) render(width int) []string {
 		kind: contentMarkdown, text: a.content, depth: a.depth, markdown: &a.md,
 		firstPrefix: rail, continuationPrefix: rail,
 	})...)
+	if a.interrupted {
+		lines = append(lines, rail+palette.Warning.On("[interrupted]"))
+	}
 	if a.hasActivity {
 		lines = append(lines, palette.Assistant.On("├─"))
 	}
@@ -247,6 +261,7 @@ const (
 	toolRunning toolState = iota
 	toolOK
 	toolFailed
+	toolInterrupted
 )
 
 type toolItem struct {
@@ -293,18 +308,24 @@ func (t *toolItem) childSummary() string {
 	if len(t.children) == 0 {
 		return ""
 	}
-	done, failed := 0, 0
+	done, failed, interrupted := 0, 0, 0
 	for _, child := range t.children {
 		if child.state != toolRunning {
 			done++
 		}
-		if child.state == toolFailed {
+		switch child.state {
+		case toolFailed:
 			failed++
+		case toolInterrupted:
+			interrupted++
 		}
 	}
 	summary := fmt.Sprintf("%d/%d calls", done, len(t.children))
 	if failed > 0 {
 		summary += fmt.Sprintf(", %d failed", failed)
+	}
+	if interrupted > 0 {
+		summary += fmt.Sprintf(", %d interrupted", interrupted)
 	}
 	return summary
 }
@@ -316,8 +337,13 @@ func (t *toolItem) render(width int) []string {
 		icon = palette.Success.On("✓")
 	case toolFailed:
 		icon = palette.Error.On("✗")
+	case toolInterrupted:
+		icon = palette.Warning.On("■")
 	}
 	head := icon + " " + t.name
+	if t.state == toolInterrupted {
+		head += " " + palette.Warning.On("interrupted")
+	}
 	if t.state == toolRunning {
 		if t.waiting {
 			head += " " + palette.Warning.On("waiting")
@@ -491,12 +517,17 @@ func (tl *timeline) geometryIndex(width int) ([]int, []int, int) {
 	// Top-level transitions invalidate their owner directly, so stable reads
 	// never scan history merely to prove that it has not changed.
 	if g.dirty < len(tl.items) {
-		if cap(g.items) < len(tl.items) {
-			g.items = make([]item, len(tl.items))
-			g.vers = make([]uint64, len(tl.items))
-			g.heights = make([]int, len(tl.items))
-			g.starts = make([]int, len(tl.items))
-			g.ends = make([]int, len(tl.items))
+		if len(g.items) < len(tl.items) {
+			// Extend instead of replacing these slices when they outgrow capacity.
+			// Navigation depends on the measured prefix before dirty; replacing the
+			// backing arrays zeroed that prefix, making scrollback see only the latest
+			// incrementally rendered turn.
+			grow := len(tl.items) - len(g.items)
+			g.items = append(g.items, make([]item, grow)...)
+			g.vers = append(g.vers, make([]uint64, grow)...)
+			g.heights = append(g.heights, make([]int, grow)...)
+			g.starts = append(g.starts, make([]int, grow)...)
+			g.ends = append(g.ends, make([]int, grow)...)
 		} else {
 			g.items = g.items[:len(tl.items)]
 			g.vers = g.vers[:len(tl.items)]
@@ -550,13 +581,17 @@ func (tl *timeline) pushItem(it item) {
 }
 
 func (tl *timeline) addUser(text string) {
+	tl.applyTranscript(transcript.UserSubmitted{Text: text})
 	tl.pushItem(&userItem{text: text})
 }
 
 func (tl *timeline) addQueuedUser(text string) {
+	change := tl.applyTranscript(transcript.QueuedUserAdded{Text: text})
+	timelineID := change.PrimaryEntryID
 	q := &queuedUserItem{text: text}
 	tl.appendItem(q)
 	tl.queued = append(tl.queued, q)
+	tl.queuedEntries = append(tl.queuedEntries, timelineID)
 }
 
 func (tl *timeline) addInjectedUser(text string) {
@@ -566,6 +601,9 @@ func (tl *timeline) addInjectedUser(text string) {
 	}
 	q := tl.queued[0]
 	tl.queued = tl.queued[1:]
+	entryID := tl.queuedEntries[0]
+	tl.queuedEntries = tl.queuedEntries[1:]
+	tl.applyTranscript(transcript.QueuedUserInjected{EntryID: entryID, Text: text})
 	q.text = text
 	q.injected = true
 	q.bump()
@@ -582,7 +620,14 @@ func (tl *timeline) addInjectedUser(text string) {
 	}
 }
 
-func (tl *timeline) addNotice(text string) {
+func (tl *timeline) addNotice(text string) { tl.addNoticeForTurn("", text) }
+
+func (tl *timeline) addNoticeForTurn(taskID, text string) {
+	tl.applyTranscript(transcript.NoticeAdded{TurnID: taskID, Text: text})
+	if sa := tl.subAgents[taskID]; sa != nil {
+		sa.addNotice(text)
+		return
+	}
 	tl.pushItem(&noticeItem{depth: 0, text: text})
 }
 
@@ -590,6 +635,7 @@ func (tl *timeline) addNotice(text string) {
 // starts. The child TaskID does not exist yet, so ConversationStarted later
 // binds the reserved row through ParentToolCallID.
 func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, prompt string) *subAgentItem {
+	tl.applyTranscript(transcript.SubagentReserved{SpawnToolID: spawnToolID, AgentName: agentName, Prompt: prompt})
 	if spawnToolID != "" {
 		if sa := tl.subAgentsBySpawn[spawnToolID]; sa != nil {
 			return sa
@@ -614,6 +660,7 @@ func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, pr
 // agent_spawn call. Falling back to a new row keeps replayed/legacy event
 // streams that lack ParentToolCallID visible.
 func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, prompt, spawnToolID string) *subAgentItem {
+	tl.applyTranscript(transcript.SubagentStarted{TurnID: taskID, SpawnToolID: spawnToolID, AgentName: agentName, Prompt: prompt})
 	if sa := tl.subAgents[taskID]; sa != nil {
 		return sa
 	}
@@ -633,6 +680,7 @@ func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName,
 // marks it closed, and removes it from the active sub-agents map so future
 // events for this taskID don't accidentally route to a finished item.
 func (tl *timeline) finishSubAgent(taskID string) {
+	tl.applyTranscript(transcript.SubagentFinished{TurnID: taskID})
 	sa := tl.subAgents[taskID]
 	if sa == nil {
 		return
@@ -649,6 +697,7 @@ func (tl *timeline) subAgent(taskID string) *subAgentItem {
 // failSubAgentSpawn leaves a terminal box in the transcript when validation or
 // admission fails before a child ConversationStarted event can be published.
 func (tl *timeline) failSubAgentSpawn(spawnToolID, detail string) {
+	tl.applyTranscript(transcript.SubagentSpawnFailed{SpawnToolID: spawnToolID, Detail: detail})
 	if sa := tl.subAgentsBySpawn[spawnToolID]; sa != nil {
 		sa.failLaunch(detail)
 	}
@@ -657,6 +706,7 @@ func (tl *timeline) failSubAgentSpawn(spawnToolID, detail string) {
 // addLoadedSkill records a successfully loaded skill under the given turn.
 // The skillsItem is always created at turn start; this just populates it.
 func (tl *timeline) addLoadedSkill(taskID, name string) {
+	tl.applyTranscript(transcript.SkillLoaded{TurnID: taskID, Name: name})
 	ot := tl.turns[taskID]
 	if ot == nil || ot.skills == nil {
 		return
@@ -673,6 +723,7 @@ func (tl *timeline) addLoadedSkill(taskID, name string) {
 // renders. Called eagerly at ConversationStarted so the response sits on
 // top of its activity.
 func (tl *timeline) startTurn(taskID string, depth int) *openTurn {
+	tl.applyTranscript(transcript.TurnStarted{TurnID: taskID})
 	resp := &assistantItem{depth: depth}
 	tl.pushItem(resp)
 	skills := &skillsItem{nested: true}
@@ -699,6 +750,7 @@ func (tl *timeline) ensureTurn(taskID string, depth int) *openTurn {
 }
 
 func (tl *timeline) appendContent(taskID string, depth int, delta string) {
+	tl.applyTranscript(transcript.AssistantDelta{TurnID: taskID, Delta: delta})
 	if sa := tl.subAgents[taskID]; sa != nil {
 		sa.appendContent(delta)
 		return
@@ -717,6 +769,7 @@ func (tl *timeline) appendContent(taskID string, depth int, delta string) {
 // (Anthropic extended thinking, DeepSeek/OpenAI reasoning_content,
 // Gemini thought parts) lands here.
 func (tl *timeline) appendThinking(taskID string, depth int, delta string) {
+	tl.applyTranscript(transcript.ReasoningDelta{TurnID: taskID, Delta: delta})
 	if delta == "" {
 		return
 	}
@@ -741,6 +794,7 @@ func (tl *timeline) appendThinking(taskID string, depth int, delta string) {
 }
 
 func (tl *timeline) endTurn(taskID string) {
+	tl.applyTranscript(transcript.TurnFinished{TurnID: taskID})
 	if sa := tl.subAgents[taskID]; sa != nil {
 		sa.endTurn()
 		return
@@ -766,6 +820,7 @@ func (tl *timeline) endTurn(taskID string) {
 }
 
 func (tl *timeline) startToolWithParent(taskID string, depth int, toolID, name, arg, parentToolID string, sequence int) {
+	tl.applyTranscript(transcript.ToolStarted{TurnID: taskID, ToolID: toolID, ParentToolID: parentToolID, Name: name, Argument: arg, Sequence: sequence})
 	if parentToolID != "" {
 		child := &toolItem{depth: depth + 1, name: name, arg: arg, state: toolRunning, sequence: sequence}
 		if ref, ok := tl.toolIdx[parentToolID]; ok && ref.tool != nil {
@@ -846,6 +901,7 @@ func insertChildBySequence(parent, child *toolItem, sequence int) {
 }
 
 func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duration, failed bool, failKind tools.Kind, effects ...string) {
+	tl.applyTranscript(transcript.ToolFinished{ToolID: toolID, Effect: firstEffectSummary(effects), FailureKind: failKind.String(), DurationMS: dur.Milliseconds(), Failed: failed})
 	ref, ok := tl.toolIdx[toolID]
 	if ok {
 		ref.tool.state = toolOK

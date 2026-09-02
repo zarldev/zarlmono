@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -154,7 +155,8 @@ func TestRecorder_CapturesRichDiffEvent(t *testing.T) {
 	}}
 	rec := diffrecorder.NewWithEventSink(src, dir, diffrecorder.NewClassifier(), sink.record)
 
-	_, err := rec.Execute(t.Context(), tools.ToolCall{
+	ctx := taskscope.WithID(t.Context(), taskscope.ID("turn-1"))
+	_, err := rec.Execute(ctx, tools.ToolCall{
 		ToolName:  "write",
 		Arguments: tools.ToolParameters{"path": "code.txt"},
 	})
@@ -167,8 +169,8 @@ func TestRecorder_CapturesRichDiffEvent(t *testing.T) {
 		t.Fatalf("expected 1 event, got %d", len(entries))
 	}
 	e := entries[0]
-	if e.Path != "code.txt" || !strings.Contains(e.Diff, "-before") || !strings.Contains(e.Diff, "+after") {
-		t.Fatalf("unexpected event path/diff: %+v", e)
+	if e.TaskID != "turn-1" || e.Path != "code.txt" || !strings.Contains(e.Diff, "-before") || !strings.Contains(e.Diff, "+after") {
+		t.Fatalf("unexpected event task/path/diff: %+v", e)
 	}
 	if string(e.Before) != "before\n" || e.BeforeMissing {
 		t.Fatalf("before image = %q missing=%v, want before image", e.Before, e.BeforeMissing)

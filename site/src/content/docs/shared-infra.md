@@ -112,9 +112,9 @@ g := workflow.NewGraph()
 workflow.AddNode(g, "validate", workflow.NodeFunc[Input, Input](validate))
 workflow.AddNode(g, "answer", workflow.NodeFunc[Input, Output](answer))
 
-g.AddEdge(workflow.Start, "validate")
+g.AddEdge(workflow.Start.String(), "validate")
 g.AddEdge("validate", "answer")
-g.AddEdge("answer", workflow.End)
+g.AddEdge("answer", workflow.End.String())
 
 run, _ := g.Compile()
 out, state, err := run.InvokeState(ctx, input)
@@ -154,6 +154,31 @@ review, decided, err := hitl.ApproveLowRisk{}.Review(ctx, req)
 if !decided {
     // send req to a TUI, web UI, notification queue, etc.
 }
+```
+
+Checkpointing and review are transport-neutral records, not automatic suspension or
+continuation. The application owns loading the checkpoint, persisting the review, and
+invoking its chosen continuation. The focused runnable `hitl_resume` example demonstrates
+that full boundary without an LLM:
+
+```bash
+go run -C examples ./hitl_resume
+```
+
+## Local session store
+
+zarlcode uses `zkit/db` for local SQLite-backed session state. Canonical transcript
+metadata and ordered entries commit together under a revision and checksum; foreign-key
+cascade removes entries when a session is deleted. The transcript schema is intentionally
+renderer-independent, while compactable provider context and auxiliary UI state remain
+separate session fields.
+
+SQLC owns the typed query layer. After changing `zkit/db/queries/` or migrations,
+regenerate committed code from the repository-pinned tool:
+
+```bash
+cd zkit/db
+go tool sqlc generate
 ```
 
 zarlcode can route these requests through its own UI surface while sharing

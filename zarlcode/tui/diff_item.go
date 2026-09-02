@@ -3,6 +3,8 @@ package tui
 import (
 	"strconv"
 	"strings"
+
+	"github.com/zarldev/zarlmono/zarlcode/transcript"
 )
 
 // maxDiffLines caps how much of a diff the inline timeline item shows;
@@ -59,7 +61,8 @@ func diffLineCounts(diff string) (int, int) {
 // toggle flips the diff's body drawer (clicked through its parent edit group).
 func (d *diffItem) toggle() { d.expanded = !d.expanded; d.bump() }
 
-func (tl *timeline) addDiff(path, diff string) {
+func (tl *timeline) addDiff(turnID, path, diff string) {
+	tl.applyTranscript(transcript.DiffAdded{TurnID: turnID, Path: path, Diff: diff})
 	// Collapsed by default — the edits group reads as a list of changed paths;
 	// the per-row [+] expands a diff on demand.
 	tl.ensureEditGroup(0).add(&diffItem{path: path, diff: diff})

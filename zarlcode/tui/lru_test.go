@@ -18,7 +18,7 @@ func TestLargeTranscriptRenderingRemainsStableAcrossCacheEviction(t *testing.T) 
 		history = append(history, llm.Message{Role: llm.RoleAssistant, Content: fmt.Sprintf("message-%03d unique content", i)})
 	}
 	ui := tui.New()
-	ui.RestoreTranscript(history)
+	ui.AddTranscriptMessages(history)
 	var model tea.Model = ui
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 

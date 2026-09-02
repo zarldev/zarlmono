@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"path"
 	"strings"
 	"time"
 
@@ -16,6 +14,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/draft"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -56,7 +55,6 @@ const (
 	sessionRestorePlanCorrupt       sessionRestoreDiagnostic = "plan"
 	sessionRestoreDiffBodiesCorrupt sessionRestoreDiagnostic = "diff bodies"
 	sessionRestoreUsageCorrupt      sessionRestoreDiagnostic = "usage"
-	sessionRestoreToolTraceCorrupt  sessionRestoreDiagnostic = "tool trace"
 	sessionRestoreDraftCorrupt      sessionRestoreDiagnostic = "draft"
 )
 
@@ -65,8 +63,8 @@ type savedSession struct {
 	Plan               code.Plan
 	DiffBodies         map[string]string
 	Usage              SessionUsageSnapshot
-	ToolTraceRaw       []byte
-	History            []llm.Message
+	Context            []llm.Message
+	Transcript         transcript.Thread
 	DraftText          string
 	restoreDiagnostics []sessionRestoreDiagnostic
 }
@@ -91,8 +89,9 @@ func listSavedSessions(ctx context.Context, store *db.Store, wsRoot string) ([]s
 	}
 	out := make([]sessionSummary, 0, len(rows))
 	for _, r := range rows {
-		s := savedSessionSummary(r)
-		out = append(out, s)
+		if r.HasTranscript || r.HasDraft {
+			out = append(out, savedSessionSummary(r))
+		}
 	}
 	return out, nil
 }
@@ -113,7 +112,7 @@ func savedSessionSummary(rec db.SessionRecord) sessionSummary {
 		PlanCompletedCount: rec.PlanCompletedCount,
 		PlanTotalCount:     rec.PlanTotalCount,
 		HasDraft:           rec.HasDraft,
-		Messages:           sessionMessageCount(rec, 0),
+		Messages:           rec.MessageCount,
 	}
 }
 
@@ -125,26 +124,56 @@ func loadSavedSession(ctx context.Context, store *db.Store, id string) (*savedSe
 	if err != nil {
 		return nil, err
 	}
-	return decodeSavedSession(rec)
+	saved, err := decodeSavedSession(rec)
+	if err != nil {
+		return nil, err
+	}
+	storedTranscript, err := store.GetSessionTranscript(ctx, id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			if rec.HasDraft {
+				saved.Transcript = transcript.NewBuilder().Thread()
+				return saved, nil
+			}
+			return nil, errors.New("session transcript not found")
+		}
+		if errors.Is(err, db.ErrTranscriptCorrupt) {
+			return nil, err
+		}
+		return nil, err
+	}
+	thread, err := transcript.FromRecords(storedTranscript.Revision, dbTranscriptRecords(storedTranscript.Entries))
+	if err != nil {
+		return nil, fmt.Errorf("session transcript is corrupted: %w", err)
+	}
+	if thread.IsEmpty() {
+		return nil, errors.New("session transcript is empty")
+	}
+	recovered, changed := thread.RecoverInterrupted()
+	if changed {
+		update, updateErr := transcriptRecoveryUpdate(rec, thread.Revision(), recovered)
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		if updateErr = store.UpdateActiveTranscript(ctx, update); updateErr != nil {
+			return nil, fmt.Errorf("persist interrupted transcript recovery: %w", updateErr)
+		}
+		thread = recovered
+	}
+	saved.Transcript = thread
+	return saved, nil
 }
 
 func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
-	var history []llm.Message
-	if len(rec.HistoryJSON) > 0 {
-		if err := json.Unmarshal(rec.HistoryJSON, &history); err != nil {
-			return nil, err
+	var contextCache []llm.Message
+	if len(rec.ContextJSON) > 0 {
+		if err := json.Unmarshal(rec.ContextJSON, &contextCache); err != nil {
+			return nil, fmt.Errorf("decode context cache: %w", err)
 		}
 	}
-	summary := savedSessionSummary(rec)
-	summary.Messages = sessionMessageCount(rec, len(history))
-	// The auxiliary blobs are best-effort: a corrupt plan/diff/usage
-	// field must not block resuming the conversation itself, which lives
-	// in HistoryJSON. Decode failures leave the zero value for the resume
-	// boundary to report once.
 	s := &savedSession{
-		sessionSummary: summary,
-		History:        history,
-		ToolTraceRaw:   rec.ToolTraceJSON,
+		sessionSummary: savedSessionSummary(rec),
+		Context:        contextCache,
 	}
 	if !decodeSessionBlob(rec.PlanJSON, &s.Plan) {
 		s.addRestoreDiagnostic(sessionRestorePlanCorrupt)
@@ -155,9 +184,6 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	if !decodeSessionBlob(rec.LastUsageJSON, &s.Usage) {
 		s.addRestoreDiagnostic(sessionRestoreUsageCorrupt)
 	}
-	if toolTraceMalformed(rec.ToolTraceJSON) {
-		s.addRestoreDiagnostic(sessionRestoreToolTraceCorrupt)
-	}
 	draftText, err := draft.Decode(rec.PendingJSON)
 	if err != nil {
 		s.addRestoreDiagnostic(sessionRestoreDraftCorrupt)
@@ -167,13 +193,6 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	return s, nil
 }
 
-func sessionMessageCount(rec db.SessionRecord, fallback int) int {
-	if rec.MessageCount > 0 || len(rec.HistoryJSON) == 0 {
-		return rec.MessageCount
-	}
-	return fallback
-}
-
 // decodeSessionBlob unmarshals an optional session blob into dst. Empty and
 // "null" blobs are absent; malformed blobs are reported to the resume boundary.
 func decodeSessionBlob(blob []byte, dst any) bool {
@@ -181,14 +200,6 @@ func decodeSessionBlob(blob []byte, dst any) bool {
 		return true
 	}
 	return json.Unmarshal(blob, dst) == nil
-}
-
-func toolTraceMalformed(raw []byte) bool {
-	if len(raw) == 0 || string(raw) == "null" {
-		return false
-	}
-	var trace savedToolTrace
-	return json.Unmarshal(raw, &trace) != nil
 }
 
 // encodeSessionJSON marshals one independently snapshotted session value.
@@ -230,9 +241,9 @@ func (m *UI) dismissIntroFresh(prompt string) tea.Cmd {
 	m.intro = nil
 	m.session.ClearIdentity()
 	if m.live != nil {
-		m.live.RestoreHistory(nil)
+		m.live.RestoreContext(nil)
 	}
-	m.timeline.restoreMessages(nil)
+	m.timeline.Clear()
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return nil
@@ -277,19 +288,19 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	m.intro = nil
 	m.session.SetIdentity(s.ID, s.Label, s.LabelManual, s.CreatedAt)
 	if m.live != nil {
-		m.live.RestoreHistory(s.History)
+		m.live.RestoreContext(s.Context)
 	}
-	m.RestoreTranscript(s.History)
+	m.timeline.restoreThread(s.Transcript)
+	m.transcriptPersisted = s.Transcript.Revision()
 	m.composer.setText(s.DraftText)
 	m.resetInputHistoryBrowse()
-	restoreToolTrace(m.timeline, s.ToolTraceRaw)
 	// Rehydrate the per-session working state so the plan overlay, Files
 	// dock + diff viewer, and cockpit totals reflect the resumed session.
 	m.session.Plan = s.Plan
 	m.session.workingSet().RestoreDiffBodies(s.DiffBodies, s.SavedAt)
 	m.session.Run.RestoreUsage(s.Usage)
 	noticeLabel := introSessionDisplayLabel(s.sessionSummary)
-	notice := fmt.Sprintf("resumed session %q — %d message(s)", noticeLabel, len(s.History))
+	notice := fmt.Sprintf("resumed session %q — %d message(s)", noticeLabel, s.Messages)
 	if !s.SavedAt.IsZero() {
 		notice += ", saved " + formatAgo(time.Since(s.SavedAt))
 	}
@@ -331,22 +342,23 @@ func (m *UI) persistResumeTarget(provider, model string) {
 }
 
 type sessionSnapshot struct {
-	record db.SessionRecord
+	record     db.SessionRecord
+	transcript db.TranscriptUpdate
 }
 
 func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 	if m.settings == nil || m.settings.Store == nil || m.live == nil {
 		return nil, errSessionSnapshotEmpty
 	}
-	history := m.live.History()
-	if len(history) == 0 {
+	contextCache := m.live.ContextSnapshot()
+	if len(contextCache) == 0 || m.timeline.transcriptThread().IsEmpty() {
 		return nil, errSessionSnapshotEmpty
 	}
 	m.session.EnsureIdentity(uuid.NewString(), time.Now())
 
-	historyJSON, err := json.Marshal(history)
+	contextJSON, err := json.Marshal(contextCache)
 	if err != nil {
-		return nil, fmt.Errorf("encode history: %w", err)
+		return nil, fmt.Errorf("encode context cache: %w", err)
 	}
 	usageJSON, err := encodeSessionJSON(m.session.Run.UsageSnapshot(), "null")
 	if err != nil {
@@ -364,10 +376,6 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode draft: %w", err)
 	}
-	toolTraceJSON, err := encodeToolTraceJSON(m.timeline)
-	if err != nil {
-		return nil, fmt.Errorf("encode tool trace: %w", err)
-	}
 	changedFileCount := len(m.session.WorkingSet.FilesChangedThisSession())
 	planCompletedCount := 0
 	for _, step := range m.session.Plan.Steps {
@@ -376,6 +384,12 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 		}
 	}
 
+	thread := m.timeline.transcriptThread()
+	messageCount := thread.MessageCount()
+	transcriptUpdate, err := m.transcriptUpdate(thread, m.transcriptPersisted)
+	if err != nil {
+		return nil, err
+	}
 	return &sessionSnapshot{record: db.SessionRecord{
 		ID:                 m.session.ID,
 		Workspace:          m.settings.WorkspaceRoot(),
@@ -383,25 +397,24 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 		LabelManual:        m.session.LabelManual,
 		Provider:           m.session.Provider,
 		Model:              m.session.Model,
-		HistoryJSON:        historyJSON,
+		ContextJSON:        contextJSON,
 		PendingJSON:        pendingJSON,
 		LastUsageJSON:      usageJSON,
 		DiffBodiesJSON:     diffBodiesJSON,
 		PlanJSON:           planJSON,
-		ToolTraceJSON:      toolTraceJSON,
 		ChangedFileCount:   changedFileCount,
 		PlanCompletedCount: planCompletedCount,
 		PlanTotalCount:     len(m.session.Plan.Steps),
-		MessageCount:       len(history),
+		MessageCount:       messageCount,
 		CreatedAt:          m.session.CreatedAt,
-	}}, nil
+	}, transcript: transcriptUpdate}, nil
 }
 
 func saveSessionSnapshot(ctx context.Context, settings *engine.Settings, snapshot *sessionSnapshot) error {
 	if settings == nil || settings.Store == nil || snapshot == nil {
 		return nil
 	}
-	if err := settings.Store.SaveActiveSession(ctx, snapshot.record); err != nil {
+	if err := settings.Store.CommitCompletedTurn(ctx, snapshot.record, snapshot.transcript); err != nil {
 		return fmt.Errorf("save session snapshot: %w", err)
 	}
 	return nil
@@ -422,27 +435,58 @@ func (m *UI) SaveSession(ctx context.Context) error {
 // the final resumable snapshot. It is called after the Bubble Tea loop stops,
 // when no command can concurrently mutate the queue.
 func (m *UI) FlushSessionPersistence(ctx context.Context) error {
-	if m.sessionPersistRunning {
-		return errors.New("session persistence still running")
+	var firstErr error
+	if m.sessionPersistRunning && m.sessionPersistCurrent != nil {
+		select {
+		case result := <-m.sessionPersistCurrent.done:
+			if result.err != nil {
+				firstErr = fmt.Errorf("flush in-flight persistence: %w", result.err)
+			} else if result.revision > m.transcriptPersisted {
+				m.transcriptPersisted = result.revision
+			}
+			m.sessionPersistRunning = false
+			m.sessionPersistCurrent = nil
+		case <-ctx.Done():
+			return fmt.Errorf("flush in-flight persistence: %w", ctx.Err())
+		}
 	}
 	for _, op := range m.sessionPersistQueue {
-		var err error
-		switch op.kind {
-		case sessionPersistDraft:
-			err = m.settings.Store.SaveSessionDraft(ctx, op.draft)
-		case sessionPersistClearDraft:
-			err = m.settings.Store.ClearSessionDraft(ctx, op.oldID)
-		case sessionPersistFull:
-			err = saveSessionSnapshot(ctx, m.settings, op.snapshot)
-		case sessionPersistDelete:
-			err = clearPersistedSession(ctx, m.settings, op.oldID)
+		if op.kind == sessionPersistTranscript || op.kind == sessionPersistFull {
+			op.rebaseTranscript(m.transcriptPersisted)
+			if op.transcriptRevision() <= m.transcriptPersisted {
+				continue
+			}
 		}
-		if err != nil {
-			return fmt.Errorf("flush queued persistence: %w", err)
+		if err := m.executeSessionPersist(ctx, op); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("flush queued persistence: %w", err)
+			}
+		} else if revision := op.transcriptRevision(); revision > m.transcriptPersisted {
+			m.transcriptPersisted = revision
 		}
 	}
 	m.sessionPersistQueue = nil
+	if firstErr != nil {
+		return firstErr
+	}
 	return m.SaveSession(ctx)
+}
+
+func (m *UI) executeSessionPersist(ctx context.Context, op sessionPersistOp) error {
+	switch op.kind {
+	case sessionPersistDraft:
+		return m.settings.Store.SaveSessionDraft(ctx, op.draft)
+	case sessionPersistClearDraft:
+		return m.settings.Store.ClearSessionDraft(ctx, op.oldID)
+	case sessionPersistTranscript:
+		return saveTranscriptSnapshot(ctx, m.settings.Store, op.transcript)
+	case sessionPersistFull:
+		return saveSessionSnapshot(ctx, m.settings, op.snapshot)
+	case sessionPersistDelete:
+		return clearPersistedSession(ctx, m.settings, op.oldID)
+	default:
+		return fmt.Errorf("unknown persistence operation %d", op.kind)
+	}
 }
 
 func (m *UI) saveSessionCmd() tea.Cmd {
@@ -453,7 +497,7 @@ func (m *UI) saveSessionCmd() tea.Cmd {
 	if err != nil {
 		return func() tea.Msg { return sessionSaveFailedMsg{Error: err.Error()} }
 	}
-	return m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistFull, snapshot: snapshot})
+	return m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistFull, generation: m.transcriptGeneration, snapshot: snapshot})
 }
 
 func (m *UI) clearContextAndTimeline() tea.Cmd {
@@ -462,15 +506,20 @@ func (m *UI) clearContextAndTimeline() tea.Cmd {
 		return m.toastExpiryCmd()
 	}
 	oldID := m.session.ID
+	m.startupPrompt = ""
+	m.startupAttachments = nil
+	m.startupAttachmentMetadata = nil
+	m.session.SetSubmittedAttachments(nil)
+	m.transcriptGeneration++
 	if m.live != nil {
-		m.live.ClearHistory()
+		m.live.ClearContext()
 	}
 	m.timeline.Clear()
 	m.session.ClearIdentity()
 	m.session.Run.RestoreUsage(SessionUsageSnapshot{})
 	m.session.Plan = code.Plan{}
 	m.session.SetSuccessToast("conversation cleared")
-	return tea.Batch(m.toastExpiryCmd(), m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete, oldID: oldID}))
+	return tea.Batch(m.toastExpiryCmd(), m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete, generation: m.transcriptGeneration, oldID: oldID}))
 }
 
 func clearPersistedSession(ctx context.Context, settings *engine.Settings, oldID string) error {
@@ -495,168 +544,6 @@ func clearPersistedSession(ctx context.Context, settings *engine.Settings, oldID
 	return err
 }
 
-func (tl *timeline) restoreMessages(history []llm.Message) {
-	tl.clearItems()
-	tl.toolIdx = make(map[string]toolRef)
-	tl.turns = make(map[string]*openTurn)
-	tl.cache = make(map[item]cacheEntry)
-	tl.curTools = nil
-	tl.curEdits = nil
-	tl.browsing = false
-	tl.scrollTop = 0
-	tl.sel = 0
-	tl.selLocal = 0
-
-	var restoredThinking *thinkingItem
-	for _, h := range history {
-		switch h.Role {
-		case "user":
-			restoredThinking = nil
-			timelineText := restoredUserContent(h)
-			if strings.TrimSpace(timelineText) != "" {
-				tl.addUser(timelineText)
-			}
-		case llm.RoleAssistant:
-			if strings.TrimSpace(h.Content) != "" {
-				tl.appendItem(&assistantItem{content: h.Content, done: true})
-			}
-			if reasoning := strings.TrimSpace(h.ReasoningContent); reasoning != "" {
-				if restoredThinking == nil {
-					restoredThinking = &thinkingItem{nested: true, done: true}
-					tl.appendItem(restoredThinking)
-				}
-				if restoredThinking.text != "" {
-					restoredThinking.text += "\n\n"
-				}
-				restoredThinking.text += reasoning
-				restoredThinking.bump()
-				tl.invalidateItem(restoredThinking)
-			}
-			if len(h.ToolCalls) > 0 {
-				g := tl.ensureToolGroup(0)
-				for _, tc := range h.ToolCalls {
-					name := tc.Function.Name
-					if name == "" {
-						name = "tool"
-					}
-					t := &toolItem{name: name, arg: toolCallArgHint(tc), state: toolOK, notify: g.bump}
-					g.add(t)
-					if tc.ID != "" {
-						tl.toolIdx[tc.ID] = toolRef{group: g, tool: t}
-					}
-				}
-			}
-		case "tool":
-			body := firstLine(strings.TrimSpace(h.Content))
-			if body == "" {
-				body = "completed"
-			}
-			if ref, ok := tl.toolIdx[h.ToolCallID]; ok {
-				ref.tool.state = toolOK
-				ref.tool.result = strings.TrimSpace(h.Content)
-				if ref.tool.result == "" {
-					ref.tool.result = "completed"
-				}
-				ref.tool.bump()
-				ref.group.bump()
-				continue
-			}
-			tl.addNotice(palette.Muted.On("✓ tool — " + body))
-		}
-	}
-	tl.closeGroups()
-}
-
-// RestoreTranscript replaces the visible conversation with persisted message
-// history, including stable placeholders for multimodal user content.
-func (m *UI) RestoreTranscript(history []llm.Message) {
-	m.timeline.restoreMessages(history)
-}
-
-func restoredUserContent(message llm.Message) string {
-	blocks := make([]string, 0, 1+len(message.Parts))
-	content := strings.TrimSpace(message.Content)
-	if content != "" {
-		blocks = append(blocks, content)
-	}
-	for _, part := range message.Parts {
-		switch part.Type {
-		case llm.ContentTypeText:
-			text := strings.TrimSpace(part.Text)
-			if text != "" && text != content {
-				blocks = append(blocks, text)
-			}
-		case llm.ContentTypeImage:
-			blocks = append(blocks, restoredMediaPlaceholder("image", imagePartLabel(part.Image)))
-		case llm.ContentTypeAudio:
-			blocks = append(blocks, restoredMediaPlaceholder("audio", audioPartLabel(part.Audio)))
-		case llm.ContentTypeVideo:
-			blocks = append(blocks, restoredMediaPlaceholder("video", videoPartLabel(part.Video)))
-		default:
-			blocks = append(blocks, "[attachment]")
-		}
-	}
-	return strings.Join(blocks, "\n\n")
-}
-
-func restoredMediaPlaceholder(kind, label string) string {
-	if label == "" {
-		return "[" + kind + "]"
-	}
-	return "[" + kind + ": " + label + "]"
-}
-
-func imagePartLabel(image *llm.ImageData) string {
-	if image == nil {
-		return ""
-	}
-	if name := mediaURLName(image.URL); name != "" {
-		return name
-	}
-	return image.MIMEType
-}
-
-func audioPartLabel(audio *llm.AudioData) string {
-	if audio == nil {
-		return ""
-	}
-	return audio.Format
-}
-
-func videoPartLabel(video *llm.VideoData) string {
-	if video == nil {
-		return ""
-	}
-	if name := mediaURLName(video.URL); name != "" {
-		return name
-	}
-	return video.MIMEType
-}
-
-func mediaURLName(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	name := path.Base(parsed.Path)
-	if name == "." || name == "/" {
-		return ""
-	}
-	return name
-}
-
-func toolCallArgHint(tc llm.ToolCall) string {
-	args := strings.TrimSpace(tc.Function.Arguments)
-	if args == "" {
-		return ""
-	}
-	var params map[string]any
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return ""
-	}
-	return toolArgHint(tc.Function.Name, params)
-}
-
 func formatAgo(d time.Duration) string {
 	if d < time.Minute {
 		return "just now"
@@ -668,4 +555,79 @@ func formatAgo(d time.Duration) string {
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+}
+
+type transcriptSnapshot struct {
+	update db.TranscriptUpdate
+}
+
+func (m *UI) transcriptSnapshot() (*transcriptSnapshot, error) {
+	if m.settings == nil || m.settings.Store == nil || m.timeline.transcriptThread().IsEmpty() {
+		return nil, db.ErrNotFound
+	}
+	m.session.EnsureIdentity(uuid.NewString(), time.Now())
+	thread := m.timeline.transcriptThread()
+	update, err := m.transcriptUpdate(thread, m.transcriptPersisted)
+	if err != nil {
+		return nil, err
+	}
+	return &transcriptSnapshot{update: update}, nil
+}
+
+func saveTranscriptSnapshot(ctx context.Context, store *db.Store, snapshot *transcriptSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	return store.UpdateActiveTranscript(ctx, snapshot.update)
+}
+
+func (m *UI) transcriptUpdate(thread transcript.Thread, expected uint64) (db.TranscriptUpdate, error) {
+	records, err := thread.RecordsSince(expected)
+	if err != nil {
+		return db.TranscriptUpdate{}, err
+	}
+	entries := make([]db.TranscriptEntry, len(records))
+	for i, record := range records {
+		entries[i] = db.TranscriptEntry{
+			Sequence: record.Sequence, EntryID: record.ID, ParentID: record.ParentID,
+			TurnID: record.TurnID, Kind: record.Kind, PayloadJSON: record.Payload, Revision: record.Revision,
+		}
+	}
+	return db.TranscriptUpdate{
+		SessionID: m.session.ID, Workspace: m.settings.WorkspaceRoot(), Label: m.session.Label,
+		LabelManual: m.session.LabelManual, AgentName: m.session.LastAgentName,
+		Provider: m.session.Provider, Model: m.session.Model, MessageCount: thread.MessageCount(),
+		CreatedAt: m.session.CreatedAt, ExpectedRevision: expected, Revision: thread.Revision(), Entries: entries,
+	}, nil
+}
+
+func dbTranscriptRecords(entries []db.TranscriptEntry) []transcript.Record {
+	records := make([]transcript.Record, len(entries))
+	for i, entry := range entries {
+		records[i] = transcript.Record{
+			Sequence: entry.Sequence, ID: entry.EntryID, ParentID: entry.ParentID,
+			TurnID: entry.TurnID, Kind: entry.Kind, Revision: entry.Revision, Payload: entry.PayloadJSON,
+		}
+	}
+	return records
+}
+
+func transcriptRecoveryUpdate(record db.SessionRecord, expected uint64, thread transcript.Thread) (db.TranscriptUpdate, error) {
+	records, err := thread.RecordsSince(expected)
+	if err != nil {
+		return db.TranscriptUpdate{}, err
+	}
+	entries := make([]db.TranscriptEntry, len(records))
+	for i, saved := range records {
+		entries[i] = db.TranscriptEntry{
+			Sequence: saved.Sequence, EntryID: saved.ID, ParentID: saved.ParentID,
+			TurnID: saved.TurnID, Kind: saved.Kind, PayloadJSON: saved.Payload, Revision: saved.Revision,
+		}
+	}
+	return db.TranscriptUpdate{
+		SessionID: record.ID, Workspace: record.Workspace, Label: record.Label,
+		LabelManual: record.LabelManual, AgentName: record.AgentName,
+		Provider: record.Provider, Model: record.Model, MessageCount: thread.MessageCount(),
+		CreatedAt: record.CreatedAt, ExpectedRevision: expected, Revision: thread.Revision(), Entries: entries,
+	}, nil
 }

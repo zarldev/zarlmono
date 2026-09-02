@@ -9,6 +9,8 @@
 --   verified         — success confirmed by the world-checking goal
 --   attempts         — agent attempts consumed (1 = single-shot)
 --   attempt_verdicts — JSON array of per-attempt goal verdicts
+-- These zero/empty defaults mean "verification telemetry was not recorded"
+-- for historical rows. They are not equivalent to a newly verified failure.
 ALTER TABLE eval_results ADD COLUMN verified         INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE eval_results ADD COLUMN attempts         INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE eval_results ADD COLUMN attempt_verdicts TEXT    NOT NULL DEFAULT '';

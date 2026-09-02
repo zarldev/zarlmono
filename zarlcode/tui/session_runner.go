@@ -14,11 +14,13 @@ import (
 
 type setupFailedEffect struct {
 	PromptToRender string
+	Attachments    []attachmentMetadata
 	ToastChanged   bool
 }
 
 type conversationStartedEffect struct {
 	PromptToRender string
+	Attachments    []attachmentMetadata
 }
 
 type toolCompletedEffect struct {
@@ -27,19 +29,25 @@ type toolCompletedEffect struct {
 
 type sessionEffect struct {
 	ToastChanged bool
+	Accepted     bool
 }
 
 func (s *Session) applyTurnSetupFailed(e turnSetupFailedMsg) setupFailedEffect {
 	s.logEvent("run setup failed", e.Error)
 	s.SetErrorToast("setup: " + e.Error)
 	s.reconcileTopLevelRun()
-	return setupFailedEffect{PromptToRender: trimPromptForNotice(e.Prompt), ToastChanged: true}
+	return setupFailedEffect{
+		PromptToRender: trimPromptForNotice(e.Prompt),
+		Attachments:    s.TakeSubmittedAttachments(),
+		ToastChanged:   true,
+	}
 }
 
 func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now time.Time) conversationStartedEffect {
 	s.LastParentToolCallID = e.ParentToolCallID
 	s.LastAgentName = e.AgentName
 	s.logEvent("run started", e.TaskID)
+	effect := conversationStartedEffect{PromptToRender: s.consumeStartedPrompt(e.Prompt)}
 
 	switch {
 	case e.Depth == 0:
@@ -47,6 +55,7 @@ func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now
 		s.checkpoints().StartTurn(e.TaskID, ordinal, now)
 		s.Run.reset()
 		s.Run.Running = true
+		effect.Attachments = s.TakeSubmittedAttachments()
 		s.Run.activeTopLevel = e.TaskID
 	case e.Depth > 0:
 		if e.Depth > s.Run.maxDepth {
@@ -54,7 +63,7 @@ func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now
 		}
 	}
 
-	return conversationStartedEffect{PromptToRender: s.consumeStartedPrompt(e.Prompt)}
+	return effect
 }
 
 func (s *Session) applyContent(e teasink.ContentMsg) {
@@ -204,7 +213,7 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 		}
 		s.SetErrorToast("provider error: " + msg)
 		s.reconcileTopLevelRun()
-		return sessionEffect{ToastChanged: true}
+		return sessionEffect{ToastChanged: true, Accepted: true}
 	}
 
 	if e.Depth == 0 {
@@ -213,7 +222,7 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 	} else {
 		s.Run.foldSubAgentUsage(e.TotalUsage)
 	}
-	return sessionEffect{}
+	return sessionEffect{Accepted: true}
 }
 
 // reconcileTopLevelRun idempotently clears UI-visible live state. The command

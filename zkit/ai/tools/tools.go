@@ -73,6 +73,37 @@ func (tp ToolParameters) String(key, defaultValue string) string {
 	return defaultValue
 }
 
+// CloneParameters returns a recursively independent copy of tool parameters.
+func CloneParameters(parameters ToolParameters) ToolParameters {
+	if parameters == nil {
+		return nil
+	}
+	cloned := make(ToolParameters, len(parameters))
+	for key, value := range parameters {
+		cloned[key] = cloneParameterValue(value)
+	}
+	return cloned
+}
+
+func cloneParameterValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		cloned := make(map[string]any, len(value))
+		for key, nested := range value {
+			cloned[key] = cloneParameterValue(nested)
+		}
+		return cloned
+	case []any:
+		cloned := make([]any, len(value))
+		for i, nested := range value {
+			cloned[i] = cloneParameterValue(nested)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
 // Int returns the value at key as an int, or defaultValue if missing or
 // unconvertible.
 func (tp ToolParameters) Int(key string, defaultValue int) int {

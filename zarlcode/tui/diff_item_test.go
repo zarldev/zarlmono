@@ -15,7 +15,7 @@ func TestExpandedDiffRendersCountsContentAndWraps(t *testing.T) {
 	long := "+" + strings.Repeat("x", 200)
 	var model tea.Model = tui.New()
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
-	model, _ = model.Update(teasink.DiffMsg{Path: "foo.go", Diff: "@@ foo.go @@\n keep\n-old line\n+new line\n" + long})
+	model, _ = model.Update(teasink.DiffMsg{TaskID: "turn", Path: "foo.go", Diff: "@@ foo.go @@\n keep\n-old line\n+new line\n" + long})
 
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

@@ -167,7 +167,8 @@ type IterationCompletedMsg struct {
 // — but it rides the same pump so it stays ordered with the tool events
 // around the update_plan call that produced it.
 type PlanUpdatedMsg struct {
-	Plan code.Plan
+	TaskID string
+	Plan   code.Plan
 }
 
 // PromptDiagnosticsMsg surfaces non-fatal prompt resolution diagnostics such as

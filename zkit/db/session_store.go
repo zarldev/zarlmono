@@ -22,13 +22,12 @@ type SessionRecord struct {
 	AgentName          string
 	Provider           string
 	Model              string
-	HistoryJSON        []byte
+	ContextJSON        []byte
 	PendingJSON        []byte
 	LastUsageJSON      []byte
 	DiffBodiesJSON     []byte
 	PlanJSON           []byte
 	MessageCount       int
-	ToolTraceJSON      []byte
 	CreatedAt          time.Time
 	Pinned             bool
 	PinnedAt           time.Time
@@ -36,6 +35,7 @@ type SessionRecord struct {
 	PlanCompletedCount int
 	PlanTotalCount     int
 	HasDraft           bool
+	HasTranscript      bool
 	UpdatedAt          time.Time
 }
 
@@ -54,7 +54,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (SessionRecord, error
 }
 
 // ListSessionSummaries returns resumable-session metadata without loading
-// large history/diff/plan JSON blobs.
+// large context, diff, or plan JSON blobs.
 func (s *Store) ListSessionSummaries(ctx context.Context, workspace string) ([]SessionRecord, error) {
 	rows, err := s.q.ListSessionSummariesByWorkspace(ctx, workspace)
 	if err != nil {
@@ -76,7 +76,7 @@ func (s *Store) ListSessions(ctx context.Context, workspace string) ([]SessionRe
 	}
 	out := make([]SessionRecord, len(rows))
 	for i, r := range rows {
-		out[i] = toSessionRecord(r)
+		out[i] = toSessionRecord(gen.GetSessionRow(r))
 	}
 	return out, nil
 }
@@ -116,11 +116,10 @@ func (s *Store) SaveSession(ctx context.Context, r SessionRecord) error {
 		AgentName:          r.AgentName,
 		Provider:           r.Provider,
 		Model:              r.Model,
-		HistoryJson:        string(orEmpty(r.HistoryJSON, "[]")),
+		ContextJson:        string(orEmpty(r.ContextJSON, "[]")),
 		PendingJson:        string(orEmpty(r.PendingJSON, "[]")),
 		LastUsageJson:      string(orEmpty(r.LastUsageJSON, "null")),
 		DiffBodiesJson:     string(orEmpty(r.DiffBodiesJSON, "{}")),
-		ToolTraceJson:      string(orEmpty(r.ToolTraceJSON, "null")),
 		PlanJson:           string(orEmpty(r.PlanJSON, "null")),
 		MessageCount:       int64(r.MessageCount),
 		CreatedAt:          r.CreatedAt.Unix(),
@@ -135,8 +134,8 @@ func (s *Store) SaveSession(ctx context.Context, r SessionRecord) error {
 	return nil
 }
 
-// SaveSessionDraft upserts only pending draft content. Existing conversation
-// metadata and activity timestamps are preserved on conflict.
+// SaveSessionDraft upserts only pending draft content. Existing canonical
+// session metadata and activity timestamps are preserved on conflict.
 func (s *Store) SaveSessionDraft(ctx context.Context, r SessionRecord) error {
 	now := time.Now()
 	if r.CreatedAt.IsZero() {
@@ -152,9 +151,9 @@ func (s *Store) SaveSessionDraft(ctx context.Context, r SessionRecord) error {
 	return nil
 }
 
-// ClearSessionDraft removes pending draft content without changing history or
-// conversation activity timestamps. A draft-only row is deleted once both its
-// history and pending content are empty.
+// ClearSessionDraft removes pending draft content without changing canonical
+// context or conversation activity timestamps. A draft-only row is deleted
+// once both its context and pending content are empty.
 func (s *Store) ClearSessionDraft(ctx context.Context, id string) error {
 	if err := s.WithTx(ctx, func(tx *Store) error {
 		if err := tx.q.ClearSessionDraft(ctx, id); err != nil {
@@ -170,8 +169,8 @@ func (s *Store) ClearSessionDraft(ctx context.Context, id string) error {
 	return nil
 }
 
-// DeleteEmptySession removes a session with no history and no
-// pending attachments. No-op when the row is absent or has content.
+// DeleteEmptySession removes a session with no model context and no pending
+// draft. No-op when the row is absent or has content.
 func (s *Store) DeleteEmptySession(ctx context.Context, id string) error {
 	if err := s.q.DeleteEmptySession(ctx, id); err != nil {
 		return fmt.Errorf("delete empty session %q: %w", id, err)
@@ -189,7 +188,7 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 }
 
 // RenameSession updates only a saved session's user-visible label. It preserves
-// history, timestamps, message counts, and every other persisted field.
+// canonical context, timestamps, message counts, and every other persisted field.
 func (s *Store) RenameSession(ctx context.Context, id, label string) error {
 	return s.q.RenameSession(ctx, gen.RenameSessionParams{Label: label, ID: id})
 }

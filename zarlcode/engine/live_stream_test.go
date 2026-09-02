@@ -38,7 +38,7 @@ func (s *liveRecordingSink) OnContent(event runner.Content) {
 }
 
 func (*liveRecordingSink) DiffEvent(diffrecorder.DiffEvent) {}
-func (*liveRecordingSink) PlanUpdated(code.Plan)            {}
+func (*liveRecordingSink) PlanUpdated(string, code.Plan)    {}
 
 func (s *liveRecordingSink) Content() []string {
 	s.mu.Lock()
@@ -63,7 +63,7 @@ func TestLiveRunnerStreamsContent(t *testing.T) {
 	if len(got) != 2 || got[0] != "first " || got[1] != "second" {
 		t.Fatalf("streamed content = %q, want [first_ second]", got)
 	}
-	history := live.History()
+	history := live.ContextSnapshot()
 	if len(history) != 2 || history[1].Content != "first second" {
 		t.Fatalf("history = %#v, want accumulated assistant response", history)
 	}

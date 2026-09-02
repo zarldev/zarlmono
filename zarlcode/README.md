@@ -91,6 +91,12 @@ Sessions are local and resumable. Provider keys live in the local vault,
 workspace settings can override global defaults, and `zarlcode -continue` picks
 up the last session for the current repo.
 
+The visible timeline is backed by a canonical, renderer-independent transcript in
+`~/.zarlcode/state.db`. Provider-facing model context is stored separately and may be
+compacted without rewriting the transcript, so resume and Markdown export keep earlier
+visible prompts, tool calls, diffs, plans, and sub-agent events. See the
+[Sessions and transcripts guide](https://zarldev.github.io/zarlmono/sessions-transcripts/).
+
 Model switching and headless runs are especially useful for open-LLM and eval-heavy work: compare providers on the same repository state, keep the session inspectable, and re-run focused prompts without turning the TUI into a black box.
 
 ## Common commands
@@ -154,9 +160,10 @@ receipt immediately so the parent can continue independent work; `agent_status`
 inspects progress, `agent_await` explicitly joins and returns the summary, and
 `agent_stop` cancels. All children are owned by the current turn and are cancelled
 and joined during shutdown. Workspace leases allow concurrent read-only children
-while preventing conflicting shared-tree writes. Long sessions compact older history
-when context gets tight. Skills and agent profiles let a workspace carry its own
-operating notes without baking them into the binary.
+while preventing conflicting shared-tree writes. Long sessions compact provider-facing
+model context when it gets tight without rewriting the canonical transcript. Skills and
+agent profiles let a workspace carry its own operating notes without baking them into
+the binary.
 In **Settings → limits → Sub-agents**, first enable delegation to expose `agent_spawn` and its lifecycle tools to the model. Profile pickers then route unnamed explore, verify, and implement tasks to discovered agents, allowing cheap exploration and stronger implementation models. The same section has per-mode iteration budgets, a simultaneous-child cap, and unresolved-routing policy (`planner`, `parent`, or `error`). Explicit `agent` arguments still win.
 
 Dynamic tool authoring also exists, but it is opt-in rather than part of the
@@ -318,6 +325,7 @@ zarlcode/
 ├── hooks/         # Workspace lifecycle hooks (OnToolResult, OnCompaction)
 ├── instructions/  # Workspace instruction loading (AGENTS.md, CLAUDE.md, etc.)
 ├── prompts/       # System prompt templates (system.md, plan.md, init.md)
+├── transcript/    # Canonical session events, validation, recovery, and Markdown export
 ├── services/      # Optional local service lifecycle helpers (for example bundled web_search)
 ├── home/          # Materialises ~/.zarlcode/ on first run
 └── version/       # Build-time version stamp (Version, Commit, Date)

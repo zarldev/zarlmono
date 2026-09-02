@@ -22,6 +22,16 @@ func TestConversationLifecycleRendersPromptAndPersistentProviderError(t *testing
 		t.Fatalf("conversation lifecycle output:\n%s", out)
 	}
 }
+func TestStaleConversationEndDoesNotMutateTimeline(t *testing.T) {
+	m := tui.New()
+	stepUI(t, m, teasink.ConversationStartedMsg{TaskID: "current", Prompt: "current prompt"})
+	before := m.View().Content
+	stepUI(t, m, teasink.ConversationEndedMsg{TaskID: "stale", Reason: runner.TerminalError, Error: "stale failure"})
+	after := m.View().Content
+	if after != before {
+		t.Fatalf("stale terminal event mutated timeline:\nbefore: %s\nafter: %s", before, after)
+	}
+}
 
 func TestLoadSkillLifecycleRendersLoadedSkill(t *testing.T) {
 	m := tui.New()

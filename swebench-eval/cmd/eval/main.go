@@ -35,6 +35,8 @@ import (
 	"github.com/zarldev/zarlmono/swebench-eval/report"
 	"github.com/zarldev/zarlmono/swebench-eval/runner"
 	"github.com/zarldev/zarlmono/swebench-eval/task"
+	"github.com/zarldev/zarlmono/swebench-eval/version"
+
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 )
 
@@ -89,7 +91,12 @@ func run() error {
 	dbPath := flag.String("db", "", "path to swebench-eval sqlite (empty = $HOME/.zarlcode/swebench-eval.db)")
 	runID := flag.String("run-id", "", "explicit run id (empty = a generated uuid)")
 	runNotes := flag.String("run-notes", "", "free-form notes to attach to the run row — eg. 'after decompose advisory refactor'")
+	versionFlag := flag.Bool("version", false, "print the build version and exit")
 	flag.Parse()
+	if *versionFlag {
+		fmt.Fprintln(os.Stdout, version.String())
+		return nil
+	}
 
 	if *tasksPath == "" {
 		fmt.Fprintln(os.Stderr, "--tasks is required")

@@ -103,8 +103,12 @@ tracked process manager, so long-running commands can be inspected or stopped
 instead of blocking the UI.
 
 For larger tasks, zarlcode can split off focused sub-agents, compact older
-history, and resume prior sessions from local SQLite state. Provider keys and
-settings are stored locally under `~/.zarlcode`.
+model context, and resume prior sessions from local SQLite state. The durable
+canonical transcript remains separate from compactable provider history, so the
+visible timeline and Markdown export keep earlier events after compaction. See
+[Sessions and transcripts](/zarlmono/sessions-transcripts/) for the persistence
+and resume model. Provider keys and settings are stored locally under
+`~/.zarlcode`.
 
 ## Plan mode and build mode
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -79,7 +80,8 @@ func planInlineLines(p code.Plan, width int) []string {
 	return out
 }
 
-func (tl *timeline) addPlanUpdate(p code.Plan) {
+func (tl *timeline) addPlanUpdate(turnID string, p code.Plan) {
+	tl.applyTranscript(transcript.PlanUpdated{TurnID: turnID, Plan: p})
 	// update_plan sends the full current plan every time. Keep repeated updates
 	// within the current turn on a single live transcript row instead of appending
 	// a new "plan updated" line for every step transition; the plan pane remains

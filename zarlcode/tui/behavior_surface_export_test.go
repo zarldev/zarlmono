@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -10,8 +11,11 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/transcript"
+	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -32,6 +36,20 @@ func (m *UI) SetPlan(plan code.Plan) { m.session.Plan = plan }
 // Submit sends text through the same queue-or-run path as the composer.
 func (m *UI) Submit(text string) tea.Cmd { return m.submit(text) }
 
+// AttachFile attaches a workspace text file through the production path.
+func (m *UI) AttachFile(path string) error { return m.attachFilePath(path) }
+
+// AttachImage attaches an image through the production path.
+func (m *UI) AttachImage(path string) error { return m.attachImagePath(path) }
+
+// StartSubmittedTurn applies the top-level start event that durably records input.
+func (m *UI) StartSubmittedTurn(taskID, prompt string) {
+	effect := m.session.applyConversationStarted(teasink.ConversationStartedMsg{
+		TaskID: taskID, Prompt: prompt,
+	}, time.Now())
+	m.timeline.addUserWithAttachments(effect.PromptToRender, effect.Attachments)
+}
+
 // SetRunning controls whether user input is queued for the active run.
 func (m *UI) SetRunning(running bool) { m.session.Run.Running = running }
 
@@ -44,6 +62,12 @@ func (m *UI) SetStartupReady(ready bool) { m.startupReady = ready }
 // StartupPrompt returns the prompt waiting for required startup work.
 func (m *UI) StartupPrompt() string { return m.startupPrompt }
 
+// ApplyStartupReady applies the production startup-ready transition.
+func (m *UI) ApplyStartupReady() tea.Cmd {
+	_, cmd := m.Update(startupReadyMsg{})
+	return cmd
+}
+
 // ApplyLimits refreshes the live runner limits from persisted settings.
 func (m *UI) ApplyLimits() { m.applyLimits() }
 
@@ -52,19 +76,32 @@ func (m *UI) RepointProvider(prov llm.Provider, spec engine.ProviderSpec, window
 	return m.handleRepointMsg(providerRepointedMsg{prov: prov, spec: spec, window: window, err: err})
 }
 
+// ResumeSavedSession loads one persisted session through the production resume path.
+func (m *UI) ResumeSavedSession(ctx context.Context, id string) error {
+	saved, err := loadSavedSession(ctx, m.settings.Store, id)
+	if err != nil {
+		return err
+	}
+	m.completeResumeSession(saved, false)
+	return nil
+}
+
 // ActiveProviderSpec returns the provider target currently shown by the session.
 func (m *UI) ActiveProviderSpec() engine.ProviderSpec { return m.session.ActiveProviderSpec() }
 
-// RestoreMessages rebuilds the visible transcript from persisted messages.
-func (m *UI) RestoreMessages(messages []llm.Message) { m.timeline.restoreMessages(messages) }
-
-// DecodeSessionHistory validates persisted conversation history while tolerating corrupt auxiliary blobs.
-func DecodeSessionHistory(rec db.SessionRecord) ([]llm.Message, error) {
-	saved, err := decodeSavedSession(rec)
-	if err != nil {
-		return nil, err
+// AddTranscriptMessages appends semantic messages through the live transcript path.
+func (m *UI) AddTranscriptMessages(messages []llm.Message) {
+	for i, message := range messages {
+		switch message.Role {
+		case llm.RoleUser:
+			m.timeline.addUser(message.Content)
+		case llm.RoleAssistant:
+			taskID := fmt.Sprintf("test-transcript-%d", i)
+			m.timeline.startTurn(taskID, 0)
+			m.timeline.appendContent(taskID, 0, message.Content)
+			m.timeline.endTurn(taskID)
+		}
 	}
-	return saved.History, nil
 }
 
 // SetToast records an informational status notification.
@@ -280,9 +317,6 @@ func (m *UI) IntroPrompt() string {
 	return string(m.intro.prompt)
 }
 
-// SetConfirmQuit controls whether the quit shortcut opens a confirmation dialog.
-func (m *UI) SetConfirmQuit(enabled bool) { m.session.ConfirmQuit = enabled }
-
 // RenderPRLine renders pull-request state for the sidebar.
 func RenderPRLine(pr *PRInfo) string { return prLine(pr) }
 
@@ -299,3 +333,166 @@ func (m *UI) RenderTranscript(width, height int) []string {
 func (m *UI) OpenDiffBrowser(ws *WorkingSet) {
 	m.overlay.push(newDiffBrowser(ws))
 }
+
+// ForceTranscriptPersist snapshots the canonical thread into the serialized persistence queue.
+func (m *UI) ForceTranscriptPersist() tea.Cmd { return m.persistTranscriptNow() }
+
+// ScheduleTranscriptPersist schedules a debounced canonical-thread write.
+func (m *UI) ScheduleTranscriptPersist() tea.Cmd { return m.scheduleTranscriptPersist() }
+
+// AddPartialTranscript appends an unfinished turn without scheduling persistence.
+func (m *UI) AddPartialTranscript(taskID, prompt, content string) {
+	m.timeline.addUser(prompt)
+	m.timeline.startTurn(taskID, 0)
+	m.timeline.appendContent(taskID, 0, content)
+}
+
+// HandleTranscriptDebounce applies a transcript debounce message for generation.
+func (m *UI) HandleTranscriptDebounce(generation uint64) tea.Cmd {
+	cmd, _ := m.handleDraftPersistenceMsg(transcriptDebounceMsg{Generation: generation})
+	return cmd
+}
+
+// TranscriptGeneration returns the current stream persistence generation.
+func (m *UI) TranscriptGeneration() uint64 { return m.transcriptGeneration }
+
+// QueueTranscriptPersist snapshots the canonical thread without starting the command.
+func (m *UI) QueueTranscriptPersist() {
+	m.sessionPersistRunning = true
+	m.persistTranscriptNow()
+	m.sessionPersistRunning = false
+}
+
+// SessionPersistQueueKinds returns the current queued operation kinds for tests.
+func (m *UI) SessionPersistQueueKinds() []string {
+	kinds := make([]string, len(m.sessionPersistQueue))
+	for i, op := range m.sessionPersistQueue {
+		switch op.kind {
+		case sessionPersistDraft:
+			kinds[i] = "draft"
+		case sessionPersistClearDraft:
+			kinds[i] = "clear-draft"
+		case sessionPersistTranscript:
+			kinds[i] = "transcript"
+		case sessionPersistFull:
+			kinds[i] = "commit"
+		case sessionPersistDelete:
+			kinds[i] = "delete"
+		}
+	}
+	return kinds
+}
+
+// QueueLatestTranscriptPersist queues the current transcript without starting it.
+func (m *UI) QueueLatestTranscriptPersist() {
+	m.sessionPersistRunning = true
+	m.persistTranscriptNow()
+	m.sessionPersistRunning = false
+}
+
+// QueueDeletePersist queues a delete barrier without starting it.
+func (m *UI) QueueDeletePersist(sessionID string) {
+	m.sessionPersistRunning = true
+	m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete, oldID: sessionID})
+	m.sessionPersistRunning = false
+}
+
+// StartTranscriptPersistWithoutDelivering starts one transcript command and
+// discards its Bubble Tea message after the store write completes.
+func (m *UI) StartTranscriptPersistWithoutDelivering() tea.Cmd {
+	cmd := m.persistTranscriptNow()
+	return func() tea.Msg {
+		cmd()
+		return nil
+	}
+}
+
+// StartBlockingTranscriptPersist starts a transcript write through a test gate.
+func (m *UI) StartBlockingTranscriptPersist(started chan<- struct{}, release <-chan struct{}, result error) tea.Cmd {
+	op := sessionPersistOp{kind: sessionPersistTranscript, generation: m.transcriptGeneration, done: make(chan sessionPersistedMsg, 1)}
+	m.sessionPersistCurrent = &op
+	m.sessionPersistRunning = true
+	return func() tea.Msg {
+		close(started)
+		<-release
+		msg := sessionPersistedMsg{kind: op.kind, generation: op.generation, err: result}
+		op.done <- msg
+		close(op.done)
+		return msg
+	}
+}
+
+// QueueCommitBarrier queues a terminal barrier for the current transcript generation.
+func (m *UI) QueueCommitBarrier() {
+	m.sessionPersistRunning = true
+	m.enqueueSessionPersist(sessionPersistOp{
+		kind: sessionPersistFull, generation: m.transcriptGeneration,
+		snapshot: &sessionSnapshot{record: db.SessionRecord{ID: m.session.ID}},
+	})
+	m.sessionPersistRunning = false
+}
+
+// QueueTranscriptGeneration queues a synthetic transcript generation for barrier tests.
+func (m *UI) QueueTranscriptGeneration(generation uint64) {
+	m.sessionPersistRunning = true
+	m.enqueueSessionPersist(sessionPersistOp{
+		kind: sessionPersistTranscript, generation: generation,
+		transcript: &transcriptSnapshot{update: db.TranscriptUpdate{SessionID: m.session.ID}},
+	})
+	m.sessionPersistRunning = false
+}
+
+// TranscriptText returns persisted entry payloads as text for black-box assertions.
+func TranscriptText(saved db.SessionTranscript) string {
+	var out strings.Builder
+	for _, entry := range saved.Entries {
+		out.Write(entry.PayloadJSON)
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
+// CanonicalThread returns the canonical thread for behavior tests.
+func (m *UI) CanonicalThread() transcript.Thread { return m.timeline.thread.Thread() }
+
+// PersistedTranscriptRevision returns the last acknowledged thread revision.
+func (m *UI) PersistedTranscriptRevision() uint64 { return m.transcriptPersisted }
+
+// ReplayTranscriptEvents reduces semantic transcript events into the live projection.
+func (m *UI) ReplayTranscriptEvents(events ...any) {
+	for _, event := range events {
+		switch event := event.(type) {
+		case transcript.UserSubmitted:
+			m.timeline.addUser(event.Text)
+		case transcript.TurnStarted:
+			m.timeline.startTurn(event.TurnID, 0)
+		case transcript.AssistantDelta:
+			m.timeline.appendContent(event.TurnID, 0, event.Delta)
+		case transcript.ReasoningDelta:
+			m.timeline.appendThinking(event.TurnID, 0, event.Delta)
+		case transcript.ToolStarted:
+			m.timeline.startToolWithParent(event.TurnID, 0, event.ToolID, event.Name, event.Argument, event.ParentToolID, event.Sequence)
+		case transcript.ToolFinished:
+			m.timeline.finishTool(event.ToolID, "", nil, time.Duration(event.DurationMS)*time.Millisecond, event.Failed, tools.Kinds.UNKNOWN, event.Effect)
+		case transcript.DiffAdded:
+			m.timeline.addDiff(event.TurnID, event.Path, event.Diff)
+		case transcript.PlanUpdated:
+			m.timeline.addPlanUpdate(event.TurnID, event.Plan)
+		case transcript.TurnFinished:
+			m.timeline.endTurn(event.TurnID)
+		default:
+			panic("unsupported test transcript event")
+		}
+	}
+}
+
+// RestoreCanonicalTranscript projects a canonical thread into a fresh timeline.
+func (m *UI) RestoreCanonicalTranscript(thread transcript.Thread) { m.timeline.restoreThread(thread) }
+
+// PendingTranscriptPersistence returns the strongest undrained reducer policy.
+func (m *UI) PendingTranscriptPersistence() string {
+	return m.timeline.pendingPersist.String()
+}
+
+// DrainTranscriptPersistence consumes the current reducer persistence policy.
+func (m *UI) DrainTranscriptPersistence() tea.Cmd { return m.transcriptPersistenceCmd() }

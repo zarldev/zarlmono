@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/options"
 	"go.starlark.net/starlark"
@@ -119,6 +121,7 @@ func WithLimits(limits Limits) options.Option[Source] {
 func (s *Source) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 	return func(yield func(tools.Tool) bool) {
 		hasProgram := false
+		allowed := []tools.ToolSpec{}
 		for tool := range s.inner.Tools(ctx) {
 			spec := tool.Definition()
 			if spec.Name == ToolName {
@@ -126,6 +129,7 @@ func (s *Source) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 				continue
 			}
 			if s.policy(spec) {
+				allowed = append(allowed, spec)
 				continue
 			}
 			if !yield(tool) {
@@ -135,7 +139,7 @@ func (s *Source) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 		if hasProgram {
 			return
 		}
-		_ = yield(programTool{source: s})
+		_ = yield(programTool{source: s, allowed: allowed})
 	}
 }
 
@@ -154,7 +158,10 @@ func (s *Source) ForgetTask(id taskscope.ID) {
 	}
 }
 
-type programTool struct{ source *Source }
+type programTool struct {
+	source  *Source
+	allowed []tools.ToolSpec
+}
 
 const programDescription = `Run bounded read/search/catalogue calls in Starlark. Direct read/search/catalogue tools are hidden; shell and mutation remain direct.
 
@@ -163,15 +170,56 @@ Built-ins:
 - call_many([{"name": name, "args": args}, ...]) -> ordered results
 - emit(value) -> final result; required exactly once
 
-Allowed names: read, grep, glob, ls, file_map, retrieve_code, web_search, web_fetch, list_skills, list_agents, list_instructions.
+Inner calls use the exact JSON argument names in the signatures below. Required arguments have no ` + "`?`" + ` suffix; optional arguments do. Do not invent aliases.
 
 No imports, filesystem, network, shell, environment, mutation, MCP, agent_spawn, or recursion.`
 
 func (t programTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolName,
-		Description: programDescription,
+		Description: nestedToolDescription(t.allowed),
 		Parameters:  tools.SchemaFor[Args]()}
+}
+
+func nestedToolDescription(specs []tools.ToolSpec) string {
+	if len(specs) == 0 {
+		return programDescription
+	}
+	slices.SortFunc(specs, func(a, b tools.ToolSpec) int {
+		return strings.Compare(a.Name.String(), b.Name.String())
+	})
+	var b strings.Builder
+	b.WriteString(programDescription)
+	b.WriteString("\n\nInner tool signatures:")
+	for _, spec := range specs {
+		fmt.Fprintf(&b, "\n- %s(%s)", spec.Name, schemaSignature(spec.Parameters))
+	}
+	return b.String()
+}
+
+func schemaSignature(schema llm.Schema) string {
+	required := make(map[string]struct{}, len(schema.Required))
+	for _, name := range schema.Required {
+		required[name] = struct{}{}
+	}
+	names := make([]string, 0, len(schema.Properties))
+	for name := range schema.Properties {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	fields := make([]string, 0, len(names))
+	for _, name := range names {
+		field := name
+		if _, ok := required[name]; !ok {
+			field += "?"
+		}
+		typeName := schema.Properties[name].Type
+		if typeName == "" {
+			typeName = "value"
+		}
+		fields = append(fields, field+": "+typeName)
+	}
+	return strings.Join(fields, ", ")
 }
 
 func (t programTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {

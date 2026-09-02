@@ -7,6 +7,7 @@ import "github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 // event — it's dispatched through the same pump (Sink.Diff) so it stays
 // ordered with the tool events around it.
 type DiffMsg struct {
+	TaskID        string
 	Path          string
 	Diff          string
 	Before        []byte
@@ -28,11 +29,8 @@ func (s *Sink) Diff(path, diff string) {
 func (s *Sink) DiffEvent(e diffrecorder.DiffEvent) {
 	s.flush()
 	s.dispatch(DiffMsg{
-		Path:          e.Path,
-		Diff:          e.Diff,
-		Before:        append([]byte(nil), e.Before...),
-		BeforeMissing: e.BeforeMissing,
-		After:         append([]byte(nil), e.After...),
-		AfterMissing:  e.AfterMissing,
+		TaskID: e.TaskID, Path: e.Path, Diff: e.Diff,
+		Before: append([]byte(nil), e.Before...), BeforeMissing: e.BeforeMissing,
+		After: append([]byte(nil), e.After...), AfterMissing: e.AfterMissing,
 	})
 }

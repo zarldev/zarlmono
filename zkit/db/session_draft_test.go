@@ -30,7 +30,7 @@ func TestStoreDraftRoundTripWithoutHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got.PendingJSON) != string(record.PendingJSON) || len(got.HistoryJSON) == 0 {
+	if string(got.PendingJSON) != string(record.PendingJSON) || len(got.ContextJSON) == 0 {
 		t.Fatalf("stored draft = %#v", got)
 	}
 	if err := store.ClearSessionDraft(t.Context(), record.ID); err != nil {
@@ -45,6 +45,28 @@ func TestStoreDraftRoundTripWithoutHistory(t *testing.T) {
 	}
 }
 
+func TestGetSessionReportsDraftState(t *testing.T) {
+	t.Parallel()
+
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.SaveSessionDraft(t.Context(), db.SessionRecord{
+		ID: "draft-state", Workspace: "/workspace", PendingJSON: []byte(`{"text":"unfinished"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetSession(t.Context(), "draft-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.HasDraft {
+		t.Fatalf("GetSession HasDraft = false, pending = %s", got.PendingJSON)
+	}
+}
+
 func TestStoreDraftUpdatePreservesConversationTimestamp(t *testing.T) {
 	t.Parallel()
 
@@ -53,7 +75,7 @@ func TestStoreDraftUpdatePreservesConversationTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	record := db.SessionRecord{ID: "saved", Workspace: "/workspace", Label: "manual", HistoryJSON: []byte(`[{"role":"user","content":"keep"}]`), MessageCount: 1}
+	record := db.SessionRecord{ID: "saved", Workspace: "/workspace", Label: "manual", ContextJSON: []byte(`[{"role":"user","content":"keep"}]`), MessageCount: 1}
 	if err := store.SaveSession(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +91,7 @@ func TestStoreDraftUpdatePreservesConversationTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !after.UpdatedAt.Equal(before.UpdatedAt) || string(after.HistoryJSON) != string(before.HistoryJSON) || after.Label != before.Label {
+	if !after.UpdatedAt.Equal(before.UpdatedAt) || string(after.ContextJSON) != string(before.ContextJSON) || after.Label != before.Label {
 		t.Fatalf("after draft = %#v; before = %#v", after, before)
 	}
 }
@@ -86,7 +108,7 @@ func TestClearStoredDraftPreservesSavedConversation(t *testing.T) {
 		ID:           "saved-with-draft",
 		Workspace:    "/workspace",
 		Label:        "manual",
-		HistoryJSON:  []byte(`[{"role":"user","content":"keep"}]`),
+		ContextJSON:  []byte(`[{"role":"user","content":"keep"}]`),
 		PendingJSON:  []byte(`{"text":"draft"}`),
 		MessageCount: 1,
 	}
@@ -104,7 +126,7 @@ func TestClearStoredDraftPreservesSavedConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(after.PendingJSON) != "[]" || string(after.HistoryJSON) != string(before.HistoryJSON) || after.Label != before.Label || !after.UpdatedAt.Equal(before.UpdatedAt) {
+	if string(after.PendingJSON) != "[]" || string(after.ContextJSON) != string(before.ContextJSON) || after.Label != before.Label || !after.UpdatedAt.Equal(before.UpdatedAt) {
 		t.Fatalf("after clear = %#v; before = %#v", after, before)
 	}
 }

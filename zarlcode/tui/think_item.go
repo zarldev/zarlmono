@@ -9,11 +9,12 @@ import "strings"
 // expands.
 type thinkingItem struct {
 	versioned
-	depth    int
-	nested   bool // turn activity: rendered tight (no blank line above)
-	text     string
-	expanded bool
-	done     bool
+	depth       int
+	nested      bool // turn activity: rendered tight (no blank line above)
+	text        string
+	expanded    bool
+	done        bool
+	interrupted bool
 }
 
 func (t *thinkingItem) finished() bool { return t.done }
@@ -32,12 +33,19 @@ func (t *thinkingItem) togglerAt(_, ln int) toggler {
 	return nil
 }
 
+func (t *thinkingItem) heading() string {
+	if t.interrupted {
+		return " thinking · interrupted"
+	}
+	return " thinking"
+}
+
 func (t *thinkingItem) render(width int) []string {
 	var lines []string
 	if !t.expanded {
-		lines = []string{palette.Subtle.On("[") + palette.Primary.On("+") + palette.Subtle.On("]") + palette.Muted.On(" thinking")}
+		lines = []string{palette.Subtle.On("[") + palette.Primary.On("+") + palette.Subtle.On("]") + palette.Muted.On(t.heading())}
 	} else {
-		lines = append(lines, palette.Subtle.On("[")+palette.Primary.On("-")+palette.Subtle.On("]")+palette.Muted.On(" thinking"))
+		lines = append(lines, palette.Subtle.On("[")+palette.Primary.On("-")+palette.Subtle.On("]")+palette.Muted.On(t.heading()))
 		lines = append(lines, renderContentBlock(width, contentBlock{
 			kind:       contentMarkdown,
 			text:       normalizeThinkingMarkdown(t.text),
