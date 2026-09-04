@@ -7,21 +7,12 @@ package cli
 // To still let `sudo -A <cmd>` work, the interactive shell provides an
 // askpass helper that talks back to the shell process — which DOES have
 // the TTY — over a unix socket.
-//
-//	zarlcode --askpass "<prompt>"  — the helper mode. Sudo execs
-//	                                    this with the prompt as argv[1].
-//	                                    We connect to the socket whose
-//	                                    path is in env, send the prompt,
-//	                                    read the password back, and print
-//	                                    it to stdout (sudo's contract).
-//
-// The server side (the in-TUI password prompt that answers these
-// requests) is a TUI feature; it lives with the interactive shell.
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -29,17 +20,21 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/askpass"
 )
 
-// RunAskpassClient is the entry point for `zarlcode --askpass`.
-// Connects to the shell over the unix socket and pipes the password
-// back to sudo via stdout. Never returns to main(); calls os.Exit.
-func RunAskpassClient(args []string) {
-	os.Exit(runAskpassClient(args))
+// AskpassCommand executes the askpass socket protocol. Sock may be supplied by
+// an embedder; its zero value reads the production socket environment variable.
+type AskpassCommand struct {
+	Sock string
 }
 
-func runAskpassClient(args []string) int {
-	sock := os.Getenv(askpass.EnvSock)
+// Execute sends the requested prompt to the owning TUI and writes the returned
+// password to stdout using sudo's one-line askpass protocol.
+func (c AskpassCommand) Execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	sock := c.Sock
 	if sock == "" {
-		fmt.Fprintln(os.Stderr, "zarlcode-askpass: ZARLCODE_ASKPASS_SOCK is unset")
+		sock = os.Getenv(askpass.EnvSock)
+	}
+	if sock == "" {
+		fmt.Fprintln(stderr, "zarlcode-askpass: ZARLCODE_ASKPASS_SOCK is unset")
 		return 2
 	}
 	prompt := "Password:"
@@ -47,28 +42,31 @@ func runAskpassClient(args []string) int {
 		prompt = strings.TrimSpace(strings.Join(args, " "))
 	}
 
-	conn, err := (&net.Dialer{}).DialContext(context.Background(), "unix", sock)
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "zarlcode-askpass: dial:", err)
+		fmt.Fprintln(stderr, "zarlcode-askpass: dial:", err)
 		return 2
 	}
 	defer conn.Close()
 
 	if err := json.NewEncoder(conn).Encode(askpass.Request{Prompt: prompt}); err != nil {
-		fmt.Fprintln(os.Stderr, "zarlcode-askpass: send:", err)
+		fmt.Fprintln(stderr, "zarlcode-askpass: send:", err)
 		return 2
 	}
 	var resp askpass.Response
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		fmt.Fprintln(os.Stderr, "zarlcode-askpass: recv:", err)
+		fmt.Fprintln(stderr, "zarlcode-askpass: recv:", err)
 		return 2
 	}
 	if resp.Error != "" {
-		fmt.Fprintln(os.Stderr, "zarlcode-askpass:", resp.Error)
+		fmt.Fprintln(stderr, "zarlcode-askpass:", resp.Error)
 		return 2
 	}
-	// sudo reads exactly one line from stdout — no trailing newline
-	// quirks needed; Println adds the newline sudo expects.
-	fmt.Fprintln(os.Stdout, resp.Password)
+	fmt.Fprintln(stdout, resp.Password)
 	return 0
+}
+
+// RunAskpassClient is the entry point for `zarlcode --askpass`.
+func RunAskpassClient(args []string) {
+	os.Exit((AskpassCommand{}).Execute(context.Background(), args, os.Stdout, os.Stderr))
 }
