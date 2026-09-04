@@ -342,13 +342,14 @@ func recoverLooseToolCalls(content string) []llm.ToolCall {
 				i = strEnd
 				continue
 			}
-			if name != "" {
+			arguments := normalizeArguments(json.RawMessage(args))
+			if name != "" && json.Valid([]byte(arguments)) {
 				calls = append(calls, llm.ToolCall{
 					ID:   id,
 					Type: toolCallTypeFunction,
 					Function: llm.ToolCallFunction{
 						Name:      name,
-						Arguments: normalizeArguments(json.RawMessage(args)),
+						Arguments: arguments,
 					},
 				})
 			}
