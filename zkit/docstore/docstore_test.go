@@ -81,6 +81,7 @@ func TestMongoStoreContract(t *testing.T) {
 		if closed {
 			return
 		}
+		// Test cleanup runs after t.Context is canceled; preserve only its values.
 		ctx, cleanupCancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 		defer cleanupCancel()
 		if err := database.Collection("records").Drop(ctx); err != nil {
