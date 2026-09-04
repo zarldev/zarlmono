@@ -340,6 +340,9 @@ func (b *NATSBus[T]) wrapHandler(subCtx context.Context, handler Handler[T]) nat
 				headers[k] = v[0]
 			}
 		}
+		if msg.Reply != "" {
+			headers.Set("reply-to", msg.Reply)
+		}
 
 		var timestamp time.Time
 		if ts := headers.Get("timestamp"); ts != "" {
