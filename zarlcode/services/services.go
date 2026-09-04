@@ -22,13 +22,11 @@ const (
 
 	composeAsset  = "assets/docker-compose.yml"
 	settingsAsset = "assets/searxng/settings.yml"
-	limiterAsset  = "assets/searxng/limiter.toml"
 )
 
 var assetTargets = map[string]string{
 	composeAsset:  "docker-compose.yml",
 	settingsAsset: filepath.Join("searxng", "settings.yml"),
-	limiterAsset:  filepath.Join("searxng", "limiter.toml"),
 }
 
 type MaterialiseResult struct {
