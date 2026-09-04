@@ -1,5 +1,5 @@
 // Command genformula renders the zarlcode Homebrew formula from release
-// checksums. It mirrors the flags of the script it replaced:
+// checksums. It accepts release metadata and writes a formula:
 //
 //	go run ./tools/genformula/cmd/genformula \
 //	  --version v0.1.2 \
