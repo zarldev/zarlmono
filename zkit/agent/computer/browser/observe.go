@@ -42,7 +42,7 @@ func (s *Session) Observe(ctx context.Context, req computer.ObserveRequest) (com
 	}
 	if req.IncludeScreenshot {
 		var png []byte
-		if err := s.run(ctx, chromedp.FullScreenshot(&png, 90)); err != nil {
+		if err := s.run(ctx, chromedp.FullScreenshot(&png, 100)); err != nil {
 			return computer.Observation{}, fmt.Errorf("capture browser screenshot: %w", err)
 		}
 		obs.Screenshot = &computer.ObservationImage{

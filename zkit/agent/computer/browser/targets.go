@@ -177,12 +177,14 @@ function resolveTarget(target) {
       if (byLocator) return byLocator;
     } catch (_) {}
   }
-  const candidates = Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[aria-label],[contenteditable="true"]'));
-  for (const el of candidates) {
-    if (target.role && elementRole(el) !== target.role) continue;
-    if (target.name && !elementName(el).includes(target.name)) continue;
-    if (target.text && !normalize(el.innerText || el.textContent || '').includes(target.text)) continue;
-    return el;
+  if (target.role || target.name || target.text) {
+    const candidates = Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[aria-label],[contenteditable="true"]'));
+    for (const el of candidates) {
+      if (target.role && elementRole(el) !== target.role) continue;
+      if (target.name && !elementName(el).includes(target.name)) continue;
+      if (target.text && !normalize(el.innerText || el.textContent || '').includes(target.text)) continue;
+      return el;
+    }
   }
   if (target.position) {
     return document.elementFromPoint(target.position.x || 0, target.position.y || 0);
