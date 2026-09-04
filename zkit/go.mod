@@ -10,6 +10,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/chromedp/chromedp v0.16.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/landlock-lsm/go-landlock v0.9.0
 	github.com/lmittmann/tint v1.2.0
@@ -52,7 +53,6 @@ require (
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.21 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
