@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zarldev/zarlmono/zkit/db"
 	_ "modernc.org/sqlite"
+
+	"github.com/zarldev/zarlmono/zkit/db"
 )
 
 func TestSessionTranscriptRoundTripAndCascadeDelete(t *testing.T) {

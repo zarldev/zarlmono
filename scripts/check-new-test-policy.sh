@@ -56,10 +56,10 @@ while IFS= read -r file; do
   [[ -z "$package" || "$package" == *_test ]] && continue
   echo "$file: owned tests must use an external *_test package" >&2
   status=1
-done < <(find zkit zarlcode swebench-eval -name '*_test.go' -type f)
+done < <(find tools examples zkit zarlcode swebench-eval -name '*_test.go' -type f)
 
-if find zkit zarlcode swebench-eval -name '*_internal_test.go' -print -quit | grep -q .; then
-  find zkit zarlcode swebench-eval -name '*_internal_test.go' -print >&2
+if find tools examples zkit zarlcode swebench-eval -name '*_internal_test.go' -print -quit | grep -q .; then
+  find tools examples zkit zarlcode swebench-eval -name '*_internal_test.go' -print >&2
   echo "owned *_internal_test.go files are forbidden" >&2
   status=1
 fi

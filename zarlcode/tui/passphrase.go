@@ -4,8 +4,9 @@ import (
 	"context"
 	"os"
 
-	"github.com/zarldev/zarlmono/zkit/vault"
 	"golang.org/x/term"
+
+	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
 // vaultPassphraseFunc returns the interactive passphrase prompt only when a

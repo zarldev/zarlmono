@@ -12,12 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"go.starlark.net/starlark"
+	"go.starlark.net/syntax"
+
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/options"
-	"go.starlark.net/starlark"
-	"go.starlark.net/syntax"
 )
 
 // ToolName is the LLM-visible programmatic tool name.

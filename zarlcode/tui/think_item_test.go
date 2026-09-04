@@ -7,6 +7,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 
 	"github.com/charmbracelet/x/ansi"
+
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 

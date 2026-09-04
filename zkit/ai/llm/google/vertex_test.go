@@ -6,9 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"google.golang.org/genai"
+
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/google"
-	"google.golang.org/genai"
 )
 
 func testClient(t *testing.T, baseURL string) *genai.Client {
