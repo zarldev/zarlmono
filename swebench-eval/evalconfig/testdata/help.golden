@@ -1,0 +1,77 @@
+Usage of eval:
+  -ablations string
+    \tcomma-separated zarlcode guardrail-ablation arms, or "all" (baseline, no-shell, no-skill-hint, no-decompose, no-fanout, no-test-edit, no-improvement, judge); each arm runs as its own driver
+  -allow-remote-reset-url
+    \tpermit a non-loopback --llamacpp-reset-url (default: loopback only, to avoid SSRF via a misconfigured URL)
+  -clone-cache string
+    \toptional --reference clone cache directory
+  -concurrency int
+    \tparallel (task, driver) invocations (default 1)
+  -context-window int
+    \tcompactor context-window size in tokens (0 = 32768)
+  -db string
+    \tpath to swebench-eval sqlite (empty = $HOME/.zarlcode/swebench-eval.db)
+  -drivers string
+    \tcomma-separated list of drivers to run (zarlcode) (default "zarlcode")
+  -env string
+    \tpath to .env loaded before provider construction (carries per-backend URL/key knobs)
+  -keep-worktrees
+    \tleave worktrees on disk after the run for post-hoc inspection
+  -languages string
+    \tcomma-separated language filter (empty = all)
+  -llamacpp-reset-url string
+    \tPOSTed before each task to flush local llama-server's KV cache slot; e.g. http://localhost:8081/slots/0?action=erase (requires --slot-save-path on the server)
+  -max-iter int
+    \tcap the agent loop's iterations (0 = loop default)
+  -run-id string
+    \texplicit run id (empty = a generated uuid)
+  -run-notes string
+    \tfree-form notes to attach to the run row — eg. 'after decompose advisory refactor'
+  -sample int
+    \tstratified sample size (0 = run all matching specs)
+  -score
+    \tafter the harness loop, invoke SWE-bench's evaluator on each driver's diffs and report resolved/unresolved
+  -score-dataset string
+    \tdataset name passed to the SWE-bench evaluator (default "SWE-bench/SWE-bench_Multilingual")
+  -score-python string
+    \tpython interpreter that has the swebench package importable (empty = python3 on PATH; typical: a venv's bin/python)
+  -score-workdir string
+    \tdirectory for the evaluator's predictions + logs (empty = a fresh tempdir)
+  -score-workers int
+    \tSWE-bench evaluator --max_workers (default 4)
+  -state-db string
+    \tpath to zarlcode state.db — vault + custom-provider rows (empty = $HOME/.zarlcode/state.db)
+  -task-timeout duration
+    \twall-clock budget per (task, driver) (default 5m0s)
+  -tasks string
+    \tpath to SWE-bench JSONL or Parquet task file (required)
+  -tool-concurrency int
+    \tcap concurrent tool dispatch per iteration (0 = sequential)
+  -version
+    \tprint the build version and exit
+  -worktree-dir string
+    \twhere to materialize worktrees (empty = a fresh tempdir)
+  -zarlcode-codex-effort string
+    \tcodex_reasoning_effort when provider is openai-codex (low/medium/high/xhigh/max)
+  -zarlcode-deadline-grace duration
+    \ttime before the task deadline at which the wrap-up nudge fires (0 = disabled); give the model a last-chance to commit before the task-timeout cancels it
+  -zarlcode-iteration-timeout duration
+    \tzarlcode per-iteration wall-clock backstop (0 = coderunner default 5m); raise for slow-prefill local models
+  -zarlcode-model string
+    \tpin zarlcode's model (e.g. gpt-5.5, qwen3.6-35b-a3b-mtp); empty = provider's default model
+  -zarlcode-provider string
+    \tpin zarlcode's backend (registry name: llamacpp, openai-codex, gemini, claude-code, …); empty = registry default (llamacpp)
+  -zarlcode-stream-idle duration
+    \tzarlcode stream-idle watchdog: gap between chunks before the stall detector fires (0 = coderunner default 90s); raise for slow-prefill local models
+  -zarlcode-thread-transcript
+    \tverified re-drives carry the full prior transcript (needs a large --context-window); default re-drives with verifier feedback only
+  -zarlcode-transcript-dir string
+    \tpersist each task's full agent transcript to <dir>/<instance_id>.json for post-hoc debugging (empty = disabled)
+  -zarlcode-verified-attempts int
+    \tenable zarlcode harness re-drive with SWE-bench verifier; values >1 cap attempts, 0/1 = trust terminal reason
+  -zarlcode-verify-timeout duration
+    \tper-attempt SWE-bench verifier timeout, independent of the agent task timeout (0 = 30m)
+  -zarlcode-verify-workdir string
+    \tdirectory for per-attempt zarlcode verification logs (empty = tempdir per attempt)
+  -zarlcode-verify-workers int
+    \tSWE-bench evaluator workers for per-attempt zarlcode verification (default 1)
