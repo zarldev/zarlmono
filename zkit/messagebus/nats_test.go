@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+
 	"github.com/zarldev/zarlmono/zkit/messagebus"
 )
 
