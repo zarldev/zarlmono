@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -278,6 +279,50 @@ func TestProvider_RequestWireRegressions(t *testing.T) {
 			}
 			tt.check(t, cb.lastBody)
 		})
+	}
+}
+
+func TestProvider_AstraMaxPresetMapsBaseModelAndEffort(t *testing.T) {
+	t.Parallel()
+	cb := newCodexBackend(t, func(w http.ResponseWriter) {
+		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
+	})
+	defer cb.Close()
+
+	provider, err := openaicodex.NewProvider(
+		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
+		openaicodex.WithBaseURL(cb.srv.URL),
+		openaicodex.WithNoRetry(),
+		openaicodex.WithModel("gpt-6-astra-max"),
+	)
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	for _, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
+	}) {
+		if streamErr != nil {
+			t.Fatalf("Complete: %v", streamErr)
+		}
+	}
+
+	if got := cb.lastBody["model"]; got != "gpt-6-astra" {
+		t.Fatalf("wire model = %v, want gpt-6-astra", got)
+	}
+	reasoning, ok := cb.lastBody["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatalf("reasoning = %#v, want object", cb.lastBody["reasoning"])
+	}
+	if got := reasoning["effort"]; got != "max" {
+		t.Fatalf("reasoning effort = %v, want max", got)
+	}
+}
+
+func TestGPT6AstraSupportsAllReasoningEfforts(t *testing.T) {
+	t.Parallel()
+	want := []string{"low", "medium", "high", "xhigh", "max"}
+	if got := openaicodex.EffortVariants("gpt-6-astra"); !slices.Equal(got, want) {
+		t.Fatalf("EffortVariants(gpt-6-astra) = %v, want %v", got, want)
 	}
 }
 
@@ -685,10 +730,11 @@ func TestProvider_DoesNotRetryOn4xxOtherThan429(t *testing.T) {
 func TestListPresetModelsContainsExpectedIDs(t *testing.T) {
 	t.Parallel()
 	models := openaicodex.ListPresetModels()
-	if len(models) < 8 {
-		t.Errorf("expected >= 8 preset models, got %d", len(models))
+	if len(models) < 9 {
+		t.Errorf("expected >= 9 preset models, got %d", len(models))
 	}
 	wantIDs := map[string]bool{
+		"gpt-6-astra":         false,
 		"gpt-5.6":             false,
 		"gpt-5.6-sol":         false,
 		"gpt-5.6-terra":       false,
@@ -777,6 +823,28 @@ func TestPresetContextWindowIsConservativeForOAuthBackend(t *testing.T) {
 			t.Errorf("ContextWindowFor(%q) = %d, want %d", model, got, openaicodex.DefaultContextWindow)
 		}
 	}
+}
+
+func TestGPT6AstraPresetContextWindow(t *testing.T) {
+	t.Parallel()
+	const wantContextWindow = 1_050_000
+
+	for _, id := range []string{"gpt-6-astra", "gpt-6-astra-max"} {
+		if got := openaicodex.ContextWindowFor(id); got != wantContextWindow {
+			t.Errorf("ContextWindowFor(%q) = %d, want %d", id, got, wantContextWindow)
+		}
+	}
+
+	for _, model := range openaicodex.ListPresetModels() {
+		if model.ID != "gpt-6-astra" {
+			continue
+		}
+		if model.MaxTokens != wantContextWindow {
+			t.Fatalf("gpt-6-astra MaxTokens = %d, want %d", model.MaxTokens, wantContextWindow)
+		}
+		return
+	}
+	t.Fatal("gpt-6-astra missing from ListPresetModels")
 }
 
 func TestProvider_NonStreamingCallerStillRequestsSSE(t *testing.T) {

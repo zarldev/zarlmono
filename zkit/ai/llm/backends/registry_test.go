@@ -320,6 +320,9 @@ func TestFetchModelsOAuthBuiltinsReturnPresets(t *testing.T) {
 			if len(models) == 0 {
 				t.Fatalf("FetchModels(%q) = empty, want preset models", name)
 			}
+			if name == "openai-codex" && !slices.Contains(models, "gpt-6-astra") {
+				t.Fatalf("FetchModels(%q) = %v, want gpt-6-astra for settings and quick model pickers", name, models)
+			}
 			if name == "claude-code" && !slices.Contains(models, "fable") {
 				t.Fatalf("FetchModels(%q) = %v, want fable", name, models)
 			}

@@ -5,6 +5,8 @@ import (
 )
 
 const (
+	modelGPT6Astra     = "gpt-6-astra"
+	gpt6ContextWindow  = 1_050_000
 	modelGPT56         = "gpt-5.6"
 	modelGPT56Sol      = "gpt-5.6-sol"
 	modelGPT56Terra    = "gpt-5.6-terra"
@@ -52,6 +54,8 @@ type modelPreset struct {
 // are intentionally not listed; they may remain API-key-only, but zarlcode's
 // openai-codex backend uses ChatGPT OAuth.
 var presetModels = []modelPreset{
+	// gpt-6-astra (strongest end-to-end coding, apps, and research model)
+	{ID: modelGPT6Astra, BaseModel: modelGPT6Astra, Description: "GPT-6 Astra (most capable)", ContextWindow: gpt6ContextWindow},
 	// gpt-5.6 alias (OpenAI's recommended Codex CLI shorthand for Sol)
 	{ID: modelGPT56, BaseModel: modelGPT56, Description: "GPT-5.6 (recommended)", ContextWindow: gpt56ContextWindow},
 	// gpt-5.6-sol (strongest coding/research/cybersecurity model)
@@ -112,6 +116,7 @@ func ContextWindowFor(id string) int {
 // by the settings pane (later) to constrain the effort dropdown to
 // what the active model actually accepts.
 var effortVariants = map[string][]reasoningEffort{
+	modelGPT6Astra:  gpt56Efforts(),
 	modelGPT56:      gpt56Efforts(),
 	modelGPT56Sol:   gpt56Efforts(),
 	modelGPT56Terra: gpt56Efforts(),
