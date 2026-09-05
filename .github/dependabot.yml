@@ -1,0 +1,77 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "gomod"
+    directory: "/examples"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "github.com/anthropics/anthropic-sdk-go"
+      - dependency-name: "github.com/invopop/jsonschema"
+
+  - package-ecosystem: "gomod"
+    directory: "/swebench-eval"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "github.com/anthropics/anthropic-sdk-go"
+      - dependency-name: "github.com/invopop/jsonschema"
+
+  - package-ecosystem: "gomod"
+    directory: "/zarlcode"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "github.com/anthropics/anthropic-sdk-go"
+      - dependency-name: "github.com/invopop/jsonschema"
+
+  - package-ecosystem: "gomod"
+    directory: "/zkit"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "github.com/anthropics/anthropic-sdk-go"
+      - dependency-name: "github.com/invopop/jsonschema"
+
+  - package-ecosystem: "npm"
+    directory: "/site"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
