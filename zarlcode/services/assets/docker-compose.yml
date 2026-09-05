@@ -1,10 +1,8 @@
 services:
   searxng:
-    image: searxng/searxng:latest
-    container_name: zarlcode-searxng
+    image: searxng/searxng@sha256:3602e6ddbeba037f5d800d1ed9d296a8b93c9f5b3cf9d05fa179d0e766dd59a1
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
     restart: unless-stopped
