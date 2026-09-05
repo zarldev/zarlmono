@@ -115,6 +115,8 @@ type ConversationStartedMsg struct {
 	Prompt           string
 	ParentToolCallID string
 	AgentName        string
+	Provider         string
+	Model            string
 }
 
 // ConversationEndedMsg marks a Run reaching its single terminal state.

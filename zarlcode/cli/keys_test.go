@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/cli"
-	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 )
 
 func TestKeysCommandSetListDeleteUsesGlobalScopeAndRedactsSecrets(t *testing.T) {

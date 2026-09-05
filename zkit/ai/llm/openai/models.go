@@ -19,15 +19,29 @@ package openai
 // openaicodex.ContextWindowFor. The regular OpenAI API and the
 // ChatGPT-account Codex backend can advertise different usable caps;
 // the Codex OAuth path uses /codex/models plus a conservative fallback.
-const modelGPT56Sol = "gpt-5.6-sol"
+const (
+	modelGPT6Astra  = "gpt-6-astra"
+	modelGPT56      = "gpt-5.6"
+	modelGPT56Sol   = "gpt-5.6-sol"
+	modelGPT56Terra = "gpt-5.6-terra"
+	modelGPT56Luna  = "gpt-5.6-luna"
+
+	textVerbosityLow    = "low"
+	textVerbosityMedium = "medium"
+	textVerbosityHigh   = "high"
+)
 
 func ContextWindowFor(model string) int {
 	if model == "" {
 		return 0
 	}
 	switch model {
+	// --- GPT-6 family ---
+	case modelGPT6Astra:
+		return 1_050_000
+
 	// --- GPT-5 family ---
-	case "gpt-5.6", modelGPT56Sol, "gpt-5.6-terra", "gpt-5.6-luna":
+	case modelGPT56, modelGPT56Sol, modelGPT56Terra, modelGPT56Luna:
 		return 1_050_000
 	case "gpt-5.5":
 		return 1_000_000

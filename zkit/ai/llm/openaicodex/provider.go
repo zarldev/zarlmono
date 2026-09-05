@@ -50,6 +50,9 @@ func newCodexClient(policy zhttp.RetryPolicy) *zhttp.Client {
 	return zhttp.NewClient(
 		zhttp.WithTimeout(0),
 		zhttp.WithRetryPolicy(policy),
+		// Generation requests deliberately opt in to this provider's retry
+		// policy. OAuth exchanges use a separate, non-retrying POST client.
+		zhttp.WithRetryMethods(http.MethodPost),
 		zhttp.WithUserAgent(originatorCodex),
 	)
 }
@@ -130,27 +133,30 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 		model = m
 	}
 	baseModel, effort := resolveModel(model)
-	// Effort precedence (highest first):
-	//   1. req.Options["reasoning_effort"]      — per-request override
-	//   2. preset's effort (from a "<base>-<effort>" id)
-	//   3. provider.defaultEffort               — user setting
-	//   4. defaultReasoningEffort(baseModel)    — model-name heuristic in buildRequest
-	if effort == "" && p.defaultEffort != "" {
-		effort = p.defaultEffort
-	}
 	request := req
-	if effort != "" {
-		if _, set := req.Options["reasoning_effort"]; !set {
-			request.Options = cloneModelOptions(req.Options)
-			request.Options["reasoning_effort"] = string(effort)
-		}
+	request.Options = cloneModelOptions(req.Options)
+	requestedEffort := optionString(req.Options, "reasoning_effort")
+	delete(request.Options, "reasoning_effort")
+	// Validate every effort source against the resolved base model. Persisted or
+	// manually supplied values can outlive a model change and must not reach the
+	// wire when the selected model does not support them.
+	suppressDefaultEffort := requestedEffort != "" && !supportsReasoningEffort(baseModel, requestedEffort)
+	switch {
+	case supportsReasoningEffort(baseModel, requestedEffort):
+		request.Options["reasoning_effort"] = requestedEffort
+	case effort != "" && supportsReasoningEffort(baseModel, string(effort)):
+		request.Options["reasoning_effort"] = string(effort)
+	case supportsReasoningEffort(baseModel, string(p.defaultEffort)):
+		request.Options["reasoning_effort"] = string(p.defaultEffort)
+	}
+	if requestedEffort == "" && effort == "" && p.defaultEffort != "" && !supportsReasoningEffort(baseModel, string(p.defaultEffort)) {
+		suppressDefaultEffort = true
 	}
 
 	// Pull system messages out of the history into the API's
 	// `instructions` field. The Responses API treats `instructions` as
 	// the system-prompt slot and would double-anchor the prompt if the
 	// same content also appeared as a system-role message in `input`.
-	//
 	// This provider deliberately does NOT inject a Codex-CLI-style
 	// system prompt. The caller (typically the zarlcode runner)
 	// owns the system prompt — it already describes the actual tool
@@ -159,7 +165,7 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	// (apply_patch, update_plan, etc.) we don't expose.
 	instructions, body := splitSystemMessages(request)
 	body.Messages = stripSystemMessages(body.Messages)
-	reqBody := buildRequest(body, baseModel, instructions)
+	reqBody := buildRequest(body, baseModel, instructions, suppressDefaultEffort)
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {

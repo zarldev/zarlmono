@@ -11,9 +11,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // modelQuickPick is a centered modal with a provider tab bar and a scrollable
@@ -134,14 +134,21 @@ func (p *modelQuickPick) effortItems(model string) []string {
 	return append(items, "low", "medium", "high", "xhigh", "max")
 }
 
+func (p *modelQuickPick) effectiveEffort(model string) string {
+	if slices.Contains(openaicodex.EffortVariants(model), p.effort) {
+		return p.effort
+	}
+	return ""
+}
+
 func (p *modelQuickPick) cycleEffort(dir int) {
 	items := p.effortItems(p.activeModel())
 	if len(items) <= 1 {
 		return
 	}
 	cur := codexEffortAuto
-	if p.effort != "" {
-		cur = p.effort
+	if effort := p.effectiveEffort(p.activeModel()); effort != "" {
+		cur = effort
 	}
 	i := slices.Index(items, cur)
 	if i < 0 {
@@ -300,8 +307,8 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 	topRight := p.activeProvider()
 	if p.activeProvider() == backends.NameOpenAICodex.String() {
 		effort := codexEffortAuto
-		if p.effort != "" {
-			effort = p.effort
+		if selected := p.effectiveEffort(p.activeModel()); selected != "" {
+			effort = selected
 		}
 		topRight += " · reasoning " + effort
 	}

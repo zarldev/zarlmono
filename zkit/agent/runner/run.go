@@ -218,6 +218,11 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		}
 		t.st.toolSurfaceFingerprint = requestTools.surface.Fingerprint
 		t.toolSurface = requestTools.surface
+		options := r.modelOptions.Clone()
+		if options == nil {
+			options = make(llm.ModelOptions, 1)
+		}
+		options["prompt_cache_key"] = string(spec.ID)
 		req := llm.CompletionRequest{
 			Messages:           shaped,
 			Tools:              requestTools.tools,
@@ -229,8 +234,8 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			// Pin every iteration of this task to one prompt_cache_key so the
 			// OpenAI/codex Responses API routes them to the same cache node,
 			// improving prefix-cache hit rate across the loop. Other providers
-			// ignore the option; an empty spec ID leaves it unset.
-			Options: llm.ModelOptions{"prompt_cache_key": string(spec.ID)},
+			// ignore the option.
+			Options: options,
 		}
 
 		// Per-iteration ctx so we can bail cleanly on
@@ -305,9 +310,11 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// serializers (Inline / Field / Strip) can reshape it for the
 		// next request without re-parsing the visible body.
 		assistantMsg := llm.Message{
-			Role:             llm.RoleAssistant,
-			Content:          assistantContent,
-			ReasoningContent: sr.thinking,
+			Role:               llm.RoleAssistant,
+			Content:            assistantContent,
+			ContentOutputIndex: sr.contentOutputIndex,
+			ReasoningContent:   sr.thinking,
+			ContinuationItems:  sr.continuationItems,
 		}
 		if len(toolCallOrder) > 0 {
 			assistantMsg.ToolCalls = make([]llm.ToolCall, 0, len(toolCallOrder))
@@ -390,6 +397,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 					ToolName:   tc.Function.Name,
 					Args:       tc.Function.Arguments,
 					Output:     fullToolResultText(d.result),
+					Effects:    append([]tools.Effect(nil), d.result.Effects...),
 				})
 			}
 			t.messages = append(t.messages, llm.Message{

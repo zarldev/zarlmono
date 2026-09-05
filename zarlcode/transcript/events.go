@@ -131,11 +131,16 @@ type SubagentStarted struct {
 	TurnID      string
 	SpawnToolID string
 	AgentName   string
+	Provider    string
+	Model       string
 	Prompt      string
 }
 
 // SubagentFinished marks a child task terminal.
-type SubagentFinished struct{ TurnID string }
+type SubagentFinished struct {
+	TurnID string
+	Status SubagentState
+}
 
 // SubagentSpawnFailed marks a spawn failure before the child starts.
 type SubagentSpawnFailed struct {
@@ -194,9 +199,11 @@ func (r *Reducer) Apply(event any) (Change, error) {
 	case SubagentReserved:
 		change.PrimaryEntryID = r.builder.ReserveSubagent(event.SpawnToolID, event.AgentName, event.Prompt)
 	case SubagentStarted:
-		change.PrimaryEntryID = r.builder.StartSubagent(event.TurnID, event.SpawnToolID, event.AgentName, event.Prompt)
+		change.PrimaryEntryID = r.builder.StartSubagent(
+			event.TurnID, event.SpawnToolID, event.AgentName, event.Provider, event.Model, event.Prompt,
+		)
 	case SubagentFinished:
-		r.builder.FinishSubagent(event.TurnID)
+		r.builder.FinishSubagent(event.TurnID, event.Status)
 	case SubagentSpawnFailed:
 		r.builder.FailSubagent(event.SpawnToolID, event.Detail)
 	default:

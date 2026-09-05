@@ -45,9 +45,13 @@ type MCPNotifier func(connection, method string, params json.RawMessage)
 type MCPRegistry struct {
 	mu       sync.Mutex
 	clients  map[string]mcpConnection // name → connection
+	pending  map[string]struct{}      // names reserved by in-flight connects
 	reg      *tools.Registry          // registry to register/unregister tools against
 	notifier MCPNotifier              // optional notification sink
 	policy   MCPConnectPolicy         // validates process/network-capable connections
+	connects sync.WaitGroup           // in-flight connects owned by this registry
+	closeMu  sync.Mutex               // serializes CloseAll callers
+	closed   bool
 }
 
 // MCPConnectPolicy is the policy seam for approving or denying MCP
@@ -107,6 +111,7 @@ const (
 	maxMCPToolsPerConnection = 64
 	maxMCPDescriptionBytes   = 2048
 	maxMCPSchemaBytes        = 32 * 1024
+	maxMCPConnections        = 8
 )
 
 type mcpConnection struct {
@@ -121,6 +126,7 @@ type mcpConnection struct {
 func NewMCPRegistry(reg *tools.Registry, notifier MCPNotifier) *MCPRegistry {
 	return &MCPRegistry{
 		clients:  make(map[string]mcpConnection),
+		pending:  make(map[string]struct{}),
 		reg:      reg,
 		notifier: notifier,
 		policy:   DefaultMCPConnectPolicy,
@@ -161,12 +167,36 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 		r.mu.Unlock()
 		return nil, fmt.Errorf("mcp connection %q already exists", name)
 	}
+	if r.closed {
+		r.mu.Unlock()
+		return nil, errors.New("mcp registry is closed")
+	}
+	if _, exists := r.pending[name]; exists {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("mcp connection %q is already connecting", name)
+	}
+	if len(r.clients)+len(r.pending) >= maxMCPConnections {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("mcp connection limit (%d) reached; disconnect a server before connecting another", maxMCPConnections)
+	}
 	policy := r.policy
 	if policy == nil {
 		policy = DefaultMCPConnectPolicy
 	}
 	notifier := r.notifier
+	r.pending[name] = struct{}{}
+	r.connects.Add(1)
 	r.mu.Unlock()
+
+	reserved := true
+	defer func() {
+		if reserved {
+			r.mu.Lock()
+			delete(r.pending, name)
+			r.mu.Unlock()
+		}
+		r.connects.Done()
+	}()
 
 	if err := policy.ValidateMCPConnect(ctx, name, conn); err != nil {
 		return nil, err
@@ -209,6 +239,13 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 	provider := "mcp:" + name
 
 	r.mu.Lock()
+	delete(r.pending, name)
+	reserved = false
+	if r.closed {
+		r.mu.Unlock()
+		_ = c.Close()
+		return nil, errors.New("mcp registry is closed")
+	}
 	defer r.mu.Unlock()
 	if _, exists := r.clients[name]; exists {
 		_ = c.Close()
@@ -309,6 +346,14 @@ func (r *MCPRegistry) disconnect(name string) error {
 // exit. Idempotent: the client map is cleared, so a second call is a no-op.
 // Returns the first close error encountered, after attempting all of them.
 func (r *MCPRegistry) CloseAll() error {
+	r.closeMu.Lock()
+	defer r.closeMu.Unlock()
+
+	r.mu.Lock()
+	r.closed = true
+	r.mu.Unlock()
+	r.connects.Wait()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

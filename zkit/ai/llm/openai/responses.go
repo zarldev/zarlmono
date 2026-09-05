@@ -22,11 +22,14 @@ type responseEventType string
 
 const (
 	responsesTypeMessage            = "message"
+	responsesTypeReasoning          = "reasoning"
 	responsesTypeFunctionCall       = "function_call"
 	responsesTypeFunctionCallOutput = "function_call_output"
 	responsesContentInputText       = "input_text"
 	responsesContentOutputText      = "output_text"
 	responsesContentInputImage      = "input_image"
+	openAIContinuationProvider      = "openai"
+	openAIResponsesItemFormat       = "responses.output_item"
 )
 
 const (
@@ -36,6 +39,7 @@ const (
 	responseEventReasoningSummaryDelta     responseEventType = "response.reasoning_summary.delta"
 	responseEventReasoningSummaryTextDelta responseEventType = "response.reasoning_summary_text.delta"
 	responseEventOutputItemAdded           responseEventType = "response.output_item.added"
+	responseEventOutputItemDone            responseEventType = "response.output_item.done"
 	responseEventFunctionCallArgsDelta     responseEventType = "response.function_call_arguments.delta"
 	responseEventFunctionCallArgsDone      responseEventType = "response.function_call_arguments.done"
 	responseEventCompleted                 responseEventType = "response.completed"
@@ -43,26 +47,44 @@ const (
 )
 
 type responsesRequest struct {
-	Model             string               `json:"model"`
-	Input             []responsesInputItem `json:"input"`
-	Tools             []responsesTool      `json:"tools,omitempty"`
-	ToolChoice        string               `json:"tool_choice,omitempty"`
-	Stream            bool                 `json:"stream"`
-	Store             bool                 `json:"store"`
-	Reasoning         map[string]string    `json:"reasoning,omitempty"`
-	MaxOutputTokens   int                  `json:"max_output_tokens,omitempty"`
-	Include           []string             `json:"include,omitempty"`
-	ParallelToolCalls bool                 `json:"parallel_tool_calls,omitempty"`
+	Model                string               `json:"model"`
+	Input                []responsesInputItem `json:"input"`
+	Tools                []responsesTool      `json:"tools,omitempty"`
+	ToolChoice           string               `json:"tool_choice,omitempty"`
+	Stream               bool                 `json:"stream"`
+	Store                bool                 `json:"store"`
+	Reasoning            map[string]string    `json:"reasoning,omitempty"`
+	Text                 *responsesText       `json:"text,omitempty"`
+	MaxOutputTokens      int                  `json:"max_output_tokens,omitempty"`
+	Include              []string             `json:"include,omitempty"`
+	ParallelToolCalls    bool                 `json:"parallel_tool_calls,omitempty"`
+	PromptCacheKey       string               `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string               `json:"prompt_cache_retention,omitempty"`
+}
+
+type responsesText struct {
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 type responsesInputItem struct {
-	Type      string                 `json:"type"`
-	Role      string                 `json:"role,omitempty"`
-	Content   []responsesContentPart `json:"content,omitempty"`
-	CallID    string                 `json:"call_id,omitempty"`
-	Name      string                 `json:"name,omitempty"`
-	Arguments string                 `json:"arguments,omitempty"`
-	Output    string                 `json:"output,omitempty"`
+	Type             string                 `json:"type"`
+	ID               string                 `json:"id,omitempty"`
+	Role             string                 `json:"role,omitempty"`
+	Content          []responsesContentPart `json:"content,omitempty"`
+	EncryptedContent string                 `json:"encrypted_content,omitempty"`
+	CallID           string                 `json:"call_id,omitempty"`
+	Name             string                 `json:"name,omitempty"`
+	Arguments        string                 `json:"arguments,omitempty"`
+	Output           string                 `json:"output,omitempty"`
+	Raw              json.RawMessage        `json:"-"`
+}
+
+func (i responsesInputItem) MarshalJSON() ([]byte, error) {
+	if len(i.Raw) > 0 {
+		return i.Raw, nil
+	}
+	type wire responsesInputItem
+	return json.Marshal(wire(i))
 }
 
 type responsesContentPart struct {
@@ -84,7 +106,8 @@ type responseEventEnvelope struct {
 }
 
 type responseTextDelta struct {
-	Delta string `json:"delta"`
+	Delta       string `json:"delta"`
+	OutputIndex int    `json:"output_index"`
 }
 
 type responseReasoningDelta struct {
@@ -97,11 +120,26 @@ type responseOutputItemAdded struct {
 }
 
 type responseOutputItem struct {
-	Type      string `json:"type"`
-	ID        string `json:"id"`
-	CallID    string `json:"call_id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Type             string                 `json:"type"`
+	ID               string                 `json:"id"`
+	Role             string                 `json:"role,omitempty"`
+	Content          []responsesContentPart `json:"content,omitempty"`
+	EncryptedContent string                 `json:"encrypted_content,omitempty"`
+	CallID           string                 `json:"call_id"`
+	Name             string                 `json:"name"`
+	Arguments        string                 `json:"arguments"`
+	Raw              json.RawMessage        `json:"-"`
+}
+
+func (i *responseOutputItem) UnmarshalJSON(data []byte) error {
+	type wire responseOutputItem
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*i = responseOutputItem(decoded)
+	i.Raw = append(i.Raw[:0], data...)
+	return nil
 }
 
 type responseArgsDelta struct {
@@ -118,7 +156,8 @@ type responseArgsDone struct {
 
 type responseCompleted struct {
 	Response struct {
-		Usage struct {
+		Output []responseOutputItem `json:"output"`
+		Usage  struct {
 			InputTokens        int `json:"input_tokens"`
 			OutputTokens       int `json:"output_tokens"`
 			TotalTokens        int `json:"total_tokens"`
@@ -127,6 +166,35 @@ type responseCompleted struct {
 			} `json:"input_tokens_details"`
 		} `json:"usage"`
 	} `json:"response"`
+}
+
+func hasOpenAIContinuationItems(messages []llm.Message) bool {
+	for _, message := range messages {
+		for _, item := range message.ContinuationItems {
+			if item.Provider == "openai" && item.Format == "responses.output_item" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func openAIContinuationItem(index int, item responseOutputItem) (llm.ContinuationItem, bool) {
+	valid := item.Type == responsesTypeReasoning && item.EncryptedContent != "" ||
+		item.Type == responsesTypeMessage && item.Role == roleAssistant && hasResponsesOutputText(item.Content)
+	if !valid {
+		return llm.ContinuationItem{}, false
+	}
+	return llm.ContinuationItem{OutputIndex: llm.OutputPosition(index), Provider: openAIContinuationProvider, Format: openAIResponsesItemFormat, Kind: item.Type, ID: item.ID, Data: append([]byte(nil), item.Raw...)}, true
+}
+
+func hasResponsesOutputText(parts []responsesContentPart) bool {
+	for _, part := range parts {
+		if part.Type == responsesContentOutputText {
+			return true
+		}
+	}
+	return false
 }
 
 type responseFailed struct {
@@ -146,12 +214,17 @@ type pendingResponseToolCall struct {
 
 func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRequest, plan responsesPlan, yield func(llm.CompletionChunk, error) bool) {
 	body := responsesRequest{
-		Model:             p.model,
-		Input:             messagesToResponsesInput(req.Messages),
-		Tools:             toolsToResponsesTools(req.Tools),
-		Stream:            true,
-		Store:             false,
-		ParallelToolCalls: plan.parallelToolCalls,
+		Model:                p.model,
+		Input:                messagesToResponsesInput(req.Messages),
+		Tools:                toolsToResponsesTools(req.Tools),
+		Stream:               true,
+		Store:                false,
+		ParallelToolCalls:    plan.parallelToolCalls,
+		PromptCacheKey:       plan.promptCacheKey,
+		PromptCacheRetention: plan.promptCacheRetention,
+	}
+	if plan.textVerbosity != "" {
+		body.Text = &responsesText{Verbosity: plan.textVerbosity}
 	}
 	if len(body.Tools) > 0 {
 		body.ToolChoice = "auto"
@@ -212,11 +285,60 @@ func messagesToResponsesInput(messages []llm.Message) []responsesInputItem {
 			}
 			out = append(out, responsesInputItem{Type: responsesTypeFunctionCallOutput, CallID: msg.ToolCallID, Output: output})
 		case roleAssistant:
-			if msg.Content != "" {
-				out = append(out, responsesInputItem{Type: responsesTypeMessage, Role: roleAssistant, Content: []responsesContentPart{{Type: responsesContentOutputText, Text: msg.Content}}})
+			type indexed struct {
+				index int
+				order int
+				item  responsesInputItem
+			}
+			var items []indexed
+			order := 0
+			hasNativeText := false
+			for _, continuation := range msg.ContinuationItems {
+				if continuation.Provider != openAIContinuationProvider || continuation.Format != openAIResponsesItemFormat {
+					continue
+				}
+				var item responsesInputItem
+				if json.Unmarshal(continuation.Data, &item) != nil {
+					continue
+				}
+				validReasoning := item.Type == responsesTypeReasoning && item.EncryptedContent != ""
+				validText := item.Type == responsesTypeMessage && item.Role == roleAssistant && hasResponsesOutputText(item.Content) && continuation.OutputIndex != nil
+				if !validReasoning && !validText {
+					continue
+				}
+				item.Raw = append(item.Raw[:0], continuation.Data...)
+				index := order
+				if continuation.OutputIndex != nil {
+					index = *continuation.OutputIndex
+				}
+				items = append(items, indexed{index: index, order: order, item: item})
+				hasNativeText = hasNativeText || validText
+				order++
+			}
+			if msg.Content != "" && !hasNativeText {
+				index := 0
+				if msg.ContentOutputIndex != nil {
+					index = *msg.ContentOutputIndex
+				}
+				items = append(items, indexed{index: index, order: order, item: responsesInputItem{Type: responsesTypeMessage, Role: roleAssistant, Content: []responsesContentPart{{Type: responsesContentOutputText, Text: msg.Content}}}})
+				order++
 			}
 			for _, tc := range msg.ToolCalls {
-				out = append(out, responsesInputItem{Type: responsesTypeFunctionCall, CallID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
+				index := order
+				if tc.OutputIndex != nil {
+					index = *tc.OutputIndex
+				}
+				items = append(items, indexed{index: index, order: order, item: responsesInputItem{Type: responsesTypeFunctionCall, CallID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments}})
+				order++
+			}
+			sort.SliceStable(items, func(i, j int) bool {
+				if items[i].index == items[j].index {
+					return items[i].order < items[j].order
+				}
+				return items[i].index < items[j].index
+			})
+			for _, item := range items {
+				out = append(out, item.item)
 			}
 		default:
 			role := msg.Role
@@ -278,13 +400,14 @@ func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool)
 	// orderedIndexes tracks the first-seen order of output indexes so tool
 	// calls are emitted deterministically at completion time.
 	var orderedIndexes []int
+	completedItems := map[int]responseOutputItem{}
 	flush := func() bool {
 		payload := data.String()
 		data.Reset()
 		if payload == "" || payload == "[DONE]" {
 			return false
 		}
-		return dispatchResponseEvent(payload, calls, byID, &orderedIndexes, yield)
+		return dispatchResponseEvent(payload, calls, byID, &orderedIndexes, completedItems, yield)
 	}
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -313,7 +436,7 @@ func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool)
 	return nil
 }
 
-func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCall, byID map[string]*pendingResponseToolCall, orderedIndexes *[]int, yield func(llm.CompletionChunk, error) bool) bool {
+func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCall, byID map[string]*pendingResponseToolCall, orderedIndexes *[]int, completedItems map[int]responseOutputItem, yield func(llm.CompletionChunk, error) bool) bool {
 	var env responseEventEnvelope
 	if err := json.Unmarshal([]byte(payload), &env); err != nil {
 		yield(llm.CompletionChunk{}, fmt.Errorf("responses event: %w", err))
@@ -327,7 +450,7 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			return true
 		}
 		if ev.Delta != "" {
-			return !yield(llm.CompletionChunk{Content: ev.Delta}, nil)
+			return !yield(llm.CompletionChunk{Content: ev.Delta, ContentOutputIndex: llm.OutputPosition(ev.OutputIndex)}, nil)
 		}
 	case responseEventReasoningDelta, responseEventReasoningTextDelta, responseEventReasoningSummaryDelta, responseEventReasoningSummaryTextDelta:
 		var ev responseReasoningDelta
@@ -338,13 +461,13 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 		if ev.Delta != "" {
 			return !yield(llm.CompletionChunk{Thinking: ev.Delta}, nil)
 		}
-	case responseEventOutputItemAdded:
+	case responseEventOutputItemAdded, responseEventOutputItemDone:
 		var ev responseOutputItemAdded
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			yield(llm.CompletionChunk{}, err)
 			return true
 		}
-		if ev.Item.Type == responsesTypeFunctionCall {
+		if env.Type == responseEventOutputItemAdded && ev.Item.Type == responsesTypeFunctionCall {
 			id := ev.Item.CallID
 			if id == "" {
 				id = ev.Item.ID
@@ -363,6 +486,9 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			}
 			// Track first-seen order for deterministic output.
 			*orderedIndexes = append(*orderedIndexes, ev.OutputIndex)
+		}
+		if env.Type == responseEventOutputItemDone && (ev.Item.Type == responsesTypeReasoning || ev.Item.Type == responsesTypeMessage) {
+			completedItems[ev.OutputIndex] = ev.Item
 		}
 	case responseEventFunctionCallArgsDelta:
 		var ev responseArgsDelta
@@ -397,6 +523,11 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			yield(llm.CompletionChunk{}, err)
 			return true
 		}
+		for index, item := range ev.Response.Output {
+			if item.Type == responsesTypeReasoning || item.Type == responsesTypeMessage {
+				completedItems[index] = item
+			}
+		}
 		// Emit tool calls in output-index order rather than nondeterministic
 		// map iteration.
 		indexes := append([]int(nil), (*orderedIndexes)...)
@@ -407,11 +538,23 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			if call == nil || call.name == "" {
 				continue
 			}
-			toolCalls = append(toolCalls, llm.ToolCall{ID: call.id, Type: typeFunction, Function: llm.ToolCallFunction{Name: call.name, Arguments: call.arguments.String()}})
+			toolCalls = append(toolCalls, llm.ToolCall{ID: call.id, Type: typeFunction, OutputIndex: llm.OutputPosition(idx), Function: llm.ToolCallFunction{Name: call.name, Arguments: call.arguments.String()}})
+		}
+		itemIndexes := make([]int, 0, len(completedItems))
+		for index := range completedItems {
+			itemIndexes = append(itemIndexes, index)
+		}
+		sort.Ints(itemIndexes)
+		nativeItems := make([]llm.ContinuationItem, 0, len(itemIndexes))
+		for _, index := range itemIndexes {
+			if item, ok := openAIContinuationItem(index, completedItems[index]); ok {
+				nativeItems = append(nativeItems, item)
+			}
 		}
 		chunk := llm.CompletionChunk{
-			FinishReason: llm.FinishReasons.STOP,
-			ToolCalls:    toolCalls,
+			FinishReason:   llm.FinishReasons.STOP,
+			ToolCalls:      toolCalls,
+			CompletedItems: nativeItems,
 			Usage: llm.Usage{
 				PromptTokens:     ev.Response.Usage.InputTokens,
 				CompletionTokens: ev.Response.Usage.OutputTokens,

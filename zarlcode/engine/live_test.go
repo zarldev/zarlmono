@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	model "github.com/zarldev/zarlmono/zkit/agent/computer"
 	"github.com/zarldev/zarlmono/zkit/agent/computer/browser"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
@@ -17,8 +18,20 @@ import (
 	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
+
+type requestRecordingProvider struct {
+	requests []llm.CompletionRequest
+}
+
+func (p *requestRecordingProvider) Complete(_ context.Context, req llm.CompletionRequest) llm.CompletionStream {
+	p.requests = append(p.requests, req)
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		yield(llm.CompletionChunk{Content: "done", FinishReason: llm.FinishReasons.STOP}, nil)
+	}
+}
+
+func (*requestRecordingProvider) Name() string { return "openai-codex" }
 
 type blockingProvider struct{ started chan struct{} }
 
@@ -76,6 +89,35 @@ func TestLiveRunnerProgrammaticToolsSetting(t *testing.T) {
 	for _, name := range []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash, code.ToolNameRead, code.ToolNameGrep, code.ToolNameGlob, code.ToolNameLs, code.ToolNameFileMap, code.ToolNameRetrieveCode} {
 		if !inspectionHasTool(ins, name) {
 			t.Fatalf("expected direct tool %q when programmatic tools disabled", name)
+		}
+	}
+}
+
+func TestLiveRunnerAppliesCodexEffortOnNextTurn(t *testing.T) {
+	ctx := t.Context()
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	settings := engine.NewSettings(store, nil, nil, ws.Root())
+	provider := &requestRecordingProvider{}
+	live := engine.NewLiveRunner(provider, ws, "gpt-5.6", engine.WithSettings(settings))
+	live.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "openai-codex", Model: "gpt-5.6"}})
+
+	for _, effort := range []string{"high", "max"} {
+		if err := settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyCodexEffort, effort); err != nil {
+			t.Fatal(err)
+		}
+		if err := live.RunTurn(ctx, effort); err != nil {
+			t.Fatal(err)
+		}
+		if got := provider.requests[len(provider.requests)-1].Options["reasoning_effort"]; got != effort {
+			t.Fatalf("next turn effort = %v, want %s", got, effort)
 		}
 	}
 }

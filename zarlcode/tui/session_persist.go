@@ -14,11 +14,11 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/draft"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 const (
@@ -45,6 +45,7 @@ type sessionSummary struct {
 	PlanTotalCount     int
 	HasDraft           bool
 	Messages           int
+	Workspace          string
 }
 
 var errSessionSnapshotEmpty = errors.New("session snapshot empty")
@@ -98,6 +99,7 @@ func listSavedSessions(ctx context.Context, store *db.Store, wsRoot string) ([]s
 
 func savedSessionSummary(rec db.SessionRecord) sessionSummary {
 	return sessionSummary{
+		Workspace:          rec.Workspace,
 		ID:                 rec.ID,
 		Label:              rec.Label,
 		LabelManual:        rec.LabelManual,
@@ -116,13 +118,64 @@ func savedSessionSummary(rec db.SessionRecord) sessionSummary {
 	}
 }
 
-func loadSavedSession(ctx context.Context, store *db.Store, id string) (*savedSession, error) {
+func (m *UI) resumeSession(ctx context.Context, id string) error {
+	if m.settings == nil || m.settings.Store == nil {
+		return errors.New("session store unavailable")
+	}
+	saved, err := loadSavedSession(ctx, m.settings.Store, id, m.settings.WorkspaceRoot())
+	if err != nil {
+		return err
+	}
+	m.completeResumeSession(saved, false)
+	return nil
+}
+
+func (m *UI) resumeLatestSession(ctx context.Context) error {
+	var ids []string
+	if m.settings != nil && m.settings.Svc != nil {
+		if active, err := m.settings.Svc.GetSetting(ctx, prefs.ScopeWorkspace, activeSessionKey); err == nil {
+			ids = append(ids, active.Value)
+		}
+	}
+	summaries, err := listSavedSessions(ctx, m.settings.Store, m.settings.WorkspaceRoot())
+	if err != nil {
+		return err
+	}
+	for _, summary := range summaries {
+		ids = append(ids, summary.ID)
+	}
+	seen := make(map[string]struct{}, len(ids))
+	var errs []error
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if err := m.resumeSession(ctx, id); err == nil {
+			return nil
+		} else {
+			errs = append(errs, fmt.Errorf("session %q: %w", id, err))
+		}
+	}
+	if len(errs) == 0 {
+		return errors.New("no resumable session in this workspace")
+	}
+	return fmt.Errorf("no valid resumable session in this workspace: %w", errors.Join(errs...))
+}
+
+func loadSavedSession(ctx context.Context, store *db.Store, id, workspace string) (*savedSession, error) {
 	if store == nil {
 		return nil, errors.New("session store unavailable")
 	}
 	rec, err := store.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if rec.Workspace != workspace {
+		return nil, fmt.Errorf("session %q belongs to workspace %q, not %q", id, rec.Workspace, workspace)
 	}
 	saved, err := decodeSavedSession(rec)
 	if err != nil {
@@ -137,10 +190,10 @@ func loadSavedSession(ctx context.Context, store *db.Store, id string) (*savedSe
 			}
 			return nil, errors.New("session transcript not found")
 		}
-		if errors.Is(err, db.ErrTranscriptCorrupt) {
-			return nil, err
-		}
 		return nil, err
+	}
+	if storedTranscript.FormatVersion > db.SessionTranscriptFormatVersion {
+		return nil, fmt.Errorf("session transcript format %d is newer than supported format %d", storedTranscript.FormatVersion, db.SessionTranscriptFormatVersion)
 	}
 	thread, err := transcript.FromRecords(storedTranscript.Revision, dbTranscriptRecords(storedTranscript.Entries))
 	if err != nil {
@@ -149,16 +202,28 @@ func loadSavedSession(ctx context.Context, store *db.Store, id string) (*savedSe
 	if thread.IsEmpty() {
 		return nil, errors.New("session transcript is empty")
 	}
-	recovered, changed := thread.RecoverInterrupted()
-	if changed {
-		update, updateErr := transcriptRecoveryUpdate(rec, thread.Revision(), recovered)
+	recovered, _ := thread.RecoverInterrupted()
+	if recovered.Revision() > storedTranscript.Revision {
+		update, updateErr := transcriptRecoveryUpdate(rec, storedTranscript.Revision, recovered)
 		if updateErr != nil {
 			return nil, updateErr
 		}
 		if updateErr = store.UpdateActiveTranscript(ctx, update); updateErr != nil {
-			return nil, fmt.Errorf("persist interrupted transcript recovery: %w", updateErr)
+			recoveryErr := updateErr
+			storedTranscript, updateErr = store.GetSessionTranscript(ctx, id)
+			if updateErr != nil {
+				return nil, fmt.Errorf("read interrupted transcript recovery: %w", updateErr)
+			}
+			thread, updateErr = transcript.FromRecords(storedTranscript.Revision, dbTranscriptRecords(storedTranscript.Entries))
+			if updateErr != nil {
+				return nil, fmt.Errorf("session transcript is corrupted: %w", updateErr)
+			}
+			if pending, _ := thread.RecoverInterrupted(); pending.Revision() > thread.Revision() {
+				return nil, fmt.Errorf("persist interrupted transcript recovery: %w", recoveryErr)
+			}
+		} else {
+			thread = recovered
 		}
-		thread = recovered
 	}
 	saved.Transcript = thread
 	return saved, nil
@@ -239,7 +304,12 @@ func (m *UI) ActivateIntro(ctx context.Context) {
 
 func (m *UI) dismissIntroFresh(prompt string) tea.Cmd {
 	m.intro = nil
-	m.session.ClearIdentity()
+	m.session.resetSession()
+	m.draftGeneration++
+	m.composer.setText("")
+	m.pendingAttachments = nil
+	m.transcriptGeneration++
+	m.resetTranscriptPersistence()
 	if m.live != nil {
 		m.live.RestoreContext(nil)
 	}
@@ -259,10 +329,16 @@ func (m *UI) resumeIntroSession(id string) tea.Cmd {
 	if m.settings == nil {
 		return nil
 	}
-	s, err := loadSavedSession(m.appContext(), m.settings.Store, id)
+	s, err := loadSavedSession(m.appContext(), m.settings.Store, id, m.settings.WorkspaceRoot())
 	if err != nil {
 		if m.intro != nil {
 			m.intro.err = err.Error()
+		}
+		return nil
+	}
+	if s.Workspace != m.settings.WorkspaceRoot() {
+		if m.intro != nil {
+			m.intro.err = fmt.Sprintf("session belongs to workspace %q", s.Workspace)
 		}
 		return nil
 	}
@@ -286,12 +362,18 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 		return nil
 	}
 	m.intro = nil
+	m.session.resetSession()
+	m.draftGeneration++
+	m.transcriptGeneration++
+	m.resetTranscriptPersistence()
+	m.pendingAttachments = nil
 	m.session.SetIdentity(s.ID, s.Label, s.LabelManual, s.CreatedAt)
 	if m.live != nil {
 		m.live.RestoreContext(s.Context)
 	}
 	m.timeline.restoreThread(s.Transcript)
 	m.transcriptPersisted = s.Transcript.Revision()
+	m.transcriptPersistedSessionID = s.ID
 	m.composer.setText(s.DraftText)
 	m.resetInputHistoryBrowse()
 	// Rehydrate the per-session working state so the plan overlay, Files
@@ -344,6 +426,7 @@ func (m *UI) persistResumeTarget(provider, model string) {
 type sessionSnapshot struct {
 	record     db.SessionRecord
 	transcript db.TranscriptUpdate
+	allEntries []db.TranscriptEntry
 }
 
 func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
@@ -386,7 +469,7 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 
 	thread := m.timeline.transcriptThread()
 	messageCount := thread.MessageCount()
-	transcriptUpdate, err := m.transcriptUpdate(thread, m.transcriptPersisted)
+	transcriptUpdate, allEntries, err := m.transcriptUpdate(thread, m.persistedTranscriptRevision(m.session.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +490,7 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 		PlanTotalCount:     len(m.session.Plan.Steps),
 		MessageCount:       messageCount,
 		CreatedAt:          m.session.CreatedAt,
-	}, transcript: transcriptUpdate}, nil
+	}, transcript: transcriptUpdate, allEntries: allEntries}, nil
 }
 
 func saveSessionSnapshot(ctx context.Context, settings *engine.Settings, snapshot *sessionSnapshot) error {
@@ -441,8 +524,11 @@ func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 		case result := <-m.sessionPersistCurrent.done:
 			if result.err != nil {
 				firstErr = fmt.Errorf("flush in-flight persistence: %w", result.err)
-			} else if result.revision > m.transcriptPersisted {
-				m.transcriptPersisted = result.revision
+			} else if result.sessionID == m.session.ID {
+				m.transcriptPersistedSessionID = result.sessionID
+				if result.revision > m.transcriptPersisted {
+					m.transcriptPersisted = result.revision
+				}
 			}
 			m.sessionPersistRunning = false
 			m.sessionPersistCurrent = nil
@@ -451,25 +537,36 @@ func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 		}
 	}
 	for _, op := range m.sessionPersistQueue {
-		if op.kind == sessionPersistTranscript || op.kind == sessionPersistFull {
+		if (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) && op.sessionID() == m.transcriptPersistedSessionID {
 			op.rebaseTranscript(m.transcriptPersisted)
-			if op.transcriptRevision() <= m.transcriptPersisted {
+			if op.kind == sessionPersistTranscript && op.transcriptRevision() <= m.transcriptPersisted {
 				continue
 			}
 		}
-		if err := m.executeSessionPersist(ctx, op); err != nil {
+		err := m.executeSessionPersist(ctx, op)
+		if err != nil && (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) {
+			err = retrySessionTranscriptPersist(ctx, m.settings, &op, err)
+		}
+		if err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("flush queued persistence: %w", err)
 			}
-		} else if revision := op.transcriptRevision(); revision > m.transcriptPersisted {
-			m.transcriptPersisted = revision
+		} else if revision := op.transcriptRevision(); op.sessionID() == m.session.ID {
+			m.transcriptPersistedSessionID = op.sessionID()
+			if revision > m.transcriptPersisted {
+				m.transcriptPersisted = revision
+			}
 		}
 	}
 	m.sessionPersistQueue = nil
-	if firstErr != nil {
-		return firstErr
+	finalErr := m.SaveSession(ctx)
+	if firstErr != nil && finalErr != nil {
+		return errors.Join(firstErr, finalErr)
 	}
-	return m.SaveSession(ctx)
+	if finalErr != nil {
+		return finalErr
+	}
+	return firstErr
 }
 
 func (m *UI) executeSessionPersist(ctx context.Context, op sessionPersistOp) error {
@@ -510,14 +607,16 @@ func (m *UI) clearContextAndTimeline() tea.Cmd {
 	m.startupAttachments = nil
 	m.startupAttachmentMetadata = nil
 	m.session.SetSubmittedAttachments(nil)
+	m.draftGeneration++
+	m.composer.setText("")
+	m.pendingAttachments = nil
 	m.transcriptGeneration++
+	m.resetTranscriptPersistence()
 	if m.live != nil {
 		m.live.ClearContext()
 	}
 	m.timeline.Clear()
-	m.session.ClearIdentity()
-	m.session.Run.RestoreUsage(SessionUsageSnapshot{})
-	m.session.Plan = code.Plan{}
+	m.session.resetSession()
 	m.session.SetSuccessToast("conversation cleared")
 	return tea.Batch(m.toastExpiryCmd(), m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete, generation: m.transcriptGeneration, oldID: oldID}))
 }
@@ -533,11 +632,15 @@ func clearPersistedSession(ctx context.Context, settings *engine.Settings, oldID
 		}
 	}
 	if settings.Svc != nil {
-		if e := settings.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, activeSessionKey); e != nil {
+		active, activeErr := settings.Svc.GetSetting(ctx, prefs.ScopeWorkspace, activeSessionKey)
+		if activeErr == nil && active.Value == oldID {
+			activeErr = settings.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, activeSessionKey)
+		}
+		if activeErr != nil && !errors.Is(activeErr, prefs.ErrNotFound) {
 			if err != nil {
-				err = fmt.Errorf("%w; clear active session: %w", err, e)
+				err = fmt.Errorf("%w; clear active session: %w", err, activeErr)
 			} else {
-				err = fmt.Errorf("clear active session: %w", e)
+				err = fmt.Errorf("clear active session: %w", activeErr)
 			}
 		}
 	}
@@ -558,7 +661,8 @@ func formatAgo(d time.Duration) string {
 }
 
 type transcriptSnapshot struct {
-	update db.TranscriptUpdate
+	update     db.TranscriptUpdate
+	allEntries []db.TranscriptEntry
 }
 
 func (m *UI) transcriptSnapshot() (*transcriptSnapshot, error) {
@@ -567,11 +671,11 @@ func (m *UI) transcriptSnapshot() (*transcriptSnapshot, error) {
 	}
 	m.session.EnsureIdentity(uuid.NewString(), time.Now())
 	thread := m.timeline.transcriptThread()
-	update, err := m.transcriptUpdate(thread, m.transcriptPersisted)
+	update, allEntries, err := m.transcriptUpdate(thread, m.persistedTranscriptRevision(m.session.ID))
 	if err != nil {
 		return nil, err
 	}
-	return &transcriptSnapshot{update: update}, nil
+	return &transcriptSnapshot{update: update, allEntries: allEntries}, nil
 }
 
 func saveTranscriptSnapshot(ctx context.Context, store *db.Store, snapshot *transcriptSnapshot) error {
@@ -581,10 +685,10 @@ func saveTranscriptSnapshot(ctx context.Context, store *db.Store, snapshot *tran
 	return store.UpdateActiveTranscript(ctx, snapshot.update)
 }
 
-func (m *UI) transcriptUpdate(thread transcript.Thread, expected uint64) (db.TranscriptUpdate, error) {
-	records, err := thread.RecordsSince(expected)
+func (m *UI) transcriptUpdate(thread transcript.Thread, expected uint64) (db.TranscriptUpdate, []db.TranscriptEntry, error) {
+	records, err := thread.RecordsSince(0)
 	if err != nil {
-		return db.TranscriptUpdate{}, err
+		return db.TranscriptUpdate{}, nil, err
 	}
 	entries := make([]db.TranscriptEntry, len(records))
 	for i, record := range records {
@@ -593,12 +697,28 @@ func (m *UI) transcriptUpdate(thread transcript.Thread, expected uint64) (db.Tra
 			TurnID: record.TurnID, Kind: record.Kind, PayloadJSON: record.Payload, Revision: record.Revision,
 		}
 	}
-	return db.TranscriptUpdate{
+	update := db.TranscriptUpdate{
 		SessionID: m.session.ID, Workspace: m.settings.WorkspaceRoot(), Label: m.session.Label,
 		LabelManual: m.session.LabelManual, AgentName: m.session.LastAgentName,
 		Provider: m.session.Provider, Model: m.session.Model, MessageCount: thread.MessageCount(),
-		CreatedAt: m.session.CreatedAt, ExpectedRevision: expected, Revision: thread.Revision(), Entries: entries,
-	}, nil
+		CreatedAt: m.session.CreatedAt, Revision: thread.Revision(), Entries: entries,
+	}
+	rebaseTranscriptUpdate(&update, entries, expected)
+	return update, entries, nil
+}
+
+func rebaseTranscriptUpdate(update *db.TranscriptUpdate, allEntries []db.TranscriptEntry, revision uint64) {
+	update.ExpectedRevision = revision
+	entries := make([]db.TranscriptEntry, 0, len(allEntries))
+	for _, entry := range allEntries {
+		if entry.Revision > revision {
+			entries = append(entries, entry)
+		}
+	}
+	update.Entries = entries
+	if len(entries) == 0 {
+		update.Revision = revision
+	}
 }
 
 func dbTranscriptRecords(entries []db.TranscriptEntry) []transcript.Record {

@@ -2,6 +2,7 @@ package backends_test
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,6 +17,20 @@ func newModelInfoRegistry() *backends.ProviderRegistry {
 	return backends.NewRegistry(backends.WithStore(newFakeStore()), backends.WithSettingsService(fakeKeyService{}))
 }
 
+func TestBuiltinOpenAIIncludesGPT6Astra(t *testing.T) {
+	t.Parallel()
+	def, ok := backends.Builtin("openai")
+	if !ok {
+		t.Fatal("OpenAI builtin missing")
+	}
+	for _, model := range def.SeedModels {
+		if model == "gpt-6-astra" {
+			return
+		}
+	}
+	t.Fatal("OpenAI seed models missing gpt-6-astra")
+}
+
 func TestRegistryCost(t *testing.T) {
 	reg := newModelInfoRegistry()
 
@@ -28,6 +43,9 @@ func TestRegistryCost(t *testing.T) {
 	if _, _, ok := reg.Cost("openai", "gpt-4o-mini"); !ok {
 		t.Error("openai gpt-4o-mini should be metered")
 	}
+	if in, out, ok := reg.Cost("openai", "gpt-6-astra"); !ok || in != 0.010 || out != 0.050 {
+		t.Errorf("openai gpt-6-astra cost = %v/%v ok=%v, want 0.010/0.050 true", in, out, ok)
+	}
 	// Local + subscription backends are not metered per token.
 	if _, _, ok := reg.Cost("llamacpp", "qwen3"); ok {
 		t.Error("llamacpp (local) must not be metered")
@@ -37,6 +55,21 @@ func TestRegistryCost(t *testing.T) {
 	}
 	if _, _, ok := reg.Cost("claude-code", "opus"); ok {
 		t.Error("claude-code (subscription) must not be metered")
+	}
+}
+
+func TestEstimateCostAppliesGPT6AstraLongContextTier(t *testing.T) {
+	t.Parallel()
+	reg := newModelInfoRegistry()
+	estimate, ok := reg.EstimateCost(t.Context(), "openai", "gpt-6-astra", llm.Usage{
+		PromptTokens:     300_000,
+		CompletionTokens: 1_000,
+	})
+	if !ok {
+		t.Fatal("EstimateCost() rate unavailable")
+	}
+	if math.Abs(estimate.InputUSD-6) > 1e-12 || math.Abs(estimate.OutputUSD-0.075) > 1e-12 || math.Abs(estimate.TotalUSD-6.075) > 1e-12 {
+		t.Fatalf("EstimateCost() = %+v, want input=6 output=.075 total=6.075", estimate)
 	}
 }
 
@@ -51,6 +84,10 @@ func TestRegistryCapabilities(t *testing.T) {
 	}
 	if reg.Capabilities("deepseek", "deepseek-chat").SupportsVision {
 		t.Error("deepseek is text-only — no vision")
+	}
+	astra := reg.Capabilities("openai", "gpt-6-astra")
+	if !astra.SupportsThinking || !astra.SupportsVision || !astra.SupportsTools {
+		t.Errorf("openai gpt-6-astra capabilities = %+v, want thinking/vision/tools", astra)
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 )
 
 // composer is the editor-pane text input. It is a plain rune buffer with
@@ -581,7 +583,7 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 			return m.toastExpiryCmd(), true
 		}
 		m.session.SetSubmittedAttachments(attachmentMetadata)
-		return RunFnWithAttachments(m.appContext(), m.live, text, attachments), true
+		return RunFnWithAttachments(engine.WithToolOutputSession(m.appContext(), m.session.ID), m.live, text, attachments), true
 	}
 	if m.runFn != nil {
 		return m.runFn(text), true

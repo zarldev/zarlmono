@@ -60,8 +60,8 @@ func TestTimeline_SubAgentExpandedShowsContent(t *testing.T) {
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	out = ansi.Strip(m.View().Content)
-	if !strings.Contains(out, "[-] helper: sub task") {
-		t.Fatalf("expanded sub-agent missing [-]:\n%s", out)
+	if !strings.Contains(out, "[-] [running]  helper: sub task") {
+		t.Fatalf("expanded sub-agent missing status-first row:\n%s", out)
 	}
 	if !strings.Contains(out, "working on it") {
 		t.Fatalf("expanded sub-agent should show content:\n%s", out)

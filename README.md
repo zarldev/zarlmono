@@ -53,6 +53,23 @@ zarlcode keys list                     # show provider keys (masked)
 zarlcode upgrade                       # self-update from GitHub Releases
 ```
 
+### Credential storage
+
+Provider keys are stored in `~/.zarlcode/state.db`. Fresh installations default
+to plaintext credential rows so non-interactive use does not depend on a prompt.
+Use `zarlcode keys protect on` to set a passphrase and atomically encrypt existing
+and future credentials at rest; `zarlcode keys protect status` shows the current
+database-wide mode. The passphrase is entered explicitly and has no environment-
+variable fallback, so keep it in your password manager—there is no recovery path.
+
+`zarlcode keys protect off` requires the current passphrase when encrypted rows
+exist and atomically writes those credentials back as plaintext. Existing legacy
+`master.key` installations migrate after an interactive unlock; headless startup
+leaves them locked and defers migration rather than blocking ordinary settings.
+Back up `state.db` together with `master.kdf` while protection is enabled. Rolling
+back to a version that does not understand the current storage metadata is not
+supported.
+
 Supported providers: **Anthropic**, **OpenAI**, **DeepSeek**, **Gemini**, **Vertex AI**, **llama.cpp**, **Ollama**, plus OAuth-backed **Claude Code** and **OpenAI Codex** surfaces.
 
 > [!NOTE]

@@ -39,7 +39,7 @@ func credFromToken(t claudecode.Token) cred {
 }
 
 type tokenSource struct {
-	svc *prefs.Service
+	svc CredentialStore
 	mu  sync.Mutex
 }
 
@@ -47,7 +47,7 @@ type tokenSource struct {
 // prefs vault: each Token read loads the stored credential under a lock,
 // so a token refreshed by a login flow is picked up without restarting
 // the consumer.
-func NewTokenSource(svc *prefs.Service) *tokenSource {
+func NewTokenSource(svc CredentialStore) *tokenSource {
 	return &tokenSource{svc: svc}
 }
 

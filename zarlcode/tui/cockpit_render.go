@@ -401,8 +401,10 @@ func (m *UI) reasoningEffortLine() string {
 		return ""
 	}
 	effort := strings.TrimSpace(m.session.ProvSpec.CodexEffort)
-	if effort != "" {
-		return palette.Fg.On(effort)
+	for _, supported := range openaicodex.EffortVariants(m.session.Model) {
+		if effort == supported {
+			return palette.Fg.On(effort)
+		}
 	}
 	for _, effort := range openaicodex.EffortVariants(m.session.Model) {
 		return palette.Fg.On("auto") + palette.Muted.On(" · ") + palette.Subtle.On(effort)

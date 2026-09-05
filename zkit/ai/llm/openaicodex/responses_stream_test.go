@@ -201,6 +201,52 @@ func TestParseSSEStream_ToolCall(t *testing.T) {
 	}
 }
 
+func TestParseSSEStream_CapturesEncryptedReasoningCompletion(t *testing.T) {
+	t.Parallel()
+	const reasoning = `{"type":"reasoning", "id":"rs_opaque","encrypted_content":"encrypted-token","summary":[{"type":"summary_text","text":"kept"}],"status":"completed","vendor":{"flag":true}}`
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_item.done","output_index":2,"item":` + reasoning + `}`,
+		``,
+		`data: {"type":"response.completed","response":{"usage":{}}}`,
+		``,
+	}, "\n")
+	chunks, err := collectChunks(t, stream)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	last := chunks[len(chunks)-1]
+	if len(last.CompletedItems) != 1 {
+		t.Fatalf("completed items = %#v, want one", last.CompletedItems)
+	}
+	item := last.CompletedItems[0]
+	if item.OutputIndex == nil || *item.OutputIndex != 2 || item.Provider != "openai-codex" || item.Format != "responses.reasoning.v1" || item.Kind != "reasoning" || item.ID != "rs_opaque" {
+		t.Fatalf("completed item metadata = %#v", item)
+	}
+	if string(item.Data) != reasoning {
+		t.Fatalf("continuation data = %s, want exact nested item %s", item.Data, reasoning)
+	}
+}
+
+func TestParseSSEStream_OrdersCompletedReasoningItemsByOutputIndex(t *testing.T) {
+	t.Parallel()
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_item.done","output_index":3,"item":{"type":"reasoning","id":"rs_3","encrypted_content":"three"}}`,
+		``,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_0","encrypted_content":"zero"}}`,
+		``,
+		`data: {"type":"response.completed","response":{"usage":{}}}`,
+		``,
+	}, "\n")
+	chunks, err := collectChunks(t, stream)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	items := chunks[len(chunks)-1].CompletedItems
+	if len(items) != 2 || items[0].ID != "rs_0" || items[1].ID != "rs_3" {
+		t.Fatalf("completed items = %#v, want output-index order", items)
+	}
+}
+
 func TestParseSSEStream_ToolCallArgDelivery(t *testing.T) {
 	t.Parallel()
 	const completed = `data: {"type":"response.completed","response":{"usage":{}}}`

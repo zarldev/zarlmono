@@ -16,8 +16,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // UI is the sole bubbletea v2 model. Per-pane state lives in imperative
@@ -107,13 +107,15 @@ type UI struct {
 	// Draft persistence is driven entirely by the Bubble Tea update loop. Each
 	// composer mutation advances the generation so stale debounce messages are
 	// ignored; at most one store command is in flight at a time.
-	draftGeneration         uint64
-	transcriptGeneration    uint64
-	transcriptPersisted     uint64
-	draftScheduleSuppressed bool
-	sessionPersistQueue     []sessionPersistOp
-	sessionPersistRunning   bool
-	sessionPersistCurrent   *sessionPersistOp
+	draftGeneration              uint64
+	transcriptGeneration         uint64
+	transcriptPersisted          uint64
+	transcriptPersistedSessionID string
+	lastSessionPersistError      string
+	draftScheduleSuppressed      bool
+	sessionPersistQueue          []sessionPersistOp
+	sessionPersistRunning        bool
+	sessionPersistCurrent        *sessionPersistOp
 }
 
 type contextViewTab int
@@ -200,7 +202,9 @@ func (m *UI) appContext() context.Context {
 // mid-session (see maybeRepoint).
 func (m *UI) SetLiveRunner(l *engine.LiveRunner) {
 	m.live = l
-	m.runFn = func(prompt string) tea.Cmd { return RunFn(m.appContext(), l, prompt) }
+	m.runFn = func(prompt string) tea.Cmd {
+		return RunFn(engine.WithToolOutputSession(m.appContext(), m.session.ID), l, prompt)
+	}
 }
 
 // SetProviderContext records the env-derived fallback spec and the currently
@@ -466,7 +470,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.startupPrompt, m.startupAttachments = "", nil
 			m.session.SetSubmittedAttachments(m.startupAttachmentMetadata)
 			m.startupAttachmentMetadata = nil
-			return m, RunFnWithAttachments(m.appContext(), m.live, prompt, attachments)
+			return m, RunFnWithAttachments(engine.WithToolOutputSession(m.appContext(), m.session.ID), m.live, prompt, attachments)
 		}
 		return m, nil
 	}

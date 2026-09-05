@@ -43,12 +43,14 @@ func (tl *timeline) transcriptThread() transcript.Thread {
 }
 
 func (tl *timeline) addUserWithAttachments(text string, attachments []attachmentMetadata) {
-	if text != "" {
-		tl.appendItem(&userItem{text: text})
+	tl.addUserTranscript(text, transcriptAttachments(attachments))
+}
+
+func (tl *timeline) addUserTranscript(text string, attachments []transcript.Attachment) {
+	if text != "" || len(attachments) > 0 {
+		tl.appendItem(&userItem{text: text, attachments: append([]transcript.Attachment(nil), attachments...)})
 	}
-	tl.applyTranscript(transcript.UserSubmitted{
-		Text: text, Attachments: transcriptAttachments(attachments),
-	})
+	tl.applyTranscript(transcript.UserSubmitted{Text: text, Attachments: attachments})
 }
 
 func (tl *timeline) restoreThread(thread transcript.Thread) {
@@ -70,7 +72,7 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 		payload := entry.Payload
 		switch entry.Kind {
 		case transcript.EntryKinds.ENTRYUSERMESSAGE:
-			it := &userItem{text: payload.Text}
+			it := &userItem{text: payload.Text, attachments: append([]transcript.Attachment(nil), payload.Attachments...)}
 			appendTop(it)
 			items[entry.ID] = it
 		case transcript.EntryKinds.ENTRYQUEUEDUSER:
@@ -168,7 +170,8 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 			markRestoredTurnActivity(turnAssistants, entry.TurnID)
 		case transcript.EntryKinds.ENTRYSUBAGENT:
 			it := &subAgentItem{
-				agentName: payload.AgentName, prompt: firstLine(payload.Prompt), taskID: entry.TurnID,
+				agentName: payload.AgentName, provider: payload.Provider, model: payload.Model,
+				prompt: firstLine(payload.Prompt), taskID: entry.TurnID,
 				closed: true, pending: false, launchFailed: payload.Subagent == transcript.SubagentFailed, interrupted: payload.Subagent == transcript.SubagentInterrupted,
 				toolIdx: make(map[string]toolRef),
 			}

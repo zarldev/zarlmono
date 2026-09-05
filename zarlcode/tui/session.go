@@ -245,6 +245,24 @@ func (s *Session) EnsureIdentity(id string, now time.Time) {
 	}
 }
 
+// resetSession clears conversation-owned runtime and persisted state while
+// retaining workspace, provider, model, and user display preferences.
+func (s *Session) resetSession() {
+	s.ClearIdentity()
+	s.Run.clearSession()
+	s.Plan = code.Plan{}
+	s.WorkingSet = NewWorkingSet(s.WorkspaceDir)
+	s.Checkpoints = NewCheckpoints(s.WorkspaceDir)
+	s.EventLog = NewEventRing(64)
+	s.LastToolResult = nil
+	s.LastToolEffects = nil
+	s.LastParentToolCallID = ""
+	s.LastAgentName = ""
+	s.PendingSkillNames = nil
+	s.SkipStartedPrompt = ""
+	s.SubmittedAttachments = nil
+}
+
 func (s *Session) SetProviderContext(fallback, current engine.ProviderSpec) {
 	s.ProvFallback = fallback
 	s.ProvSpec = current

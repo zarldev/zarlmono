@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 )
 
 // Limits is the resolved run-budget configuration. Zero-valued budget fields

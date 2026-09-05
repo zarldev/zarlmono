@@ -461,6 +461,8 @@ func (s *Sink) OnConversationStarted(e runner.ConversationStarted) {
 		Prompt:           e.Prompt,
 		ParentToolCallID: e.ParentToolCallID,
 		AgentName:        e.AgentName,
+		Provider:         e.Provider,
+		Model:            e.Model,
 	})
 }
 
@@ -552,30 +554,7 @@ func cloneMessages(messages []llm.Message) []llm.Message {
 	if messages == nil {
 		return nil
 	}
-	cloned := make([]llm.Message, len(messages))
-	for i, message := range messages {
-		cloned[i] = message
-		cloned[i].ToolCalls = append([]llm.ToolCall(nil), message.ToolCalls...)
-		if message.Parts != nil {
-			cloned[i].Parts = make([]llm.ContentPart, len(message.Parts))
-			for j, part := range message.Parts {
-				cloned[i].Parts[j] = part
-				if part.Image != nil {
-					image := *part.Image
-					cloned[i].Parts[j].Image = &image
-				}
-				if part.Audio != nil {
-					audio := *part.Audio
-					cloned[i].Parts[j].Audio = &audio
-				}
-				if part.Video != nil {
-					video := *part.Video
-					cloned[i].Parts[j].Video = &video
-				}
-			}
-		}
-	}
-	return cloned
+	return llm.CloneMessages(messages)
 }
 
 // OnDiagnostic intentionally keeps recovery diagnostics out of the transcript.

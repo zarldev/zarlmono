@@ -178,6 +178,7 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	})
 	opts = append(opts,
 		spawnRunnerPromptOption(l, agent, func() tools.Source { return visible }),
+		runner.WithModelIdentity(prov.Name(), model),
 		runner.WithCompactor(coderunner.StandardCompactor(
 			// Empty wsRoot: a sub-agent handover reseeds its own context but
 			// does not write a file (sub-agents run unattended and would spam

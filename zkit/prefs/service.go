@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"sync"
 
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/vault"
@@ -39,6 +39,7 @@ import (
 //	they're the same would require an awkward `any` return.
 type Service struct {
 	store  *db.Store
+	mu     sync.RWMutex // protects vault replacement and credential transitions
 	vault  *vault.Vault // nil when keys subsystem isn't initialised yet
 	wsRoot string       // resolved workspace root; never empty in normal startup
 }
@@ -52,11 +53,12 @@ func NewService(store *db.Store, v *vault.Vault, wsRoot string) *Service {
 	return &Service{store: store, vault: v, wsRoot: wsRoot}
 }
 
-// ModelSelection is the provider/model pair persisted as one preference
-// transition. Model may be empty to inherit the provider's runtime default.
-type ModelSelection struct {
-	Provider string
-	Model    string
+// SettingChange is one operation in an atomic preference update. Delete removes
+// Key; otherwise Value must be non-empty and is persisted exactly.
+type SettingChange struct {
+	Key    string
+	Value  string
+	Delete bool
 }
 
 // Stable scope names retained for callers; generated values own validity,
@@ -121,17 +123,18 @@ type KeyValue struct {
 // succeed before attempting one (e.g. provider builders gating on
 // "do we have OAuth support") check this rather than catching
 // [ErrNoVault] after the fact.
-func (s *Service) HasVault() bool { return s.vault != nil }
+func (s *Service) HasVault() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.vault != nil
+}
 
-// CredentialProtection reports the effective credential storage mode. An
-// explicit setting wins. Without one, any existing vault-backed row preserves
-// passphrase mode for upgraded installs; otherwise fresh/plaintext installs
-// default to off.
+// CredentialProtection reports the database-wide credential storage mode. An
+// explicit global setting wins. Workspace settings never affect key storage.
+// Without one, any existing vault-backed row preserves passphrase mode for
+// upgraded installs; otherwise fresh/plaintext installs default to off.
 func (s *Service) CredentialProtection(ctx context.Context) (string, error) {
-	if s == nil || s.store == nil {
-		return CredentialProtectionOff, nil
-	}
-	sv, err := s.GetSetting(ctx, ScopeEffective, KeyCredentialProtection)
+	sv, err := s.GetSetting(ctx, ScopeGlobal, credentialProtectionSetting)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return "", err
 	}
@@ -142,9 +145,6 @@ func (s *Service) CredentialProtection(ctx context.Context) (string, error) {
 		case CredentialProtectionOff:
 			return CredentialProtectionOff, nil
 		}
-	}
-	if os.Getenv("ZARLCODE_KEY") != "" || os.Getenv("ZARLCODE_PASSPHRASE") != "" {
-		return CredentialProtectionPassphrase, nil
 	}
 	rows, err := s.store.AllAPIKeys(ctx)
 	if err != nil {
@@ -161,9 +161,6 @@ func (s *Service) CredentialProtection(ctx context.Context) (string, error) {
 // HasVaultBackedKeys reports whether any credential row still requires a vault
 // to decode. Startup uses this to decide whether an unlock prompt is necessary.
 func (s *Service) HasVaultBackedKeys(ctx context.Context) (bool, error) {
-	if s == nil || s.store == nil {
-		return false, nil
-	}
 	rows, err := s.store.AllAPIKeys(ctx)
 	if err != nil {
 		return false, fmt.Errorf("settings: inspect credential rows: %w", err)
@@ -178,7 +175,11 @@ func (s *Service) HasVaultBackedKeys(ctx context.Context) (bool, error) {
 
 // SetVault replaces the currently unlocked vault. It is used by startup and
 // protection toggles after opening/creating the vault outside NewService.
-func (s *Service) SetVault(v *vault.Vault) { s.vault = v }
+func (s *Service) SetVault(v *vault.Vault) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.vault = v
+}
 
 // GetSetting reads a setting and reports its resolved scope.
 func (s *Service) GetSetting(ctx context.Context, sc Scope, key string) (SettingValue, error) {
@@ -237,29 +238,32 @@ func (s *Service) SetSetting(ctx context.Context, sc Scope, key, value string) e
 	return fmt.Errorf("settings: unknown scope %d", sc)
 }
 
-// SetModelSelection atomically persists a provider and its selected model at
-// the explicit scope. An empty model removes the scoped model row so provider
-// fallback applies; the provider itself must always be explicit.
-func (s *Service) SetModelSelection(ctx context.Context, sc Scope, selection ModelSelection) error {
-	if selection.Provider == "" {
-		return errors.New("settings: model selection requires provider")
-	}
+// ApplySettings atomically applies changes at an explicit scope. It is the
+// generic transaction boundary for application-owned groups of preferences.
+func (s *Service) ApplySettings(ctx context.Context, sc Scope, changes ...SettingChange) error {
 	workspace, err := s.writeWorkspace(sc)
 	if err != nil {
 		return err
 	}
+	for _, change := range changes {
+		if change.Key == "" {
+			return errors.New("settings: change requires key")
+		}
+		if !change.Delete && change.Value == "" {
+			return errors.New("settings: change with empty value must be a delete")
+		}
+	}
 	return s.store.WithTx(ctx, func(tx *db.Store) error {
-		if err := tx.SetSetting(ctx, workspace, KeyProvider, selection.Provider); err != nil {
-			return fmt.Errorf("set model selection provider: %w", err)
-		}
-		if selection.Model == "" {
-			if err := tx.DeleteSetting(ctx, workspace, KeyModel); err != nil {
-				return fmt.Errorf("clear model selection model: %w", err)
+		for _, change := range changes {
+			if change.Delete {
+				if err := tx.DeleteSetting(ctx, workspace, change.Key); err != nil {
+					return fmt.Errorf("delete setting %q: %w", change.Key, err)
+				}
+				continue
 			}
-			return nil
-		}
-		if err := tx.SetSetting(ctx, workspace, KeyModel, selection.Model); err != nil {
-			return fmt.Errorf("set model selection model: %w", err)
+			if err := tx.SetSetting(ctx, workspace, change.Key, change.Value); err != nil {
+				return fmt.Errorf("set setting %q: %w", change.Key, err)
+			}
 		}
 		return nil
 	})
@@ -378,6 +382,8 @@ func (s *Service) GetKeyEffective(ctx context.Context, provider string) (KeyValu
 }
 
 func (s *Service) exactKey(ctx context.Context, workspace, provider string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ct, err := s.store.GetAPIKeyExact(ctx, workspace, provider)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -402,6 +408,8 @@ func (s *Service) exactKey(ctx context.Context, workspace, provider string) (str
 // encrypts before persisting. Empty plaintext is rejected — callers
 // use DeleteKey to clear.
 func (s *Service) SetKey(ctx context.Context, sc Scope, provider, plaintext string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if plaintext == "" {
 		return errors.New("settings: SetKey with empty plaintext; use DeleteKey")
 	}
@@ -429,8 +437,12 @@ func (s *Service) SetKey(ctx context.Context, sc Scope, provider, plaintext stri
 // writeKey persists plaintext at (workspace, provider), encrypting only when
 // the current credential-protection mode requires passphrase storage.
 func (s *Service) writeKey(ctx context.Context, workspace, provider, plaintext, mode string) error {
+	return s.writeKeyToStore(s.store, ctx, workspace, provider, plaintext, mode)
+}
+
+func (s *Service) writeKeyToStore(store *db.Store, ctx context.Context, workspace, provider, plaintext, mode string) error {
 	if mode != CredentialProtectionPassphrase {
-		return s.store.SetAPIKey(ctx, workspace, provider, db.APIKeyCiphertext{
+		return store.SetAPIKey(ctx, workspace, provider, db.APIKeyCiphertext{
 			Ciphertext: []byte(plaintext),
 			Nonce:      nil,
 			KeyVersion: 0,
@@ -444,7 +456,7 @@ func (s *Service) writeKey(ctx context.Context, workspace, provider, plaintext, 
 	if err != nil {
 		return fmt.Errorf("encrypt api key for %q: %w", provider, err)
 	}
-	return s.store.SetAPIKey(ctx, workspace, provider, db.APIKeyCiphertext{
+	return store.SetAPIKey(ctx, workspace, provider, db.APIKeyCiphertext{
 		Ciphertext: ct,
 		Nonce:      nonce,
 		KeyVersion: vault.CurrentKeyVersion,
@@ -464,37 +476,33 @@ func (s *Service) writeKey(ctx context.Context, workspace, provider, plaintext, 
 // number of rows re-encrypted. A no-op (returns 0, nil) when there's no vault
 // or no legacy key.
 func (s *Service) MigrateVaultKeys(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.vault == nil || !s.vault.HasLegacy() {
 		return 0, nil
 	}
-	rows, err := s.store.AllAPIKeys(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("settings: list keys for migration: %w", err)
-	}
-	// Re-encrypt every row unconditionally: the vault decrypts via the legacy
-	// key when needed and re-encrypts under the primary, so this is idempotent
-	// for rows already on the primary and correct for those still on the
-	// legacy key. We don't gate on KeyVersion — it can't distinguish a row
-	// written under the primary from one written under an env raw key.
 	migrated := 0
-	allOK := true
-	for _, r := range rows {
-		if r.Storage == db.APIKeyStoragePlaintext {
-			continue
+	if err := s.store.WithTx(ctx, func(tx *db.Store) error {
+		rows, err := tx.AllAPIKeys(ctx)
+		if err != nil {
+			return fmt.Errorf("list keys for migration: %w", err)
 		}
-		plain, derr := s.vault.Decrypt(r.Ciphertext, r.Nonce)
-		if derr != nil {
-			allOK = false
-			continue
+		for _, r := range rows {
+			if r.Storage == db.APIKeyStoragePlaintext {
+				continue
+			}
+			plain, err := s.vault.Decrypt(r.Ciphertext, r.Nonce)
+			if err != nil {
+				return fmt.Errorf("decrypt key %q: %w", r.Provider, err)
+			}
+			if err := s.writeKeyToStore(tx, ctx, r.Workspace, r.Provider, plain, CredentialProtectionPassphrase); err != nil {
+				return err
+			}
+			migrated++
 		}
-		if werr := s.writeKey(ctx, r.Workspace, r.Provider, plain, CredentialProtectionPassphrase); werr != nil {
-			allOK = false
-			continue
-		}
-		migrated++
-	}
-	if !allOK {
-		return migrated, fmt.Errorf("settings: %d key(s) failed to migrate; keeping legacy master.key", len(rows)-migrated)
+		return nil
+	}); err != nil {
+		return migrated, fmt.Errorf("settings: migrate legacy vault keys: %w", err)
 	}
 	if err := s.vault.RemoveLegacy(); err != nil {
 		return migrated, fmt.Errorf("settings: remove legacy master key: %w", err)
@@ -504,13 +512,12 @@ func (s *Service) MigrateVaultKeys(ctx context.Context) (int, error) {
 
 // EnableCredentialProtection encrypts every plaintext credential row and marks
 // future writes as passphrase-protected. Existing encrypted rows are preserved.
-func (s *Service) EnableCredentialProtection(ctx context.Context, passphrase vault.PassphraseFunc) (int, error) {
+// The caller must supply an unlocked vault through NewService or SetVault first.
+func (s *Service) EnableCredentialProtection(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.vault == nil {
-		v, err := vault.Open(passphrase)
-		if err != nil {
-			return 0, fmt.Errorf("settings: open vault: %w", err)
-		}
-		s.vault = v
+		return 0, ErrNoVault
 	}
 	rows, err := s.store.AllAPIKeys(ctx)
 	if err != nil {
@@ -536,7 +543,7 @@ func (s *Service) EnableCredentialProtection(ctx context.Context, passphrase vau
 			}
 			migrated++
 		}
-		if err := tx.SetSetting(ctx, "", KeyCredentialProtection, CredentialProtectionPassphrase); err != nil {
+		if err := tx.SetSetting(ctx, "", credentialProtectionSetting, CredentialProtectionPassphrase); err != nil {
 			return fmt.Errorf("set credential protection: %w", err)
 		}
 		return nil
@@ -547,20 +554,18 @@ func (s *Service) EnableCredentialProtection(ctx context.Context, passphrase vau
 }
 
 // DisableCredentialProtection decrypts every encrypted credential row and marks
-// future writes as plaintext. If encrypted rows exist and no vault is unlocked,
-// passphrase is used to unlock it first. The rewrite and setting change are one
-// transaction so a failure leaves the previous mode intact.
-func (s *Service) DisableCredentialProtection(ctx context.Context, passphrase vault.PassphraseFunc) (int, error) {
+// future writes as plaintext. Encrypted rows require a vault already unlocked
+// by the caller; the service never prompts or chooses a vault location. The
+// rewrite and setting change are one transaction so a failure leaves the mode intact.
+func (s *Service) DisableCredentialProtection(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	hasVaultRows, err := s.HasVaultBackedKeys(ctx)
 	if err != nil {
 		return 0, err
 	}
 	if hasVaultRows && s.vault == nil {
-		v, err := vault.Open(passphrase)
-		if err != nil {
-			return 0, fmt.Errorf("settings: unlock vault: %w", err)
-		}
-		s.vault = v
+		return 0, ErrCredentialsLocked
 	}
 	rows, err := s.store.AllAPIKeys(ctx)
 	if err != nil {
@@ -589,12 +594,12 @@ func (s *Service) DisableCredentialProtection(ctx context.Context, passphrase va
 			}
 			migrated++
 		}
-		if err := tx.SetSetting(ctx, "", KeyCredentialProtection, CredentialProtectionOff); err != nil {
+		if err := tx.SetSetting(ctx, "", credentialProtectionSetting, CredentialProtectionOff); err != nil {
 			return fmt.Errorf("set credential protection: %w", err)
 		}
-		_ = tx.DeleteSetting(ctx, "", KeyVaultPrompt)
+		_ = tx.DeleteSetting(ctx, "", legacyVaultPromptSetting)
 		if s.wsRoot != "" {
-			_ = tx.DeleteSetting(ctx, s.wsRoot, KeyVaultPrompt)
+			_ = tx.DeleteSetting(ctx, s.wsRoot, legacyVaultPromptSetting)
 		}
 		return nil
 	}); err != nil {
@@ -603,9 +608,26 @@ func (s *Service) DisableCredentialProtection(ctx context.Context, passphrase va
 	return migrated, nil
 }
 
+// MigrateCredentialProtection consumes a global legacy vault_prompt=off marker
+// by applying the current plaintext mode transition and deleting the marker.
+// Workspace preferences cannot change the database-wide credential policy. It
+// is idempotent and returns zero when no global migration is pending.
+func (s *Service) MigrateCredentialProtection(ctx context.Context) (int, error) {
+	sv, err := s.GetSetting(ctx, ScopeGlobal, legacyVaultPromptSetting)
+	if errors.Is(err, ErrNotFound) || (err == nil && sv.Value != CredentialProtectionOff) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read legacy credential protection: %w", err)
+	}
+	return s.DisableCredentialProtection(ctx)
+}
+
 // DeleteKey removes an api-key at the explicit scope. Returns nil on
 // missing rows — delete is idempotent.
 func (s *Service) DeleteKey(ctx context.Context, sc Scope, provider string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	switch sc {
 	case ScopeWorkspace:
 		if s.wsRoot == "" {

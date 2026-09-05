@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 func TestActiveProviderKeepsFallbackCredentialsOnlyForFallbackBackend(t *testing.T) {
@@ -18,11 +18,10 @@ func TestActiveProviderKeepsFallbackCredentialsOnlyForFallbackBackend(t *testing
 
 	settings := engine.NewSettings(store, nil, nil, t.TempDir())
 	fallback := engine.ProviderSpec{
-		Name:        "llamacpp",
-		Model:       "fallback-model",
-		BaseURL:     "http://127.0.0.1:8081",
-		APIKey:      "fallback-key",
-		CodexEffort: "high",
+		Name:    "llamacpp",
+		Model:   "fallback-model",
+		BaseURL: "http://127.0.0.1:8081",
+		APIKey:  "fallback-key",
 	}
 
 	got := settings.ActiveProvider(t.Context(), fallback)

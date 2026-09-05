@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 	"github.com/zarldev/zarlmono/zkit/oauth/codex"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // ActiveProvider resolves the active ProviderSpec from settings, falling
@@ -29,6 +29,7 @@ func (s *Settings) ActiveProvider(ctx context.Context, fb ProviderSpec) Provider
 		spec.BaseURL = fb.BaseURL
 		spec.APIKey = fb.APIKey
 	}
+	spec.CodexEffort = validCodexEffort(spec, spec.CodexEffort)
 	return spec
 }
 
@@ -187,4 +188,45 @@ func (s *Settings) VerifyLoop(ctx context.Context) (string, int) {
 	cmd := strings.TrimSpace(s.setting(ctx, prefs.KeyVerifyTests, ""))
 	attempts := s.intSetting(ctx, prefs.KeyVerifyAttempts, 1)
 	return cmd, attempts
+}
+
+// TextVerbosity resolves supported request-level output detail.
+func (s *Settings) TextVerbosity(ctx context.Context, target ProviderSpec) string {
+	if !SupportsTextVerbosity(target) {
+		return ""
+	}
+	v := strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyTextVerbosity, "")))
+	switch v {
+	case "low", "medium", "high":
+		return v
+	}
+	return ""
+}
+
+// CodexEffort resolves the persisted Codex reasoning effort when supported.
+func (s *Settings) CodexEffort(ctx context.Context, target ProviderSpec) string {
+	return validCodexEffort(target, s.setting(ctx, prefs.KeyCodexEffort, ""))
+}
+func validCodexEffort(target ProviderSpec, raw string) string {
+	id, _ := llm.ParseLLMProvider(target.Name)
+	if id != backends.NameOpenAICodex {
+		return ""
+	}
+	v := strings.ToLower(strings.TrimSpace(raw))
+	for _, x := range openaicodex.EffortVariants(target.Model) {
+		if v == x {
+			return v
+		}
+	}
+	return ""
+}
+
+// SupportsTextVerbosity reports models with wire-level verbosity support.
+func SupportsTextVerbosity(target ProviderSpec) bool {
+	id, _ := llm.ParseLLMProvider(target.Name)
+	if id == backends.NameOpenAICodex {
+		return true
+	}
+	m := strings.ToLower(strings.TrimSpace(target.Model))
+	return id == llm.LLMProviders.OPENAI && (m == "gpt-6-astra" || m == "gpt-5.6" || strings.HasPrefix(m, "gpt-5.6-"))
 }

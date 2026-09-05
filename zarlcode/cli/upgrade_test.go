@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/cli"
-	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 )
 
 func archive(t *testing.T, tag, goos, arch string) (string, []byte, string) {

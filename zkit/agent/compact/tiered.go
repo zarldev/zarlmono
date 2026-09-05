@@ -18,11 +18,11 @@ const TieredDefaultTargetBytes = 128 * 1024
 // re-referenceable inside the same compaction window.
 const tieredToolTruncateChars = 256
 
-// tieredAssistantTruncateChars caps assistant narrative content in
-// Phase 2. Trims more aggressively than [Structural]'s 1KB ceiling
-// because Phase 2 only fires when the conversation is already at
-// 75% of the configured budget.
+// tieredAssistantTruncateChars bounds the operational-state capsule retained
+// for each older assistant message in Phases 2 and 3.
 const tieredAssistantTruncateChars = 256
+
+const tieredAssistantCapsuleEdgeChars = tieredAssistantTruncateChars / 2
 
 // Tiered is a progressive compactor that escalates aggressiveness in
 // three phases keyed to the current history byte size. Messages carry
@@ -44,10 +44,11 @@ const tieredAssistantTruncateChars = 256
 // preserved verbatim — only the prose alongside them is cut.
 //
 // Phase 3 (>= 90% budget): Phase 2 + tool result bodies replaced
-// with a single-line placeholder regardless of size; assistant
-// narrative content cleared entirely. ToolCalls + ToolCallIDs still
-// preserved so the action sequence is recoverable. The agent can
-// re-run any tool to recover content if it needs to.
+// with a single-line placeholder regardless of size. The bounded
+// head-and-tail assistant capsules, ToolCalls, and ToolCallIDs remain,
+// preserving projected operational state and provider-required tool pairing.
+// As an explicit native replay boundary, complete ContinuationItems are dropped
+// from older messages (individual payloads are never truncated).
 //
 // Below 60% budget Tiered is a pure no-op — history flows through
 // untouched, no allocation.
@@ -158,7 +159,7 @@ func (t *Tiered) Compact(_ context.Context, history []llm.Message, keepRecent in
 	// Fast path: below Phase 1 trigger or nothing eligible to trim.
 	if totalBytes < t1 || len(history) <= keepRecent {
 		return Result{
-			History: append([]llm.Message{}, history...),
+			History: llm.CloneMessages(history),
 			Engine:  EngineTiered,
 		}, nil
 	}
@@ -172,7 +173,7 @@ func (t *Tiered) Compact(_ context.Context, history []llm.Message, keepRecent in
 	end := len(history) - keepRecent
 	if end <= head {
 		return Result{
-			History: append([]llm.Message{}, history...),
+			History: llm.CloneMessages(history),
 			Engine:  EngineTiered,
 		}, nil
 	}
@@ -189,7 +190,8 @@ func (t *Tiered) Compact(_ context.Context, history []llm.Message, keepRecent in
 		return tieredResult(out, totalBytes-historyBytes(out), 2), nil
 	}
 
-	// Phase 3 = Phase 2 + tool placeholder + assistant content clear.
+	// Phase 3 = Phase 2 + smaller tool placeholders and an explicit native
+	// continuation boundary for the older range.
 	out = tieredPhase3(out, head, end)
 	return tieredResult(out, totalBytes-historyBytes(out), 3), nil
 }
@@ -221,8 +223,7 @@ func historyBytes(messages []llm.Message) int {
 // tieredPhase1 truncates tool result bodies in the older range.
 // Returns a new slice; input is not mutated.
 func tieredPhase1(history []llm.Message, head, end int) []llm.Message {
-	out := make([]llm.Message, len(history))
-	copy(out, history)
+	out := llm.CloneMessages(history)
 	for i := head; i < end; i++ {
 		msg := out[i]
 		if msg.Role != llm.RoleTool {
@@ -246,8 +247,7 @@ func tieredPhase1(history []llm.Message, head, end int) []llm.Message {
 // the action trail stays intact. Operates on a slice already
 // produced by tieredPhase1 — does not re-truncate tool results.
 func tieredPhase2(history []llm.Message, head, end int) []llm.Message {
-	out := make([]llm.Message, len(history))
-	copy(out, history)
+	out := llm.CloneMessages(history)
 	for i := head; i < end; i++ {
 		msg := out[i]
 		if msg.Role != llm.RoleAssistant {
@@ -256,26 +256,32 @@ func tieredPhase2(history []llm.Message, head, end int) []llm.Message {
 		if len(msg.Content) <= tieredAssistantTruncateChars {
 			continue
 		}
-		kept := clipToRune(msg.Content, tieredAssistantTruncateChars)
-		removed := len(msg.Content) - len(kept)
+		prefix := clipToRune(msg.Content, tieredAssistantCapsuleEdgeChars)
+		suffixStart := len(msg.Content) - tieredAssistantCapsuleEdgeChars
+		for suffixStart < len(msg.Content) && suffixStart > 0 && (msg.Content[suffixStart]&0xc0) == 0x80 {
+			suffixStart++
+		}
+		suffix := msg.Content[suffixStart:]
+		removed := len(msg.Content) - len(prefix) - len(suffix)
 		msg.Content = fmt.Sprintf(
-			"%s\n[reasoning trimmed — %d chars elided]",
-			kept, removed)
+			"%s\n[reasoning trimmed — %d chars elided; operational tail retained]\n%s",
+			prefix, removed, suffix)
 		out[i] = msg
 	}
 	return out
 }
 
-// tieredPhase3 collapses tool result bodies to a single-line
-// placeholder and clears assistant narrative content entirely.
-// ToolCalls + ToolCallIDs are preserved so the call sequence
-// remains valid against provider APIs that require paired
-// tool_call / tool_result messages.
+// tieredPhase3 collapses tool result bodies to a single-line placeholder
+// while retaining the bounded assistant operational-state capsules created by
+// Phase 2. ToolCalls + ToolCallIDs remain unchanged so provider-required
+// tool_call / tool_result pairs stay valid. Complete ContinuationItems are
+// dropped from older messages at this explicit compaction boundary; their
+// projected content and tool history remain.
 func tieredPhase3(history []llm.Message, head, end int) []llm.Message {
-	out := make([]llm.Message, len(history))
-	copy(out, history)
+	out := llm.CloneMessages(history)
 	for i := head; i < end; i++ {
 		msg := out[i]
+		msg.ContinuationItems = nil
 		switch msg.Role {
 		case llm.RoleTool:
 			placeholder := fmt.Sprintf(
@@ -283,8 +289,11 @@ func tieredPhase3(history []llm.Message, head, end int) []llm.Message {
 				len(msg.Content))
 			msg.Content = placeholder
 		case llm.RoleAssistant:
-			msg.Content = ""
+			// Phase 2 already reduced visible assistant prose to a bounded
+			// head-and-tail capsule. Retain it so high pressure does not erase
+			// decisions, resolutions, or promised next actions.
 		default:
+			out[i] = msg
 			continue
 		}
 		out[i] = msg

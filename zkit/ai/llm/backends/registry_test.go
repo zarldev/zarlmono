@@ -111,18 +111,19 @@ func TestRegistryBuildBuiltinsDoNotPanic(t *testing.T) {
 	}
 }
 
-// TestRegistryBuildNilStoreAndService exercises the documented
-// built-ins-only configuration: nil Store and nil SettingsService, with
-// keys resolved from the environment alone. resolveAPIKey once panicked
-// here on the unguarded vault check.
+// A standalone registry needs explicit keys for hosted providers, but local
+// providers remain usable without a credential service.
 func TestRegistryBuildNilStoreAndService(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "sk-x")
-	ctx := t.Context()
+	t.Parallel()
 	reg := backends.NewRegistry()
-	for _, name := range []string{"openai", "llamacpp"} {
-		if _, err := reg.Build(ctx, name, ""); err != nil {
-			t.Fatalf("Build(%q): %v", name, err)
-		}
+	if _, err := reg.Build(t.Context(), "openai", ""); err == nil {
+		t.Fatal("hosted provider built without an explicit credential")
+	}
+	if _, err := reg.BuildWithConfig(t.Context(), "openai", backends.BuildConfig{APIKey: "sk-explicit"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Build(t.Context(), "llamacpp", ""); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -241,7 +242,7 @@ func TestFetchModelsLiveProbe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// No vault, no env key → the probe must go out unauthenticated.
+	// No configured key: the probe must go out unauthenticated.
 	reg, ctx := newTestRegistry(t, fakeKeyService{})
 	upsertCustomOAI(t, reg, ctx, "custom-oai", srv.URL, []string{"seed-only"})
 
@@ -326,17 +327,17 @@ func TestFetchModelsOAuthBuiltinsReturnPresets(t *testing.T) {
 	}
 }
 
-// TestUsesAPIKey locks in the distinction between RequiresKey (env-var
-// declaration) and UsesAPIKey (offer a key field in the UI).
+// TestUsesAPIKey distinguishes required hosted credentials from optional custom
+// endpoint authentication offered in the UI.
 func TestUsesAPIKey(t *testing.T) {
 	tests := []struct {
 		name string
 		def  backends.ProviderDefinition
 		want bool
 	}{
-		{"hosted builtin", backends.ProviderDefinition{Builtin: true, EnvAPIKeyVars: []string{"OPENAI_API_KEY"}}, true},
+		{"hosted builtin", backends.ProviderDefinition{Builtin: true, APIKeyRequired: true}, true},
 		{"local builtin", backends.ProviderDefinition{Builtin: true}, false},
-		{"custom no env", backends.ProviderDefinition{Builtin: false}, true},
+		{"custom endpoint", backends.ProviderDefinition{Builtin: false}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

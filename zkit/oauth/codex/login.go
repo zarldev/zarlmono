@@ -51,7 +51,7 @@ const successHTML = `<!doctype html>
 //     [prefs.ScopeGlobal] so every workspace inherits the credential.
 func RunLogin(
 	ctx context.Context,
-	svc *prefs.Service,
+	svc CredentialStore,
 	stdin io.Reader,
 	stdout io.Writer,
 ) error {
@@ -109,7 +109,7 @@ func exchangeAuthorizationCode(ctx context.Context, code, verifier string) (open
 // otherwise.
 func runManual(
 	ctx context.Context,
-	svc *prefs.Service,
+	svc CredentialStore,
 	flow openaicodex.AuthorizationFlow,
 	stdin io.Reader,
 	stdout io.Writer,
@@ -168,7 +168,7 @@ func indexByte(b []byte, c byte) int {
 // chain. Shared by both the auto and manual flow paths.
 func finishLogin(
 	ctx context.Context,
-	svc *prefs.Service,
+	svc CredentialStore,
 	verifier, code string,
 	stdout io.Writer,
 	exchange func(context.Context, string, string) (openaicodex.Token, error),

@@ -82,6 +82,26 @@ func TestRecordsSinceUsesCompactSnakeCasePayload(t *testing.T) {
 	}
 }
 
+func TestSuccessfulToolOmitsFailureKind(t *testing.T) {
+	t.Parallel()
+
+	builder := transcript.NewBuilder()
+	builder.StartTool("turn", "", "tool", "", "read", "main.go", 0)
+	builder.FinishTool("tool", "read main.go", "unknown", 10, false)
+
+	thread := builder.Thread()
+	if err := thread.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := thread.RecordsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(records[0].Payload); strings.Contains(got, "failure_kind") {
+		t.Fatalf("successful tool payload contains failure kind: %s", got)
+	}
+}
+
 func TestRecordsSinceReturnsOnlyChangedEntries(t *testing.T) {
 	builder := transcript.NewBuilder()
 	builder.AddUser("prompt")
@@ -302,7 +322,6 @@ func TestFromRecordsRejectsContradictoryLifecyclePayloads(t *testing.T) {
 		payload string
 		want    string
 	}{
-		{name: "empty open assistant", kind: "assistant_message", payload: `{}`, want: "assistant entry is empty and nonterminal"},
 		{name: "running tool duration", kind: "tool_call", payload: `{"tool_id":"tool","tool_name":"read","tool_state":"running","duration_ms":1}`, want: "running tool has duration"},
 		{name: "successful tool failure", kind: "tool_call", payload: `{"tool_id":"tool","tool_name":"read","tool_state":"succeeded","failure_kind":"error"}`, want: "succeeded tool has failure kind"},
 	}
@@ -317,6 +336,27 @@ func TestFromRecordsRejectsContradictoryLifecyclePayloads(t *testing.T) {
 	}
 }
 
+func TestFromRecordsRecoversEmptyOpenAssistant(t *testing.T) {
+	t.Parallel()
+
+	thread, err := transcript.FromRecords(1, []transcript.Record{
+		record(1, "e1", "turn", "assistant_message", 1, `{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := thread.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if !entries[0].Payload.Interrupted || entries[0].Payload.Complete {
+		t.Fatalf("assistant lifecycle = %+v, want interrupted and incomplete", entries[0].Payload)
+	}
+	if thread.Revision() != 2 {
+		t.Fatalf("revision = %d, want 2", thread.Revision())
+	}
+}
+
 func TestRecoverInterruptedAdvancesOpenLifecycleEntries(t *testing.T) {
 	builder := transcript.NewBuilder()
 	builder.AddUser("prompt")
@@ -324,7 +364,7 @@ func TestRecoverInterruptedAdvancesOpenLifecycleEntries(t *testing.T) {
 	builder.AppendReasoning("turn", "", "partial thought")
 	builder.AppendAssistant("turn", "", "partial answer")
 	builder.StartTool("turn", "", "tool", "", "read", "main.go", 0)
-	builder.StartSubagent("child", "spawn", "explore", "inspect")
+	builder.StartSubagent("child", "spawn", "explore", "anthropic", "claude-sonnet", "inspect")
 	before := builder.Thread()
 	recovered, changed := before.RecoverInterrupted()
 	if !changed || recovered.Revision() <= before.Revision() {
@@ -340,7 +380,8 @@ func TestRecoverInterruptedAdvancesOpenLifecycleEntries(t *testing.T) {
 		case transcript.EntryKinds.ENTRYTOOLCALL:
 			tool = entry.Payload.ToolState == transcript.ToolInterrupted
 		case transcript.EntryKinds.ENTRYSUBAGENT:
-			child = entry.Payload.Subagent == transcript.SubagentInterrupted
+			child = entry.Payload.Subagent == transcript.SubagentInterrupted &&
+				entry.Payload.Provider == "anthropic" && entry.Payload.Model == "claude-sonnet"
 		}
 	}
 	if !assistant || !reasoning || !tool || !child {

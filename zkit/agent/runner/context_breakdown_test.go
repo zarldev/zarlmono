@@ -26,7 +26,7 @@ func TestContextBreakdownPublishedForToolHistory(t *testing.T) {
 			{ID: "c2", Function: llm.ToolCallFunction{Name: "agent_await", Arguments: `{}`}},
 			{ID: "c3", Function: llm.ToolCallFunction{Name: "bash", Arguments: `{}`}},
 			{ID: "c4", Function: llm.ToolCallFunction{Name: "instruction_load", Arguments: `{}`}},
-		}}},
+		}, CompletedItems: []llm.ContinuationItem{{Provider: "native", Format: "v1", Kind: "reasoning", ID: "opaque-1", Data: []byte("payload")}}}},
 		{runnertest.ChunkText("ok")},
 	})
 	registry := tools.NewRegistry(
@@ -62,6 +62,11 @@ func TestContextBreakdownPublishedForToolHistory(t *testing.T) {
 	}
 	if breakdown.SkillBytes == 0 || breakdown.AgentBytes == 0 || breakdown.InstructionBytes == 0 {
 		t.Errorf("classified tool bytes = skill%d agent%d instruction%d", breakdown.SkillBytes, breakdown.AgentBytes, breakdown.InstructionBytes)
+	}
+	wantAssistantBytes := len("skill_load") + len(`{}`) + len("agent_await") + len(`{}`) + len("bash") + len(`{}`) + len("instruction_load") + len(`{}`) +
+		len("native") + len("v1") + len("reasoning") + len("opaque-1") + len("payload")
+	if breakdown.AssistantBytes != wantAssistantBytes {
+		t.Errorf("assistant bytes = %d, want %d including opaque continuation item", breakdown.AssistantBytes, wantAssistantBytes)
 	}
 	other := breakdown.ToolBytes - breakdown.SkillBytes - breakdown.AgentBytes - breakdown.InstructionBytes
 	if other == 0 {

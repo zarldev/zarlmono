@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
