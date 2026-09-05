@@ -73,6 +73,9 @@ func TestCodexEffortIsValidatedForSelectedModel(t *testing.T) {
 	}
 
 	codex := backends.NameOpenAICodex.String()
+	if got := settings.CodexEffort(t.Context(), engine.ProviderSpec{Name: codex, Model: "gpt-6-astra"}); got != "max" {
+		t.Fatalf("gpt-6-astra effort = %q, want max", got)
+	}
 	if got := settings.CodexEffort(t.Context(), engine.ProviderSpec{Name: codex, Model: "gpt-5.6"}); got != "max" {
 		t.Fatalf("gpt-5.6 effort = %q, want max", got)
 	}
