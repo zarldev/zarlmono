@@ -132,20 +132,21 @@ func TestTokenSourcePropagatesRefreshFailure(t *testing.T) {
 
 func openTestService(t *testing.T) *prefs.Service {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	dir := filepath.Join(t.TempDir(), ".zarlcode")
-	t.Setenv("ZARLCODE_HOME", dir)
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	dir := t.TempDir()
 	store, err := db.Open(t.Context(), filepath.Join(dir, "state.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	v, err := vault.Open(nil)
+	v, err := vault.Open(dir, func(_, _ bool) (string, error) { return "test-passphrase", nil })
 	if err != nil {
 		t.Fatalf("open vault: %v", err)
 	}
-	return prefs.NewService(store, v, "")
+	svc := prefs.NewService(store, v, "")
+	if _, err := svc.EnableCredentialProtection(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return svc
 }
 
 func storeCred(t *testing.T, svc *prefs.Service, cred codex.Cred) {

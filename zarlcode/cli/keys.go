@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/oauth"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
@@ -33,7 +34,9 @@ func (c KeysCommand) Execute(ctx context.Context, args []string, stdout, stderr 
 	}
 	oauthLogin := c.OAuthLogin
 	if oauthLogin == nil {
-		oauthLogin = oauth.RunLogin
+		oauthLogin = func(ctx context.Context, svc *prefs.Service, provider string, stdin io.Reader, stdout io.Writer) error {
+			return oauth.RunLogin(ctx, svc, provider, stdin, stdout)
+		}
 	}
 
 	cmd := cmdList
@@ -62,7 +65,7 @@ func (c KeysCommand) Execute(ctx context.Context, args []string, stdout, stderr 
 		}
 		return keysOAuth(ctx, c.Service, oauthLogin, args[1], stdin, stdout, stderr)
 	case "protect":
-		return keysProtect(ctx, c.Service, args[1:], stdout, stderr)
+		return keysProtect(ctx, c.Service, "", args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown subcommand %q (want list | set | delete | oauth | protect)\n", cmd)
 		return 2
@@ -73,7 +76,12 @@ func (c KeysCommand) Execute(ctx context.Context, args []string, stdout, stderr 
 // preference store and any vault required by the requested operation.
 func RunKeys(args []string, stdout io.Writer) int {
 	ctx := context.Background()
-	store, err := db.Open(ctx, "")
+	dir, err := db.DefaultDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "state directory:", err)
+		return 1
+	}
+	store, err := db.Open(ctx, filepath.Join(dir, "state.db"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "store:", err)
 		return 1
@@ -86,7 +94,7 @@ func RunKeys(args []string, stdout io.Writer) int {
 		cmd = args[0]
 	}
 	if needsKeysVault(ctx, svc, cmd) {
-		v, err := vault.Open(vault.TerminalPassphrase)
+		v, err := vault.Open(dir, vault.TerminalPassphrase)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "vault:", err)
 			return 1
@@ -178,7 +186,7 @@ const (
 	cmdStatus = "status"
 )
 
-func keysProtect(ctx context.Context, svc *prefs.Service, args []string, stdout, stderr io.Writer) int {
+func keysProtect(ctx context.Context, svc *prefs.Service, dir string, args []string, stdout, stderr io.Writer) int {
 	cmd := cmdStatus
 	if len(args) > 0 {
 		cmd = strings.ToLower(strings.TrimSpace(args[0]))
@@ -193,7 +201,7 @@ func keysProtect(ctx context.Context, svc *prefs.Service, args []string, stdout,
 		fmt.Fprintf(stdout, "credential protection: %s\n", mode)
 		return 0
 	case "on", "enable":
-		n, err := svc.EnableCredentialProtection(ctx, vault.TerminalPassphrase)
+		n, err := changeCredentialProtection(ctx, svc, dir, true)
 		if err != nil {
 			fmt.Fprintln(stderr, "protect on:", err)
 			return 1
@@ -201,7 +209,7 @@ func keysProtect(ctx context.Context, svc *prefs.Service, args []string, stdout,
 		fmt.Fprintf(stdout, "credential protection enabled — encrypted %d key(s)\n", n)
 		return 0
 	case "off", "disable":
-		n, err := svc.DisableCredentialProtection(ctx, vault.TerminalPassphrase)
+		n, err := changeCredentialProtection(ctx, svc, dir, false)
 		if err != nil {
 			fmt.Fprintln(stderr, "protect off:", err)
 			return 1
@@ -212,4 +220,22 @@ func keysProtect(ctx context.Context, svc *prefs.Service, args []string, stdout,
 		fmt.Fprintln(stderr, "usage: zarlcode keys protect [status|on|off]")
 		return 2
 	}
+}
+
+func changeCredentialProtection(ctx context.Context, svc *prefs.Service, dir string, enabled bool) (int, error) {
+	hasRows, err := svc.HasVaultBackedKeys(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if (enabled || hasRows) && !svc.HasVault() && dir != "" {
+		v, err := vault.Open(dir, vault.TerminalPassphrase)
+		if err != nil {
+			return 0, err
+		}
+		svc.SetVault(v)
+	}
+	if enabled {
+		return svc.EnableCredentialProtection(ctx)
+	}
+	return svc.DisableCredentialProtection(ctx)
 }

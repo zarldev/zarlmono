@@ -6,11 +6,11 @@ import (
 
 	. "github.com/zarldev/zarlmono/zarlcode/engine"
 
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // ResponseTimeout defaults to 90s, honours a positive override, and floors a

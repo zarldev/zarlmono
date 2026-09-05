@@ -107,7 +107,7 @@ func TestTiered_Phase2TrimsAssistantContent(t *testing.T) {
 	}
 }
 
-func TestTiered_Phase3CollapsesEverything(t *testing.T) {
+func TestTiered_Phase3PreservesOperationalStateAndToolPairs(t *testing.T) {
 	t.Parallel()
 	c := tinyBudgetTiered()
 	// Force phase 3: huge tool result, huge assistant. Even after
@@ -117,9 +117,13 @@ func TestTiered_Phase3CollapsesEverything(t *testing.T) {
 	in := []llm.Message{
 		{Role: "system", Content: "sys"},
 		{Role: "user", Content: "do thing"},
-		{Role: "assistant", Content: strings.Repeat("r", 2000)},
+		{Role: "assistant", Content: strings.Repeat("r", 2000), ToolCalls: []llm.ToolCall{{
+			ID: "t1", Type: "function", Function: llm.ToolCallFunction{Name: "read", Arguments: `{"path":"first.go"}`},
+		}}},
 		{Role: "tool", ToolCallID: "t1", Content: strings.Repeat("a", 2000)},
-		{Role: "assistant", Content: strings.Repeat("s", 2000)},
+		{Role: "assistant", Content: strings.Repeat("s", 2000), ToolCalls: []llm.ToolCall{{
+			ID: "t2", Type: "function", Function: llm.ToolCallFunction{Name: "grep", Arguments: `{"pattern":"promise"}`},
+		}}},
 		{Role: "tool", ToolCallID: "t2", Content: strings.Repeat("b", 2000)},
 		{Role: "user", Content: "next"},
 	}
@@ -130,12 +134,12 @@ func TestTiered_Phase3CollapsesEverything(t *testing.T) {
 	if !strings.Contains(res.Warning, "phase 3") {
 		t.Errorf("expected phase 3 trigger, got: %q", res.Warning)
 	}
-	// Phase 3 must clear assistant content entirely.
-	if got := res.History[2].Content; got != "" {
-		t.Errorf("phase 3: assistant content should be cleared, got len=%d", len(got))
+	// Phase 3 must retain bounded assistant operational-state capsules.
+	if got := res.History[2].Content; !strings.HasSuffix(got, strings.Repeat("r", 128)) {
+		t.Errorf("phase 3: first assistant operational tail lost: %q", got)
 	}
-	if got := res.History[4].Content; got != "" {
-		t.Errorf("phase 3: assistant content should be cleared, got len=%d", len(got))
+	if got := res.History[4].Content; !strings.HasSuffix(got, strings.Repeat("s", 128)) {
+		t.Errorf("phase 3: second assistant operational tail lost: %q", got)
 	}
 	// Tool messages should be replaced with placeholders, NOT dropped.
 	if got := res.History[3].Content; !strings.Contains(got, "[tool result elided") {
@@ -144,6 +148,15 @@ func TestTiered_Phase3CollapsesEverything(t *testing.T) {
 	// ToolCallID linkage preserved.
 	if res.History[3].ToolCallID != "t1" || res.History[5].ToolCallID != "t2" {
 		t.Errorf("tool call ids dropped in phase 3")
+	}
+	declared := map[string]bool{}
+	for _, msg := range res.History {
+		for _, call := range msg.ToolCalls {
+			declared[call.ID] = true
+		}
+		if msg.Role == llm.RoleTool && !declared[msg.ToolCallID] {
+			t.Errorf("phase 3 produced orphan tool result %q", msg.ToolCallID)
+		}
 	}
 }
 

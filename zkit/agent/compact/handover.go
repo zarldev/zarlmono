@@ -15,36 +15,6 @@ import (
 // verbatim turns.
 const HandoverDefaultMaxTokens = 4000
 
-// HandoverDefaultSystemPrompt instructs the model to write a self-contained
-// handover for a fresh agent that will take over with no other context — the
-// whole prior conversation is cleared and replaced by this document.
-const HandoverDefaultSystemPrompt = `You are writing a HANDOVER DOCUMENT for a fresh coding agent that will take over this task with NO other context: the entire prior conversation is being cleared and replaced by your document. It must be self-contained — if it is not in your document, the successor will not know it.
-
-A PLAN PROGRESS, WORKING FILES, and TOOL USAGE section may already be attached above your output — do NOT repeat them. Produce these markdown sections:
-
-## Objective
-The user's goal in their own words where possible, and what "done" looks like.
-
-## Done so far
-What has been accomplished and actually verified (name the evidence: passing tests, confirmed output).
-
-## Current state
-Where things stand right now, and what was mid-flight when the handover was taken.
-
-## Key decisions
-Choices already committed to and why (architecture, libraries, patterns), so the successor does not relitigate them.
-
-## Files to read first
-The specific file paths the successor should open to re-orient, and why each matters. The successor has no memory of which files are in play — name them explicitly.
-
-## Next steps
-The concrete next actions, in order.
-
-## Gotchas
-Dead ends already explored, pitfalls, and constraints the successor must respect.
-
-Be concrete and load-bearing. Paraphrase evidence rather than re-quoting large output. Do not invent facts that are not present in the conversation.`
-
 // HandoverWriter persists a produced handover document and returns the path it
 // was written to. It is injected so the compact package stays free of file I/O;
 // a nil writer simply skips persistence (the document still seeds the context).
@@ -96,7 +66,7 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 	}
 	leading, older := splitLeadingSystem(history)
 	if len(older) == 0 {
-		return Result{History: append([]llm.Message{}, history...), Engine: EngineHandover}, nil
+		return Result{History: llm.CloneMessages(history), Engine: EngineHandover}, nil
 	}
 	olderBytes := 0
 	for _, msg := range older {
@@ -157,7 +127,7 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 		doc + savedNote
 
 	out := make([]llm.Message, 0, len(leading)+1)
-	out = append(out, leading...)
+	out = append(out, llm.CloneMessages(leading)...)
 	out = append(out, llm.Message{Role: llm.RoleUser, Content: seed})
 
 	// The whole non-system history collapses to the seed, so the byte saving is

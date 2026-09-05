@@ -15,6 +15,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	computertools "github.com/zarldev/zarlmono/zkit/ai/tools/computer"
@@ -359,6 +360,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	// settings change applies next turn without a restart.
 	var temperature float32
 	var streamIdle time.Duration
+	var modelOptions llm.ModelOptions
 	autoCompact := true
 	if settings != nil {
 		sctx := ctx
@@ -367,6 +369,15 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 		temperature = settings.Temperature(sctx)
 		streamIdle = settings.ResponseTimeout(sctx)
 		autoCompact = settings.AutoCompact(sctx)
+		if v := settings.TextVerbosity(sctx, tgt.Spec); v != "" {
+			modelOptions = llm.ModelOptions{"text_verbosity": v}
+		}
+		if v := settings.CodexEffort(sctx, tgt.Spec); v != "" {
+			if modelOptions == nil {
+				modelOptions = llm.ModelOptions{}
+			}
+			modelOptions["reasoning_effort"] = v
+		}
 	}
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{
@@ -381,6 +392,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 		runner.WithPrompt(l.promptFunc(func() tools.Source { return visible })),
 		runner.WithResultTruncator(l.truncator),
 		runner.WithTemperature(temperature),
+		runner.WithModelOptions(modelOptions),
 	)
 	// Arm the auto-compactor only in auto mode. In manual mode the user
 	// compacts on demand (CompactNow builds its own compactor, so it still

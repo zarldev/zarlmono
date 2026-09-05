@@ -12,9 +12,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 const providerModelFetchTimeout = 6 * time.Second

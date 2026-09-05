@@ -19,6 +19,8 @@ func TestToolArgHint(t *testing.T) {
 		{"skill_load", map[string]any{"name": "go-testing"}, "go-testing"},
 		{"agent_spawn", map[string]any{"prompt": "fix the bug\nmore detail"}, "fix the bug"},
 		{"agent_spawn", map[string]any{"agent": "reviewer", "prompt": "review the patch"}, "reviewer: review the patch"},
+		{"computer_act", map[string]any{"action": map[string]any{"kind": "click", "target": map[string]any{"id": "save-button"}}}, "click save-button"},
+		{"computer_observe", map[string]any{"include_screenshot": true, "include_targets": true, "include_text": true}, "screenshot, targets, text"},
 		{"program", map[string]any{"script": `emit(call("read", {"path": "main.go"}))`}, "read  main.go"},
 		{"program", map[string]any{"script": `results = call_many([
   {"name": "grep", "args": {"pattern": "TODO"}},

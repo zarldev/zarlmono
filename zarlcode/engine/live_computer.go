@@ -13,9 +13,10 @@ import (
 type liveComputer struct {
 	owner *LiveRunner
 
-	mu         sync.Mutex
-	session    ComputerSession
-	newSession ComputerSessionFactory
+	mu            sync.Mutex
+	session       ComputerSession
+	newSession    ComputerSessionFactory
+	forceHeadless bool
 }
 
 func (c *liveComputer) Observe(ctx context.Context, req model.ObserveRequest) (model.Observation, error) {
@@ -83,12 +84,15 @@ func (c *liveComputer) sessionFor(ctx context.Context) (ComputerSession, error) 
 		return c.session, nil
 	}
 
+	headless := true
 	var opts []browser.Option
 	if settings := c.owner.settings; settings != nil {
+		headless = c.forceHeadless || !settings.ComputerBrowserVisible(ctx)
 		if cp := settings.ChromeBinPath(ctx); cp != "" {
 			opts = append(opts, browser.WithChromePath(cp))
 		}
 	}
+	opts = append([]browser.Option{browser.WithHeadless(headless)}, opts...)
 	newSession := c.newSession
 	if newSession == nil {
 		newSession = newBrowserSession

@@ -53,6 +53,32 @@ Every state a consumer wants to mutate at runtime flows through a
 - **Steered messages**: `Steerer.Drain(ctx)` returns an `iter.Seq[llm.Message]` at the top of every iteration. An interactive harness (or the MCP notification bridge in `zkit/agent/mcp`) injects fresh user messages without restarting the loop.
 - **Compaction**: `Compactor.Compact(ctx, messages, keepRecent)` is called at the start of every iteration after the first. The compactor decides whether the next request would overflow and returns a shrunken history.
 
+## Provider-neutral history and replay
+
+Prompt behavior is shared runner policy: the runner sends the same inspectable
+system/task/compaction prompts through the narrow `Client` contract rather than
+embedding behavior in provider adapters. Assistant history has two distinct
+reasoning channels:
+
+- `ReasoningContent` is the displayable, provider-neutral projection accumulated
+  from streamed thinking. Sinks may render it and adapters may reshape it for
+  their normal history format.
+- `ContinuationItems` contains complete opaque provider-native output items
+  needed for lossless continuation. The runner clones completed items into the
+  assistant turn in native output order; it does not parse them.
+
+An adapter replays only continuation items matching its own provider and format,
+byte-for-byte and at their recorded output positions. It ignores foreign items,
+which makes reusing history after a provider switch safe. Compaction counts
+opaque payload bytes and deep-copies retained turns, but never summarizes or
+partially truncates an item; collapsing or dropping its owning old message is
+the compaction boundary.
+
+The loop remains stateless across requests. Provider beta controls and server-side
+conversation chaining (for example previous-response IDs) are intentionally
+deferred until they justify stable typed, opt-in interfaces. They are not inferred
+from opaque replay items and do not widen `llm.Provider` or `Client`.
+
 No watchers, no broadcast machinery. The runner asks; the source
 answers fresh.
 

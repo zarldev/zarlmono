@@ -1,6 +1,10 @@
 package runner
 
-import "context"
+import (
+	"context"
+
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
+)
 
 // ToolOutput is one captured tool result. The runner emits it before the
 // truncator trims the model-facing text, so consumers can persist the full
@@ -10,6 +14,7 @@ type ToolOutput struct {
 	ToolName   string
 	Args       string // raw JSON arguments string
 	Output     string // full, untruncated tool result
+	Effects    []tools.Effect
 }
 
 // ToolOutputSink receives full tool results before truncation. Implementations

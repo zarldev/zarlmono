@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ type MemoryBus[T any] struct {
 	subscriptions map[string][]*memorySubscription[T]
 	config        *memoryConfig
 	closed        bool
+	deliveries    sync.WaitGroup
 }
 
 // memoryConfig holds memory bus configuration.
@@ -80,12 +82,13 @@ func WithSynchronous[T any]() options.Option[MemoryBus[T]] {
 	}
 }
 
-// Publish sends data to all subscribers whose subject pattern matches subject.
+// Publish sends data to matching subscribers, selecting one member per queue group.
 func (b *MemoryBus[T]) Publish(ctx context.Context, subject string, data T) error {
 	return b.PublishWithHeaders(ctx, subject, data, Headers{})
 }
 
-// PublishWithHeaders sends data and headers to all matching subscribers.
+// PublishWithHeaders sends data and headers to matching subscribers, selecting
+// one member per queue group.
 //
 // Delivery discipline:
 //
@@ -122,12 +125,7 @@ func (b *MemoryBus[T]) PublishWithHeaders(ctx context.Context, subject string, d
 		Timestamp: time.Now(),
 	}
 
-	var matchingSubs []*memorySubscription[T]
-	for pattern, subs := range b.subscriptions {
-		if b.matchSubject(pattern, subject) {
-			matchingSubs = append(matchingSubs, subs...)
-		}
-	}
+	matchingSubs := b.matchingSubscriptions(subject)
 
 	if !b.config.synchronous {
 		// Async: keep RLock during channel send so Unsubscribe can't
@@ -160,11 +158,38 @@ func (b *MemoryBus[T]) PublishWithHeaders(ctx context.Context, subject string, d
 	return nil
 }
 
+// matchingSubscriptions requires b.mu to be held for reading.
+func (b *MemoryBus[T]) matchingSubscriptions(subject string) []*memorySubscription[T] {
+	var matching []*memorySubscription[T]
+	groups := make(map[string][]*memorySubscription[T])
+	for pattern, subs := range b.subscriptions {
+		if !b.matchSubject(pattern, subject) {
+			continue
+		}
+		for _, sub := range subs {
+			if sub.queue == "" {
+				matching = append(matching, sub)
+			} else {
+				groups[sub.queue] = append(groups[sub.queue], sub)
+			}
+		}
+	}
+	// A queue spans matching subject patterns, not just identical patterns.
+	for _, members := range groups {
+		matching = append(matching, members[rand.IntN(len(members))]) //nolint:gosec // Load balancing is not security-sensitive.
+	}
+	return matching
+}
+
 // Subscribe registers handler for subject and returns a subscription handle.
 //
 // Subject matching supports exact subjects plus NATS-style `*` single-token and
 // `>` remainder wildcards.
 func (b *MemoryBus[T]) Subscribe(ctx context.Context, subject string, handler Handler[T]) (Subscription, error) {
+	return b.subscribe(ctx, subject, "", handler)
+}
+
+func (b *MemoryBus[T]) subscribe(ctx context.Context, subject, queue string, handler Handler[T]) (Subscription, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -174,13 +199,17 @@ func (b *MemoryBus[T]) Subscribe(ctx context.Context, subject string, handler Ha
 
 	sub := &memorySubscription[T]{
 		subject: subject,
+		queue:   queue,
 		handler: handler,
 		bus:     b,
 	}
 
 	if !b.config.synchronous {
+		deliveryCtx, cancel := context.WithCancel(ctx) //nolint:gosec // The subscription owns cancel and invokes it from Unsubscribe or Close.
 		sub.messages = make(chan Message[T], b.config.bufferSize)
-		go sub.processMessages(ctx)
+		sub.cancel = cancel
+		b.deliveries.Add(1)
+		go sub.processMessages(deliveryCtx)
 	}
 
 	b.subscriptions[subject] = append(b.subscriptions[subject], sub)
@@ -195,18 +224,17 @@ func (b *MemoryBus[T]) Subscribe(ctx context.Context, subject string, handler Ha
 	return sub, nil
 }
 
-// QueueSubscribe registers handler for subject using the Bus queue-subscribe API.
-//
-// The in-memory implementation does not coordinate queue groups; it currently
-// behaves like Subscribe and delivers to each matching subscription.
+// QueueSubscribe delivers each matching publication to one randomly selected
+// member of each queue group, including members with overlapping subject
+// patterns. Ordinary subscriptions still receive every publication. Delivery
+// remains best-effort when the selected member's buffer is full.
 func (b *MemoryBus[T]) QueueSubscribe(
 	ctx context.Context,
 	subject string,
 	queue string,
 	handler Handler[T],
 ) (Subscription, error) {
-	// For memory implementation, queue groups are simulated by round-robin delivery
-	return b.Subscribe(ctx, subject, handler)
+	return b.subscribe(ctx, subject, queue, handler)
 }
 
 // Request publishes data with a temporary reply subject and waits for one reply.
@@ -255,32 +283,36 @@ func (b *MemoryBus[T]) Request(ctx context.Context, subject string, data T, time
 	}
 }
 
-// Close marks the bus closed (subsequent Publish/Subscribe return errors),
-// closes every async subscription channel under the bus lock — buffered
-// messages drain to handlers before each processMessages goroutine exits —
-// and empties the subscription map, so later Close or Unsubscribe calls
-// are safe no-ops.
+// Close stops all asynchronous deliveries and waits for their goroutines to
+// exit. It cancels each handler context before closing its channel, so handlers
+// blocked on their supplied context can return promptly. Handlers must honor
+// that context; Close cannot stop a handler that deliberately ignores it.
 func (b *MemoryBus[T]) Close() error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
+	if b.closed {
+		b.mu.Unlock()
+		b.deliveries.Wait()
+		return nil
+	}
 	b.closed = true
 
-	// Close all subscriptions. We hold bus.Lock, so no publisher
-	// can be mid-iterate; safe to close channels directly. The
-	// valid flag is gone — closed channel + missing from b.subscriptions
-	// is the new "invalid" signal. Don't nil out s.messages: see
-	// Unsubscribe's matching comment.
+	// Close all subscriptions. We hold bus.Lock, so no publisher can be
+	// mid-iterate. Cancelling first makes any currently-running handler's
+	// context done before buffered messages are drained.
 	for _, subs := range b.subscriptions {
 		for _, sub := range subs {
+			if sub.cancel != nil {
+				sub.cancel()
+			}
 			if sub.messages != nil {
 				close(sub.messages)
 			}
 		}
 	}
-
 	b.subscriptions = make(map[string][]*memorySubscription[T])
+	b.mu.Unlock()
 
+	b.deliveries.Wait()
 	return nil
 }
 
@@ -339,15 +371,15 @@ func (b *MemoryBus[T]) matchParts(pattern, subject []string) bool {
 // which fires the moment Unsubscribe closes the channel under bus.Lock.
 type memorySubscription[T any] struct {
 	subject  string
+	queue    string
 	handler  Handler[T]
 	messages chan Message[T]
 	bus      *MemoryBus[T]
+	cancel   context.CancelFunc
 }
 
 func (s *memorySubscription[T]) processMessages(ctx context.Context) {
-	// Natural exit on close — Unsubscribe closes s.messages under
-	// the bus lock, after removing this sub from b.subscriptions,
-	// so no publisher will ever send again after the close.
+	defer s.bus.deliveries.Done()
 	for msg := range s.messages {
 		if err := s.handler(ctx, msg); err != nil {
 			slog.WarnContext(ctx, "messagebus: async handler",
@@ -392,8 +424,13 @@ func (s *memorySubscription[T]) Unsubscribe() error {
 	// goroutine's unsynchronised read at loop start. Closing is
 	// the signal that matters; the GC reclaims the channel after
 	// the goroutine exits. Only close when we're the remover (see found).
-	if found && s.messages != nil {
-		close(s.messages)
+	if found {
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if s.messages != nil {
+			close(s.messages)
+		}
 	}
 	return nil
 }

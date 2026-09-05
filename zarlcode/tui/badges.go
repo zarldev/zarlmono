@@ -6,7 +6,7 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 )
 
 // Badges are the shared status vocabulary for the settings surface: short,

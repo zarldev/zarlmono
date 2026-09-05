@@ -63,6 +63,11 @@ func FromRecords(revision uint64, records []Record) (Thread, error) {
 		if err := decoder.Decode(&payload); err != nil {
 			return Thread{}, fmt.Errorf("decode transcript entry %q: %w", record.ID, err)
 		}
+		// Affected older builds recorded the UNKNOWN enum sentinel on successful
+		// tools. It represented no failure, so normalize that exact legacy shape.
+		if kind == EntryKinds.ENTRYTOOLCALL && payload.ToolState == ToolSucceeded && payload.FailureKind == "unknown" {
+			payload.FailureKind = ""
+		}
 		if err := decoder.Decode(&struct{}{}); err != io.EOF {
 			return Thread{}, fmt.Errorf("decode transcript entry %q: trailing payload data", record.ID)
 		}
@@ -70,6 +75,18 @@ func FromRecords(revision uint64, records []Record) (Thread, error) {
 			ID: record.ID, ParentID: record.ParentID, TurnID: record.TurnID,
 			Kind: kind, Revision: record.Revision, Payload: payload,
 		})
+	}
+	// TurnStarted is persisted immediately so crashes retain the user-visible
+	// lifecycle. If the process died before the first token, recover that exact
+	// runtime-open shape before applying quiescent transcript validation.
+	for i := range thread.entries {
+		entry := &thread.entries[i]
+		if entry.Kind == EntryKinds.ENTRYASSISTANTMESSAGE && entry.Payload.Text == "" &&
+			!entry.Payload.Complete && !entry.Payload.Interrupted {
+			thread.revision++
+			entry.Revision = thread.revision
+			entry.Payload.Interrupted = true
+		}
 	}
 	if err := thread.Validate(); err != nil {
 		return Thread{}, err

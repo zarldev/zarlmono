@@ -33,6 +33,8 @@ func (r *Runner) publishConversationStarted(_ context.Context, spec TaskSpec) {
 		Prompt:           spec.Prompt,
 		ParentToolCallID: spec.ParentToolCallID,
 		AgentName:        spec.AgentName,
+		Provider:         r.providerName,
+		Model:            r.modelName,
 	})
 }
 

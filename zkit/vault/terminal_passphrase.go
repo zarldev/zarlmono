@@ -15,20 +15,19 @@ import (
 // bubbletea overlay). On first-ever setup it asks for a confirmation; on a
 // returning launch it asks once and Open retries on a wrong passphrase.
 //
-// Returns an error when stdin isn't a terminal so the caller degrades
-// gracefully (set $ZARLCODE_PASSPHRASE for non-interactive use) rather than
-// blocking on a read that can never succeed.
+// Returns an error when stdin is not a terminal rather than blocking on an
+// unavailable input source. Non-interactive callers must supply their own
+// PassphraseFunc explicitly, or leave protected credentials locked.
 func TerminalPassphrase(setup, retry bool) (string, error) {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
-		return "", errors.New("vault passphrase required but stdin is not a terminal (set ZARLCODE_PASSPHRASE)")
+		return "", errors.New("vault passphrase required but stdin is not a terminal")
 	}
 	if retry {
 		fmt.Fprintln(os.Stderr, "Passphrase incorrect — try again.")
 	}
 	if setup {
-		fmt.Fprintln(os.Stderr, "Set a passphrase to encrypt zarlcode credentials at rest.")
-		fmt.Fprintln(os.Stderr, "(Set ZARLCODE_PASSPHRASE to skip this prompt on future launches.)")
+		fmt.Fprintln(os.Stderr, "Set a passphrase to encrypt credentials at rest.")
 		pass, err := readSecret(fd, "New passphrase: ")
 		if err != nil {
 			return "", err
@@ -45,7 +44,7 @@ func TerminalPassphrase(setup, retry bool) (string, error) {
 		}
 		return pass, nil
 	}
-	return readSecret(fd, "zarlcode vault passphrase: ")
+	return readSecret(fd, "Vault passphrase: ")
 }
 
 // readSecret prints label to stderr and reads a line from the terminal without

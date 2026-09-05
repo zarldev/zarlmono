@@ -132,11 +132,12 @@ type Session struct {
 }
 
 type SessionTranscript struct {
-	SessionID   string
-	Revision    int64
-	Checksum    string
-	CreatedAtMs int64
-	UpdatedAtMs int64
+	SessionID     string
+	Revision      int64
+	Checksum      string
+	CreatedAtMs   int64
+	UpdatedAtMs   int64
+	FormatVersion int64
 }
 
 type SessionTranscriptEntry struct {

@@ -240,12 +240,23 @@ func TestProvider_RequestWireRegressions(t *testing.T) {
 			}
 		}},
 		{name: "spark omits summary", model: "gpt-5.3-codex-spark", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Options: llm.ModelOptions{"reasoning_effort": "high", "reasoning_summary": "concise"}}, check: func(t *testing.T, body map[string]any) {
-			reasoning := body["reasoning"].(map[string]any)
-			if reasoning["effort"] != "high" {
-				t.Errorf("spark effort = %v, want high", reasoning["effort"])
+			if _, ok := body["reasoning"]; ok {
+				t.Errorf("unsupported spark effort serialized: %v", body["reasoning"])
 			}
-			if _, ok := reasoning["summary"]; ok {
-				t.Errorf("spark reasoning summary present: %v", reasoning)
+		}},
+		{name: "codex effort values and cache semantics", model: "gpt-5.6", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Options: llm.ModelOptions{"reasoning_effort": "max", "text_verbosity": "high", "prompt_cache_key": "cache-local"}}, check: func(t *testing.T, body map[string]any) {
+			if body["reasoning"].(map[string]any)["effort"] != "max" || body["text"].(map[string]any)["verbosity"] != "high" || body["prompt_cache_key"] != "cache-local" {
+				t.Errorf("Codex options changed: %v", body)
+			}
+		}},
+		{name: "unsupported effort omitted after model switch", model: "gpt-5.4-mini", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Options: llm.ModelOptions{"reasoning_effort": "max"}}, check: func(t *testing.T, body map[string]any) {
+			if _, ok := body["reasoning"]; ok {
+				t.Errorf("unsupported mini effort serialized: %v", body["reasoning"])
+			}
+		}},
+		{name: "invalid verbosity omitted", model: "gpt-5.6", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Options: llm.ModelOptions{"text_verbosity": "verbose"}}, check: func(t *testing.T, body map[string]any) {
+			if _, ok := body["text"]; ok {
+				t.Errorf("invalid text verbosity serialized: %v", body["text"])
 			}
 		}},
 	}
@@ -267,6 +278,89 @@ func TestProvider_RequestWireRegressions(t *testing.T) {
 			}
 			tt.check(t, cb.lastBody)
 		})
+	}
+}
+
+func TestProvider_ReplaysEncryptedReasoningInNativeOrder(t *testing.T) {
+	t.Parallel()
+	cb := newCodexBackend(t, func(w http.ResponseWriter) {
+		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
+	})
+	defer cb.Close()
+	provider, err := openaicodex.NewProvider(
+		openaicodex.StaticTokenSource{T: freshToken(t, "acct")},
+		openaicodex.WithBaseURL(cb.srv.URL),
+		openaicodex.WithNoRetry(),
+	)
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	reasoningData := []byte(`{"type":"reasoning","id":"rs_reason","encrypted_content":"opaque-ciphertext","summary":[{"type":"summary_text","text":"preserve me"}],"status":"completed","vendor":{"nested":7}}`)
+	req := llm.CompletionRequest{Messages: []llm.Message{
+		{Role: llm.RoleUser, Content: "search"},
+		{
+			Role:               llm.RoleAssistant,
+			Content:            "calling search",
+			ContentOutputIndex: llm.OutputPosition(2),
+			ContinuationItems: []llm.ContinuationItem{
+				{
+					OutputIndex: llm.OutputPosition(1),
+					Provider:    "openai-codex",
+					Format:      "responses.reasoning.v1",
+					Kind:        "reasoning",
+					ID:          "rs_reason",
+					Data:        reasoningData,
+				},
+				{
+					OutputIndex: llm.OutputPosition(0),
+					Provider:    "anthropic",
+					Format:      "content_block.v1",
+					Kind:        "thinking",
+					Data:        []byte(`{"type":"reasoning","id":"foreign","encrypted_content":"must-not-replay"}`),
+				},
+			},
+			ToolCalls: []llm.ToolCall{{
+				ID: "call_tool", Type: "function", OutputIndex: llm.OutputPosition(0),
+				Function: llm.ToolCallFunction{Name: "search", Arguments: `{"q":"foo"}`},
+			}},
+		},
+		{Role: llm.RoleTool, ToolCallID: "call_tool", Content: "bar"},
+	}}
+	for _, streamErr := range provider.Complete(t.Context(), req) {
+		if streamErr != nil {
+			t.Fatalf("Complete: %v", streamErr)
+		}
+	}
+
+	input := cb.lastBody["input"].([]any)
+	if len(input) != 5 {
+		t.Fatalf("input = %#v, want user/message/reasoning/function/output with foreign item ignored", input)
+	}
+	wantTypes := []string{"message", "function_call", "reasoning", "message", "function_call_output"}
+	for i, want := range wantTypes {
+		if got := input[i].(map[string]any)["type"]; got != want {
+			t.Fatalf("input[%d].type = %v, want %s; input=%#v", i, got, want, input)
+		}
+	}
+	reasoning := input[2].(map[string]any)
+	if reasoning["id"] != "rs_reason" || reasoning["encrypted_content"] != "opaque-ciphertext" {
+		t.Fatalf("reasoning item = %#v", reasoning)
+	}
+	if reasoning["status"] != "completed" || reasoning["vendor"].(map[string]any)["nested"] != float64(7) || reasoning["summary"].([]any)[0].(map[string]any)["text"] != "preserve me" {
+		t.Fatalf("reasoning additional fields not preserved: %#v", reasoning)
+	}
+	if _, ok := reasoning["call_id"]; ok {
+		t.Fatalf("reasoning item confused id with call_id: %#v", reasoning)
+	}
+	call := input[1].(map[string]any)
+	if call["call_id"] != "call_tool" {
+		t.Fatalf("function call = %#v", call)
+	}
+
+	reasoningData[0] = 'X'
+	if got := input[2].(map[string]any)["type"]; got != "reasoning" {
+		t.Fatalf("request retained continuation backing bytes: %#v", input[2])
 	}
 }
 
@@ -296,37 +390,6 @@ func TestProviderOptionsAssignEmptyValues(t *testing.T) {
 	}
 	if got := cb.lastBody["model"]; got != "" {
 		t.Errorf("wire model = %v, want empty option value", got)
-	}
-}
-
-func TestProvider_PresetModelMapsBaseAndEffort(t *testing.T) {
-	t.Parallel()
-	cb := newCodexBackend(t, func(w http.ResponseWriter) {
-		w.Write([]byte("data: " + `{"type":"response.completed","response":{"usage":{}}}` + "\n\n"))
-	})
-	defer cb.Close()
-
-	p, _ := openaicodex.NewProvider(
-		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
-		openaicodex.WithBaseURL(cb.srv.URL),
-		openaicodex.WithModel("gpt-5.6-sol-high"),
-	)
-	seq := p.Complete(t.Context(), llm.CompletionRequest{
-		Messages: []llm.Message{{Role: "user", Content: "hi"}},
-		Stream:   true,
-	})
-	for range seq {
-	}
-
-	if got := cb.lastBody["model"]; got != "gpt-5.6-sol" {
-		t.Errorf("wire model = %v, want gpt-5.6-sol", got)
-	}
-	reasoning, _ := cb.lastBody["reasoning"].(map[string]any)
-	if reasoning == nil {
-		t.Fatalf("reasoning block missing: %v", cb.lastBody)
-	}
-	if reasoning["effort"] != "high" {
-		t.Errorf("effort = %v, want high", reasoning["effort"])
 	}
 }
 
@@ -622,8 +685,8 @@ func TestProvider_DoesNotRetryOn4xxOtherThan429(t *testing.T) {
 func TestListPresetModelsContainsExpectedIDs(t *testing.T) {
 	t.Parallel()
 	models := openaicodex.ListPresetModels()
-	if len(models) < 7 {
-		t.Errorf("expected >= 7 preset models, got %d", len(models))
+	if len(models) < 8 {
+		t.Errorf("expected >= 8 preset models, got %d", len(models))
 	}
 	wantIDs := map[string]bool{
 		"gpt-5.6":             false,
@@ -645,26 +708,6 @@ func TestListPresetModelsContainsExpectedIDs(t *testing.T) {
 			t.Errorf("preset %q missing from ListPresetModels", id)
 		}
 	}
-}
-
-func TestListPresetModelsReportsPresetContextWindow(t *testing.T) {
-	t.Parallel()
-	const presetID = "gpt-5.6"
-
-	want := openaicodex.ContextWindowFor(presetID)
-	if want == openaicodex.DefaultContextWindow {
-		t.Fatalf("ContextWindowFor(%q) = DefaultContextWindow; want preset-specific window", presetID)
-	}
-	for _, model := range openaicodex.ListPresetModels() {
-		if model.ID != presetID {
-			continue
-		}
-		if model.MaxTokens != want {
-			t.Errorf("preset %q MaxTokens = %d, want ContextWindow %d", presetID, model.MaxTokens, want)
-		}
-		return
-	}
-	t.Fatalf("preset %q missing from ListPresetModels", presetID)
 }
 
 func TestFetchContextWindowUsesBackendAutoCompactLimit(t *testing.T) {

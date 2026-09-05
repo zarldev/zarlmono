@@ -34,6 +34,9 @@ func TestSessionTranscriptRoundTripAndCascadeDelete(t *testing.T) {
 	if got.Revision != 1 || len(got.Entries) != 1 || got.Entries[0].EntryID != "e1" {
 		t.Fatalf("transcript = %#v", got)
 	}
+	if got.FormatVersion != db.SessionTranscriptFormatVersion {
+		t.Fatalf("format version = %d, want %d", got.FormatVersion, db.SessionTranscriptFormatVersion)
+	}
 	record, err := store.GetSession(t.Context(), update.SessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -323,6 +326,72 @@ func TestCommitCompletedTurnExactReplayStillConflicts(t *testing.T) {
 	}
 	if string(got.ContextJSON) != `[{"role":"user","content":"first"}]` {
 		t.Fatalf("commit replay changed context: %s", got.ContextJSON)
+	}
+}
+func TestCommitCompletedTurnPersistsSessionWithoutTranscriptDelta(t *testing.T) {
+	t.Parallel()
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.UpdateActiveTranscript(t.Context(), db.TranscriptUpdate{
+		SessionID: "commit-no-delta", Workspace: "/workspace", Revision: 1,
+		Entries: []db.TranscriptEntry{{Sequence: 1, EntryID: "e1", Kind: "user_message", PayloadJSON: []byte(`{"text":"prompt"}`), Revision: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	record := db.SessionRecord{
+		ID: "commit-no-delta", Workspace: "/workspace",
+		ContextJSON: []byte(`[{"role":"assistant","content":"terminal context"}]`),
+	}
+	update := db.TranscriptUpdate{
+		SessionID: record.ID, Workspace: record.Workspace, Revision: 1, ExpectedRevision: 1,
+	}
+	if err := store.CommitCompletedTurn(t.Context(), record, update); err != nil {
+		t.Fatalf("commit without transcript delta: %v", err)
+	}
+
+	got, err := store.GetSession(t.Context(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.ContextJSON) != string(record.ContextJSON) {
+		t.Fatalf("context after record-only commit = %s, want %s", got.ContextJSON, record.ContextJSON)
+	}
+	thread, err := store.GetSessionTranscript(t.Context(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if thread.Revision != 1 {
+		t.Fatalf("transcript revision after record-only commit = %d, want 1", thread.Revision)
+	}
+}
+
+func TestCommitCompletedTurnRejectsPendingEntriesAtTerminalRevision(t *testing.T) {
+	t.Parallel()
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.UpdateActiveTranscript(t.Context(), db.TranscriptUpdate{
+		SessionID: "commit-pending", Workspace: "/workspace", Revision: 1,
+		Entries: []db.TranscriptEntry{{Sequence: 1, EntryID: "e1", Kind: "user_message", PayloadJSON: []byte(`{"text":"prompt"}`), Revision: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	update := db.TranscriptUpdate{
+		SessionID: "commit-pending", Workspace: "/workspace", Revision: 1, ExpectedRevision: 1,
+		Entries: []db.TranscriptEntry{{Sequence: 1, EntryID: "e1", Kind: "user_message", PayloadJSON: []byte(`{"text":"prompt"}`), Revision: 1}},
+	}
+	err = store.CommitCompletedTurn(t.Context(), db.SessionRecord{ID: "commit-pending", Workspace: "/workspace"}, update)
+	if err == nil {
+		t.Fatal("commit with pending entries at terminal revision succeeded, want error")
 	}
 }
 

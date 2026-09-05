@@ -634,14 +634,6 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-const childSummaryContract = `
-
-Sub-agent completion contract:
-- Your job is to return a concise final summary to the parent agent. The parent only sees your final answer, not your full transcript.
-- Prefer a useful partial summary over another tool call when budget or time is tight.
-- Before the iteration cap or timeout, stop using tools and answer in plain text with: what you found, what you changed (if anything), blockers/uncertainties, and recommended next steps.
-- If you cannot complete the task, still produce a final summary of the evidence gathered so far and why you stopped.`
-
 func childPrompt(prompt string) string {
 	return strings.TrimSpace(prompt) + childSummaryContract
 }

@@ -215,7 +215,10 @@ func TestDo_PostBodyReplayedAcrossRetries(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	c := fastClient(t, 5)
+	c := zhttp.NewClient(
+		zhttp.WithRetryPolicy(zhttp.NewRetryPolicy(5, time.Millisecond, time.Millisecond, zhttp.NoRetryJitter)),
+		zhttp.WithRetryMethods(http.MethodPost),
+	)
 	payload := `{"hello":"world"}`
 	// http.NewRequestWithContext + *bytes.Reader populates req.GetBody
 	// — that's what enables retry replay.

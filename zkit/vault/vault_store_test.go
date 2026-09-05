@@ -1,7 +1,6 @@
 package vault_test
 
 import (
-	"encoding/base64"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -21,47 +20,10 @@ func openTestStore(t *testing.T) *db.Store {
 	return s
 }
 
-// A raw $ZARLCODE_KEY takes precedence over an already-initialised
-// passphrase vault.
-func TestVault_EnvKeyOverridesPassphrase(t *testing.T) {
-	tmpHome(t)
-	if _, err := vault.Open(fixedPass("pw")); err != nil {
-		t.Fatalf("passphrase setup: %v", err)
-	}
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	v, err := vault.Open(nil)
-	if err != nil {
-		t.Fatalf("open with env key: %v", err)
-	}
-	ct, nonce, err := v.Encrypt("hi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := v.Decrypt(ct, nonce); err != nil || got != "hi" {
-		t.Errorf("env-key roundtrip: got %q err=%v", got, err)
-	}
-}
-
-func TestVault_EnvKeyBadLength(t *testing.T) {
-	tmpHome(t)
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString([]byte("too short")))
-	if _, err := vault.Open(nil); err == nil {
-		t.Fatal("expected error for wrong-length env key")
-	}
-}
-
-func TestVault_EnvKeyBadBase64(t *testing.T) {
-	tmpHome(t)
-	t.Setenv("ZARLCODE_KEY", "$$$ not base64 $$$")
-	if _, err := vault.Open(nil); err == nil {
-		t.Fatal("expected error for invalid base64 env key")
-	}
-}
-
 func TestVaultAPIKey_RoundTripThroughStore(t *testing.T) {
-	tmpHome(t)
+	t.Parallel()
 	store := openTestStore(t)
-	v, err := vault.Open(fixedPass("pw"))
+	v, err := vault.Open(t.TempDir(), fixedPass("pw"))
 	if err != nil {
 		t.Fatal(err)
 	}

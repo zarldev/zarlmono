@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
-	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 

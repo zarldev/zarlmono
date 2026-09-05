@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 func TestActiveProviderPrecedence(t *testing.T) {

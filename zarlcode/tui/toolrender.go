@@ -56,9 +56,69 @@ func rawToolArg(name string, params map[string]any) string {
 			return agent
 		}
 		return prompt
+	case "computer_act":
+		return computerActionHint(params)
+	case "computer_observe":
+		return computerObserveHint(params)
 	default:
 		return ""
 	}
+}
+
+func computerActionHint(params map[string]any) string {
+	action, _ := params["action"].(map[string]any)
+	kind, _ := action["kind"].(string)
+	if kind == "" {
+		return ""
+	}
+
+	switch kind {
+	case "navigate":
+		return strings.TrimSpace(kind + " " + stringArg(action, "url"))
+	case "press":
+		return strings.TrimSpace(kind + " " + stringArg(action, "key"))
+	case "scroll":
+		if delta, ok := action["delta"].(map[string]any); ok {
+			return fmt.Sprintf("%s %v,%v", kind, delta["x"], delta["y"])
+		}
+	}
+	return strings.TrimSpace(kind + " " + computerTargetHint(action["target"]))
+}
+
+func computerObserveHint(params map[string]any) string {
+	fields := make([]string, 0, 4)
+	for _, field := range []struct {
+		key   string
+		label string
+	}{
+		{"include_screenshot", "screenshot"},
+		{"include_targets", "targets"},
+		{"include_text", "text"},
+		{"include_raw", "raw"},
+	} {
+		if included, _ := params[field.key].(bool); included {
+			fields = append(fields, field.label)
+		}
+	}
+	return strings.Join(fields, ", ")
+}
+
+func computerTargetHint(value any) string {
+	target, _ := value.(map[string]any)
+	for _, key := range []string{"id", "name", "text", "locator"} {
+		if hint := stringArg(target, key); hint != "" {
+			return hint
+		}
+	}
+	if position, ok := target["position"].(map[string]any); ok {
+		return fmt.Sprintf("%v,%v", position["x"], position["y"])
+	}
+	return ""
+}
+
+func stringArg(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
 }
 
 func programArgHint(params map[string]any) string {

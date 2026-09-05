@@ -1,15 +1,14 @@
 package tui_test
 
 import (
-	"encoding/base64"
 	"path/filepath"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
@@ -20,12 +19,15 @@ func newVaultSettings(t *testing.T) *engine.Settings {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	v, err := vault.Open(nil)
+	v, err := vault.Open(t.TempDir(), func(_, _ bool) (string, error) { return "test-passphrase", nil })
 	if err != nil {
 		t.Fatalf("open vault: %v", err)
 	}
-	return engine.NewSettings(store, v, nil, "")
+	s := engine.NewSettings(store, v, nil, "")
+	if _, err := s.Svc.EnableCredentialProtection(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 // A legacy plaintext token in the mcp_servers row must be migrated into

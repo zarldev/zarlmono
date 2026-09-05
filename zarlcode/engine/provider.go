@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/claudecode"
@@ -12,12 +13,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/oauth/claude"
 	"github.com/zarldev/zarlmono/zkit/oauth/codex"
 	"github.com/zarldev/zarlmono/zkit/options"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // ProviderSpec is a resolved active-provider selection: which backend, the
 // model, and optional overrides. BaseURL/APIKey override the registry's
-// stored/env values when non-empty; CodexEffort tunes the Codex OAuth
+// stored values when non-empty; CodexEffort tunes the Codex OAuth
 // provider's reasoning effort.
 type ProviderSpec struct {
 	Name        string
@@ -36,7 +36,7 @@ type ProviderSpec struct {
 //   - everything else (openai Bearer, anthropic x-api-key + version,
 //     deepseek, gemini, llamacpp / ollama local OpenAI-compatible): built
 //     through the registry, which owns per-adapter construction and the
-//     key-resolution chain (override → vault → env → placeholder).
+//     key-resolution chain (explicit override → credential service → local placeholder).
 //
 // This mirrors v1's buildProviderFor / buildLLMProvider split so the two
 // front-ends can't drift on how a given backend is wired. The OAuth branch

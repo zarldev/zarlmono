@@ -7,10 +7,10 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // fakeJudgeProvider satisfies llm.Provider for identity checks — the tests

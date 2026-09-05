@@ -58,7 +58,10 @@ type Provider struct {
 	// Strict hosted APIs and OpenAI-forwarding proxies reject the key, so
 	// the generic OpenAI-compatible provider keeps it OFF by default; local
 	// wrappers such as llama.cpp/Ollama opt in explicitly.
-	chatTemplateKwargs bool
+	chatTemplateKwargs   bool
+	responsesAPI         bool
+	responsesAPIExplicit bool
+	responsesDefaults    responsesPlan
 }
 
 const (
@@ -85,10 +88,11 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) (*Provider, er
 	client := openai.NewClient(clientOpts...)
 
 	provider := &Provider{
-		client:  client,
-		model:   modelGPT4oMini, // Default model
-		apiKey:  apiKey,
-		baseURL: "https://api.openai.com/v1", // Default base URL
+		client:       client,
+		model:        modelGPT4oMini, // Default model
+		apiKey:       apiKey,
+		baseURL:      "https://api.openai.com/v1", // Default base URL
+		responsesAPI: true,
 	}
 
 	// Apply options
@@ -111,7 +115,7 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 			yield(llm.CompletionChunk{}, cause)
 			return
 		}
-		plan, err := planRequest(p.model, req)
+		plan, err := planRequest(p.model, req, p.responsesAPI, p.responsesDefaults)
 		if err != nil {
 			yield(llm.CompletionChunk{}, err)
 			return
@@ -922,11 +926,15 @@ func convertToolsToOpenAI(tools []llm.Tool) []openai.ChatCompletionToolUnionPara
 	return result
 }
 
-// WithBaseURL sets a custom base URL for the OpenAI API.
+// WithBaseURL sets a custom base URL for the OpenAI API. A custom URL defaults
+// to Chat Completions unless [WithResponsesAPI] explicitly selects an endpoint.
 func WithBaseURL(baseURL string) options.Option[Provider] {
 	return func(p *Provider) {
 		if baseURL != "" {
 			p.baseURL = baseURL
+			if !p.responsesAPIExplicit {
+				p.responsesAPI = false
+			}
 			// Recreate the client with the new base URL and existing API key
 			clientOpts := []option.RequestOption{
 				option.WithAPIKey(p.apiKey),
@@ -1024,6 +1032,40 @@ func WithCachePrompt(enabled bool) options.Option[Provider] {
 func WithChatTemplateKwargs(enabled bool) options.Option[Provider] {
 	return func(p *Provider) {
 		p.chatTemplateKwargs = enabled
+	}
+}
+
+// WithResponsesAPI explicitly selects whether to use OpenAI's public Responses
+// wire format. This selection wins over [WithBaseURL] regardless of option order.
+func WithResponsesAPI(enabled bool) options.Option[Provider] {
+	return func(p *Provider) {
+		p.responsesAPI = enabled
+		p.responsesAPIExplicit = true
+	}
+}
+
+// WithDefaultReasoningEffort sets the Responses reasoning effort. Unsupported
+// values, including max on models without that capability, are omitted.
+func WithDefaultReasoningEffort(effort ReasoningEffort) options.Option[Provider] {
+	return func(p *Provider) { p.responsesDefaults.reasoning = &effort }
+}
+
+// WithDefaultTextVerbosity sets text.verbosity for Responses requests.
+func WithDefaultTextVerbosity(verbosity string) options.Option[Provider] {
+	return func(p *Provider) {
+		if verbosity == textVerbosityLow || verbosity == textVerbosityMedium || verbosity == textVerbosityHigh {
+			p.responsesDefaults.textVerbosity = verbosity
+		}
+	}
+}
+
+// WithPromptCache sets the documented Responses prompt-cache key and retention.
+func WithPromptCache(key, retention string) options.Option[Provider] {
+	return func(p *Provider) {
+		p.responsesDefaults.promptCacheKey = key
+		if retention == "in-memory" || retention == "24h" {
+			p.responsesDefaults.promptCacheRetention = retention
+		}
 	}
 }
 
