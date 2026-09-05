@@ -36,13 +36,13 @@ func TestMigrationGapFrom22ToLatestAndBack(t *testing.T) {
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("migrate across gap to latest: %v", err)
 	}
-	assertMigrationVersion(t, provider, 26)
+	assertMigrationVersion(t, provider, 27)
 	assertTableExists(t, d, "session_transcripts", true)
 	assertTableExists(t, d, "session_transcript_entries", true)
 	assertSessionColumnExists(t, d, "context_json", true)
 	assertSessionColumnExists(t, d, "history_json", false)
 
-	for i := range 2 {
+	for i := range 3 {
 		if _, err := provider.Down(ctx); err != nil {
 			t.Fatalf("down migration %d: %v", i+1, err)
 		}

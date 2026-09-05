@@ -48,6 +48,9 @@ func TestContextWindowFor(t *testing.T) {
 		{"gpt-3.5-turbo-0613", 4_096},
 		{"gpt-3.5-turbo-instruct", 4_096},
 
+		// GPT-6: hosted OpenAI API window
+		{"gpt-6-astra", 1_050_000},
+
 		// GPT-5: hosted OpenAI API windows
 		{"gpt-5.6", 1_050_000},
 		{"gpt-5.6-sol", 1_050_000},

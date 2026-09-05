@@ -224,6 +224,22 @@ func (s *RunState) RestoreUsage(snap SessionUsageSnapshot) {
 	s.nestedTools = cloneStringIntMap(snap.NestedTools)
 }
 
+// clearSession resets live and cumulative conversation accounting while
+// preserving provider pricing and context-pressure configuration.
+func (s *RunState) clearSession() {
+	window, local, subscription := s.window, s.local, s.subscription
+	inCost, outCost := s.inCostPer1k, s.outCostPer1k
+	pressureWindow, pressureReserve := s.pressureWindow, s.pressureReserve
+	*s = RunState{
+		window: window, local: local, subscription: subscription,
+		inCostPer1k: inCost, outCostPer1k: outCost,
+		pressureWindow: pressureWindow, pressureReserve: pressureReserve,
+		startedAt: time.Now(), nestedActive: make(map[string]bool),
+		nestedTools: make(map[string]int), toolStats: make(map[string]toolStat),
+	}
+	s.bumpRevision()
+}
+
 // reset clears the live-run counters at the start of a new top-level turn
 // while preserving session rollup, history, pricing, and window — those
 // accumulate across turns until the program restarts (or a future /clear).

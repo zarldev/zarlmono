@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,17 @@ import (
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
-const defaultModel = anthropic.ModelClaudeSonnet4_6
+const (
+	defaultModel = anthropic.ModelClaudeSonnet4_6
+
+	continuationProvider = "anthropic"
+	continuationFormat   = "content_block.v1"
+	continuationThinking = "thinking"
+	continuationRedacted = "redacted_thinking"
+	continuationText     = "text"
+
+	thinkingDisplayOption = "anthropic_thinking_display"
+)
 
 // Provider implements the Anthropic Claude LLM provider using the official SDK.
 type Provider struct {
@@ -129,7 +140,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	}
 
 	applyResponseFormat(&params, req.ResponseFormat)
-	applyThinking(&params, req.Thinking)
+	applyThinking(&params, req.Thinking, req.Options)
 
 	// Acquire the SDK stream only after iteration starts and always close it,
 	// including cancellation and downstream early-stop paths.
@@ -156,7 +167,8 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			case anthropic.TextDelta:
 				if deltaVariant.Text != "" {
 					if !yield(llm.CompletionChunk{
-						Content: deltaVariant.Text,
+						Content:            deltaVariant.Text,
+						ContentOutputIndex: llm.OutputPosition(int(eventVariant.Index)),
 					}, nil) {
 						return
 					}
@@ -175,20 +187,28 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			}
 
 		case anthropic.ContentBlockStopEvent:
-			// Content block completed
-			// Check if this was a tool use block that just completed
+			// Emit complete native thinking blocks only once they have accumulated
+			// their signature/data. Thinking deltas remain the display projection;
+			// the completed item is solely for exact continuation replay.
 			if eventVariant.Index < int64(len(message.Content)) {
 				block := message.Content[eventVariant.Index]
+				if item, ok := anthropicContinuationItem(int(eventVariant.Index), block); ok {
+					if !yield(llm.CompletionChunk{CompletedItems: []llm.ContinuationItem{item}}, nil) {
+						return
+					}
+					break
+				}
 				if toolBlock, ok := block.AsAny().(anthropic.ToolUseBlock); ok {
-					// Send final complete tool call with full arguments
+					// Send final complete tool call with full arguments.
 					inputJSON := "{}"
 					if len(toolBlock.Input) > 0 {
 						inputJSON = string(toolBlock.Input)
 					}
 					if !yield(llm.CompletionChunk{
 						ToolCalls: []llm.ToolCall{{
-							ID:   toolBlock.ID,
-							Type: "function",
+							ID:          toolBlock.ID,
+							OutputIndex: llm.OutputPosition(int(eventVariant.Index)),
+							Type:        "function",
 							Function: llm.ToolCallFunction{
 								Name:      toolBlock.Name,
 								Arguments: inputJSON,
@@ -262,7 +282,7 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 	}
 
 	applyResponseFormat(&params, req.ResponseFormat)
-	applyThinking(&params, req.Thinking)
+	applyThinking(&params, req.Thinking, req.Options)
 
 	// Make the request
 	response, err := p.client.Messages.New(ctx, params)
@@ -276,11 +296,17 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 	var fullContent strings.Builder
 	var thinkingContent strings.Builder
 	var toolCalls []llm.ToolCall
+	var textIndexes []int
+	var completedItems []llm.ContinuationItem
 
-	for _, block := range response.Content {
+	for index, block := range response.Content {
+		if item, ok := anthropicContinuationItem(index, block); ok {
+			completedItems = append(completedItems, item)
+		}
 		switch content := block.AsAny().(type) {
 		case anthropic.TextBlock:
 			fullContent.WriteString(content.Text)
+			textIndexes = append(textIndexes, index)
 
 		case anthropic.ThinkingBlock:
 			thinkingContent.WriteString(content.Thinking)
@@ -294,8 +320,9 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 			}
 
 			toolCalls = append(toolCalls, llm.ToolCall{
-				ID:   content.ID,
-				Type: "function",
+				OutputIndex: llm.OutputPosition(index),
+				ID:          content.ID,
+				Type:        "function",
 				Function: llm.ToolCallFunction{
 					Name:      content.Name,
 					Arguments: inputJSON,
@@ -305,11 +332,21 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 	}
 
 	// Send content, reasoning, and tool calls
+	var contentOutputIndex *int
+	if len(textIndexes) > 0 {
+		// Anthropic can return multiple text blocks, while Message.Content is a
+		// single projection. Replay their byte-concatenation at the first text
+		// block's position; this is exact for the usual single or adjacent text
+		// blocks but intentionally does not claim separated block boundaries.
+		contentOutputIndex = llm.OutputPosition(textIndexes[0])
+	}
 	if !yield(llm.CompletionChunk{
-		Content:      fullContent.String(),
-		Thinking:     thinkingContent.String(),
-		ToolCalls:    toolCalls,
-		FinishReason: normalizeFinishReason(response.StopReason),
+		Content:            fullContent.String(),
+		ContentOutputIndex: contentOutputIndex,
+		Thinking:           thinkingContent.String(),
+		ToolCalls:          toolCalls,
+		CompletedItems:     completedItems,
+		FinishReason:       normalizeFinishReason(response.StopReason),
 	}, nil) {
 		return
 	}
@@ -409,9 +446,9 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 			// turn so roles alternate.
 			flushUser()
 
-			var blocks []anthropic.ContentBlockParamUnion
+			projected := make([]anthropic.ContentBlockParamUnion, 0, 1+len(msg.ToolCalls))
 			if msg.Content != "" {
-				blocks = append(blocks, anthropic.NewTextBlock(msg.Content))
+				projected = append(projected, anthropic.NewTextBlock(msg.Content))
 			}
 			for _, tc := range msg.ToolCalls {
 				// Input is marshalled by the SDK at send time; pass the raw
@@ -422,9 +459,10 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 				if len(input) == 0 {
 					input = json.RawMessage("{}")
 				}
-				blocks = append(blocks,
+				projected = append(projected,
 					anthropic.NewToolUseBlock(tc.ID, input, tc.Function.Name))
 			}
+			blocks := mergeAnthropicContinuation(projected, msg.ContinuationItems, msg.Content != "", msg.ContentOutputIndex, msg.ToolCalls)
 			// Anthropic rejects an empty assistant message — skip a turn
 			// that carried neither visible text nor a tool call.
 			if len(blocks) > 0 {
@@ -435,6 +473,132 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 	flushUser()
 
 	return sdkMessages
+}
+
+type nativeThinkingBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Citations json.RawMessage `json:"citations,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
+}
+
+func anthropicContinuationItem(index int, block anthropic.ContentBlockUnion) (llm.ContinuationItem, bool) {
+	var native nativeThinkingBlock
+	switch content := block.AsAny().(type) {
+	case anthropic.TextBlock:
+		native = nativeThinkingBlock{Type: continuationText, Text: content.Text}
+		if raw := content.RawJSON(); raw != "" {
+			var exact nativeThinkingBlock
+			if json.Unmarshal([]byte(raw), &exact) == nil {
+				native = exact
+			}
+		}
+	case anthropic.ThinkingBlock:
+		native = nativeThinkingBlock{Type: continuationThinking, Thinking: content.Thinking, Signature: content.Signature}
+	case anthropic.RedactedThinkingBlock:
+		native = nativeThinkingBlock{Type: continuationRedacted, Data: content.Data}
+	default:
+		return llm.ContinuationItem{}, false
+	}
+	data, err := json.Marshal(native)
+	if err != nil {
+		return llm.ContinuationItem{}, false
+	}
+	return llm.ContinuationItem{
+		OutputIndex: llm.OutputPosition(index),
+		Provider:    continuationProvider,
+		Format:      continuationFormat,
+		Kind:        native.Type,
+		Data:        data,
+	}, true
+}
+
+func mergeAnthropicContinuation(projected []anthropic.ContentBlockParamUnion, items []llm.ContinuationItem, hasContent bool, contentIndex *int, toolCalls []llm.ToolCall) []anthropic.ContentBlockParamUnion {
+	type indexedBlock struct {
+		index int
+		order int
+		block anthropic.ContentBlockParamUnion
+	}
+	indexed := make([]indexedBlock, 0, len(projected)+len(items))
+	occupied := make(map[int]bool, len(items))
+	hasNativeText := false
+	order := 0
+	for _, item := range items {
+		if item.Provider != continuationProvider || item.Format != continuationFormat {
+			continue
+		}
+		var block nativeThinkingBlock
+		if err := json.Unmarshal(item.Data, &block); err != nil {
+			continue
+		}
+		if block.Type == continuationText && (item.Kind != continuationText || item.OutputIndex == nil) {
+			continue
+		}
+		var native anthropic.ContentBlockParamUnion
+		switch {
+		case item.Kind == continuationText && block.Type == continuationText:
+			text := anthropic.NewTextBlock(block.Text)
+			if len(block.Citations) > 0 {
+				_ = json.Unmarshal(block.Citations, &text.OfText.Citations)
+			}
+			native = text
+			hasNativeText = true
+		case item.Kind == continuationThinking && block.Type == continuationThinking:
+			native = anthropic.NewThinkingBlock(block.Signature, block.Thinking)
+		case item.Kind == continuationRedacted && block.Type == continuationRedacted:
+			native = anthropic.NewRedactedThinkingBlock(block.Data)
+		default:
+			continue
+		}
+		index := 0
+		if item.OutputIndex != nil {
+			index = *item.OutputIndex
+		}
+		indexed = append(indexed, indexedBlock{index: index, order: order, block: native})
+		occupied[index] = true
+		order++
+	}
+	for projectedIndex, block := range projected {
+		var position *int
+		toolIndex := projectedIndex
+		if hasContent {
+			if projectedIndex == 0 {
+				if hasNativeText {
+					continue
+				}
+				position = contentIndex
+			} else {
+				toolIndex--
+			}
+		}
+		if position == nil && toolIndex >= 0 && toolIndex < len(toolCalls) {
+			position = toolCalls[toolIndex].OutputIndex
+		}
+		index := 0
+		if position != nil {
+			index = *position
+		} else {
+			for occupied[index] {
+				index++
+			}
+		}
+		indexed = append(indexed, indexedBlock{index: index, order: order, block: block})
+		occupied[index] = true
+		order++
+	}
+	sort.SliceStable(indexed, func(i, j int) bool {
+		if indexed[i].index == indexed[j].index {
+			return indexed[i].order < indexed[j].order
+		}
+		return indexed[i].index < indexed[j].index
+	})
+	blocks := make([]anthropic.ContentBlockParamUnion, len(indexed))
+	for i := range indexed {
+		blocks[i] = indexed[i].block
+	}
+	return blocks
 }
 
 // setLastMessageCacheBreakpoint marks the final content block of the final
@@ -554,7 +718,7 @@ func applyResponseFormat(params *anthropic.MessageNewParams, rf llm.ResponseForm
 // headroom. (The caller separately drops a custom temperature, which
 // extended thinking forbids.) A disabled config is a no-op, leaving the
 // model's default.
-func applyThinking(params *anthropic.MessageNewParams, tc llm.ThinkingConfig) {
+func applyThinking(params *anthropic.MessageNewParams, tc llm.ThinkingConfig, modelOptions llm.ModelOptions) {
 	if !tc.Enabled {
 		return
 	}
@@ -563,6 +727,13 @@ func applyThinking(params *anthropic.MessageNewParams, tc llm.ThinkingConfig) {
 		params.MaxTokens = budget + 4096
 	}
 	params.Thinking = anthropic.ThinkingConfigParamOfEnabled(budget)
+	if display, ok := modelOptions[thinkingDisplayOption].(string); ok {
+		switch display {
+		case string(anthropic.ThinkingConfigEnabledDisplaySummarized),
+			string(anthropic.ThinkingConfigEnabledDisplayOmitted):
+			params.Thinking.OfEnabled.Display = anthropic.ThinkingConfigEnabledDisplay(display)
+		}
+	}
 }
 
 // convertToolsToSDK converts our tool format to SDK format.

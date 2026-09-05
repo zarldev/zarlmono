@@ -104,11 +104,19 @@ func (osfs *OSFileSystem) resolveInsideRoot(userPath string) (string, error) {
 // symlink detection.
 func evalLongestExisting(p string) (string, error) {
 	p = filepath.Clean(p)
-	if realPath, err := filepath.EvalSymlinks(p); err == nil {
+	realPath, err := filepath.EvalSymlinks(p)
+	if err == nil {
 		return realPath, nil
 	}
-	// Walk up component by component until we find one that resolves;
-	// everything below is "new" relative to the filesystem.
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	// A dangling symlink exists even though its target does not. Never
+	// mistake it for a new path component: writes would follow the link.
+	if _, statErr := os.Lstat(p); !errors.Is(statErr, fs.ErrNotExist) {
+		return "", err
+	}
+	// Only genuinely missing components may be appended to a checked parent.
 	parent := filepath.Dir(p)
 	if parent == p {
 		// Reached root without finding any existing ancestor — that

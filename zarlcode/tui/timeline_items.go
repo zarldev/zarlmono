@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -33,13 +34,24 @@ type cacheEntry struct {
 
 type userItem struct {
 	versioned
-	text string
+	text        string
+	attachments []transcript.Attachment
 }
 
 func (u *userItem) render(width int) []string {
 	anchor, rail := turnOwnerPrefixes("you", palette.User.On)
 	lines := []string{anchor}
 	lines = append(lines, renderPlain(width, u.text, withFirstPrefix(rail, rail))...)
+	for _, a := range u.attachments {
+		detail := fmt.Sprintf("attachment: %s", a.Name)
+		if a.MIMEType != "" {
+			detail += " (" + a.MIMEType + ")"
+		}
+		if a.Size > 0 {
+			detail += fmt.Sprintf(" — %d bytes", a.Size)
+		}
+		lines = append(lines, renderPlain(width, detail, withFirstPrefix(rail, rail))...)
+	}
 	return append(lines, palette.User.On("└─"))
 }
 func (u *userItem) finished() bool { return true }

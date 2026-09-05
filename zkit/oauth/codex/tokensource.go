@@ -76,7 +76,7 @@ func credFromToken(t openaicodex.Token) Cred {
 // occasional double refreshes don't break anything (each refresh
 // returns a fresh token bundle).
 type tokenSource struct {
-	svc     *prefs.Service
+	svc     CredentialStore
 	refresh func(context.Context, string) (openaicodex.Token, error)
 
 	mu sync.Mutex
@@ -92,7 +92,7 @@ func WithTokenRefresh(refresh func(context.Context, string) (openaicodex.Token, 
 // determines which workspace's row the read prefers; the GLOBAL row
 // is the fallback if the workspace has no pin. Writes go back to the
 // scope the read resolved from.
-func NewTokenSource(svc *prefs.Service, opts ...options.Option[tokenSource]) *tokenSource {
+func NewTokenSource(svc CredentialStore, opts ...options.Option[tokenSource]) *tokenSource {
 	src := &tokenSource{svc: svc, refresh: refreshAccessToken}
 	for _, opt := range opts {
 		opt(src)

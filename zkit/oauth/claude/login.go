@@ -20,7 +20,7 @@ import (
 // OAuth token from the output (falling back to a manual paste prompt
 // when the subprocess fails), and persists it at [prefs.ScopeGlobal]
 // under CredProvider.
-func RunLogin(ctx context.Context, svc *prefs.Service, stdin io.Reader, stdout io.Writer) error {
+func RunLogin(ctx context.Context, svc CredentialStore, stdin io.Reader, stdout io.Writer) error {
 	fmt.Fprintln(stdout, "oauth: launching `claude setup-token` for Claude Code sign-in...")
 	fmt.Fprintln(stdout, "oauth: complete the browser flow, then paste the printed token here if prompted.")
 	cmd := exec.CommandContext(ctx, "claude", "setup-token")
@@ -110,7 +110,7 @@ func looksLikeClaudeOAuthToken(s string) bool {
 	return true
 }
 
-func finishLogin(ctx context.Context, svc *prefs.Service, token string, stdout io.Writer) error {
+func finishLogin(ctx context.Context, svc CredentialStore, token string, stdout io.Writer) error {
 	if token == "" {
 		return errors.New("oauth: no Claude Code OAuth token provided")
 	}
@@ -137,6 +137,6 @@ func SetupTokenCommand() *exec.Cmd {
 
 // StoreToken extracts the OAuth token from `claude setup-token`
 // output (or accepts a bare pasted token) and persists it at global scope.
-func StoreToken(ctx context.Context, svc *prefs.Service, output string) error {
+func StoreToken(ctx context.Context, svc CredentialStore, output string) error {
 	return finishLogin(ctx, svc, extractToken(output), io.Discard)
 }

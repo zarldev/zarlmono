@@ -20,7 +20,7 @@ func runResponses(t *testing.T, handler http.Handler, messages []llm.Message) ([
 	t.Helper()
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	p, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithModel("gpt-5.6-sol"))
+	p, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithResponsesAPI(true), openai.WithModel("gpt-5.6-sol"))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

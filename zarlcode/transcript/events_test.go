@@ -130,7 +130,7 @@ func TestReducerDeclaresPersistencePolicyForEveryEvent(t *testing.T) {
 		transcript.PlanUpdated{TurnID: "t", Plan: code.Plan{Steps: []code.PlanStep{{Text: "p", Status: code.StepStatuses.PENDING}}}},
 		transcript.SubagentReserved{SpawnToolID: "spawn", AgentName: "agent"},
 		transcript.SubagentStarted{TurnID: "child", SpawnToolID: "spawn", AgentName: "agent"},
-		transcript.SubagentFinished{TurnID: "child"}, transcript.TurnFinished{TurnID: "t"},
+		transcript.SubagentFinished{TurnID: "child", Status: transcript.SubagentCompleted}, transcript.TurnFinished{TurnID: "t"},
 	}
 	reducer := transcript.NewReducer()
 	for _, event := range events {

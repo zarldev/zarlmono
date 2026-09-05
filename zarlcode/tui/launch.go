@@ -17,18 +17,19 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zarlcode/sleepinhibit"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	agentmcp "github.com/zarldev/zarlmono/zkit/agent/mcp"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/filesystem"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 	"github.com/zarldev/zarlmono/zkit/zapp"
 	"github.com/zarldev/zarlmono/zkit/zlog"
@@ -103,6 +104,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	if err != nil {
 		return nil, fmt.Errorf("workspace %q: %w", root, err)
 	}
+	root = ws.Root()
 	if _, err := home.Materialise(); err != nil {
 		return nil, fmt.Errorf("seed zarlcode home: %w", err)
 	}
@@ -192,14 +194,8 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		return nil
 	}))
 
-	// Provider/model/theme come from the shared ~/.zarlcode settings opened
-	// above, with the ZARLCODE_* env vars as the fallback for any unset row.
-	fallback := engine.ProviderSpec{
-		Name:    "llamacpp",
-		Model:   envOr("ZARLCODE_MODEL", "local"),
-		BaseURL: os.Getenv("ZARLCODE_BASE_URL"),
-		APIKey:  os.Getenv("ZARLCODE_API_KEY"),
-	}
+	// Database settings override application defaults, never ambient credentials.
+	fallback := engine.ProviderSpec{Name: backends.DefaultBuiltinName.String(), Model: "local"}
 	prov, spec, err := settings.BuildActive(ctx, fallback)
 	if err != nil {
 		model := New()
@@ -218,7 +214,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	sink := teasink.New(nil)
 	_ = app.AddCloser("sink", closerFunc(func() error { sink.Close(); return nil }))
 
-	UseTheme(selectThemeByName(settings.Theme(ctx, envOr("ZARLCODE_THEME", "catppuccin-mocha"))))
+	UseTheme(selectThemeByName(settings.Theme(ctx, "catppuccin-mocha")))
 
 	// Use static provider metadata immediately. Interactive launches defer network
 	// probes (local server props and Codex account limits) until Bubble Tea can
@@ -265,6 +261,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		engine.WithProcessManager(pm),
 		engine.WithSandbox(sb),
 		engine.WithToolEnvironment(toolEnv),
+		engine.WithComputerHeadless(p.Headless),
 	)
 	_ = app.AddContextCloser("live", zapp.ContextCloseFunc(live.Close))
 
@@ -298,9 +295,13 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	m.SetLiveRunner(live) // also sets the run handler; enables mid-session re-point
 	m.askpass = askpassSrv
 
-	// The intro (fresh-start prompt + saved-session picker) is an interactive
-	// affordance; headless drives the loop directly in Run and skips it.
-	if !p.Headless {
+	// Resume applies to both interactive and headless runs; only the intro is
+	// an interactive affordance and is skipped in headless mode.
+	if p.Resume {
+		if err := m.resumeLatestSession(ctx); err != nil {
+			return nil, fmt.Errorf("continue: %w", err)
+		}
+	} else if !p.Headless {
 		m.ActivateIntro(ctx)
 	}
 
@@ -400,13 +401,6 @@ func grantSandboxExecPath(policy sandbox.Policy, path string) sandbox.Policy {
 type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
 
 // connectConfiguredMCPServers connects every enabled MCP server from the
 // persistent settings config through the connect tool, so a settings-defined
@@ -574,11 +568,11 @@ func selectThemeByName(name string) theme.Theme {
 // connection is opened and closed before the long-lived settings store
 // takes over; the double-open is a small one-time startup cost and
 // ensures the flash screen carries the right colours. On any failure the
-// theme degrades to the env/default; a missing setting is not an error.
+// theme uses the application default; a missing setting is not an error.
 func peekTheme(ctx context.Context, wsRoot string) theme.Theme {
 	store, err := db.Open(ctx, "")
 	if err != nil {
-		return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))
+		return selectThemeByName("catppuccin-mocha")
 	}
 	defer store.Close()
 	svc := prefs.NewService(store, nil, wsRoot)
@@ -586,7 +580,7 @@ func peekTheme(ctx context.Context, wsRoot string) theme.Theme {
 	if err == nil && setting.Value != "" {
 		return selectThemeByName(setting.Value)
 	}
-	return selectThemeByName(envOr("ZARLCODE_THEME", "catppuccin-mocha"))
+	return selectThemeByName("catppuccin-mocha")
 }
 
 // setupLaunchLogging redirects slog and the stdlib log away from stderr

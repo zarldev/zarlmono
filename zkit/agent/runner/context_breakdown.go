@@ -80,6 +80,9 @@ func msgBytes(m *llm.Message) int {
 	for _, tc := range m.ToolCalls {
 		total += len(tc.Function.Name) + len(tc.Function.Arguments)
 	}
+	for _, item := range m.ContinuationItems {
+		total += item.ByteLen()
+	}
 	total += len(m.ToolCallID)
 	return total
 }

@@ -405,8 +405,8 @@ func composeHelpSections() []helpSection {
 			rows: [][]keyHint{
 				{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
 				{{"ctrl+p", "plan pane"}, {"ctrl+w", "working set"}, {"ctrl+o", "inspector"}},
-				{{"ctrl+h", "tool history"}, {"ctrl+t", "theme"}, {"ctrl+n", "name session"}},
-				{{"ctrl+y", "execution tray"}, {"ctrl+b", "toggle state bar"}},
+				{{"ctrl+a", "agent activity"}, {"ctrl+h", "tool history"}, {"ctrl+t", "theme"}},
+				{{"ctrl+y", "execution tray"}, {"ctrl+b", "toggle state bar"}, {"ctrl+n", "name session"}},
 			},
 		},
 		{

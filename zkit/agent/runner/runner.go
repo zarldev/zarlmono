@@ -46,6 +46,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/options"
@@ -64,9 +65,11 @@ import (
 // particular, sharing one queue across concurrent Runs splits
 // inbound messages arbitrarily and is rarely what a caller wants.
 type Runner struct {
-	client   Client
-	tools    ToolSource
-	template templates.ChatTemplate
+	client       Client
+	tools        ToolSource
+	template     templates.ChatTemplate
+	providerName string
+	modelName    string
 
 	// optional plumbing
 	sink           EventSink
@@ -140,8 +143,11 @@ type Runner struct {
 	// on the runner goroutine, so it should be fast (a single UPDATE
 	// or a channel send), not block on network.
 	progressUpdater ProgressUpdater
-	activeMu        sync.Mutex
-	activeIDs       map[taskscope.ID]struct{}
+	// modelOptions are copied onto every completion request and merged with
+	// runner-owned options such as prompt_cache_key.
+	modelOptions llm.ModelOptions
+	activeMu     sync.Mutex
+	activeIDs    map[taskscope.ID]struct{}
 }
 
 // New constructs a Runner. The only required argument is the LLM client

@@ -15,7 +15,7 @@ go run ./zarlcode/cmd -continue
 The CI build excludes the CLI package in its package matrix (`go list ./... | grep -v '/cmd$' | xargs go build`); use `go tool task zarlcode` when asked to rebuild/install the application.
 ## One service, two tables, three scope words
 
-Every persisted preference flows through `prefs.Service` (`zkit/prefs/service.go`). The service fronts two underlying tables:
+Every persisted preference flows through the application facade in `zarlcode/prefs`. It owns zarlcode's stable key catalogue and model-selection transition while embedding the generic scoped service from `zkit/prefs`. The service fronts two underlying tables:
 
 - `settings` — plaintext (workspace, key, value)
 - `api_keys` — encrypted (workspace, provider, ciphertext, nonce)
@@ -42,10 +42,10 @@ Move, not copy: after a promote, a later workspace edit signals "per-workspace o
 | Intro wizard's first-time save | global |
 | Settings pane edit (any row) | workspace |
 | Settings pane edit + Ctrl+G | workspace → global (promote) |
-| Model picker (provider/model swap) | workspace, via `persistSettings` → `prefs.Service` |
+| Model picker (provider/model swap) | workspace, atomically via `zarlcode/prefs.Service.SetModelSelection` |
 | OAuth completion handler | global, via `prefs.Service.SetKey(prefs.ScopeGlobal, …)` |
 
-The model picker doesn't write the `settings` table directly: `applyConfigChange` mutates the live provider/model config, and `persistSettings` reads the current state and writes through `prefs.Service.SetSetting(prefs.ScopeWorkspace, …)` / `DeleteSetting(prefs.ScopeWorkspace, …)` per key — same audit surface as the pane and CLI.
+The model picker doesn't write the `settings` table directly: `applyConfigChange` mutates the live provider/model config, and persistence writes the application-owned pair through `zarlcode/prefs.Service.SetModelSelection`. The facade translates that transition to generic `zkit/prefs.Service.ApplySettings` operations in one transaction.
 
 The split between write-once fields (theme / provider / model / agent, from the quick pickers and the settings pane) and read-write fields (everything else) is load-bearing: `currentSettings()` only knows about the write-once fields, so widening `saveSettings` without widening `currentSettings` deletes the unmentioned settings on every persist.
 
@@ -68,7 +68,7 @@ Picker-routed rows (theme / provider / model / agent) close the pane after commi
 
 ## Storage inspector
 
-`/storage` opens a read-only inspector listing every known setting + provider key across all four columns: workspace / global / env / effective + source. Use it to answer "did my save land?" without dropping to sqlite. Outside the TUI, `zarlcode keys list` shows the global-scope key roster.
+`/storage` opens a read-only inspector listing every known setting + provider key across workspace, global, effective, and source columns. Use it to answer "did my save land?" without dropping to sqlite. Outside the TUI, `zarlcode keys list` shows the global-scope key roster.
 
 ## Logging
 
@@ -86,6 +86,7 @@ Contexts are operation-scoped: turns, source construction, provider rebuilds, to
 
 ## Things to never do
 
+- Put zarlcode preference keys or application-specific preference transitions in `zkit/prefs`. The app-owned catalogue and transitions belong in `zarlcode/prefs`; `zkit/prefs` exposes only generic scoped operations.
 - Call `store.SetAPIKey` / `store.SetSetting` directly from a user-reachable write path. Use `prefs.Service.SetKey(scope, …)` / `prefs.Service.SetSetting(scope, …)` — direct calls bypass the scope enum's guarantees and the audit surface.
 - Pass `""` as a workspace argument to mean "global". Use `prefs.ScopeGlobal`.
 - Dual-write workspace + global. The promote action is the explicit publish path; dual-write diverges.

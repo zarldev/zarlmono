@@ -103,6 +103,9 @@ func (s *Store) SaveActiveSession(ctx context.Context, r SessionRecord) error {
 // SaveSession upserts the record. CreatedAt is preserved (treated as
 // metadata the caller owns); UpdatedAt is replaced with time.Now().
 func (s *Store) SaveSession(ctx context.Context, r SessionRecord) error {
+	if err := s.ensureSessionWorkspace(ctx, r.ID, r.Workspace); err != nil {
+		return err
+	}
 	now := time.Now()
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = now
@@ -133,10 +136,26 @@ func (s *Store) SaveSession(ctx context.Context, r SessionRecord) error {
 	}
 	return nil
 }
+func (s *Store) ensureSessionWorkspace(ctx context.Context, id, workspace string) error {
+	existing, err := s.GetSession(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read session %q workspace: %w", id, err)
+	}
+	if existing.Workspace != workspace {
+		return fmt.Errorf("session %q belongs to workspace %q, not %q", id, existing.Workspace, workspace)
+	}
+	return nil
+}
 
 // SaveSessionDraft upserts only pending draft content. Existing canonical
 // session metadata and activity timestamps are preserved on conflict.
 func (s *Store) SaveSessionDraft(ctx context.Context, r SessionRecord) error {
+	if err := s.ensureSessionWorkspace(ctx, r.ID, r.Workspace); err != nil {
+		return err
+	}
 	now := time.Now()
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = now

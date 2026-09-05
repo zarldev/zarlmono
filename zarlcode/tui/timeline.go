@@ -340,8 +340,8 @@ func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, pr
 // startSubAgentWithParent binds the child run to the row reserved by its exact
 // agent_spawn call. Falling back to a new row keeps replayed/legacy event
 // streams that lack ParentToolCallID visible.
-func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, prompt, spawnToolID string) *subAgentItem {
-	tl.applyTranscript(transcript.SubagentStarted{TurnID: taskID, SpawnToolID: spawnToolID, AgentName: agentName, Prompt: prompt})
+func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, provider, model, prompt, spawnToolID string) *subAgentItem {
+	tl.applyTranscript(transcript.SubagentStarted{TurnID: taskID, SpawnToolID: spawnToolID, AgentName: agentName, Provider: provider, Model: model, Prompt: prompt})
 	if sa := tl.subAgents[taskID]; sa != nil {
 		return sa
 	}
@@ -352,7 +352,7 @@ func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName,
 	if sa == nil {
 		sa = tl.reserveSubAgent(spawnToolID, depth-1, agentName, prompt)
 	}
-	sa.bind(taskID, depth, agentName, prompt)
+	sa.bind(taskID, depth, agentName, provider, model, prompt)
 	tl.subAgents[taskID] = sa
 	return sa
 }
@@ -360,8 +360,16 @@ func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName,
 // finishSubAgent finalizes the sub-agent run: closes its internal groups,
 // marks it closed, and removes it from the active sub-agents map so future
 // events for this taskID don't accidentally route to a finished item.
-func (tl *timeline) finishSubAgent(taskID string) {
-	tl.applyTranscript(transcript.SubagentFinished{TurnID: taskID})
+func (tl *timeline) finishSubAgent(taskID string, failed, interrupted bool) {
+	tl.applyTranscript(transcript.SubagentFinished{TurnID: taskID, Status: func() transcript.SubagentState {
+		if failed {
+			return transcript.SubagentFailed
+		}
+		if interrupted {
+			return transcript.SubagentInterrupted
+		}
+		return transcript.SubagentCompleted
+	}()})
 	sa := tl.subAgents[taskID]
 	if sa == nil {
 		return

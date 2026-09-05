@@ -8,8 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // mcpAuthKeyProvider namespaces an MCP server's bearer token as a provider

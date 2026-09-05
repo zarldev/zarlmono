@@ -1,13 +1,15 @@
 package prefs_test
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -29,14 +31,10 @@ func openTestStore(t *testing.T) *db.Store {
 	return s
 }
 
-// openTestVault creates a Vault with a deterministic key via
-// $ZARLCODE_KEY so encrypt/decrypt is reproducible across calls in
-// the same test.
+// openTestVault creates an isolated passphrase vault without process overrides.
 func openTestVault(t *testing.T) *vault.Vault {
 	t.Helper()
-	// 32-byte zero key, base64-encoded — deterministic and valid.
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	v, err := vault.Open(nil)
+	v, err := vault.Open(t.TempDir(), func(_, _ bool) (string, error) { return "test-passphrase", nil })
 	if err != nil {
 		t.Fatalf("open vault: %v", err)
 	}
@@ -49,7 +47,11 @@ func openTestService(t *testing.T) *prefs.Service {
 	t.Helper()
 	store := openTestStore(t)
 	v := openTestVault(t)
-	return prefs.NewService(store, v, "/home/test/project")
+	svc := prefs.NewService(store, v, "/home/test/project")
+	if _, err := svc.EnableCredentialProtection(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return svc
 }
 
 // openTestServiceNoVault returns a Service without a vault — used to
@@ -66,11 +68,14 @@ func openTestServiceNoWorkspace(t *testing.T) *prefs.Service {
 	t.Helper()
 	store := openTestStore(t)
 	v := openTestVault(t)
-	return prefs.NewService(store, v, "")
+	svc := prefs.NewService(store, v, "")
+	if _, err := svc.EnableCredentialProtection(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return svc
 }
 
 func TestService_SetSetting_ScopeWorkspace_Roundtrip(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -92,7 +97,6 @@ func TestService_SetSetting_ScopeWorkspace_Roundtrip(t *testing.T) {
 }
 
 func TestService_SetSetting_ScopeWorkspace_ErrNoWorkspace(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
 
@@ -117,37 +121,52 @@ func TestService_SetSetting_ScopeWorkspace_ErrNoWorkspace(t *testing.T) {
 	}
 }
 
-func TestService_SetModelSelection_AtomicPair(t *testing.T) {
+func TestService_ApplySettings_AtomicSetAndDelete(t *testing.T) {
+	t.Parallel()
 	svc := openTestService(t)
 	ctx := t.Context()
-	if err := svc.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel, "old-model"); err != nil {
-		t.Fatalf("seed model: %v", err)
+	if err := svc.SetSetting(ctx, prefs.ScopeWorkspace, "secondary", "old"); err != nil {
+		t.Fatalf("seed secondary: %v", err)
 	}
-	selection := prefs.ModelSelection{Provider: "openai", Model: "gpt-4o"}
-	if err := svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
-		t.Fatalf("set model selection: %v", err)
+	if err := svc.ApplySettings(ctx, prefs.ScopeWorkspace,
+		prefs.SettingChange{Key: "primary", Value: "new-primary"},
+		prefs.SettingChange{Key: "secondary", Value: "new-secondary"},
+	); err != nil {
+		t.Fatalf("apply settings: %v", err)
 	}
-	provider, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyProvider)
+	primary, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, "primary")
 	if err != nil {
-		t.Fatalf("get provider: %v", err)
+		t.Fatalf("get primary: %v", err)
 	}
-	model, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel)
+	secondary, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, "secondary")
 	if err != nil {
-		t.Fatalf("get model: %v", err)
+		t.Fatalf("get secondary: %v", err)
 	}
-	if provider.Value != selection.Provider || model.Value != selection.Model {
-		t.Fatalf("selection = %s/%s, want %s/%s", provider.Value, model.Value, selection.Provider, selection.Model)
+	if primary.Value != "new-primary" || secondary.Value != "new-secondary" {
+		t.Fatalf("settings = %q/%q", primary.Value, secondary.Value)
 	}
-	if err := svc.SetModelSelection(ctx, prefs.ScopeWorkspace, prefs.ModelSelection{Provider: "llamacpp"}); err != nil {
-		t.Fatalf("clear model selection: %v", err)
+	if err := svc.ApplySettings(ctx, prefs.ScopeWorkspace,
+		prefs.SettingChange{Key: "primary", Value: "final"},
+		prefs.SettingChange{Key: "secondary", Delete: true},
+	); err != nil {
+		t.Fatalf("apply delete: %v", err)
 	}
-	if _, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyModel); !errors.Is(err, prefs.ErrNotFound) {
-		t.Fatalf("cleared model error = %v, want ErrNotFound", err)
+	if _, err := svc.GetSetting(ctx, prefs.ScopeWorkspace, "secondary"); !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("deleted setting error = %v, want ErrNotFound", err)
+	}
+	if err := svc.ApplySettings(ctx, prefs.ScopeWorkspace,
+		prefs.SettingChange{Key: "primary", Value: "must-not-land"},
+		prefs.SettingChange{Key: "invalid-empty"},
+	); err == nil {
+		t.Fatal("ApplySettings accepted ambiguous empty value")
+	}
+	primary, err = svc.GetSetting(ctx, prefs.ScopeWorkspace, "primary")
+	if err != nil || primary.Value != "final" {
+		t.Fatalf("prevalidation was not atomic: %q, %v", primary.Value, err)
 	}
 }
 
 func TestService_SetSetting_ScopeGlobal_Roundtrip(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	// Service with empty wsRoot — global scope must still work.
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
@@ -170,7 +189,6 @@ func TestService_SetSetting_ScopeGlobal_Roundtrip(t *testing.T) {
 }
 
 func TestService_GetSetting_ScopeEffective_Fallback(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -214,7 +232,6 @@ func TestService_GetSetting_ScopeEffective_Fallback(t *testing.T) {
 }
 
 func TestService_SetSetting_EmptyValueRejection(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -228,7 +245,6 @@ func TestService_SetSetting_EmptyValueRejection(t *testing.T) {
 }
 
 func TestService_WriteRejection_ScopeEffective(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -254,7 +270,6 @@ func TestService_WriteRejection_ScopeEffective(t *testing.T) {
 }
 
 func TestService_PromoteSetting_Move(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -293,7 +308,6 @@ func TestService_PromoteSetting_Move(t *testing.T) {
 }
 
 func TestService_SetKey_Roundtrip(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -325,7 +339,6 @@ func TestService_SetKey_Roundtrip(t *testing.T) {
 }
 
 func TestService_SetKey_EmptyRejection(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -339,7 +352,6 @@ func TestService_SetKey_EmptyRejection(t *testing.T) {
 }
 
 func TestService_NoVaultPlaintextMode(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv in other tests.
 	svc := openTestServiceNoVault(t)
 	ctx := t.Context()
 
@@ -373,7 +385,6 @@ func TestService_NoVaultPlaintextMode(t *testing.T) {
 }
 
 func TestService_ListKeys_Union(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -437,7 +448,6 @@ func TestService_ListKeys_Union(t *testing.T) {
 }
 
 func TestService_Delete_Idempotent(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -463,7 +473,6 @@ func TestService_Delete_Idempotent(t *testing.T) {
 }
 
 func TestService_UnknownScope(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -503,7 +512,6 @@ func TestService_UnknownScope(t *testing.T) {
 }
 
 func TestService_GetKey_Effective_PrefersWorkspace(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -543,7 +551,6 @@ func TestService_GetKey_Effective_PrefersWorkspace(t *testing.T) {
 }
 
 func TestService_PromoteKey_Move(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -585,7 +592,6 @@ func TestService_PromoteKey_Move(t *testing.T) {
 }
 
 func TestService_DeleteKey_IdempotentWithVault(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -613,8 +619,6 @@ func TestService_DeleteKey_IdempotentWithVault(t *testing.T) {
 }
 
 func TestService_HasVault(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
-
 	withVault := openTestService(t)
 	if !withVault.HasVault() {
 		t.Error("HasVault false when vault is set")
@@ -627,8 +631,6 @@ func TestService_HasVault(t *testing.T) {
 }
 
 func TestService_Scope_String(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
-
 	tests := []struct {
 		scope prefs.Scope
 		want  string
@@ -650,7 +652,6 @@ func TestService_Scope_String(t *testing.T) {
 // ScopeWorkspace only returns workspace values and does not fall
 // back to global.
 func TestService_GetSetting_ExactScopes(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestService(t)
 	ctx := t.Context()
 
@@ -678,7 +679,6 @@ func TestService_GetSetting_ExactScopes(t *testing.T) {
 // TestService_KeyMethods_ErrNoWorkspace ensures key methods return
 // ErrNoWorkspace when wsRoot is empty.
 func TestService_KeyMethods_ErrNoWorkspace(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
 
@@ -706,7 +706,6 @@ func TestService_KeyMethods_ErrNoWorkspace(t *testing.T) {
 // TestService_GetKeyEffective_WithoutWorkspace uses wsRoot="" and
 // verifies that only the global key is returned.
 func TestService_GetKeyEffective_WithoutWorkspace(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
 
@@ -730,7 +729,6 @@ func TestService_GetKeyEffective_WithoutWorkspace(t *testing.T) {
 // TestService_ListKeys_ErrNoWorkspace verifies ListKeys returns
 // ErrNoWorkspace for workspace scope when wsRoot is empty.
 func TestService_ListKeys_ErrNoWorkspace(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
 
@@ -743,7 +741,6 @@ func TestService_ListKeys_ErrNoWorkspace(t *testing.T) {
 // TestService_ListKeys_WithoutWorkspace verifies that ListKeys with
 // ScopeEffective still works when wsRoot is empty (only global).
 func TestService_ListKeys_WithoutWorkspace(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
 
@@ -773,7 +770,6 @@ func TestService_ListKeys_WithoutWorkspace(t *testing.T) {
 // ScopeEffective falls back to global when wsRoot is empty (the
 // workspace check is simply skipped).
 func TestService_GetSetting_Effective_WithoutWorkspace(t *testing.T) {
-	// Not parallel — openTestVault uses t.Setenv.
 	svc := openTestServiceNoWorkspace(t)
 	ctx := t.Context()
 
@@ -798,17 +794,7 @@ func TestService_GetSetting_Effective_WithoutWorkspace(t *testing.T) {
 // to end: a credential encrypted under the old random master.key must come out
 // readable under the new passphrase-derived key, and master.key must be gone.
 func TestService_MigrateVaultKeys(t *testing.T) {
-	// db.DefaultDir resolves from $HOME; point it at a throwaway dir so the
-	// test never touches the real ~/.zarlcode.
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("ZARLCODE_PASSPHRASE", "")
-	home, err := db.DefaultDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
+	home := t.TempDir()
 	store := openTestStore(t)
 
 	// A random legacy key (what the pre-passphrase binary generated).
@@ -817,16 +803,27 @@ func TestService_MigrateVaultKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. Seed a credential encrypted under kOld (via the raw-key path, no
-	//    master.key on disk yet so the vault has no legacy).
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(kOld))
-	vOld, err := vault.Open(nil)
+	// Seed the pre-passphrase persisted representation, without a runtime
+	// raw-key override. This is a migration fixture, not a current write path.
+	block, err := aes.NewCipher(kOld)
 	if err != nil {
-		t.Fatalf("open old vault: %v", err)
+		t.Fatal(err)
 	}
-	svcOld := prefs.NewService(store, vOld, "")
-	if err := svcOld.SetKey(t.Context(), prefs.ScopeGlobal, "openai", "sk-OLD"); err != nil {
-		t.Fatalf("seed key: %v", err)
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAPIKey(t.Context(), "", "openai", db.APIKeyCiphertext{
+		Ciphertext: aead.Seal(nil, nonce, []byte("sk-OLD"), nil),
+		Nonce:      nonce,
+		KeyVersion: 1,
+		Storage:    db.APIKeyStorageVault,
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	// 2. Simulate the upgrade: drop kOld as the legacy master.key file and
@@ -834,8 +831,7 @@ func TestService_MigrateVaultKeys(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "master.key"), kOld, 0o600); err != nil {
 		t.Fatalf("write legacy key: %v", err)
 	}
-	t.Setenv("ZARLCODE_KEY", "")
-	vNew, err := vault.Open(func(_, _ bool) (string, error) { return "pp", nil })
+	vNew, err := vault.Open(home, func(_, _ bool) (string, error) { return "pp", nil })
 	if err != nil {
 		t.Fatalf("open passphrase vault: %v", err)
 	}
@@ -862,7 +858,7 @@ func TestService_MigrateVaultKeys(t *testing.T) {
 	if err != nil || got != "sk-OLD" {
 		t.Fatalf("GetKey after migrate = %q,%v; want sk-OLD,nil", got, err)
 	}
-	vFinal, err := vault.Open(func(_, _ bool) (string, error) { return "pp", nil })
+	vFinal, err := vault.Open(home, func(_, _ bool) (string, error) { return "pp", nil })
 	if err != nil {
 		t.Fatalf("reopen passphrase-only: %v", err)
 	}
@@ -909,14 +905,14 @@ func TestService_CredentialProtectionEnableDisableMigratesRows(t *testing.T) {
 	svc := prefs.NewService(store, v, "/home/test/project")
 	ctx := t.Context()
 
-	if err := svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyCredentialProtection, prefs.CredentialProtectionOff); err != nil {
+	if err := svc.SetSetting(ctx, prefs.ScopeGlobal, "credential_protection", prefs.CredentialProtectionOff); err != nil {
 		t.Fatalf("set protection off: %v", err)
 	}
 	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-migrate"); err != nil {
 		t.Fatalf("seed plaintext key: %v", err)
 	}
 
-	n, err := svc.EnableCredentialProtection(ctx, nil)
+	n, err := svc.EnableCredentialProtection(ctx)
 	if err != nil {
 		t.Fatalf("EnableCredentialProtection: %v", err)
 	}
@@ -938,7 +934,7 @@ func TestService_CredentialProtectionEnableDisableMigratesRows(t *testing.T) {
 		t.Fatalf("locked GetKey err = %v, want ErrCredentialsLocked", err)
 	}
 
-	n, err = svc.DisableCredentialProtection(ctx, nil)
+	n, err = svc.DisableCredentialProtection(ctx)
 	if err != nil {
 		t.Fatalf("DisableCredentialProtection: %v", err)
 	}
@@ -952,5 +948,56 @@ func TestService_CredentialProtectionEnableDisableMigratesRows(t *testing.T) {
 	}
 	if got != "sk-migrate" {
 		t.Fatalf("plaintext GetKey = %q; want sk-migrate", got)
+	}
+}
+
+// TestService_SetVaultConcurrentWithCredentialReads exercises the runtime
+// unlock path while token sources are reading existing protected credentials.
+func TestService_SetVaultConcurrentWithCredentialReads(t *testing.T) {
+	svc := openTestService(t)
+	ctx := t.Context()
+	dir := t.TempDir()
+	first, err := vault.Open(dir, func(_, _ bool) (string, error) { return "replacement", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.SetVault(first)
+	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-safe"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := vault.Open(dir, func(_, _ bool) (string, error) { return "replacement", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var group sync.WaitGroup
+	errs := make(chan error, 100)
+	for range 2 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for range 50 {
+				svc.SetVault(first)
+				svc.SetVault(second)
+			}
+		}()
+	}
+	for range 2 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for range 50 {
+				if got, err := svc.GetKey(ctx, prefs.ScopeGlobal, "openai"); err != nil || got != "sk-safe" {
+					errs <- err
+				}
+			}
+		}()
+	}
+	group.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatal("credential read returned an unexpected value")
 	}
 }

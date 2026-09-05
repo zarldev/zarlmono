@@ -204,6 +204,11 @@ func WithComputerSessionFactory(factory ComputerSessionFactory) options.Option[L
 	return func(l *LiveRunner) { l.computer.newSession = factory }
 }
 
+// WithComputerHeadless forces the reusable computer browser to run headlessly.
+func WithComputerHeadless(headless bool) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.computer.forceHeadless = headless }
+}
+
 // WithLiveSink overrides the no-op event sink. Passing nil is invalid.
 func WithLiveSink(s LiveSink) options.Option[LiveRunner] {
 	if s == nil {

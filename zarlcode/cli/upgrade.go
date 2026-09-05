@@ -14,9 +14,9 @@ import (
 	"syscall"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zarlcode/version"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // defaultUpgradeRepo is the GitHub repository zarlcode pulls release binaries

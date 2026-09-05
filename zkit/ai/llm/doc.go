@@ -24,4 +24,18 @@
 // Richer capabilities, such as model discovery or OAuth-backed construction,
 // remain separate opt-in interfaces or backend helpers rather than widening
 // Provider.
+//
+// Portable behavior belongs above adapters: callers and the runner supply the
+// same inspectable prompt and neutral content/tool contract to every provider.
+// [Message.ReasoningContent] is the displayable reasoning projection; it may be
+// rendered to users and reshaped by adapters. [Message.ContinuationItems] is a
+// separate opaque replay channel for complete provider-native output items.
+// Adapters replay only items whose Provider and Format they own, preserving the
+// exact payload and native output order, and ignore foreign items so switching
+// providers cannot leak backend state.
+//
+// The current contract is deliberately stateless and request-scoped. Stateful
+// response chaining and provider beta controls that cannot be represented by
+// the stable neutral request are deferred to future typed, opt-in capabilities;
+// they must not be smuggled through continuation items or widen Provider.
 package llm

@@ -9,17 +9,17 @@ func (c CompletionChunk) Clone() CompletionChunk {
 	clone := c
 	clone.Content = strings.Clone(c.Content)
 	clone.Thinking = strings.Clone(c.Thinking)
+	clone.ContentOutputIndex = cloneInt(c.ContentOutputIndex)
 	if c.ToolCalls != nil {
 		clone.ToolCalls = make([]ToolCall, len(c.ToolCalls))
 		for i, call := range c.ToolCalls {
-			clone.ToolCalls[i] = ToolCall{
-				ID:   strings.Clone(call.ID),
-				Type: strings.Clone(call.Type),
-				Function: ToolCallFunction{
-					Name:      strings.Clone(call.Function.Name),
-					Arguments: strings.Clone(call.Function.Arguments),
-				},
-			}
+			clone.ToolCalls[i] = call.Clone()
+		}
+	}
+	if c.CompletedItems != nil {
+		clone.CompletedItems = make([]ContinuationItem, len(c.CompletedItems))
+		for i, item := range c.CompletedItems {
+			clone.CompletedItems[i] = item.Clone()
 		}
 	}
 	return clone

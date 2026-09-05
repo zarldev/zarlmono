@@ -12,13 +12,15 @@ import (
 
 const advanceSessionTranscript = `-- name: AdvanceSessionTranscript :execresult
 UPDATE session_transcripts
-SET revision = ?1, checksum = CAST(?2 AS TEXT), updated_at_ms = ?3
-WHERE session_id = ?4 AND revision = ?5
+SET revision = ?1, checksum = CAST(?2 AS TEXT),
+    format_version = ?3, updated_at_ms = ?4
+WHERE session_id = ?5 AND revision = ?6
 `
 
 type AdvanceSessionTranscriptParams struct {
 	Revision         int64
 	Checksum         string
+	FormatVersion    int64
 	UpdatedAtMs      int64
 	SessionID        string
 	ExpectedRevision int64
@@ -28,6 +30,7 @@ func (q *Queries) AdvanceSessionTranscript(ctx context.Context, arg AdvanceSessi
 	return q.db.ExecContext(ctx, advanceSessionTranscript,
 		arg.Revision,
 		arg.Checksum,
+		arg.FormatVersion,
 		arg.UpdatedAtMs,
 		arg.SessionID,
 		arg.ExpectedRevision,
@@ -35,22 +38,24 @@ func (q *Queries) AdvanceSessionTranscript(ctx context.Context, arg AdvanceSessi
 }
 
 const ensureSessionTranscript = `-- name: EnsureSessionTranscript :exec
-INSERT INTO session_transcripts (session_id, revision, checksum, created_at_ms, updated_at_ms)
-VALUES (?1, 0, CAST(?2 AS TEXT), ?3, ?4)
+INSERT INTO session_transcripts (session_id, revision, checksum, format_version, created_at_ms, updated_at_ms)
+VALUES (?1, 0, CAST(?2 AS TEXT), ?3, ?4, ?5)
 ON CONFLICT(session_id) DO NOTHING
 `
 
 type EnsureSessionTranscriptParams struct {
-	SessionID   string
-	Checksum    string
-	CreatedAtMs int64
-	UpdatedAtMs int64
+	SessionID     string
+	Checksum      string
+	FormatVersion int64
+	CreatedAtMs   int64
+	UpdatedAtMs   int64
 }
 
 func (q *Queries) EnsureSessionTranscript(ctx context.Context, arg EnsureSessionTranscriptParams) error {
 	_, err := q.db.ExecContext(ctx, ensureSessionTranscript,
 		arg.SessionID,
 		arg.Checksum,
+		arg.FormatVersion,
 		arg.CreatedAtMs,
 		arg.UpdatedAtMs,
 	)
@@ -58,17 +63,18 @@ func (q *Queries) EnsureSessionTranscript(ctx context.Context, arg EnsureSession
 }
 
 const getSessionTranscript = `-- name: GetSessionTranscript :one
-SELECT session_id, revision, CAST(checksum AS TEXT) AS checksum, created_at_ms, updated_at_ms
+SELECT session_id, revision, CAST(checksum AS TEXT) AS checksum, format_version, created_at_ms, updated_at_ms
 FROM session_transcripts
 WHERE session_id = ?
 `
 
 type GetSessionTranscriptRow struct {
-	SessionID   string
-	Revision    int64
-	Checksum    string
-	CreatedAtMs int64
-	UpdatedAtMs int64
+	SessionID     string
+	Revision      int64
+	Checksum      string
+	FormatVersion int64
+	CreatedAtMs   int64
+	UpdatedAtMs   int64
 }
 
 func (q *Queries) GetSessionTranscript(ctx context.Context, sessionID string) (GetSessionTranscriptRow, error) {
@@ -78,6 +84,7 @@ func (q *Queries) GetSessionTranscript(ctx context.Context, sessionID string) (G
 		&i.SessionID,
 		&i.Revision,
 		&i.Checksum,
+		&i.FormatVersion,
 		&i.CreatedAtMs,
 		&i.UpdatedAtMs,
 	)

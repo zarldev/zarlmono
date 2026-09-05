@@ -1,34 +1,23 @@
 package vault_test
 
 import (
-	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/vault"
 )
-
-// tmpHome points the vault at a throwaway ~/.zarlcode (db.DefaultDir resolves
-// from $HOME) and clears the env overrides so each test starts uninitialised.
-func tmpHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ZARLCODE_KEY", "")
-	t.Setenv("ZARLCODE_PASSPHRASE", "")
-	return filepath.Join(home, ".zarlcode")
-}
 
 func fixedPass(p string) vault.PassphraseFunc {
 	return func(_, _ bool) (string, error) { return p, nil }
 }
 
 func TestVault_PassphraseRoundTrip(t *testing.T) {
-	dir := tmpHome(t)
-
-	v, err := vault.Open(fixedPass("hunter2")) // first run: setup
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "credentials")
+	v, err := vault.Open(dir, fixedPass("hunter2"))
 	if err != nil {
 		t.Fatalf("setup open: %v", err)
 	}
@@ -36,68 +25,92 @@ func TestVault_PassphraseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-
-	// Reopen with the same passphrase — must decrypt.
-	v2, err := vault.Open(fixedPass("hunter2"))
+	v2, err := vault.Open(dir, fixedPass("hunter2"))
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	got, err := v2.Decrypt(ct, nonce)
-	if err != nil {
-		t.Fatalf("decrypt: %v", err)
+	if err != nil || got != "sk-secret" {
+		t.Fatalf("decrypt = %q, %v", got, err)
 	}
-	if got != "sk-secret" {
-		t.Errorf("decrypt = %q, want sk-secret", got)
+	for path, want := range map[string]os.FileMode{
+		dir: 0o700, filepath.Join(dir, "master.kdf"): 0o600,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Errorf("%s mode = %o, want %o", path, info.Mode().Perm(), want)
+		}
 	}
+}
 
-	// File permissions: KDF file 0600, home dir 0700.
-	if info, err := os.Stat(filepath.Join(dir, "master.kdf")); err != nil {
-		t.Fatalf("stat kdf: %v", err)
-	} else if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("master.kdf mode = %o, want 600", perm)
+// TestVault_ConcurrentFirstOpen verifies every concurrent opener derives the
+// key installed by the single atomic initialiser.
+func TestVault_ConcurrentFirstOpen(t *testing.T) {
+	dir := t.TempDir()
+	start := make(chan struct{})
+	results := make(chan *vault.Vault, 2)
+	errs := make(chan error, 2)
+	var group sync.WaitGroup
+	for range 2 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			v, err := vault.Open(dir, fixedPass("same-passphrase"))
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- v
+		}()
 	}
-	if info, err := os.Stat(dir); err != nil {
-		t.Fatalf("stat dir: %v", err)
-	} else if perm := info.Mode().Perm(); perm != 0o700 {
-		t.Errorf("~/.zarlcode mode = %o, want 700", perm)
+	close(start)
+	group.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	values := make([]*vault.Vault, 0, 2)
+	for v := range results {
+		values = append(values, v)
+	}
+	if len(values) != 2 {
+		t.Fatalf("opened vaults = %d, want 2", len(values))
+	}
+	ciphertext, nonce, err := values[0].Encrypt("credential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := values[1].Decrypt(ciphertext, nonce); err != nil || got != "credential" {
+		t.Fatalf("second concurrent opener decrypt = %q, %v", got, err)
 	}
 }
 
 func TestVault_WrongPassphrase(t *testing.T) {
-	tmpHome(t)
-	if _, err := vault.Open(fixedPass("correct")); err != nil {
-		t.Fatalf("setup: %v", err)
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := vault.Open(dir, fixedPass("correct")); err != nil {
+		t.Fatal(err)
 	}
-	_, err := vault.Open(fixedPass("incorrect")) // retries exhausted
-	if !errors.Is(err, vault.ErrWrongPassphrase) {
-		t.Fatalf("Open(wrong) err = %v, want ErrWrongPassphrase", err)
-	}
-}
-
-func TestVault_RawKeyEnv(t *testing.T) {
-	tmpHome(t)
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	v, err := vault.Open(nil)
-	if err != nil {
-		t.Fatalf("open raw: %v", err)
-	}
-	ct, nonce, _ := v.Encrypt("x")
-	if got, err := v.Decrypt(ct, nonce); err != nil || got != "x" {
-		t.Fatalf("round trip = %q, %v", got, err)
+	if _, err := vault.Open(dir, fixedPass("incorrect")); !errors.Is(err, vault.ErrWrongPassphrase) {
+		t.Fatalf("Open(wrong) = %v, want ErrWrongPassphrase", err)
 	}
 }
 
-// A malformed stored row (here an empty nonce on material flagged as
-// encrypted) must surface as a decrypt error, not panic GCM.Open and kill the
-// process.
 func TestVault_DecryptWrongNonceLength(t *testing.T) {
-	tmpHome(t)
-	t.Setenv("ZARLCODE_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	v, err := vault.Open(nil)
+	t.Parallel()
+	v, err := vault.Open(t.TempDir(), fixedPass("pw"))
 	if err != nil {
-		t.Fatalf("open raw: %v", err)
+		t.Fatal(err)
 	}
-	ct, _, _ := v.Encrypt("x")
+	ct, _, err := v.Encrypt("x")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, nonce := range [][]byte{nil, {}, make([]byte, 11), make([]byte, 13)} {
 		if _, err := v.Decrypt(ct, nonce); err == nil {
 			t.Errorf("Decrypt(len=%d nonce) = nil err, want decrypt error", len(nonce))
@@ -105,48 +118,60 @@ func TestVault_DecryptWrongNonceLength(t *testing.T) {
 	}
 }
 
-func TestVault_EnvPassphrase(t *testing.T) {
-	tmpHome(t)
-	t.Setenv("ZARLCODE_PASSPHRASE", "envpass")
-	v, err := vault.Open(nil) // setup via env, no prompt
-	if err != nil {
-		t.Fatalf("env setup: %v", err)
+func TestVault_ExistsAndLockStates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if ex, err := vault.Exists(dir); err != nil || ex {
+		t.Fatalf("Exists on fresh = %v,%v, want false,nil", ex, err)
 	}
-	ct, nonce, _ := v.Encrypt("y")
-
-	v2, err := vault.Open(nil)
-	if err != nil {
-		t.Fatalf("env reopen: %v", err)
+	if _, err := vault.Open(dir, nil); !errors.Is(err, vault.ErrUninitialised) {
+		t.Fatalf("Open(nil) fresh = %v, want ErrUninitialised", err)
 	}
-	if got, err := v2.Decrypt(ct, nonce); err != nil || got != "y" {
-		t.Errorf("round trip = %q, %v", got, err)
+	if _, err := vault.Open(dir, fixedPass("p")); err != nil {
+		t.Fatal(err)
 	}
-
-	t.Setenv("ZARLCODE_PASSPHRASE", "wrong")
-	if _, err := vault.Open(nil); !errors.Is(err, vault.ErrWrongPassphrase) {
-		t.Errorf("wrong env passphrase err = %v, want ErrWrongPassphrase", err)
+	if ex, err := vault.Exists(dir); err != nil || !ex {
+		t.Fatalf("Exists after setup = %v,%v, want true,nil", ex, err)
+	}
+	if _, err := vault.Open(dir, nil); !errors.Is(err, vault.ErrLocked) {
+		t.Fatalf("Open(nil) existing = %v, want ErrLocked", err)
 	}
 }
 
-func TestVault_ExistsAndLockStates(t *testing.T) {
-	tmpHome(t)
-
-	if ex, err := vault.Exists(); err != nil || ex {
-		t.Fatalf("Exists on fresh = %v,%v, want false,nil", ex, err)
+func TestVaultIgnoresCredentialEnvironment(t *testing.T) {
+	// Even valid old overrides cannot initialise, unlock, or override a vault.
+	t.Setenv("ZARLCODE_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("ZARLCODE_PASSPHRASE", "explicit")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	if _, err := vault.Open(dir, nil); !errors.Is(err, vault.ErrUninitialised) {
+		t.Fatalf("environment initialised vault: %v", err)
 	}
-	// No passphrase source + nothing on disk → uninitialised (degrade, don't fail).
-	if _, err := vault.Open(nil); !errors.Is(err, vault.ErrUninitialised) {
-		t.Fatalf("Open(nil) fresh err = %v, want ErrUninitialised", err)
+	v, err := vault.Open(dir, fixedPass("explicit"))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if _, err := vault.Open(fixedPass("p")); err != nil {
-		t.Fatalf("setup: %v", err)
+	ct, nonce, err := v.Encrypt("secret")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ex, err := vault.Exists(); err != nil || !ex {
-		t.Fatalf("Exists after setup = %v,%v, want true,nil", ex, err)
+	if _, err := vault.Open(dir, nil); !errors.Is(err, vault.ErrLocked) {
+		t.Fatalf("environment unlocked vault: %v", err)
 	}
-	// Vault exists but no passphrase source → locked.
-	if _, err := vault.Open(nil); !errors.Is(err, vault.ErrLocked) {
-		t.Errorf("Open(nil) with vault present err = %v, want ErrLocked", err)
+	t.Setenv("ZARLCODE_KEY", "not even base64")
+	t.Setenv("ZARLCODE_PASSPHRASE", "wrong")
+	reopened, err := vault.Open(dir, fixedPass("explicit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := reopened.Decrypt(ct, nonce); err != nil || got != "secret" {
+		t.Fatalf("environment changed encryption key: %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zarlcode")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("vault touched application home: %v", err)
+	}
+	if exists, err := vault.Exists(t.TempDir()); err != nil || exists {
+		t.Fatalf("vault path leaked between directories: %v, %v", exists, err)
 	}
 }

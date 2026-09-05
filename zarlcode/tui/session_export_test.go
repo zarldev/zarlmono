@@ -74,6 +74,43 @@ func TestResumeUsesDurableTranscriptInsteadOfCompactedContextHistory(t *testing.
 	}
 }
 
+func TestResumeNormalizesLegacySuccessfulToolFailureKind(t *testing.T) {
+	t.Parallel()
+
+	workspaceRoot := t.TempDir()
+	workspace, err := code.NewWorkspace(workspaceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const sessionID = "legacy-success-kind"
+	if err := store.UpdateActiveTranscript(t.Context(), db.TranscriptUpdate{
+		SessionID: sessionID, Workspace: workspaceRoot, Revision: 2,
+		Entries: []db.TranscriptEntry{
+			{Sequence: 1, EntryID: "e1", Kind: "user_message", PayloadJSON: []byte(`{"text":"inspect"}`), Revision: 1},
+			{Sequence: 2, EntryID: "e2", TurnID: "turn-1", Kind: "tool_call", PayloadJSON: []byte(`{"tool_id":"tool","tool_name":"read","tool_state":"succeeded","failure_kind":"unknown"}`), Revision: 2},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ui := tui.New()
+	ui.SetLiveRunner(engine.NewLiveRunner(nil, workspace, "test-model"))
+	ui.SetSettings(engine.NewSettings(store, nil, nil, workspaceRoot))
+	if err := ui.ResumeSavedSession(t.Context(), sessionID); err != nil {
+		t.Fatalf("resume legacy successful tool: %v", err)
+	}
+	entries := ui.CanonicalThread().Entries()
+	if len(entries) != 2 || entries[1].Payload.FailureKind != "" {
+		t.Fatalf("restored entries = %#v", entries)
+	}
+}
+
 func TestResumeDraftOnlySessionWithoutTranscript(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	workspace, err := code.NewWorkspace(workspaceRoot)

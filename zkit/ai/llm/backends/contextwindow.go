@@ -2,7 +2,6 @@ package backends
 
 import (
 	"context"
-	"os"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
@@ -133,25 +132,13 @@ func contextWindowForAdapter(at AdapterType, model string) int {
 	}
 }
 
-// ResolveBaseURL returns the URL a consumer should thread into a
-// BuildConfig (and the picker should fetch models from), applying
-// the same precedence the old backends.Backend.BaseURL did:
-//
-//  1. def.BaseURLEnv (e.g. LLAMACPP_BASE_URL) when set.
-//  2. activeURL when activeName matches name (user pointed LLM_BASE_URL
-//     at the active provider).
-//  3. def.BaseURL (the static default; "" for SDK-managed endpoints).
-//
-// Unknown providers resolve to "".
+// ResolveBaseURL returns the explicitly selected active URL when names match,
+// otherwise the provider definition's URL. Unknown providers resolve to an empty
+// string. Neither application settings nor environment variables are read here.
 func (r *ProviderRegistry) ResolveBaseURL(name, activeName, activeURL string) string {
 	def, err := r.Parse(name)
 	if err != nil {
 		return ""
-	}
-	if def.BaseURLEnv != "" {
-		if v := os.Getenv(def.BaseURLEnv); v != "" {
-			return v
-		}
 	}
 	if activeName == name && activeURL != "" {
 		return activeURL

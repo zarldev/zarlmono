@@ -18,6 +18,9 @@ var ErrTranscriptConflict = errors.New("transcript revision conflict")
 // ErrTranscriptCorrupt means persisted canonical thread rows failed integrity verification.
 var ErrTranscriptCorrupt = errors.New("session transcript is corrupted")
 
+// SessionTranscriptFormatVersion is the current canonical payload contract.
+const SessionTranscriptFormatVersion uint64 = 2
+
 // TranscriptEntry is one ordered renderer-independent persistence record.
 type TranscriptEntry struct {
 	Sequence    uint64
@@ -31,12 +34,13 @@ type TranscriptEntry struct {
 
 // SessionTranscript is the durable canonical thread for a saved session.
 type SessionTranscript struct {
-	SessionID string
-	Revision  uint64
-	Checksum  string
-	Entries   []TranscriptEntry
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	SessionID     string
+	Revision      uint64
+	Checksum      string
+	FormatVersion uint64
+	Entries       []TranscriptEntry
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // TranscriptUpdate is one optimistic incremental canonical-thread write.
@@ -85,6 +89,13 @@ func (s *Store) getSessionTranscript(ctx context.Context, sessionID string) (Ses
 	if err != nil {
 		return SessionTranscript{}, fmt.Errorf("%w: %w", ErrTranscriptCorrupt, err)
 	}
+	formatVersion, err := nonnegativeUint64("transcript format version", metadata.FormatVersion)
+	if err != nil || formatVersion == 0 {
+		if err == nil {
+			err = errors.New("transcript format version is zero")
+		}
+		return SessionTranscript{}, fmt.Errorf("%w: %w", ErrTranscriptCorrupt, err)
+	}
 	entries := make([]TranscriptEntry, len(rows))
 	for i, row := range rows {
 		sequence, conversionErr := nonnegativeUint64("entry sequence", row.Sequence)
@@ -105,7 +116,8 @@ func (s *Store) getSessionTranscript(ctx context.Context, sessionID string) (Ses
 		return SessionTranscript{}, fmt.Errorf("%w: checksum mismatch", ErrTranscriptCorrupt)
 	}
 	return SessionTranscript{
-		SessionID: metadata.SessionID, Revision: revision, Checksum: metadata.Checksum, Entries: entries,
+		SessionID: metadata.SessionID, Revision: revision, Checksum: metadata.Checksum,
+		FormatVersion: formatVersion, Entries: entries,
 		CreatedAt: time.UnixMilli(metadata.CreatedAtMs), UpdatedAt: time.UnixMilli(metadata.UpdatedAtMs),
 	}, nil
 }
@@ -123,17 +135,26 @@ func (s *Store) CommitCompletedTurn(ctx context.Context, record SessionRecord, u
 }
 
 func (s *Store) updateActiveTranscript(ctx context.Context, update TranscriptUpdate, record *SessionRecord) error {
-	if update.Revision < update.ExpectedRevision {
-		return fmt.Errorf("update transcript %q: revision %d before expected %d", update.SessionID, update.Revision, update.ExpectedRevision)
-	}
-	if update.Revision == update.ExpectedRevision {
-		return fmt.Errorf("update transcript %q: revision %d does not advance expected %d", update.SessionID, update.Revision, update.ExpectedRevision)
-	}
 	if update.SessionID == "" {
 		return errors.New("update transcript: session ID is empty")
 	}
 	if update.Workspace == "" {
 		return fmt.Errorf("update transcript %q: workspace is empty", update.SessionID)
+	}
+	if record != nil && record.Workspace != update.Workspace {
+		return fmt.Errorf("update transcript %q: record workspace %q does not match transcript workspace %q", update.SessionID, record.Workspace, update.Workspace)
+	}
+	if record != nil && update.Revision == update.ExpectedRevision {
+		if len(update.Entries) != 0 {
+			return fmt.Errorf("update transcript %q: %d pending entries at terminal revision %d", update.SessionID, len(update.Entries), update.Revision)
+		}
+		return s.commitCompletedSessionOnly(ctx, *record, update)
+	}
+	if update.Revision < update.ExpectedRevision {
+		return fmt.Errorf("update transcript %q: revision %d before expected %d", update.SessionID, update.Revision, update.ExpectedRevision)
+	}
+	if update.Revision == update.ExpectedRevision {
+		return fmt.Errorf("update transcript %q: revision %d does not advance expected %d", update.SessionID, update.Revision, update.ExpectedRevision)
 	}
 	revision, err := sqliteInteger("transcript revision", update.Revision)
 	if err != nil {
@@ -167,6 +188,9 @@ func (s *Store) updateActiveTranscript(ctx context.Context, update TranscriptUpd
 		update.CreatedAt = now
 	}
 	if err := s.WithTx(ctx, func(tx *Store) error {
+		if err := tx.ensureSessionWorkspace(ctx, update.SessionID, update.Workspace); err != nil {
+			return err
+		}
 		if record != nil {
 			if err := tx.SaveSession(ctx, *record); err != nil {
 				return err
@@ -180,7 +204,8 @@ func (s *Store) updateActiveTranscript(ctx context.Context, update TranscriptUpd
 			return fmt.Errorf("update transcript metadata: %w", err)
 		}
 		if err := tx.q.EnsureSessionTranscript(ctx, gen.EnsureSessionTranscriptParams{
-			SessionID: update.SessionID, Checksum: transcriptChecksum(update.SessionID, 0, nil), CreatedAtMs: update.CreatedAt.UnixMilli(), UpdatedAtMs: now.UnixMilli(),
+			SessionID: update.SessionID, Checksum: transcriptChecksum(update.SessionID, 0, nil),
+			FormatVersion: int64(SessionTranscriptFormatVersion), CreatedAtMs: update.CreatedAt.UnixMilli(), UpdatedAtMs: now.UnixMilli(),
 		}); err != nil {
 			return fmt.Errorf("ensure session transcript: %w", err)
 		}
@@ -213,7 +238,7 @@ func (s *Store) updateActiveTranscript(ctx context.Context, update TranscriptUpd
 		}
 		checksum := transcriptChecksum(update.SessionID, update.Revision, allEntries)
 		result, err := tx.q.AdvanceSessionTranscript(ctx, gen.AdvanceSessionTranscriptParams{
-			Revision: revision, Checksum: checksum, UpdatedAtMs: now.UnixMilli(),
+			Revision: revision, Checksum: checksum, FormatVersion: int64(SessionTranscriptFormatVersion), UpdatedAtMs: now.UnixMilli(),
 			SessionID: update.SessionID, ExpectedRevision: expectedRevision,
 		})
 		if err != nil {
@@ -232,6 +257,16 @@ func (s *Store) updateActiveTranscript(ctx context.Context, update TranscriptUpd
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update active transcript %q: %w", update.SessionID, err)
+	}
+	return nil
+}
+
+// commitCompletedSessionOnly persists a terminal session snapshot whose
+// canonical transcript is already durable. It commits the resumable model
+// context and workspace state without advancing the transcript revision.
+func (s *Store) commitCompletedSessionOnly(ctx context.Context, record SessionRecord, update TranscriptUpdate) error {
+	if err := s.SaveActiveSession(ctx, record); err != nil {
+		return fmt.Errorf("commit completed turn %q: %w", update.SessionID, err)
 	}
 	return nil
 }

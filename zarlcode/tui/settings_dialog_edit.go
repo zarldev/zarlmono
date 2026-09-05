@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 )
 
 // handlePaste feeds clipboard content to whichever text-entry sub-mode is
@@ -84,7 +84,7 @@ func (d *settingsDialog) commit(key, val string) {
 	if key == prefs.KeyCredentialProtection {
 		switch val {
 		case prefs.CredentialProtectionOff:
-			if n, err := d.s.Svc.DisableCredentialProtection(ctx, nil); err != nil {
+			if n, err := d.s.Svc.DisableCredentialProtection(ctx); err != nil {
 				d.setStatus("credential protection: " + err.Error())
 			} else {
 				d.setStatus(fmt.Sprintf("credential protection off — %d key(s) plaintext", n))
@@ -94,7 +94,7 @@ func (d *settingsDialog) commit(key, val string) {
 				d.setStatus("enable with: zarlcode keys protect on")
 				return
 			}
-			if n, err := d.s.Svc.EnableCredentialProtection(ctx, nil); err != nil {
+			if n, err := d.s.Svc.EnableCredentialProtection(ctx); err != nil {
 				d.setStatus("credential protection: " + err.Error())
 			} else {
 				d.setStatus(fmt.Sprintf("credential protection enabled — %d key(s) encrypted", n))

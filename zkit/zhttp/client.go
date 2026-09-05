@@ -59,11 +59,12 @@ import (
 // from multiple goroutines — wraps an [http.Client] which itself is.
 // Construct via [NewClient] with functional options.
 type Client struct {
-	httpClient *http.Client
-	retry      RetryPolicy
-	logger     *slog.Logger
-	userAgent  string
-	traceHook  TraceHook
+	httpClient   *http.Client
+	retry        RetryPolicy
+	retryMethods []string
+	logger       *slog.Logger
+	userAgent    string
+	traceHook    TraceHook
 }
 
 // RetryPolicy governs how [Client.Do] re-issues a failed request. Its zero
@@ -146,7 +147,11 @@ func NewClient(opts ...options.Option[Client]) *Client {
 			Transport: DefaultTransport(),
 			Timeout:   30 * time.Second,
 		},
-		retry:     DefaultRetryPolicy(),
+		retry: DefaultRetryPolicy(),
+		retryMethods: []string{
+			http.MethodGet, http.MethodHead, http.MethodOptions,
+			http.MethodTrace, http.MethodPut, http.MethodDelete,
+		},
 		logger:    slog.Default(),
 		userAgent: "zhttp/1",
 	}
@@ -234,7 +239,8 @@ func DefaultTransport() *http.Transport {
 // the Client's retry path assumes the http.Client is stable.
 func (c *Client) HTTPClient() *http.Client { return c.httpClient }
 
-// Do issues req with retry.
+// Do issues req with retry. Only idempotent methods are eligible by default;
+// use WithRetryMethods to explicitly opt in other methods.
 //
 // Body replay: the stdlib's [http.NewRequest] populates
 // [http.Request.GetBody] when body is a *bytes.Buffer,
@@ -252,6 +258,9 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	}
 
 	policy := c.retry
+	if !c.canRetry(req) {
+		policy = NoRetry()
+	}
 
 	// Remember whether retries can replay. Either there's no body
 	// or the stdlib populated GetBody (it does so for the three
@@ -304,11 +313,11 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 			break
 		}
 
-		// Drain + close the response body before retrying so the
-		// connection can return to the pool. Skipping this leaks
-		// the connection until the GC closes the response.
+		// Close without draining. A retryable upstream may produce an unbounded
+		// or never-ending body; draining it would let that body stall the retry.
+		// This may forfeit connection reuse for this attempt, but bounds retry
+		// latency and releases the response deterministically.
 		if resp != nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 		}
 

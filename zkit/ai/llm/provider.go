@@ -2,13 +2,56 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
-// ModelOptions holds semantic model configuration options as a
-// map[string]any.
+// ModelOptions holds provider-neutral, JSON-like model configuration options.
+// Supported values are nil, bool, string, numeric scalar types, [json.Number],
+// ModelOptions, map[string]any, and recursively nested []any values. Callers
+// crossing an ownership boundary use [ModelOptions.Clone].
 type ModelOptions map[string]any
+
+// Clone returns a recursively owned copy of o. It panics when a value is not
+// part of the supported JSON-like ModelOptions contract.
+func (o ModelOptions) Clone() ModelOptions {
+	if o == nil {
+		return nil
+	}
+	clone := make(ModelOptions, len(o))
+	for key, value := range o {
+		clone[key] = cloneModelOptionValue(value)
+	}
+	return clone
+}
+
+func cloneModelOptionValue(value any) any {
+	switch value := value.(type) {
+	case nil, bool, string,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64, json.Number:
+		return value
+	case ModelOptions:
+		return value.Clone()
+	case map[string]any:
+		clone := make(map[string]any, len(value))
+		for key, nested := range value {
+			clone[key] = cloneModelOptionValue(nested)
+		}
+		return clone
+	case []any:
+		clone := make([]any, len(value))
+		for i, nested := range value {
+			clone[i] = cloneModelOptionValue(nested)
+		}
+		return clone
+	default:
+		panic(fmt.Sprintf("llm: unsupported ModelOptions value type %T", value))
+	}
+}
 
 // PersonalityModifiers holds trait-driven adjustments to LLM behavior.
 type PersonalityModifiers map[string]any
@@ -258,6 +301,11 @@ type Message struct {
 	// contract.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
 
+	// ContentOutputIndex is the optional native position of the projected visible
+	// assistant content. Providers interpret the position in their own native
+	// output sequence; nil selects their legacy deterministic fallback.
+	ContentOutputIndex *int `json:"content_output_index,omitempty"`
+
 	// Parts carries multimodal content (text + image + audio + video) for
 	// vision/audio/video-capable models. When non-nil, providers SHOULD send
 	// Parts in preference to Content; if a provider doesn't support
@@ -272,10 +320,125 @@ type Message struct {
 	// re-emitting the same call on every iteration.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 
-	// ToolCallID is set on role="tool" messages and matches the ID of
-	// the assistant's tool call this message is responding to. OpenAI
-	// (and llama.cpp's OAI shim) reject tool messages without it.
 	ToolCallID string `json:"tool_call_id,omitempty"`
+
+	// ContinuationItems carries completed provider-native output items needed
+	// to continue the conversation losslessly. Items remain in provider output
+	// order and coexist with the neutral Content, ReasoningContent, and
+	// ToolCalls projections used for display and execution. Providers that do
+	// not recognize an item's Provider and Format ignore it.
+	ContinuationItems []ContinuationItem `json:"continuation_items,omitempty"`
+}
+
+// ContinuationItem is an opaque, SDK-independent provider-native output item.
+// Data contains semantically complete opaque JSON: all native fields and values
+// survive replay, though surrounding request marshaling may canonicalize JSON
+// whitespace. Provider and Format route it back to the adapter that understands
+// that encoding. Kind and ID are optional routing hints and must not be
+// interpreted as the opaque payload. Slice order is the provider's original
+// output-item order.
+type ContinuationItem struct {
+	// OutputIndex is the item's optional zero-based position in the provider's
+	// native output sequence. Nil preserves compatibility with history written
+	// before native ordering metadata existed; non-nil zero is position zero.
+	OutputIndex *int   `json:"output_index,omitempty"`
+	Provider    string `json:"provider"`
+	Format      string `json:"format"`
+	Kind        string `json:"kind,omitempty"`
+	ID          string `json:"id,omitempty"`
+	Data        []byte `json:"data"`
+}
+
+// ByteLen returns the number of bytes retained by the continuation item,
+// including its opaque payload and routing metadata.
+func (i ContinuationItem) ByteLen() int {
+	n := len(i.Provider) + len(i.Format) + len(i.Kind) + len(i.ID) + len(i.Data)
+	if i.OutputIndex != nil {
+		n += 8
+	}
+	return n
+}
+
+// Clone returns an owned deep copy of the continuation item.
+func (i ContinuationItem) Clone() ContinuationItem {
+	clone := i
+	clone.OutputIndex = cloneInt(i.OutputIndex)
+	clone.Provider = strings.Clone(i.Provider)
+	clone.Format = strings.Clone(i.Format)
+	clone.Kind = strings.Clone(i.Kind)
+	clone.ID = strings.Clone(i.ID)
+	clone.Data = append([]byte(nil), i.Data...)
+	return clone
+}
+
+// Clone returns an owned deep copy of the message and all reference-backed
+// nested state.
+func (m Message) Clone() Message {
+	clone := m
+	clone.Role = strings.Clone(m.Role)
+	clone.Content = strings.Clone(m.Content)
+	clone.ReasoningContent = strings.Clone(m.ReasoningContent)
+	clone.ToolCallID = strings.Clone(m.ToolCallID)
+	clone.Parts = cloneContentParts(m.Parts)
+	if m.ToolCalls != nil {
+		clone.ToolCalls = make([]ToolCall, len(m.ToolCalls))
+		for i, call := range m.ToolCalls {
+			clone.ToolCalls[i] = call.Clone()
+		}
+	}
+	clone.ContentOutputIndex = cloneInt(m.ContentOutputIndex)
+	if m.ContinuationItems != nil {
+		clone.ContinuationItems = make([]ContinuationItem, len(m.ContinuationItems))
+		for idx, item := range m.ContinuationItems {
+			clone.ContinuationItems[idx] = item.Clone()
+		}
+	}
+	return clone
+}
+
+// CloneMessages returns an owned deep copy of messages.
+func CloneMessages(messages []Message) []Message {
+	if messages == nil {
+		return nil
+	}
+	clone := make([]Message, len(messages))
+	for i, message := range messages {
+		clone[i] = message.Clone()
+	}
+	return clone
+}
+
+func cloneContentParts(parts []ContentPart) []ContentPart {
+	if parts == nil {
+		return nil
+	}
+	clone := make([]ContentPart, len(parts))
+	for i, part := range parts {
+		clone[i] = part
+		clone[i].Text = strings.Clone(part.Text)
+		if part.Image != nil {
+			image := *part.Image
+			image.URL = strings.Clone(image.URL)
+			image.DataURI = strings.Clone(image.DataURI)
+			image.MIMEType = strings.Clone(image.MIMEType)
+			image.Detail = strings.Clone(image.Detail)
+			clone[i].Image = &image
+		}
+		if part.Audio != nil {
+			audio := *part.Audio
+			audio.DataURI = strings.Clone(audio.DataURI)
+			audio.Format = strings.Clone(audio.Format)
+			clone[i].Audio = &audio
+		}
+		if part.Video != nil {
+			video := *part.Video
+			video.URL = strings.Clone(video.URL)
+			video.DataURI = strings.Clone(video.DataURI)
+			video.MIMEType = strings.Clone(video.MIMEType)
+			clone[i].Video = &video
+		}
+	}
+	return clone
 }
 
 // ContentPartType discriminates which kind of payload a ContentPart
@@ -403,6 +566,33 @@ type ToolCall struct {
 	ID       string           `json:"id"`
 	Type     string           `json:"type"` // "function"
 	Function ToolCallFunction `json:"function"`
+
+	// OutputIndex is the optional zero-based position of this call in the
+	// provider's native assistant output sequence.
+	OutputIndex *int `json:"output_index,omitempty"`
+}
+
+// Clone returns an owned deep copy of the tool call.
+func (c ToolCall) Clone() ToolCall {
+	clone := c
+	clone.ID = strings.Clone(c.ID)
+	clone.Type = strings.Clone(c.Type)
+	clone.Function.Name = strings.Clone(c.Function.Name)
+	clone.Function.Arguments = strings.Clone(c.Function.Arguments)
+	clone.OutputIndex = cloneInt(c.OutputIndex)
+	return clone
+}
+
+// OutputPosition returns an owned optional native output position, including
+// for position zero.
+func OutputPosition(index int) *int { return &index }
+
+func cloneInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 // ToolCallFunction represents the function details in a tool call.
@@ -424,12 +614,14 @@ type ToolCallFunction struct {
 // returns. Consumers that retain a chunk must call [CompletionChunk.Clone]
 // before returning from yield.
 type CompletionChunk struct {
-	Content       string
-	Thinking      string
-	ToolCalls     []ToolCall
-	FinishReason  FinishReason
-	Usage         Usage
-	UsageReported bool
+	Content            string
+	ContentOutputIndex *int
+	Thinking           string
+	ToolCalls          []ToolCall
+	CompletedItems     []ContinuationItem
+	FinishReason       FinishReason
+	Usage              Usage
+	UsageReported      bool
 }
 
 // Usage tracks token usage.

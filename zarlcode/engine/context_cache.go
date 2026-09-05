@@ -78,36 +78,7 @@ func (c *ContextCache) snapshot() []llm.Message {
 }
 
 func cloneMessages(messages []llm.Message) []llm.Message {
-	cloned := make([]llm.Message, len(messages))
-	for i, message := range messages {
-		message.Parts = cloneContentParts(message.Parts)
-		message.ToolCalls = append([]llm.ToolCall(nil), message.ToolCalls...)
-		cloned[i] = message
-	}
-	return cloned
-}
-
-func cloneContentParts(parts []llm.ContentPart) []llm.ContentPart {
-	if parts == nil {
-		return nil
-	}
-	cloned := make([]llm.ContentPart, len(parts))
-	for i, part := range parts {
-		if part.Image != nil {
-			image := *part.Image
-			part.Image = &image
-		}
-		if part.Audio != nil {
-			audio := *part.Audio
-			part.Audio = &audio
-		}
-		if part.Video != nil {
-			video := *part.Video
-			part.Video = &video
-		}
-		cloned[i] = part
-	}
-	return cloned
+	return llm.CloneMessages(messages)
 }
 
 // restore replaces the context cache with a persisted context cache. A

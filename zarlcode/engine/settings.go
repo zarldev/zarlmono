@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,13 +12,13 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
@@ -89,55 +88,47 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 	if err != nil {
 		return nil, fmt.Errorf("open state.db: %w", err)
 	}
-	probe := prefs.NewService(store, nil, wsRoot)
-	legacyOff := false
-	if sv, err := probe.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyVaultPrompt); err == nil && sv.Value == "off" {
-		legacyOff = true
-	}
-	hasVaultRows, err := probe.HasVaultBackedKeys(ctx)
+	svc := prefs.NewService(store, nil, wsRoot)
+	hasRows, err := svc.HasVaultBackedKeys(ctx)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	mode, err := probe.CredentialProtection(ctx)
+	mode, err := svc.CredentialProtection(ctx)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	shouldOpenVault := os.Getenv("ZARLCODE_KEY") != "" || os.Getenv("ZARLCODE_PASSPHRASE") != "" || (hasVaultRows && !legacyOff) || mode == prefs.CredentialProtectionPassphrase
 	var v *vault.Vault
-	if shouldOpenVault {
-		var verr error
-		v, verr = vault.Open(passphrase)
-		if verr != nil {
-			// ErrUninitialised / ErrLocked are the expected "no usable vault"
-			// signals; plaintext credentials still work. Encrypted rows surface as
-			// ErrCredentialsLocked from the credential service.
-			slog.WarnContext(ctx, "vault unavailable; encrypted credentials locked", "err", verr)
+	if hasRows || mode == prefs.CredentialProtectionPassphrase {
+		dir, derr := db.DefaultDir()
+		if derr != nil {
+			_ = store.Close()
+			return nil, derr
+		}
+		v, err = vault.Open(dir, passphrase)
+		if err != nil {
+			slog.WarnContext(ctx, "vault unavailable; encrypted credentials locked", "err", err)
 			v = nil
 		}
 	}
-	src := newModelsDevSource()
-	s := NewSettings(store, v, src, wsRoot)
+	s := NewSettings(store, v, newModelsDevSource(), wsRoot)
 	if err := s.Registry.Reload(ctx); err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("reload provider registry: %w", err)
 	}
 	s.ownsStore = true
-	if legacyOff {
-		if n, derr := s.Svc.DisableCredentialProtection(ctx, passphrase); derr != nil {
-			_ = store.Close()
-			return nil, fmt.Errorf("disable credential protection: %w", derr)
-		} else if n > 0 {
-			slog.InfoContext(ctx, "disabled credential protection; decrypted stored credentials", "count", n)
-		}
-	}
 	if v != nil {
 		if n, merr := s.Svc.MigrateVaultKeys(ctx); merr != nil {
-			slog.WarnContext(ctx, "vault key migration incomplete", "migrated", n, "err", merr)
+			slog.WarnContext(ctx, "vault key migration incomplete", "err", merr)
 		} else if n > 0 {
-			slog.InfoContext(ctx, "migrated credentials to passphrase-derived key", "count", n)
+			slog.InfoContext(ctx, "migrated credentials", "count", n)
 		}
+	}
+	if n, merr := s.Svc.MigrateCredentialProtection(ctx); merr != nil {
+		slog.WarnContext(ctx, "credential migration deferred", "err", merr)
+	} else if n > 0 {
+		slog.InfoContext(ctx, "migrated credentials", "count", n)
 	}
 	s.startModelsDevWarm(ctx)
 	return s, nil
@@ -468,13 +459,7 @@ func (s *Settings) Setting(ctx context.Context, key, def string) string {
 // web_search is always wired; an unreachable endpoint fails the call with a
 // friendly error rather than hiding the tool.
 func (s *Settings) SearxngURL(ctx context.Context) string {
-	if v := s.setting(ctx, prefs.KeySearxngURL, ""); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("SEARXNG_URL")); v != "" {
-		return v
-	}
-	return DefaultSearxngURL
+	return s.setting(ctx, prefs.KeySearxngURL, DefaultSearxngURL)
 }
 
 // SearchKeyProviderBrave is the api_keys provider tag under which the Brave
@@ -532,4 +517,9 @@ func (s *Settings) PprofAddr(ctx context.Context) string {
 // full-run trace capture.
 func (s *Settings) TraceFile(ctx context.Context) string {
 	return strings.TrimSpace(s.setting(ctx, prefs.KeyTraceFile, ""))
+}
+
+// ComputerBrowserVisible resolves whether the browser runs visibly.
+func (s *Settings) ComputerBrowserVisible(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyComputerBrowserVisible, "off") == "on"
 }

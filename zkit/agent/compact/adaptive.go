@@ -65,12 +65,15 @@ func AdaptiveKeepRecent(history []llm.Message, targetTokens, minKeep, maxKeep in
 // fields. Mirrors the shell-side msgChars but lives here so the
 // compact package stays self-contained.
 func messageChars(m llm.Message) int {
-	n := len(m.Content)
+	n := len(m.Content) + len(m.ReasoningContent)
 	for _, tc := range m.ToolCalls {
 		n += len(tc.Function.Name) + len(tc.Function.Arguments)
 	}
 	for _, p := range m.Parts {
 		n += len(p.Text)
+	}
+	for _, item := range m.ContinuationItems {
+		n += item.ByteLen()
 	}
 	return n
 }

@@ -15,22 +15,6 @@ import (
 // while small enough to leave context headroom on a 32k window.
 const SummaryDefaultMaxTokens = 4096
 
-// SummaryDefaultSystemPrompt is the instruction the secondary model
-// receives. Targeted at coding-agent history: preserves the user's
-// stated goals, ongoing tasks, decisions, file paths, and any
-// findings the agent will need to reference downstream. The shell's
-// settings may override.
-const SummaryDefaultSystemPrompt = `You are a conversation summariser. The user message you receive contains the older portion of a coding-agent conversation that is being compacted to free context. Produce a single, terse summary that preserves:
-
-  - The user's stated goals and instructions (in their words where possible).
-  - Key decisions, plans, and trade-offs the agent committed to.
-  - Important file paths, identifiers, and tool results the agent will reference downstream.
-  - Any open tasks, blockers, or follow-ups.
-
-Omit chit-chat, redundant explanations, and full tool-output blobs (note that "the file was read" suffices; the agent can re-read).
-
-Write the summary as third-person prose, with bullet lists where they help readability. Do not exceed ~600 words.`
-
 // Summary is the LLM-driven compactor. It feeds the older portion of
 // the conversation to a configured [llm.Provider] (typically a smaller
 // / cheaper model than the one running the main loop) and replaces
@@ -107,7 +91,7 @@ func (s *Summary) Compact(ctx context.Context, history []llm.Message, keepRecent
 	if len(history) <= keepRecent+1 {
 		// Nothing meaningful to summarise (one or zero older messages).
 		return Result{
-			History: append([]llm.Message{}, history...),
+			History: llm.CloneMessages(history),
 			Engine:  EngineSummary,
 		}, nil
 	}
@@ -117,7 +101,7 @@ func (s *Summary) Compact(ctx context.Context, history []llm.Message, keepRecent
 	leading, older, recent := splitForSummary(history, keepRecent)
 	if len(older) == 0 {
 		return Result{
-			History: append([]llm.Message{}, history...),
+			History: llm.CloneMessages(history),
 			Engine:  EngineSummary,
 		}, nil
 	}
@@ -150,14 +134,14 @@ func (s *Summary) Compact(ctx context.Context, history []llm.Message, keepRecent
 	}
 
 	out := make([]llm.Message, 0, len(leading)+1+len(recent))
-	out = append(out, leading...)
+	out = append(out, llm.CloneMessages(leading)...)
 	out = append(out, llm.Message{
 		Role: llm.RoleAssistant,
 		Content: fmt.Sprintf(
 			"[compacted — summary of %d older message(s)]\n\n%s",
 			len(older), body),
 	})
-	out = append(out, recent...)
+	out = append(out, llm.CloneMessages(recent)...)
 
 	// Defensive sweep: the snap above keeps tool messages glued to
 	// their owning assistant, but a previous compaction (or a

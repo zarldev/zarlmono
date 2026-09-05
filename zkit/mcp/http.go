@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -56,8 +58,8 @@ type httpTransport struct {
 	// is started at most once per transport lifetime.
 	notifMu   sync.Mutex
 	notifier  func(method string, params json.RawMessage)
+	closed    bool
 	sseStart  sync.Once // lazy start gate
-	sseCtx    context.Context
 	sseCancel context.CancelFunc
 	sseDone   chan struct{}
 }
@@ -143,6 +145,11 @@ func validatingDialContext(policy AddrPolicy) func(ctx context.Context, network,
 // goroutine to exit so the transport doesn't outlive its consumer.
 func (t *httpTransport) Close() error {
 	t.notifMu.Lock()
+	if t.closed {
+		t.notifMu.Unlock()
+		return nil
+	}
+	t.closed = true
 	cancel := t.sseCancel
 	done := t.sseDone
 	t.notifMu.Unlock()
@@ -161,30 +168,22 @@ func (t *httpTransport) Close() error {
 // arrive on the wire but are dropped).
 func (t *httpTransport) OnNotification(handler func(method string, params json.RawMessage)) {
 	t.notifMu.Lock()
+	defer t.notifMu.Unlock()
+	if t.closed {
+		return
+	}
 	t.notifier = handler
-	t.notifMu.Unlock()
-	t.sseStart.Do(t.startSSEListener)
+	t.sseStart.Do(t.startSSEListenerLocked)
 }
 
-// startSSEListener opens a long-lived GET against baseURL with
-// Accept: text/event-stream and feeds every inbound JSON-RPC
-// notification to the current notifier. Runs in a single goroutine
-// for the lifetime of the transport; Close() cancels its ctx.
-//
-// Reconnect policy: if the stream closes (server hung up, network
-// blip), we wait briefly and reopen. Permanent failures (DNS gone,
-// auth rejected, etc.) eventually surface as repeated reconnect
-// attempts in slog; the transport doesn't surface them to the
-// consumer because Subscribe is documented as best-effort.
-func (t *httpTransport) startSSEListener() {
+// startSSEListenerLocked requires t.notifMu to be held. Starting and closing
+// are serialized by that lock, so Close winning the race prevents a listener
+// from being created afterward.
+func (t *httpTransport) startSSEListenerLocked() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	t.notifMu.Lock()
-	t.sseCtx = ctx
 	t.sseCancel = cancel
 	t.sseDone = done
-	t.notifMu.Unlock()
-
 	go t.runSSEListener(ctx, done)
 }
 
@@ -197,6 +196,10 @@ func (t *httpTransport) runSSEListener(ctx context.Context, done chan struct{}) 
 			return
 		}
 		if err := t.readSSEStream(ctx); err != nil && ctx.Err() == nil {
+			if errors.Is(err, ErrSSEEventTooLarge) {
+				slog.WarnContext(ctx, "mcp: SSE listener stopped", "error", err)
+				return
+			}
 			// Backoff before reconnecting. Capped exponential.
 			select {
 			case <-ctx.Done():
@@ -243,7 +246,7 @@ func (t *httpTransport) readSSEStream(ctx context.Context) error {
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxSSELineBytes)
 	var dataBuf []byte
 	dispatch := func() {
 		if len(dataBuf) == 0 {
@@ -277,14 +280,17 @@ func (t *httpTransport) readSSEStream(ctx context.Context) error {
 			continue
 		}
 		payload = strings.TrimPrefix(payload, " ")
-		if len(dataBuf) > 0 {
-			dataBuf = append(dataBuf, '\n')
+		dataBuf, err = appendSSEData(dataBuf, payload)
+		if err != nil {
+			return err
 		}
-		dataBuf = append(dataBuf, payload...)
 	}
-	// Flush any trailing event with no terminating blank line.
+	if err := sseScanError(scanner.Err()); err != nil {
+		return err
+	}
+	// Flush any trailing event with no terminating blank line at clean EOF.
 	dispatch()
-	return scanner.Err()
+	return nil
 }
 
 func (t *httpTransport) Call(ctx context.Context, req rpcRequest) (rpcResponse, error) {
@@ -330,12 +336,27 @@ func decodeHTTPResponse(contentType string, body io.Reader, wantID json.RawMessa
 	if strings.Contains(contentType, "text/event-stream") {
 		return decodeSSEResponse(body, wantID)
 	}
-	// Cap the JSON body: a malicious/compromised MCP server (connected at the
-	// model's request) could otherwise stream a multi-GB response into a single
-	// tools/call and OOM the client. The SSE path already caps its scanner.
+	// Read one extra byte so the cap covers the complete JSON document, not
+	// merely its first value. A decoder alone accepts a valid object followed
+	// by a second value, which is not a JSON-RPC response body.
+	payload, err := io.ReadAll(io.LimitReader(body, maxRPCBodyBytes+1))
+	if err != nil {
+		return rpcResponse{}, fmt.Errorf("read response: %w", err)
+	}
+	if len(payload) > maxRPCBodyBytes {
+		return rpcResponse{}, fmt.Errorf("decode response: body exceeds %d bytes", maxRPCBodyBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(payload))
 	var r rpcResponse
-	if err := json.NewDecoder(io.LimitReader(body, maxRPCBodyBytes)).Decode(&r); err != nil {
+	if err := dec.Decode(&r); err != nil {
 		return rpcResponse{}, fmt.Errorf("decode response: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return rpcResponse{}, errors.New("decode response: trailing JSON value")
+		}
+		return rpcResponse{}, fmt.Errorf("decode response: trailing content: %w", err)
 	}
 	return r, nil
 }
@@ -356,7 +377,7 @@ func decodeRPCEvent(payload []byte) (rpcResponse, bool) {
 // whose payload exceeded one line.
 func decodeSSEResponse(body io.Reader, wantID json.RawMessage) (rpcResponse, error) {
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxSSELineBytes)
 	var dataBuf []byte
 	flush := func() (rpcResponse, bool) {
 		if len(dataBuf) == 0 {
@@ -395,18 +416,19 @@ func decodeSSEResponse(body io.Reader, wantID json.RawMessage) (rpcResponse, err
 		// with "data: " (one space) is the conformant strip; falling
 		// through to "data:" handles servers that omit the space.
 		payload = strings.TrimPrefix(payload, " ")
-		if len(dataBuf) > 0 {
-			dataBuf = append(dataBuf, '\n')
+		var err error
+		dataBuf, err = appendSSEData(dataBuf, payload)
+		if err != nil {
+			return rpcResponse{}, err
 		}
-		dataBuf = append(dataBuf, payload...)
+	}
+	if err := sseScanError(scanner.Err()); err != nil {
+		return rpcResponse{}, fmt.Errorf("read sse stream: %w", err)
 	}
 	// Stream may end without a terminating blank line — flush any
-	// pending payload.
+	// pending payload at clean EOF.
 	if r, matched := flush(); matched {
 		return r, nil
-	}
-	if err := scanner.Err(); err != nil {
-		return rpcResponse{}, fmt.Errorf("read sse stream: %w", err)
 	}
 	return rpcResponse{}, fmt.Errorf("sse stream closed without matching response for id %s", string(wantID))
 }

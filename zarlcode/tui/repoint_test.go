@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zarlcode/tui"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 func TestApplyLimitsFlowsSettingsToRunner(t *testing.T) {

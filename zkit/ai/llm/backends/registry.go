@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -12,9 +11,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
-// SettingsService is the interface the registry needs for key
-// resolution: the encrypted vault + provider-keyed lookup. Each
-// consumer implements it (zarlcode wraps its settingsService).
+// SettingsService supplies provider-keyed credentials. The consuming application
+// owns scope, persistence, and unlocking; the registry has no environment fallback.
 type SettingsService interface {
 	GetKey(ctx context.Context, provider string) (string, error)
 }
@@ -190,7 +188,7 @@ type BuildConfig struct {
 }
 
 // Build constructs an llm.Provider for the named definition, optionally
-// overriding the model. It resolves the API key via the vault → env chain.
+// overriding the model. Credentials come only from the supplied SettingsService.
 func (r *ProviderRegistry) Build(ctx context.Context, name, model string) (llm.Provider, error) {
 	return r.BuildWithConfig(ctx, name, BuildConfig{Model: model})
 }
@@ -198,7 +196,7 @@ func (r *ProviderRegistry) Build(ctx context.Context, name, model string) (llm.P
 // BuildWithConfig constructs an llm.Provider for name using cfg as an
 // override layer. Empty cfg.Model falls back to def.DefaultModel; empty
 // cfg.BaseURL falls back to def.BaseURL; empty cfg.APIKey resolves through
-// the registry's vault/env chain.
+// the supplied SettingsService. No credentials are read from the environment.
 func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg BuildConfig) (llm.Provider, error) {
 	def, err := r.Parse(name)
 	if err != nil {
@@ -309,10 +307,7 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 	}
 }
 
-// resolveAPIKey walks the key resolution chain for def:
-//  1. Vault (workspace then global)
-//  2. Provider-specific env vars
-//  3. Generic LLM_API_KEY env fallback
+// resolveAPIKey consults only the credential source supplied by the caller.
 func (r *ProviderRegistry) resolveAPIKey(ctx context.Context, def ProviderDefinition) (string, error) {
 	if r.svc != nil {
 		k, err := r.svc.GetKey(ctx, def.Name)
@@ -323,15 +318,7 @@ func (r *ProviderRegistry) resolveAPIKey(ctx context.Context, def ProviderDefini
 			return "", err
 		}
 	}
-	if len(def.EnvAPIKeyVars) == 0 {
-		return "", nil
-	}
-	for _, v := range def.EnvAPIKeyVars {
-		if k := os.Getenv(v); k != "" {
-			return k, nil
-		}
-	}
-	return os.Getenv("LLM_API_KEY"), nil
+	return "", nil
 }
 
 // SetActiveName records the currently active provider so Delete can
@@ -394,7 +381,7 @@ func (r *ProviderRegistry) UpsertProvider(ctx context.Context, def ProviderDefin
 }
 
 // FetchModels returns the live model list for a provider by name. It
-// resolves the API key internally (vault → env chain) and probes the
+// resolves the API key through the supplied credential service and probes the
 // provider's /models endpoint based on adapter type. On any failure — or
 // when the probe returns nothing — it falls back to def.SeedModels so the
 // picker always has something to show and is never blocked by a down or

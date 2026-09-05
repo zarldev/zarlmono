@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
-	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -259,6 +259,8 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					desc: "brave search api key for web_search, stored encrypted in the credential vault (global — shared across workspaces). enter to set/replace; empty + enter clears."},
 				{label: "web search", section: "Services", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,
 					desc: "searxng endpoint the web_search tool queries. empty uses the local default."},
+				{label: "text verbosity", key: prefs.KeyTextVerbosity, kind: rowEnum, def: "(unset)", opts: []string{"(unset)", "low", "medium", "high"}, desc: "output detail for supported targets."},
+				{label: "show computer browser", key: prefs.KeyComputerBrowserVisible, kind: rowEnum, def: "off", opts: []string{"off", "on"}, desc: "show the Chrome window used by computer tools."},
 				{label: "local web_search service", section: "Services", kind: rowAction, def: "SearXNG",
 					desc: "install/start the optional bundled SearXNG Docker Compose service for web_search. model servers stay external.",
 					open: func(*engine.Settings) dialog { return newServiceDialog(ctx) }},

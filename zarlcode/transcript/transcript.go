@@ -133,6 +133,8 @@ type Payload struct {
 	Attachments []Attachment `json:"attachments,omitempty"`
 
 	AgentName   string        `json:"agent_name,omitempty"`
+	Provider    string        `json:"provider,omitempty"`
+	Model       string        `json:"model,omitempty"`
 	Prompt      string        `json:"prompt,omitempty"`
 	SpawnToolID string        `json:"spawn_tool_id,omitempty"`
 	Subagent    SubagentState `json:"subagent,omitempty"`
@@ -355,7 +357,10 @@ func (b *Builder) FinishTool(toolID, effect, failureKind string, durationMS int6
 			entry.Payload.ToolState = ToolFailed
 		}
 		entry.Payload.Effect = effect
-		entry.Payload.FailureKind = failureKind
+		entry.Payload.FailureKind = ""
+		if failed {
+			entry.Payload.FailureKind = failureKind
+		}
 		entry.Payload.DurationMS = durationMS
 	})
 }
@@ -392,7 +397,7 @@ func (b *Builder) ReserveSubagent(spawnToolID, agentName, prompt string) string 
 }
 
 // StartSubagent binds a reserved child task or appends a running child entry.
-func (b *Builder) StartSubagent(turnID, spawnToolID, agentName, prompt string) string {
+func (b *Builder) StartSubagent(turnID, spawnToolID, agentName, provider, model, prompt string) string {
 	id := b.spawnAgents[spawnToolID]
 	if id == "" {
 		id = b.ReserveSubagent(spawnToolID, agentName, prompt)
@@ -400,6 +405,8 @@ func (b *Builder) StartSubagent(turnID, spawnToolID, agentName, prompt string) s
 	b.update(id, func(entry *Entry) {
 		entry.TurnID = turnID
 		entry.Payload.AgentName = agentName
+		entry.Payload.Provider = provider
+		entry.Payload.Model = model
 		entry.Payload.Prompt = prompt
 		entry.Payload.Subagent = SubagentRunning
 	})
@@ -407,10 +414,10 @@ func (b *Builder) StartSubagent(turnID, spawnToolID, agentName, prompt string) s
 	return id
 }
 
-// FinishSubagent marks a child task terminal.
-func (b *Builder) FinishSubagent(turnID string) {
+// FinishSubagent marks a child task terminal with its final state.
+func (b *Builder) FinishSubagent(turnID string, status SubagentState) {
 	id := b.subagents[turnID]
-	b.update(id, func(entry *Entry) { entry.Payload.Subagent = SubagentCompleted })
+	b.update(id, func(entry *Entry) { entry.Payload.Subagent = status })
 	delete(b.subagents, turnID)
 }
 
