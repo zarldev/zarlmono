@@ -4,7 +4,10 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"path/filepath"
 	"strings"
@@ -60,6 +63,42 @@ func TestAskpassCommandProtocol(t *testing.T) {
 			t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 		}
 	})
+}
+
+func TestAskpassCommandCancellationAfterConnect(t *testing.T) {
+	requestRead := make(chan struct{})
+	sock := serveAskpass(t, func(conn net.Conn) error {
+		var req askpass.Request
+		if err := json.NewDecoder(conn).Decode(&req); err != nil {
+			return err
+		}
+		close(requestRead)
+		var one [1]byte
+		_, err := conn.Read(one[:])
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancelled := make(chan struct{})
+	go func() {
+		defer close(cancelled)
+		select {
+		case <-requestRead:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	var stdout, stderr bytes.Buffer
+	code := (cli.AskpassCommand{Sock: sock}).Execute(ctx, nil, &stdout, &stderr)
+	cancel()
+	<-cancelled
+	if code != 2 || stdout.String() != "" || stderr.String() != "zarlcode-askpass: recv: context canceled\n" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
 }
 
 func TestAskpassCommandRequiresSocket(t *testing.T) {

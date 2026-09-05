@@ -48,13 +48,21 @@ func (c AskpassCommand) Execute(ctx context.Context, args []string, stdout, stde
 		return 2
 	}
 	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 
 	if err := json.NewEncoder(conn).Encode(askpass.Request{Prompt: prompt}); err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			err = cause
+		}
 		fmt.Fprintln(stderr, "zarlcode-askpass: send:", err)
 		return 2
 	}
 	var resp askpass.Response
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			err = cause
+		}
 		fmt.Fprintln(stderr, "zarlcode-askpass: recv:", err)
 		return 2
 	}
