@@ -7,7 +7,6 @@ import (
 
 	"github.com/zarldev/zarlmono/zkit/oauth/claude"
 	"github.com/zarldev/zarlmono/zkit/oauth/codex"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 )
 
 // RunLogin dispatches an interactive login to the named provider's flow:
@@ -18,7 +17,7 @@ import (
 // directly.
 func RunLogin(
 	ctx context.Context,
-	svc *prefs.Service,
+	svc codex.CredentialStore,
 	provider string,
 	stdin io.Reader,
 	stdout io.Writer,

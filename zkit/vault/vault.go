@@ -1,44 +1,31 @@
-// Package vault provides at-rest encryption for zarlcode credentials.
-// It owns the AES-256-GCM primitive and the master-key lifecycle; the
-// master key never leaves the process, only ciphertext + nonce reach
-// disk. Composing the vault with the db.Store to persist/fetch
-// credentials is prefs.Service's job, not the vault's.
+// Package vault provides at-rest credential encryption and master-key storage.
+// Callers supply a storage directory and a passphrase source; vault does not
+// resolve application settings, environment variables, or database locations.
 //
-// The master key is derived from a passphrase via Argon2id (the KDF
-// parameters and a random salt live in ~/.zarlcode/master.kdf, alongside
-// a verifier blob used to detect a wrong passphrase). Two non-interactive
-// overrides skip the prompt: $ZARLCODE_KEY (a raw base64 32-byte key)
-// and $ZARLCODE_PASSPHRASE (a passphrase fed to the same KDF). A legacy
-// random key at ~/.zarlcode/master.key (the pre-passphrase scheme) is kept
-// as a decrypt fallback so prefs can migrate old rows, then removed.
+// The master key is derived via Argon2id. Its salt, KDF parameters, and verifier
+// live in master.kdf within the supplied directory. A legacy master.key remains
+// available for decryption until the caller migrates stored ciphertext and
+// explicitly removes it. Persisted formats are unchanged by path injection.
 package vault
 
 import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/filesystem"
 )
 
 const (
-	// masterKeyEnv is a raw base64-encoded 32-byte key — the strongest,
-	// fully non-interactive override (no passphrase, no KDF).
-	masterKeyEnv = "ZARLCODE_KEY"
-	// masterPassphraseEnv supplies the passphrase non-interactively (headless
-	// / eval); it goes through the same Argon2id KDF as the interactive prompt.
-	masterPassphraseEnv = "ZARLCODE_PASSPHRASE"
-
 	legacyKeyFileRelPath = "master.key" // pre-passphrase random key
 	kdfFileRelPath       = "master.kdf" // salt + KDF params + verifier
 	masterKeySize        = 32           // AES-256
@@ -46,15 +33,14 @@ const (
 	maxPassphraseAttempts = 3
 )
 
-// CurrentKeyVersion is the key-rotation version stamped onto ciphertext the
-// vault writes. v1 was the random ~/.zarlcode/master.key; v2 is the Argon2id
-// passphrase-derived key. Exported so prefs.Service can record it and detect
-// rows still on the old key.
+// CurrentKeyVersion identifies the key scheme stamped onto stored ciphertext:
+// v1 used a random master.key; v2 uses an Argon2id passphrase-derived key.
 const CurrentKeyVersion = 2
 
 // verifierPlaintext is encrypted under a freshly-derived key and stored in the
 // KDF file; decrypting it on a later open confirms the entered passphrase is
 // correct before any real credential is touched.
+// Its historical value is part of the persisted format and must not change.
 const verifierPlaintext = "zarlcode-vault-verifier-v2"
 
 // Default Argon2id cost. Persisted per-vault in the KDF file so raising these
@@ -67,20 +53,19 @@ const (
 
 var (
 	// ErrUninitialised means no vault exists yet and no way to create one was
-	// provided (no env override, no interactive prompt). The caller degrades
-	// to "credentials disabled" rather than failing the launch.
+	// provided (no passphrase source).
 	ErrUninitialised = errors.New("vault: not initialised")
 	// ErrLocked means a vault exists but no passphrase source was available to
-	// unlock it (e.g. a headless run with neither env var set).
+	// unlock it, for example when a non-interactive caller passes nil.
 	ErrLocked = errors.New("vault: locked (no passphrase source)")
 	// ErrWrongPassphrase is returned after the interactive attempt budget is
-	// exhausted, or immediately when the env passphrase is wrong.
+	// exhausted. Errors from the supplied passphrase source abort immediately.
 	ErrWrongPassphrase = errors.New("vault: wrong passphrase")
 	// ErrNotFound means optional vault material does not exist on disk.
 	ErrNotFound = errors.New("vault: material not found")
 )
 
-// PassphraseFunc supplies the master passphrase interactively. setup is true on
+// PassphraseFunc explicitly supplies the master passphrase. setup is true on
 // first-ever use (no KDF file yet) so the caller can confirm a new passphrase;
 // retry is true when a previous attempt was wrong. Returning an error aborts
 // the unlock (e.g. the user pressed Ctrl-C at the prompt).
@@ -89,7 +74,7 @@ type PassphraseFunc func(setup, retry bool) (string, error)
 // Vault wraps the AEAD primitive used to encrypt API keys at rest. The master
 // key never leaves this process. legacy is non-nil while a pre-passphrase
 // master.key is still on disk, so old ciphertext keeps decrypting until
-// prefs.Service migrates it.
+// the caller migrates it.
 type Vault struct {
 	primary    cipher.AEAD
 	legacy     cipher.AEAD
@@ -108,16 +93,8 @@ type kdfFile struct {
 	KeyLength uint32 `json:"key_length"`
 }
 
-// Exists reports whether a vault has been initialised on disk — a KDF file
-// (passphrase scheme) or a legacy master.key. Callers use it to decide whether
-// to prompt for a passphrase at startup: a fresh install with no stored
-// credentials (the local-llama.cpp default) shouldn't be nagged. $ZARLCODE_KEY
-// / $ZARLCODE_PASSPHRASE callers don't need this — Open handles them directly.
-func Exists() (bool, error) {
-	dir, err := db.DefaultDir()
-	if err != nil {
-		return false, err
-	}
+// Exists reports whether dir contains master.kdf or a legacy master.key.
+func Exists(dir string) (bool, error) {
 	for _, name := range []string{kdfFileRelPath, legacyKeyFileRelPath} {
 		switch _, err := os.Stat(filepath.Join(dir, name)); {
 		case err == nil:
@@ -131,16 +108,11 @@ func Exists() (bool, error) {
 	return false, nil
 }
 
-// Open loads or initialises the master key and constructs the vault.
-// Precedence: $ZARLCODE_KEY (raw key) → $ZARLCODE_PASSPHRASE (KDF) →
-// interactive passphrase. A nil passphrase func with neither env var set and
-// no existing vault returns ErrUninitialised; with an existing vault it
-// returns ErrLocked.
-func Open(passphrase PassphraseFunc) (*Vault, error) {
-	dir, err := db.DefaultDir()
-	if err != nil {
-		return nil, err
-	}
+// Open loads or initialises a passphrase-derived master key in dir.
+// A nil passphrase source returns ErrUninitialised if no vault exists, or
+// ErrLocked if existing material requires unlocking. Open never reads secrets
+// from the environment and does not choose a default directory.
+func Open(dir string, passphrase PassphraseFunc) (*Vault, error) {
 	legacyPath := filepath.Join(dir, legacyKeyFileRelPath)
 	legacyAEAD, err := loadLegacy(legacyPath)
 	if errors.Is(err, ErrNotFound) {
@@ -150,16 +122,7 @@ func Open(passphrase PassphraseFunc) (*Vault, error) {
 		return nil, err
 	}
 
-	// 1. Explicit raw key — no KDF, no prompt.
-	if v := os.Getenv(masterKeyEnv); v != "" {
-		key, err := decodeRawKey(v)
-		if err != nil {
-			return nil, err
-		}
-		return newVault(key, legacyAEAD, legacyPath)
-	}
-
-	// 2. Passphrase-derived. Load the KDF material if a vault already exists.
+	// Load KDF material from the explicitly selected vault directory.
 	if err := os.MkdirAll(dir, filesystem.ModePrivateDir); err != nil {
 		return nil, fmt.Errorf("vault dir: %w", err)
 	}
@@ -173,22 +136,12 @@ func Open(passphrase PassphraseFunc) (*Vault, error) {
 		return nil, err
 	}
 
-	envPass := os.Getenv(masterPassphraseEnv)
-	if envPass == "" && passphrase == nil {
+	if passphrase == nil {
 		// No way to obtain a passphrase.
 		if kdfExists || legacyAEAD != nil {
 			return nil, ErrLocked
 		}
 		return nil, ErrUninitialised
-	}
-
-	// Env passphrase: one shot, no retry.
-	if envPass != "" {
-		key, err := deriveOrInit(envPass, &kdf, kdfExists, kdfPath)
-		if err != nil {
-			return nil, err
-		}
-		return newVault(key, legacyAEAD, legacyPath)
 	}
 
 	// Interactive: prompt, with a small retry budget on a wrong passphrase.
@@ -231,10 +184,21 @@ func deriveOrInit(pass string, kdf *kdfFile, exists bool, kdfPath string) ([]byt
 		if err != nil {
 			return nil, fmt.Errorf("vault kdf encode: %w", err)
 		}
-		if err := writeFileAtomic(kdfPath, blob, filesystem.ModePrivateFile); err != nil {
+		installed, err := writeNewFileAtomic(kdfPath, blob, filesystem.ModePrivateFile)
+		if err != nil {
 			return nil, err
 		}
-		return key, nil
+		if installed {
+			return key, nil
+		}
+		// Another process completed initialisation first. Always derive from the
+		// KDF material it installed; returning our unpublished key would make
+		// credentials written by this opener unrecoverable.
+		winner, err := loadKDF(kdfPath)
+		if err != nil {
+			return nil, err
+		}
+		return deriveOrInit(pass, &winner, true, kdfPath)
 	}
 	derived := argon2.IDKey([]byte(pass), kdf.Salt, kdf.Time, kdf.Memory, kdf.Threads, kdf.KeyLength)
 	aead, err := aeadFromKey(derived)
@@ -267,29 +231,29 @@ func aeadFromKey(key []byte) (cipher.AEAD, error) {
 	return aead, nil
 }
 
-func decodeRawKey(v string) ([]byte, error) {
-	key, err := base64.StdEncoding.DecodeString(v)
-	if err != nil {
-		return nil, fmt.Errorf("%s: not valid base64: %w", masterKeyEnv, err)
-	}
-	if len(key) != masterKeySize {
-		return nil, fmt.Errorf("%s: decoded to %d bytes, want %d", masterKeyEnv, len(key), masterKeySize)
-	}
-	return key, nil
-}
-
 // loadKDF reads the KDF file or returns ErrNotFound.
 func loadKDF(path string) (kdfFile, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return kdfFile{}, ErrNotFound
 	}
 	if err != nil {
+		return kdfFile{}, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxEncodedHeader+1))
+	if err != nil {
 		return kdfFile{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(data) > maxEncodedHeader {
+		return kdfFile{}, fmt.Errorf("%w: file exceeds %d bytes", ErrInvalidKDF, maxEncodedHeader)
 	}
 	var f kdfFile
 	if err := json.Unmarshal(data, &f); err != nil {
-		return kdfFile{}, fmt.Errorf("decode %s: %w", path, err)
+		return kdfFile{}, fmt.Errorf("%w: decode %s: %w", ErrInvalidKDF, path, err)
+	}
+	if err := validateKDF(f); err != nil {
+		return kdfFile{}, fmt.Errorf("load %s: %w", path, err)
 	}
 	return f, nil
 }
@@ -366,36 +330,39 @@ func (v *Vault) RemoveLegacy() error {
 	return nil
 }
 
-// writeFileAtomic writes data to a temp file in the same directory, fsyncs it,
-// and renames it into place — so a crash mid-write can't leave a truncated KDF
-// file (which would make every stored credential undecryptable).
-func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
+// writeNewFileAtomic installs a complete file only when path does not already
+// exist. Hard-linking the synced temporary file is an atomic create operation:
+// concurrent initialisers cannot overwrite one another's KDF material.
+func writeNewFileAtomic(path string, data []byte, perm fs.FileMode) (bool, error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".vault-*")
 	if err != nil {
-		return fmt.Errorf("vault temp: %w", err)
+		return false, fmt.Errorf("vault temp: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
+	defer os.Remove(tmpName)
 	if err := tmp.Chmod(perm); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("vault chmod: %w", err)
+		return false, fmt.Errorf("vault chmod: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("vault write: %w", err)
+		return false, fmt.Errorf("vault write: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("vault sync: %w", err)
+		return false, fmt.Errorf("vault sync: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("vault close: %w", err)
+		return false, fmt.Errorf("vault close: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("vault rename: %w", err)
+	if err := os.Link(tmpName, path); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("vault install: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // Credential persistence (encrypt→store, fetch→decrypt) lives in

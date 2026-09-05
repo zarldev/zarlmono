@@ -1,6 +1,8 @@
 package openaicodex
 
 import (
+	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -63,10 +65,21 @@ type inputItem struct {
 	// Function-call fields. CallID is the cross-reference both ways
 	// between a sseTypeFunctionCall item and its "function_call_output"
 	// — the Codex backend rejects orphans.
-	CallID    string `json:"call_id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
-	Output    string `json:"output,omitempty"`
+	CallID           string          `json:"call_id,omitempty"`
+	Name             string          `json:"name,omitempty"`
+	Arguments        string          `json:"arguments,omitempty"`
+	Output           string          `json:"output,omitempty"`
+	ID               string          `json:"id,omitempty"`
+	EncryptedContent string          `json:"encrypted_content,omitempty"`
+	Raw              json.RawMessage `json:"-"`
+}
+
+func (i inputItem) MarshalJSON() ([]byte, error) {
+	if len(i.Raw) > 0 {
+		return i.Raw, nil
+	}
+	type wire inputItem
+	return json.Marshal(wire(i))
 }
 
 // contentPart is one element of an inputItem.Content array. text uses
@@ -139,7 +152,7 @@ func responseFormatToText(rf llm.ResponseFormat) *textFormat {
 // can be overridden via req.Options (keys: "reasoning_effort",
 // "text_verbosity", "tool_choice", "parallel_tool_calls",
 // "prompt_cache_key").
-func buildRequest(req llm.CompletionRequest, model, instructions string) responsesRequest {
+func buildRequest(req llm.CompletionRequest, model, instructions string, suppressDefaultEffort ...bool) responsesRequest {
 	rr := responsesRequest{
 		Model:        model,
 		Instructions: instructions,
@@ -172,13 +185,13 @@ func buildRequest(req llm.CompletionRequest, model, instructions string) respons
 		if supportsReasoningSummary(model) {
 			rr.Reasoning.Summary = optionStringOr(req.Options, "reasoning_summary", "detailed")
 		}
-	} else if defaultEffort := defaultReasoningEffort(model); defaultEffort != "" {
-		rr.Reasoning = &reasoningConfig{Effort: defaultEffort}
+	} else if (len(suppressDefaultEffort) == 0 || !suppressDefaultEffort[0]) && defaultReasoningEffort(model) != "" {
+		rr.Reasoning = &reasoningConfig{Effort: defaultReasoningEffort(model)}
 		if supportsReasoningSummary(model) {
 			rr.Reasoning.Summary = "detailed"
 		}
 	}
-	if verb := optionString(req.Options, "text_verbosity"); verb != "" {
+	if verb := optionString(req.Options, "text_verbosity"); validTextVerbosity(verb) {
 		rr.Text = &textConfig{Verbosity: textVerbosity(verb)}
 	}
 	// Structured output rides on text.format, sharing the text block with
@@ -209,6 +222,15 @@ func optionString(opts llm.ModelOptions, key string) string {
 		return v
 	}
 	return ""
+}
+
+func validTextVerbosity(verbosity string) bool {
+	switch verbosity {
+	case "low", "medium", "high":
+		return true
+	default:
+		return false
+	}
 }
 
 func optionStringOr(opts llm.ModelOptions, key, fallback string) string {
@@ -250,21 +272,7 @@ func messagesToInput(msgs []llm.Message) []inputItem {
 				Content: userContentParts(m),
 			})
 		case llm.RoleAssistant:
-			if m.Content != "" {
-				out = append(out, inputItem{
-					Type:    sseTypeMessage,
-					Role:    llm.RoleAssistant,
-					Content: []contentPart{{Type: "output_text", Text: m.Content}},
-				})
-			}
-			for _, tc := range m.ToolCalls {
-				out = append(out, inputItem{
-					Type:      sseTypeFunctionCall,
-					CallID:    tc.ID,
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-				})
-			}
+			out = append(out, assistantInputItems(m)...)
 		case llm.RoleTool:
 			// `output` is a required field on function_call_output even
 			// when the tool returned empty content — omitempty would
@@ -290,6 +298,94 @@ func messagesToInput(msgs []llm.Message) []inputItem {
 		}
 	}
 	return out
+}
+
+func assistantInputItems(m llm.Message) []inputItem {
+	projected := make([]inputItem, 0, 1+len(m.ToolCalls))
+	if m.Content != "" {
+		projected = append(projected, inputItem{
+			Type:    sseTypeMessage,
+			Role:    llm.RoleAssistant,
+			Content: []contentPart{{Type: "output_text", Text: m.Content}},
+		})
+	}
+	for _, tc := range m.ToolCalls {
+		projected = append(projected, inputItem{
+			Type:      sseTypeFunctionCall,
+			CallID:    tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments,
+		})
+	}
+
+	type indexedItem struct {
+		index int
+		order int
+		item  inputItem
+	}
+	indexed := make([]indexedItem, 0, len(m.ContinuationItems)+len(projected))
+	occupied := make(map[int]bool, len(m.ContinuationItems))
+	for order, continuation := range m.ContinuationItems {
+		item, ok := codexReasoningInput(continuation)
+		if !ok {
+			continue
+		}
+		index := order
+		if continuation.OutputIndex != nil {
+			index = *continuation.OutputIndex
+		}
+		indexed = append(indexed, indexedItem{index: index, order: order, item: item})
+		occupied[index] = true
+	}
+	index := 0
+	for order, item := range projected {
+		var position *int
+		if item.Type == sseTypeMessage {
+			position = m.ContentOutputIndex
+		} else {
+			toolIndex := order
+			if m.Content != "" {
+				toolIndex--
+			}
+			if toolIndex >= 0 && toolIndex < len(m.ToolCalls) {
+				position = m.ToolCalls[toolIndex].OutputIndex
+			}
+		}
+		if position != nil {
+			index = *position
+		} else {
+			for occupied[index] {
+				index++
+			}
+		}
+		indexed = append(indexed, indexedItem{index: index, order: len(m.ContinuationItems) + order, item: item})
+		occupied[index] = true
+		index++
+	}
+	sort.SliceStable(indexed, func(i, j int) bool {
+		if indexed[i].index == indexed[j].index {
+			return indexed[i].order < indexed[j].order
+		}
+		return indexed[i].index < indexed[j].index
+	})
+	out := make([]inputItem, len(indexed))
+	for i := range indexed {
+		out[i] = indexed[i].item
+	}
+	return out
+}
+
+func codexReasoningInput(continuation llm.ContinuationItem) (inputItem, bool) {
+	if continuation.Provider != codexContinuationProvider || continuation.Format != codexReasoningFormat ||
+		(continuation.Kind != "" && continuation.Kind != sseTypeReasoning) {
+		return inputItem{}, false
+	}
+	var item inputItem
+	if err := json.Unmarshal(continuation.Data, &item); err != nil || item.Type != sseTypeReasoning || item.ID == "" || item.EncryptedContent == "" {
+		return inputItem{}, false
+	}
+	item.Raw = append(item.Raw[:0], continuation.Data...)
+	return item, true
 }
 
 // userContentParts builds the contentPart slice for a user message,

@@ -170,6 +170,9 @@ func TestRender_CompactPromptRetainsInvariantsAndSizeGate(t *testing.T) {
 		"update_plan",
 		"sudo -A",
 		"plain text",
+		"offered means available",
+		"absent means unavailable",
+		"schema/description overrides prompt memory",
 	} {
 		if !strings.Contains(compact, want) {
 			t.Errorf("compact prompt missing invariant %q", want)
@@ -242,9 +245,75 @@ func TestRender_ProgrammaticToolsGuidance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"program` replaces", "read-only investigation fan-out", "build/test/git"} {
+	for _, want := range []string{"program` replaces", "read-only investigation fan-out", "An offered shell remains limited"} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan prompt missing programmatic guidance %q", want)
+		}
+	}
+}
+
+func TestRender_PhaseOneOperatingPolicy(t *testing.T) {
+	buildPrompts := []struct {
+		name string
+		body string
+	}{
+		{name: "compact", body: prompts.SystemCompact},
+		{name: "standard", body: prompts.System},
+	}
+	for _, tt := range buildPrompts {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := prompts.Render(tt.name, tt.body, prompts.Data{WorkspaceRoot: "/repo"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				"inspect-only unless the user asks for changes",
+				"reversible local work implied by the request",
+				"destructive actions",
+				"external",
+				"security-sensitive changes",
+				"material scope expansion",
+				"batch independent reads",
+				"status checks",
+				"dependent calls",
+				"mutations sequentially",
+				"current external facts",
+				"exact",
+				"relevant name",
+				"Do not make unrelated",
+				"fixes, optimizations, documentation changes, or tests",
+				"perform it before answering or state the blocker",
+				"caveats, blockers, or remaining work",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("render missing phase-one policy %q", want)
+				}
+			}
+		})
+	}
+
+	plan, err := prompts.Render("plan", prompts.Plan, prompts.Data{WorkspaceRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Only read-only investigation",
+		"plan artifacts are permitted",
+		"Batch independent reads",
+		"searches when supported",
+		"current external facts matter",
+		"exact",
+		"relevant name",
+		"destructive, external",
+		"security-sensitive, or material scope expansion",
+		"Only read-only investigation and writes to",
+		"regardless of any unexpected",
+		"use offered tools only for",
+		"read-only investigation or plan-artifact writes",
+		"even if an unexpected tool for doing so is listed",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("plan render missing aligned phase-one policy %q", want)
 		}
 	}
 }

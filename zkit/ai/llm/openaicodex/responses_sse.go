@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -18,8 +19,9 @@ type sseEventEnvelope struct {
 }
 
 type sseTextDelta struct {
-	Type  string `json:"type"`
-	Delta string `json:"delta"`
+	Type      string `json:"type"`
+	Delta     string `json:"delta"`
+	OutputIdx int    `json:"output_index"`
 }
 
 type sseReasoningDelta struct {
@@ -52,11 +54,26 @@ type sseOutputItemAdded struct {
 }
 
 type sseOutputItem struct {
-	Type      string `json:"type"`
-	ID        string `json:"id"`
-	CallID    string `json:"call_id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Type             string          `json:"type"`
+	ID               string          `json:"id"`
+	Role             string          `json:"role,omitempty"`
+	Content          []contentPart   `json:"content,omitempty"`
+	CallID           string          `json:"call_id"`
+	Name             string          `json:"name"`
+	Arguments        string          `json:"arguments"`
+	EncryptedContent string          `json:"encrypted_content"`
+	Raw              json.RawMessage `json:"-"`
+}
+
+func (i *sseOutputItem) UnmarshalJSON(data []byte) error {
+	type wire sseOutputItem
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*i = sseOutputItem(decoded)
+	i.Raw = append(i.Raw[:0], data...)
+	return nil
 }
 
 type sseCompleted struct {
@@ -178,11 +195,13 @@ func parseSSEStream(r io.Reader, yield func(llm.CompletionChunk, error) bool) (b
 // per-output-index tool-call ID map.
 type sseState struct {
 	// toolCallByIdx tracks output_index → in-flight tool call state.
+	contentOutputIndex *int
 	// function_call_arguments.delta events arrive identified by
 	// item_id only; we use it to look up the call we started in the
 	// output_item.added event.
-	toolCallByIdx map[int]*pendingToolCall
-	toolCallByID  map[string]*pendingToolCall
+	toolCallByIdx  map[int]*pendingToolCall
+	toolCallByID   map[string]*pendingToolCall
+	reasoningItems map[int]llm.ContinuationItem
 	// reasoningEmitted records whether any reasoning delta has been
 	// yielded on the Thinking channel. The summary streams as discrete
 	// parts (a *.summary_part.added event precedes each), so we use this
@@ -202,8 +221,9 @@ type pendingToolCall struct {
 
 func newSSEState() *sseState {
 	return &sseState{
-		toolCallByIdx: map[int]*pendingToolCall{},
-		toolCallByID:  map[string]*pendingToolCall{},
+		toolCallByIdx:  map[int]*pendingToolCall{},
+		toolCallByID:   map[string]*pendingToolCall{},
+		reasoningItems: map[int]llm.ContinuationItem{},
 	}
 }
 
@@ -224,7 +244,8 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 			return true
 		}
 		if ev.Delta != "" {
-			if !yield(llm.CompletionChunk{Content: ev.Delta}, nil) {
+			s.contentOutputIndex = llm.OutputPosition(ev.OutputIdx)
+			if !yield(llm.CompletionChunk{Content: ev.Delta, ContentOutputIndex: llm.OutputPosition(ev.OutputIdx)}, nil) {
 				s.stopped = true
 				return true
 			}
@@ -302,8 +323,9 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		// immediately so downstream UIs can show "calling X..." before the
 		// rest of the arguments stream in.
 		if !yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{{
-			ID:   pc.id,
-			Type: sseTypeFunction,
+			ID:          pc.id,
+			Type:        sseTypeFunction,
+			OutputIndex: llm.OutputPosition(ev.OutputIdx),
 			Function: llm.ToolCallFunction{
 				Name:      pc.name,
 				Arguments: ev.Item.Arguments,
@@ -311,6 +333,26 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		}}}, nil) {
 			s.stopped = true
 			return true
+		}
+	case "response.output_item.done":
+		var ev sseOutputItemAdded
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			s.err = fmt.Errorf("sse output_item.done: %w", err)
+			return true
+		}
+		validReasoning := ev.Item.Type == sseTypeReasoning && ev.Item.ID != "" && ev.Item.EncryptedContent != ""
+		validText := ev.Item.Type == sseTypeMessage && ev.Item.Role == llm.RoleAssistant && hasCodexOutputText(ev.Item.Content)
+		if !validReasoning && !validText {
+			return false
+		}
+		data := append([]byte(nil), ev.Item.Raw...)
+		s.reasoningItems[ev.OutputIdx] = llm.ContinuationItem{
+			OutputIndex: llm.OutputPosition(ev.OutputIdx),
+			Provider:    codexContinuationProvider,
+			Format:      codexReasoningFormat,
+			Kind:        ev.Item.Type,
+			ID:          ev.Item.ID,
+			Data:        data,
 		}
 	case "response.function_call_arguments.delta":
 		var ev sseFunctionArgsDelta
@@ -329,8 +371,9 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		}
 		pc.arguments.WriteString(ev.Delta)
 		if !yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{{
-			ID:   pc.id,
-			Type: sseTypeFunction,
+			ID:          pc.id,
+			Type:        sseTypeFunction,
+			OutputIndex: llm.OutputPosition(ev.OutputIdx),
 			Function: llm.ToolCallFunction{
 				Arguments: ev.Delta,
 			},
@@ -364,8 +407,9 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		}
 		pc.arguments.WriteString(remainder)
 		if !yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{{
-			ID:   pc.id,
-			Type: sseTypeFunction,
+			ID:          pc.id,
+			Type:        sseTypeFunction,
+			OutputIndex: llm.OutputPosition(ev.OutputIdx),
 			Function: llm.ToolCallFunction{
 				Arguments: remainder,
 			},
@@ -386,7 +430,7 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		if ev.Type == "response.incomplete" || ev.Response.Status == "incomplete" {
 			finish = llm.FinishReasons.LENGTH
 		}
-		chunk := llm.CompletionChunk{FinishReason: finish}
+		chunk := llm.CompletionChunk{FinishReason: finish, CompletedItems: s.completedReasoningItems()}
 		if ev.Response.Usage != nil {
 			chunk.Usage = llm.Usage{
 				PromptTokens:     ev.Response.Usage.InputTokens,
@@ -421,9 +465,8 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		s.err = fmt.Errorf("codex response %s: %s", env.Type, msg)
 		return true
 	default:
-		// Quietly ignore events we don't model (created, in_progress,
-		// output_item.done, content_part.added, etc.). They're not
-		// load-bearing for chunk emission.
+		// content_part.added, etc.). They're not load-bearing for chunk
+		// emission.
 	}
 	return false
 }
@@ -457,4 +500,29 @@ func (s *sseState) pendingCall(idx int, itemID string) *pendingToolCall {
 		return pc
 	}
 	return nil
+}
+
+func (s *sseState) completedReasoningItems() []llm.ContinuationItem {
+	if len(s.reasoningItems) == 0 {
+		return nil
+	}
+	indices := make([]int, 0, len(s.reasoningItems))
+	for index := range s.reasoningItems {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	items := make([]llm.ContinuationItem, 0, len(indices))
+	for _, index := range indices {
+		items = append(items, s.reasoningItems[index])
+	}
+	return items
+}
+
+func hasCodexOutputText(parts []contentPart) bool {
+	for _, part := range parts {
+		if part.Type == "output_text" {
+			return true
+		}
+	}
+	return false
 }

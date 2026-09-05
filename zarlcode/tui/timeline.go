@@ -184,13 +184,24 @@ type cacheEntry struct {
 
 type userItem struct {
 	versioned
-	text string
+	text        string
+	attachments []transcript.Attachment
 }
 
 func (u *userItem) render(width int) []string {
 	anchor, rail := turnOwnerPrefixes("you", palette.User.On)
 	lines := []string{anchor}
 	lines = append(lines, renderPlain(width, u.text, withFirstPrefix(rail, rail))...)
+	for _, attachment := range u.attachments {
+		detail := fmt.Sprintf("attachment: %s", attachment.Name)
+		if attachment.MIMEType != "" {
+			detail += " (" + attachment.MIMEType + ")"
+		}
+		if attachment.Size > 0 {
+			detail += fmt.Sprintf(" — %d bytes", attachment.Size)
+		}
+		lines = append(lines, renderPlain(width, detail, withFirstPrefix(rail, rail))...)
+	}
 	return append(lines, palette.User.On("└─"))
 }
 func (u *userItem) finished() bool { return true }
@@ -659,8 +670,11 @@ func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, pr
 // startSubAgentWithParent binds the child run to the row reserved by its exact
 // agent_spawn call. Falling back to a new row keeps replayed/legacy event
 // streams that lack ParentToolCallID visible.
-func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, prompt, spawnToolID string) *subAgentItem {
-	tl.applyTranscript(transcript.SubagentStarted{TurnID: taskID, SpawnToolID: spawnToolID, AgentName: agentName, Prompt: prompt})
+func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, provider, model, prompt, spawnToolID string) *subAgentItem {
+	tl.applyTranscript(transcript.SubagentStarted{
+		TurnID: taskID, SpawnToolID: spawnToolID, AgentName: agentName,
+		Provider: provider, Model: model, Prompt: prompt,
+	})
 	if sa := tl.subAgents[taskID]; sa != nil {
 		return sa
 	}
@@ -671,7 +685,7 @@ func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName,
 	if sa == nil {
 		sa = tl.reserveSubAgent(spawnToolID, depth-1, agentName, prompt)
 	}
-	sa.bind(taskID, depth, agentName, prompt)
+	sa.bind(taskID, depth, agentName, provider, model, prompt)
 	tl.subAgents[taskID] = sa
 	return sa
 }
@@ -679,12 +693,20 @@ func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName,
 // finishSubAgent finalizes the sub-agent run: closes its internal groups,
 // marks it closed, and removes it from the active sub-agents map so future
 // events for this taskID don't accidentally route to a finished item.
-func (tl *timeline) finishSubAgent(taskID string) {
-	tl.applyTranscript(transcript.SubagentFinished{TurnID: taskID})
+func (tl *timeline) finishSubAgent(taskID string, failed, interrupted bool) {
+	status := transcript.SubagentCompleted
+	if failed {
+		status = transcript.SubagentFailed
+	} else if interrupted {
+		status = transcript.SubagentInterrupted
+	}
+	tl.applyTranscript(transcript.SubagentFinished{TurnID: taskID, Status: status})
 	sa := tl.subAgents[taskID]
 	if sa == nil {
 		return
 	}
+	sa.failed = failed
+	sa.interrupted = interrupted
 	sa.endTurn()
 	sa.closeGroups()
 	delete(tl.subAgents, taskID)

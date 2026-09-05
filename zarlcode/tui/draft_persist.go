@@ -3,12 +3,14 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
 
 	"github.com/zarldev/zarlmono/zarlcode/draft"
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -44,6 +46,7 @@ type sessionPersistOp struct {
 type sessionPersistedMsg struct {
 	kind       sessionPersistKind
 	generation uint64
+	sessionID  string
 	revision   uint64
 	err        error
 }
@@ -72,12 +75,25 @@ func (m *UI) handleDraftPersistenceMsg(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		return m.enqueueDraftPersist(msg.Generation), true
 	case sessionPersistedMsg:
-		if msg.err == nil && (msg.kind == sessionPersistTranscript || msg.kind == sessionPersistFull) && msg.revision > m.transcriptPersisted {
-			m.transcriptPersisted = msg.revision
+		if msg.err == nil && msg.sessionID == m.session.ID &&
+			(msg.kind == sessionPersistTranscript || msg.kind == sessionPersistFull) {
+			if m.transcriptPersistedSessionID != msg.sessionID || msg.revision > m.transcriptPersisted {
+				m.transcriptPersistedSessionID = msg.sessionID
+				m.transcriptPersisted = msg.revision
+			}
+			m.lastSessionPersistError = ""
 		}
 		m.sessionPersistRunning = false
 		m.sessionPersistCurrent = nil
 		if msg.err != nil {
+			if msg.sessionID != "" && msg.sessionID != m.session.ID && msg.kind != sessionPersistDelete {
+				return m.startNextSessionPersist(), true
+			}
+			errorKey := fmt.Sprintf("%d:%s:%v", msg.kind, msg.sessionID, msg.err)
+			if errorKey == m.lastSessionPersistError {
+				return m.startNextSessionPersist(), true
+			}
+			m.lastSessionPersistError = errorKey
 			label := "session save"
 			switch msg.kind {
 			case sessionPersistClearDraft:
@@ -98,6 +114,19 @@ func (m *UI) handleDraftPersistenceMsg(msg tea.Msg) (tea.Cmd, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func (m *UI) persistedTranscriptRevision(sessionID string) uint64 {
+	if sessionID == "" || sessionID != m.transcriptPersistedSessionID {
+		return 0
+	}
+	return m.transcriptPersisted
+}
+
+func (m *UI) resetTranscriptPersistence() {
+	m.transcriptPersisted = 0
+	m.transcriptPersistedSessionID = ""
+	m.lastSessionPersistError = ""
 }
 
 func (m *UI) handleComposerInputMsg(msg tea.Msg) (tea.Cmd, bool) {
@@ -205,23 +234,22 @@ func (m *UI) enqueueSessionPersist(op sessionPersistOp) tea.Cmd {
 
 func (op *sessionPersistOp) rebaseTranscript(revision uint64) {
 	var update *db.TranscriptUpdate
+	var allEntries []db.TranscriptEntry
 	if op.transcript != nil {
 		update = &op.transcript.update
+		allEntries = op.transcript.allEntries
 	}
 	if op.snapshot != nil {
 		update = &op.snapshot.transcript
+		allEntries = op.snapshot.allEntries
 	}
 	if update == nil {
 		return
 	}
-	update.ExpectedRevision = revision
-	entries := update.Entries[:0]
-	for _, entry := range update.Entries {
-		if entry.Revision > revision {
-			entries = append(entries, entry)
-		}
+	if allEntries == nil {
+		allEntries = append([]db.TranscriptEntry(nil), update.Entries...)
 	}
-	update.Entries = entries
+	rebaseTranscriptUpdate(update, allEntries, revision)
 }
 
 func (op sessionPersistOp) transcriptRevision() uint64 {
@@ -279,8 +307,11 @@ func (m *UI) startNextSessionPersist() tea.Cmd {
 	op := m.sessionPersistQueue[0]
 	m.sessionPersistQueue = m.sessionPersistQueue[1:]
 	if op.kind == sessionPersistTranscript || op.kind == sessionPersistFull {
-		op.rebaseTranscript(m.transcriptPersisted)
-		if op.transcriptRevision() <= m.transcriptPersisted {
+		if op.sessionID() == m.transcriptPersistedSessionID {
+			op.rebaseTranscript(m.transcriptPersisted)
+		}
+		if op.kind == sessionPersistTranscript && op.sessionID() == m.transcriptPersistedSessionID &&
+			op.transcriptRevision() <= m.transcriptPersisted {
 			return m.startNextSessionPersist()
 		}
 	}
@@ -291,24 +322,90 @@ func (m *UI) startNextSessionPersist() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(baseCtx, sessionSaveCommandTTL)
 		defer cancel()
-		var err error
-		switch op.kind {
-		case sessionPersistDraft:
-			err = settings.Store.SaveSessionDraft(ctx, op.draft)
-		case sessionPersistClearDraft:
-			err = settings.Store.ClearSessionDraft(ctx, op.oldID)
-		case sessionPersistTranscript:
-			err = saveTranscriptSnapshot(ctx, settings.Store, op.transcript)
-		case sessionPersistFull:
-			err = saveSessionSnapshot(ctx, settings, op.snapshot)
-		case sessionPersistDelete:
-			err = clearPersistedSession(ctx, settings, op.oldID)
+		err := executeSessionPersist(ctx, settings, &op)
+		if err != nil && (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) {
+			err = retrySessionTranscriptPersist(ctx, settings, &op, err)
 		}
-		msg := sessionPersistedMsg{kind: op.kind, generation: op.generation, revision: op.transcriptRevision(), err: err}
+		msg := sessionPersistedMsg{
+			kind: op.kind, generation: op.generation, sessionID: op.sessionID(),
+			revision: op.transcriptRevision(), err: err,
+		}
 		op.done <- msg
 		close(op.done)
 		return msg
 	}
+}
+
+func executeSessionPersist(ctx context.Context, settings *engine.Settings, op *sessionPersistOp) error {
+	switch op.kind {
+	case sessionPersistDraft:
+		return settings.Store.SaveSessionDraft(ctx, op.draft)
+	case sessionPersistClearDraft:
+		return settings.Store.ClearSessionDraft(ctx, op.oldID)
+	case sessionPersistTranscript:
+		return saveTranscriptSnapshot(ctx, settings.Store, op.transcript)
+	case sessionPersistFull:
+		return saveSessionSnapshot(ctx, settings, op.snapshot)
+	case sessionPersistDelete:
+		return clearPersistedSession(ctx, settings, op.oldID)
+	default:
+		return nil
+	}
+}
+
+func retrySessionTranscriptPersist(ctx context.Context, settings *engine.Settings, op *sessionPersistOp, original error) error {
+	target := op.transcriptRevision()
+	stored, err := settings.Store.GetSessionTranscript(ctx, op.sessionID())
+	if errors.Is(err, db.ErrNotFound) {
+		stored = db.SessionTranscript{}
+	} else if err != nil {
+		return original
+	}
+	if stored.Revision > target || !compatibleTranscriptPrefix(stored.Entries, op.transcriptEntries(), stored.Revision) {
+		return fmt.Errorf("%w: durable transcript diverges from pending transcript: %w", db.ErrTranscriptConflict, original)
+	}
+	op.rebaseTranscript(stored.Revision)
+	if stored.Revision == target {
+		return nil
+	}
+	if err := executeSessionPersist(ctx, settings, op); err != nil {
+		return original
+	}
+	return nil
+}
+
+func (op *sessionPersistOp) transcriptEntries() []db.TranscriptEntry {
+	if op.transcript != nil {
+		return op.transcript.allEntries
+	}
+	if op.snapshot != nil {
+		return op.snapshot.allEntries
+	}
+	return nil
+}
+
+func compatibleTranscriptPrefix(durable, pending []db.TranscriptEntry, revision uint64) bool {
+	if revision == 0 {
+		return true
+	}
+	prefix := make(map[uint64]db.TranscriptEntry, len(pending))
+	for _, entry := range pending {
+		if entry.Revision <= revision {
+			prefix[entry.Revision] = entry
+		}
+	}
+	if len(prefix) != len(durable) {
+		return false
+	}
+	for _, entry := range durable {
+		pendingEntry, ok := prefix[entry.Revision]
+		if !ok || pendingEntry.Sequence != entry.Sequence || pendingEntry.EntryID != entry.EntryID ||
+			pendingEntry.ParentID != entry.ParentID || pendingEntry.TurnID != entry.TurnID || pendingEntry.Kind != entry.Kind ||
+			string(pendingEntry.PayloadJSON) != string(entry.PayloadJSON) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *UI) scheduleTranscriptPersist() tea.Cmd {

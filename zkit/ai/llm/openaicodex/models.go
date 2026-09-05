@@ -157,6 +157,15 @@ func EffortVariants(baseModel string) []string {
 	return out
 }
 
+func supportsReasoningEffort(model, effort string) bool {
+	for _, supported := range EffortVariants(model) {
+		if effort == supported {
+			return true
+		}
+	}
+	return false
+}
+
 // suffixedPresets returns the synthetic "<base>-<effort>" entries
 // for every effort each base model supports. Added to presetByID at
 // init() so direct id entry (e.g. /model gpt-5.4-high) still works

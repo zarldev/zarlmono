@@ -56,6 +56,57 @@ func TestTranscriptPersistsBeforeContextSnapshotExists(t *testing.T) {
 	}
 }
 
+func TestFreshSessionPersistsFromFirstTranscriptSequence(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	workspace, err := code.NewWorkspace(workspaceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.UpdateActiveTranscript(t.Context(), db.TranscriptUpdate{
+		SessionID: "previous", Workspace: workspaceRoot, Revision: 1,
+		Entries: []db.TranscriptEntry{{
+			Sequence: 1, EntryID: "old-e1", Kind: "user_message",
+			PayloadJSON: []byte(`{"text":"old session"}`), Revision: 1,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ui := tui.New()
+	ui.SetLiveRunner(engine.NewLiveRunner(nil, workspace, "test-model"))
+	ui.SetSettings(engine.NewSettings(store, nil, nil, workspaceRoot))
+	if err := ui.ResumeSavedSession(t.Context(), "previous"); err != nil {
+		t.Fatal(err)
+	}
+	ui.OpenIntro(workspaceRoot)
+	ui.StartFreshSession("")
+	if got := ui.PersistedTranscriptRevision(); got != 0 {
+		t.Fatalf("fresh session inherited persisted revision %d", got)
+	}
+
+	ui.SetSessionIdentity("fresh", "Fresh", false, time.Now())
+	ui.AddPartialTranscript("new-turn", "new prompt", "new response")
+	cmd := ui.ForceTranscriptPersist()
+	if cmd == nil {
+		t.Fatal("fresh transcript persistence returned no command")
+	}
+	ui.Update(cmd())
+
+	stored, err := store.GetSessionTranscript(t.Context(), "fresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Entries) != 2 || stored.Entries[0].Sequence != 1 || stored.Entries[1].Sequence != 2 {
+		t.Fatalf("fresh transcript sequences = %#v", stored.Entries)
+	}
+}
+
 func TestFlushAcknowledgesCompletedInFlightTranscriptBeforeFinalSnapshot(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	workspace, err := code.NewWorkspace(workspaceRoot)

@@ -78,12 +78,7 @@ func (m *UI) RepointProvider(prov llm.Provider, spec engine.ProviderSpec, window
 
 // ResumeSavedSession loads one persisted session through the production resume path.
 func (m *UI) ResumeSavedSession(ctx context.Context, id string) error {
-	saved, err := loadSavedSession(ctx, m.settings.Store, id)
-	if err != nil {
-		return err
-	}
-	m.completeResumeSession(saved, false)
-	return nil
+	return m.resumeSession(ctx, id)
 }
 
 // ActiveProviderSpec returns the provider target currently shown by the session.
@@ -303,6 +298,9 @@ func (m *UI) OpenThemePicker() {
 	m.overlay.push(newThemePicker())
 }
 
+// StartFreshSession dismisses the intro into a fresh session for behavior tests.
+func (m *UI) StartFreshSession(prompt string) tea.Cmd { return m.dismissIntroFresh(prompt) }
+
 // ComposerText returns the editor's current source text.
 func (m *UI) ComposerText() string { return m.composer.text() }
 
@@ -463,7 +461,7 @@ func (m *UI) ReplayTranscriptEvents(events ...any) {
 	for _, event := range events {
 		switch event := event.(type) {
 		case transcript.UserSubmitted:
-			m.timeline.addUser(event.Text)
+			m.timeline.addUserTranscript(event.Text, event.Attachments)
 		case transcript.TurnStarted:
 			m.timeline.startTurn(event.TurnID, 0)
 		case transcript.AssistantDelta:
@@ -496,3 +494,19 @@ func (m *UI) PendingTranscriptPersistence() string {
 
 // DrainTranscriptPersistence consumes the current reducer persistence policy.
 func (m *UI) DrainTranscriptPersistence() tea.Cmd { return m.transcriptPersistenceCmd() }
+
+// SeedSessionOwnedState seeds non-transcript state for lifecycle behavior tests.
+func (m *UI) SeedSessionOwnedState() {
+	m.session.WorkingSet.RestoreDiffBodies(map[string]string{"old.go": "change"}, time.Now())
+	m.session.Checkpoints.StartTurn("old-turn", 1, time.Now())
+	m.session.Plan = code.Plan{Steps: []code.PlanStep{{Text: "old"}}}
+	m.session.Run.RestoreUsage(SessionUsageSnapshot{In: 10, Out: 20})
+}
+
+// SessionOwnedStateEmpty reports whether fresh-session replacement cleared auxiliary state.
+func (m *UI) SessionOwnedStateEmpty() bool {
+	return len(m.session.WorkingSet.DiffBodies()) == 0 && len(m.session.Plan.Steps) == 0 && m.session.Run.UsageSnapshot().In == 0 && m.session.Run.UsageSnapshot().Out == 0
+}
+
+// ResumeLatestSavedSession resumes the workspace-selected session for behavior tests.
+func (m *UI) ResumeLatestSavedSession(ctx context.Context) error { return m.resumeLatestSession(ctx) }

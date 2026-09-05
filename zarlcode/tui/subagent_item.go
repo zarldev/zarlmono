@@ -18,6 +18,8 @@ type subAgentItem struct {
 	depth     int
 	nested    bool
 	agentName string
+	provider  string
+	model     string
 	prompt    string // first line of the sub-agent prompt
 	taskID    string
 	children  []item
@@ -37,6 +39,7 @@ type subAgentItem struct {
 	spawnToolID  string             // parent agent_spawn ToolID; set before child TaskID is known
 	pending      bool               // true between agent_spawn start and child ConversationStarted
 	launchFailed bool
+	failed       bool
 	interrupted  bool
 }
 
@@ -59,13 +62,15 @@ func newPendingSubAgentItem(depth int, agentName, prompt, spawnToolID string) *s
 	return sa
 }
 
-func (sa *subAgentItem) bind(taskID string, _ int, agentName, prompt string) {
+func (sa *subAgentItem) bind(taskID string, depth int, agentName, provider, model, prompt string) {
 	sa.taskID = taskID
-	sa.depth = 0
+	sa.depth = depth
 	sa.pending = false
 	if agentName != "" {
 		sa.agentName = agentName
 	}
+	sa.provider = provider
+	sa.model = model
 	if prompt = firstLine(prompt); prompt != "" {
 		sa.prompt = prompt
 	}
@@ -94,6 +99,46 @@ func (sa *subAgentItem) bump() {
 	}
 }
 func (sa *subAgentItem) finished() bool { return sa.closed }
+
+func (sa *subAgentItem) status() string {
+	switch {
+	case sa.pending:
+		return "starting"
+	case sa.launchFailed || sa.failed:
+		return "failed"
+	case sa.interrupted:
+		return "interrupted"
+	case !sa.closed:
+		return "running"
+	default:
+		return "complete"
+	}
+}
+
+func (sa *subAgentItem) statusBadge() string {
+	status := sa.status()
+	switch status {
+	case "failed":
+		return palette.Error.On("[" + status + "]")
+	case "starting", "interrupted":
+		return palette.Warning.On("[" + status + "]")
+	case "running":
+		return palette.Success.On("[" + status + "]")
+	default:
+		return palette.Muted.On("[" + status + "]")
+	}
+}
+
+func (sa *subAgentItem) targetLabel() string {
+	switch {
+	case sa.provider != "" && sa.model != "":
+		return sa.provider + "/" + sa.model
+	case sa.provider != "":
+		return sa.provider
+	default:
+		return sa.model
+	}
+}
 
 func (sa *subAgentItem) toggle() {
 	sa.expanded = !sa.expanded
@@ -126,29 +171,23 @@ func (sa *subAgentItem) render(width int) []string {
 		toggle = palette.Subtle.On("[") + palette.Primary.On("-") + palette.Subtle.On("]")
 	}
 
-	summary := sa.agentName
-	if summary == "" {
-		summary = "agent"
+	name := sa.agentName
+	if name == "" {
+		name = "agent"
+	}
+	summary := sa.statusBadge() + "  " + palette.Subtle.On(name)
+	if target := sa.targetLabel(); target != "" {
+		summary += palette.Subtle.On(" · " + target)
 	}
 	if sa.prompt != "" {
-		summary += ": " + sa.prompt
-	}
-	switch {
-	case sa.pending:
-		summary += "  " + palette.Warning.On("starting")
-	case sa.launchFailed:
-		summary += "  " + palette.Error.On("failed")
-	case sa.interrupted:
-		summary += "  " + palette.Warning.On("interrupted")
-	case !sa.closed:
-		summary += "  " + palette.Warning.On("running")
+		summary += palette.Subtle.On(": " + sa.prompt)
 	}
 	toolCount := sa.toolCount()
 	if toolCount > 0 {
-		summary += fmt.Sprintf("  (%d %s)", toolCount, plural(toolCount, "tool", "tools"))
+		summary += palette.Subtle.On(fmt.Sprintf("  (%d %s)", toolCount, plural(toolCount, "tool", "tools")))
 	}
 
-	lines := []string{toggle + " " + palette.Subtle.On(summary)}
+	lines := []string{toggle + " " + summary}
 	if sa.expanded {
 		lines = append(lines, sa.layout.render(sa.children, sa.childWidth(width), sa.version()).lines...)
 	}

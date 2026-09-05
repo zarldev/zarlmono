@@ -129,6 +129,8 @@ type ConversationStarted struct {
 	Prompt           string
 	ParentToolCallID string
 	AgentName        string
+	Provider         string
+	Model            string
 }
 
 // ConversationEnded is the single terminal event for a Run — it fires

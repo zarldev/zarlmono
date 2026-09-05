@@ -9,5 +9,3 @@ use (
 	./zarlcode
 	./zkit
 )
-
-replace charm.land/bubbletea/v2 => ./third_party/bubbletea

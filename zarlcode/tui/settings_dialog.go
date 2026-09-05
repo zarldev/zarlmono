@@ -12,9 +12,9 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -147,6 +147,8 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					desc: "named agent preset; 'default' is the built-in coding agent."},
 				{label: "reasoning effort", key: prefs.KeyCodexEffort, kind: rowEnum, def: codexEffortAuto,
 					desc: "reasoning effort for OpenAI Codex models. (auto) uses the model/default heuristic; options narrow to the selected model when known."},
+				{label: "text verbosity", key: prefs.KeyTextVerbosity, kind: rowEnum, def: "(unset)", opts: []string{"(unset)", "low", "medium", "high"},
+					desc: "output detail for supported OpenAI Responses targets; unset leaves the model default."},
 				{label: "temperature", key: prefs.KeyTemperature, kind: rowEnum, def: "(default)", opts: []string{"(default)", "0", "0.2", "0.5", "0.7", "1.0"},
 					desc: "sampling temperature. (default) leaves it to the server; a low value (0–0.2) makes local models more deterministic and improves tool-call reliability."},
 			}},
@@ -270,6 +272,8 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					open: func(*engine.Settings) dialog { return newServiceDialog(ctx) }},
 				{label: "chrome path", section: "Services", key: prefs.KeyChromeBinPath, kind: rowText, def: "(auto-detect)",
 					desc: "absolute path to a Chrome or Chromium binary for the web_fetch browser fallback. empty auto-detects."},
+				{label: "show computer browser", section: "Services", key: prefs.KeyComputerBrowserVisible, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+					desc: "show the Chrome window used by computer_act and computer_observe. off keeps it headless. applies when the browser session starts; restart if one is already running."},
 				{label: "editor", section: "Services", key: prefs.KeyEditor, kind: rowText, def: "(uses $EDITOR)",
 					desc: "command to edit agents/skills (may carry flags, e.g. 'code -w'). empty falls back to $ZARLCODE_EDITOR / $VISUAL / $EDITOR, then vi."},
 				{label: "max alive", section: "Processes", key: prefs.KeyMaxAliveProcesses, kind: rowText, numeric: true, def: "16",
@@ -349,11 +353,23 @@ func (d *settingsDialog) refresh(ctx context.Context) {
 			if r.key == "" || d.s == nil || d.s.Svc == nil {
 				continue // action rows have no backing setting
 			}
+			if r.key == prefs.KeyCredentialProtection {
+				mode, err := d.s.Svc.CredentialProtection(ctx)
+				if err == nil {
+					r.value, r.scope, r.isSet = mode, prefs.ScopeGlobal, true
+				} else {
+					r.value, r.isSet = "", false
+				}
+				continue
+			}
 			sv, err := d.s.Svc.GetSetting(ctx, prefs.ScopeEffective, r.key)
 			if err == nil {
 				r.value, r.scope, r.isSet = sv.Value, sv.Source, true
 			} else {
 				r.value, r.isSet = "", false
+			}
+			if r.key == prefs.KeyCodexEffort && d.s.CodexEffort(ctx, engine.ProviderSpec{Name: d.currentProvider(), Model: d.activeModel()}) == "" {
+				r.value = ""
 			}
 		}
 	}
@@ -453,14 +469,35 @@ func (d *settingsDialog) setStatus(s string) {
 	d.status, d.statusAt = s, time.Now()
 }
 
-func (d *settingsDialog) rows() []settingsRow { return d.cats[d.cat].rows }
+func (d *settingsDialog) rows() []settingsRow {
+	rows := d.cats[d.cat].rows
+	return slices.DeleteFunc(slices.Clone(rows), func(row settingsRow) bool { return !d.rowVisible(row) })
+}
+
+func (d *settingsDialog) rowVisible(row settingsRow) bool {
+	target := engine.ProviderSpec{Name: d.currentProvider(), Model: d.activeModel()}
+	switch row.key {
+	case prefs.KeyCodexEffort:
+		return target.Name == backends.NameOpenAICodex.String() && len(openaicodex.EffortVariants(target.Model)) > 0
+	case prefs.KeyTextVerbosity:
+		return engine.SupportsTextVerbosity(target)
+	default:
+		return true
+	}
+}
 
 func (d *settingsDialog) curRow() *settingsRow {
-	rs := d.cats[d.cat].rows
-	if d.row < 0 || d.row >= len(rs) {
+	visible := d.rows()
+	if d.row < 0 || d.row >= len(visible) {
 		return &settingsRow{}
 	}
-	return &rs[d.row]
+	key := visible[d.row].key
+	for i := range d.cats[d.cat].rows {
+		if d.cats[d.cat].rows[i].key == key {
+			return &d.cats[d.cat].rows[i]
+		}
+	}
+	return &settingsRow{}
 }
 
 func (d *settingsDialog) handleKey(msg tea.KeyPressMsg) action {
@@ -627,6 +664,18 @@ func (d *settingsDialog) activateEnum(dir int) action {
 					d.pendingFetch = p
 				}
 			}
+		})}
+	case prefs.KeyTextVerbosity:
+		items := []string{"(unset)", "low", "medium", "high"}
+		sel := "(unset)"
+		if r.value != "" {
+			sel = r.value
+		}
+		return actionPush{d: newListPicker("text verbosity", items, sel, func(choice string) {
+			if choice == "(unset)" {
+				choice = ""
+			}
+			d.commit(prefs.KeyTextVerbosity, choice)
 		})}
 	case prefs.KeyCodexEffort:
 		items := d.codexEffortItems()
@@ -806,12 +855,9 @@ func (d *settingsDialog) activeModel() string {
 func (d *settingsDialog) codexEffortItems() []string {
 	items := []string{codexEffortAuto}
 	if d.currentProvider() != backends.NameOpenAICodex.String() {
-		return append(items, "low", "medium", "high", "xhigh", "max")
+		return items
 	}
-	if variants := openaicodex.EffortVariants(d.activeModel()); len(variants) > 0 {
-		return append(items, variants...)
-	}
-	return append(items, "low", "medium", "high", "xhigh", "max")
+	return append(items, openaicodex.EffortVariants(d.activeModel())...)
 }
 
 // takePendingFetch returns and clears any queued model-fetch provider.
@@ -1011,7 +1057,7 @@ func (d *settingsDialog) commit(key, val string) {
 	if key == prefs.KeyCredentialProtection {
 		switch val {
 		case prefs.CredentialProtectionOff:
-			if n, err := d.s.Svc.DisableCredentialProtection(ctx, nil); err != nil {
+			if n, err := d.s.Svc.DisableCredentialProtection(ctx); err != nil {
 				d.setStatus("credential protection: " + err.Error())
 			} else {
 				d.setStatus(fmt.Sprintf("credential protection off — %d key(s) plaintext", n))
@@ -1021,7 +1067,7 @@ func (d *settingsDialog) commit(key, val string) {
 				d.setStatus("enable with: zarlcode keys protect on")
 				return
 			}
-			if n, err := d.s.Svc.EnableCredentialProtection(ctx, nil); err != nil {
+			if n, err := d.s.Svc.EnableCredentialProtection(ctx); err != nil {
 				d.setStatus("credential protection: " + err.Error())
 			} else {
 				d.setStatus(fmt.Sprintf("credential protection enabled — %d key(s) encrypted", n))

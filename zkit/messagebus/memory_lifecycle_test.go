@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/messagebus"
 )
@@ -65,4 +66,42 @@ func TestMemoryBus_CtxCancelAutoUnsubscribes(t *testing.T) {
 			t.Fatal("ctx cancel did not auto-unsubscribe — the processMessages goroutine leaks")
 		}
 	})
+}
+
+func TestMemoryBus_CloseCancelsAndWaitsForDelivery(t *testing.T) {
+	bus := messagebus.NewMemoryBus[int]()
+	started := make(chan struct{})
+	exited := make(chan struct{})
+	if _, err := bus.Subscribe(t.Context(), "x", func(ctx context.Context, _ messagebus.Message[int]) error {
+		close(started)
+		<-ctx.Done()
+		close(exited)
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Publish(t.Context(), "x", 1); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- bus.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not wait for cancellation-aware delivery")
+	}
+	select {
+	case <-exited:
+	default:
+		t.Fatal("Close returned before the delivery goroutine exited")
+	}
 }

@@ -14,7 +14,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/oauth/codex"
 	"github.com/zarldev/zarlmono/zkit/options"
 	"github.com/zarldev/zarlmono/zkit/prefs"
-	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
 // providerEnv bundles the zarlcode-side state the in-process driver
@@ -28,27 +27,19 @@ type providerEnv struct {
 	svc   *prefs.Service
 }
 
-// openProviderEnv opens zarlcode's state.db + vault. A missing vault is
-// non-fatal: providers that need no secret (llamacpp, ollama) build
-// fine without one, and the registry's key resolution falls through to
-// env vars. stateDB empty resolves to ~/.zarlcode/state.db (db.Open's
-// default).
+// openProviderEnv opens the selected application database. Evaluation is
+// non-interactive: plaintext database credentials remain available, while
+// passphrase-protected credentials remain locked without explicit unlock input.
+// Empty stateDB resolves to db.Open's application default.
 func openProviderEnv(ctx context.Context, stateDB string) (*providerEnv, error) {
 	store, err := db.Open(ctx, stateDB)
 	if err != nil {
 		return nil, fmt.Errorf("open state.db: %w", err)
 	}
-	// Eval is non-interactive: pass nil so the vault opens only from
-	// $ZARLCODE_KEY / $ZARLCODE_PASSPHRASE (or an existing legacy key);
-	// otherwise it stays disabled and provider keys fall back to env vars.
-	var v *vault.Vault
-	if opened, vErr := vault.Open(nil); vErr == nil {
-		v = opened
-	}
 	// Global scope: codex/claude OAuth credentials and most API keys are
 	// stored global (workspace=""), so effective resolution finds them
 	// without a workspace pin.
-	return &providerEnv{store: store, svc: prefs.NewService(store, v, "")}, nil
+	return &providerEnv{store: store, svc: prefs.NewService(store, nil, "")}, nil
 }
 
 func (e *providerEnv) close() {
@@ -79,7 +70,7 @@ func (a settingsAdapter) GetKey(ctx context.Context, provider string) (string, e
 // buildProvider constructs the llm.Provider for (name, model). OAuth
 // providers (openai-codex, claude-code) build from a vault-backed token
 // source; everything else routes through the provider registry, which
-// owns static construction and the vault→env key-resolution chain. This
+// owns static construction and database-backed key resolution. This
 // is the same branching zarlcode's buildProviderFor uses, so eval lands
 // on the identical provider the TUI would for a given (name, model).
 func (e *providerEnv) buildProvider(ctx context.Context, name, model, codexEffort string) (llm.Provider, error) {

@@ -239,10 +239,9 @@ func testQueueSubscriptions(t *testing.T, bus messagebus.Bus[TestEvent]) {
 	count2 := len(received2)
 	total := count1 + count2
 
-	// For memory bus, all messages go to all subscribers in queue group.
-	// For NATS, it would be round-robin.
-	if total < 4 {
-		t.Errorf("Expected at least 4 messages total, got %d (handler1: %d, handler2: %d)",
+	// Each publication goes to exactly one member of the queue group.
+	if total != 4 {
+		t.Errorf("Expected 4 messages total, got %d (handler1: %d, handler2: %d)",
 			total, count1, count2)
 	}
 }

@@ -17,22 +17,6 @@ import (
 // a few thousand tokens even on the largest histories.
 const ExecutiveDefaultMaxTokens = 3000
 
-// ExecutiveDefaultSystemPrompt instructs the briefing model. Targets
-// a state-handoff voice — third-person, no fluff, every line
-// load-bearing. The model's job is to make a fresh-context successor
-// agent productive immediately.
-const ExecutiveDefaultSystemPrompt = `You are an executive briefer. You receive the older portion of a coding-agent conversation that is being compacted to free context. The structured sections (PLAN PROGRESS, WORKING FILES, TOOL USAGE) are already attached at the top of the resulting briefing — DO NOT repeat them. Your job is to produce the NARRATIVE section.
-
-Write a synthesis that a successor agent could read in 30 seconds and pick up exactly where the original left off. Cover:
-
-  - The user's stated goal (in their words where possible).
-  - Decisions the agent committed to and why (architecture, library, pattern choices).
-  - Concrete intermediate findings the agent will need to reference (file contents, command output, error messages — paraphrased, not re-quoted).
-  - Open questions the agent was about to ask or work that's mid-flight.
-  - Pitfalls / dead ends already explored so the successor doesn't redo them.
-
-No bullet recap of every turn. No "the user said X, the agent replied Y". One coherent paragraph or two of operational handoff prose. Aim for under 600 words.`
-
 // PlanStep is one item in the plan snapshot the briefing renders.
 // Status is one of "pending", "in_progress", "completed". Note is
 // optional context the model added with the step.
@@ -164,7 +148,7 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 	}
 	if len(history) <= keepRecent+1 {
 		return Result{
-			History: append([]llm.Message{}, history...),
+			History: llm.CloneMessages(history),
 			Engine:  EngineExecutive,
 		}, nil
 	}
@@ -172,7 +156,7 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 	leading, older, recent := splitForSummary(history, keepRecent)
 	if len(older) == 0 {
 		return Result{
-			History: append([]llm.Message{}, history...),
+			History: llm.CloneMessages(history),
 			Engine:  EngineExecutive,
 		}, nil
 	}
@@ -224,9 +208,9 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 	briefing := composeBriefing(len(older), plan, files, tools, verification, failures, narrativeBody)
 
 	out := make([]llm.Message, 0, len(leading)+1+len(recent))
-	out = append(out, leading...)
+	out = append(out, llm.CloneMessages(leading)...)
 	out = append(out, llm.Message{Role: llm.RoleAssistant, Content: briefing})
-	out = append(out, recent...)
+	out = append(out, llm.CloneMessages(recent)...)
 
 	// Same orphan-tool repair as Summary.Compact — see the note there
 	// for why this is load-bearing for collapse-style compactors.

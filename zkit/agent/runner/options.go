@@ -33,6 +33,15 @@ func WithSink(s EventSink) options.Option[Runner] {
 	return func(r *Runner) { r.sink = s }
 }
 
+// WithModelIdentity labels lifecycle events with the provider and model used by
+// this runner. It is observability metadata only and does not alter requests.
+func WithModelIdentity(provider, model string) options.Option[Runner] {
+	return func(r *Runner) {
+		r.providerName = provider
+		r.modelName = model
+	}
+}
+
 // WithConversationLock installs the cooperative yield mutex. When set,
 // the runner waits for the lock to become inactive before each
 // iteration so a real-time conversation gets LLM priority.
@@ -219,6 +228,15 @@ func WithTemperature(t float32) options.Option[Runner] {
 		if t > 0 {
 			r.temperature = t
 		}
+	}
+}
+
+// WithModelOptions adds request-level provider options to every completion
+// iteration. The runner recursively owns opts at construction and recursively
+// clones it for each request before merging its prompt_cache_key.
+func WithModelOptions(opts llm.ModelOptions) options.Option[Runner] {
+	return func(r *Runner) {
+		r.modelOptions = opts.Clone()
 	}
 }
 

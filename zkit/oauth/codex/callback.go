@@ -28,7 +28,7 @@ const serverShutdown = 2 * time.Second
 // browser-open, no manual fallback — just bind, wait, exchange, store —
 // because the bubbletea shell drives the flow as a background tea.Cmd
 // and has no terminal to prompt on.
-func AwaitCallback(ctx context.Context, svc *prefs.Service, flow openaicodex.AuthorizationFlow) (string, error) {
+func AwaitCallback(ctx context.Context, svc CredentialStore, flow openaicodex.AuthorizationFlow) (string, error) {
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", callbackAddr)
 	if err != nil {
 		return "", fmt.Errorf(

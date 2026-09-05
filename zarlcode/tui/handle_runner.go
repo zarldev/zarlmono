@@ -70,7 +70,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			if agentName == "" {
 				agentName = "agent"
 			}
-			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, agentName, e.Prompt, e.ParentToolCallID)
+			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, agentName, e.Provider, e.Model, e.Prompt, e.ParentToolCallID)
 		}
 
 	case teasink.ContentMsg:
@@ -192,7 +192,8 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 					m.timeline.addNoticeForTurn(e.TaskID, notice)
 				}
 			}
-			m.timeline.finishSubAgent(e.TaskID)
+			terminalFailed := failed || e.Reason == runner.TerminalMaxIterations
+			m.timeline.finishSubAgent(e.TaskID, terminalFailed, e.Reason == runner.TerminalCancelled)
 		} else {
 			m.timeline.endTurn(e.TaskID)
 			if failed {

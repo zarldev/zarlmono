@@ -19,3 +19,19 @@ func TestSubagentSpawnFailureRemainsVisible(t *testing.T) {
 		t.Fatalf("reserved agent row missing:\n%s", out)
 	}
 }
+
+func TestSubagentRowsPreserveNestedDepth(t *testing.T) {
+	out := drive(t,
+		teasink.ConversationStartedMsg{TaskID: "root", Depth: 0},
+		teasink.ToolStartedMsg{TaskID: "root", Depth: 0, ToolID: "spawn-child", ToolName: "agent_spawn", Parameters: map[string]any{"agent": "child", "prompt": "child task"}},
+		teasink.ConversationStartedMsg{TaskID: "child", Depth: 1, ParentToolCallID: "spawn-child", AgentName: "child", Prompt: "child task"},
+		teasink.ToolStartedMsg{TaskID: "child", Depth: 1, ToolID: "spawn-grandchild", ToolName: "agent_spawn", Parameters: map[string]any{"agent": "grandchild", "prompt": "grandchild task"}},
+		teasink.ConversationStartedMsg{TaskID: "grandchild", Depth: 2, ParentToolCallID: "spawn-grandchild", AgentName: "grandchild", Prompt: "grandchild task"},
+	)
+	if !strings.Contains(out, "grandchild: grandchild task") {
+		t.Fatalf("nested sub-agent row missing:\n%s", out)
+	}
+	if !strings.Contains(out, "⇢ ⇢") {
+		t.Fatalf("nested sub-agent depth was not rendered:\n%s", out)
+	}
+}

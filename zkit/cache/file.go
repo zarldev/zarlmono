@@ -38,8 +38,8 @@ type FileSystem interface {
 	// ReadFile reads the file named by filename and returns the contents.
 	ReadFile(filename string) ([]byte, error)
 
-	// WriteFile writes data to a file named by filename.
-	WriteFile(filename string, data []byte, perm fs.FileMode) error
+	// WriteFileAtomic replaces a file without exposing partial contents to readers.
+	WriteFileAtomic(filename string, data []byte, perm fs.FileMode) error
 
 	// Remove removes the named file.
 	Remove(filename string) error
@@ -186,7 +186,7 @@ func (c *FileCache[K, V]) Set(ctx context.Context, key K, value V) error {
 		return err
 	}
 
-	return c.fs.WriteFile(filename, data, 0644)
+	return c.fs.WriteFileAtomic(filename, data, 0644)
 }
 
 // Get retrieves the value associated with the given key from disk.
@@ -345,7 +345,7 @@ func (c *FileCache[K, V]) Healthy(ctx context.Context) error {
 	const probe = ".health_check"
 	want := []byte("health_check")
 
-	if err := c.fs.WriteFile(probe, want, 0644); err != nil {
+	if err := c.fs.WriteFileAtomic(probe, want, 0644); err != nil {
 		return fmt.Errorf("write probe: %w", err)
 	}
 	got, err := c.fs.ReadFile(probe)

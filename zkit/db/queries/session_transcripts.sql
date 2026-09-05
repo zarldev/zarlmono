@@ -1,11 +1,12 @@
 -- name: EnsureSessionTranscript :exec
-INSERT INTO session_transcripts (session_id, revision, checksum, created_at_ms, updated_at_ms)
-VALUES (sqlc.arg(session_id), 0, CAST(sqlc.arg(checksum) AS TEXT), sqlc.arg(created_at_ms), sqlc.arg(updated_at_ms))
+INSERT INTO session_transcripts (session_id, revision, checksum, format_version, created_at_ms, updated_at_ms)
+VALUES (sqlc.arg(session_id), 0, CAST(sqlc.arg(checksum) AS TEXT), sqlc.arg(format_version), sqlc.arg(created_at_ms), sqlc.arg(updated_at_ms))
 ON CONFLICT(session_id) DO NOTHING;
 
 -- name: AdvanceSessionTranscript :execresult
 UPDATE session_transcripts
-SET revision = sqlc.arg(revision), checksum = CAST(sqlc.arg(checksum) AS TEXT), updated_at_ms = sqlc.arg(updated_at_ms)
+SET revision = sqlc.arg(revision), checksum = CAST(sqlc.arg(checksum) AS TEXT),
+    format_version = sqlc.arg(format_version), updated_at_ms = sqlc.arg(updated_at_ms)
 WHERE session_id = sqlc.arg(session_id) AND revision = sqlc.arg(expected_revision);
 
 -- name: UpsertSessionTranscriptEntry :exec
@@ -21,7 +22,7 @@ ON CONFLICT(session_id, entry_id) DO UPDATE SET
 WHERE excluded.revision > session_transcript_entries.revision;
 
 -- name: GetSessionTranscript :one
-SELECT session_id, revision, CAST(checksum AS TEXT) AS checksum, created_at_ms, updated_at_ms
+SELECT session_id, revision, CAST(checksum AS TEXT) AS checksum, format_version, created_at_ms, updated_at_ms
 FROM session_transcripts
 WHERE session_id = ?;
 

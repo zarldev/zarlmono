@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -22,7 +22,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/oauth/codex"
-	"github.com/zarldev/zarlmono/zkit/prefs"
 	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
@@ -82,21 +81,21 @@ func (r providerKeyResolver) GetKey(ctx context.Context, provider string) (strin
 // "unavailable" rather than blocking startup. A failed store IS fatal —
 // without it there's nowhere to read configuration from.
 //
-// passphrase is the interactive passphrase prompt; it may be nil for callers
-// that rely on $ZARLCODE_KEY / $ZARLCODE_PASSPHRASE (headless / eval), or
-// when no vault exists yet (a fresh install isn't prompted). When the vault
-// opens with a legacy master.key still present, its credentials are migrated to
+// passphrase supplies unlock input when database settings or existing encrypted
+// rows require a vault. It may be nil for non-interactive callers; protected
+// credentials then remain locked, while plaintext credentials stay available.
+// When the vault opens with a legacy master.key, stored credentials migrate to
 // the passphrase-derived key here, once, transparently.
 func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.PassphraseFunc) (*Settings, error) {
-	store, err := db.Open(ctx, "")
+	dir, err := db.DefaultDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve state directory: %w", err)
+	}
+	store, err := db.Open(ctx, filepath.Join(dir, "state.db"))
 	if err != nil {
 		return nil, fmt.Errorf("open state.db: %w", err)
 	}
 	probe := prefs.NewService(store, nil, wsRoot)
-	legacyOff := false
-	if sv, err := probe.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyVaultPrompt); err == nil && sv.Value == "off" {
-		legacyOff = true
-	}
 	hasVaultRows, err := probe.HasVaultBackedKeys(ctx)
 	if err != nil {
 		_ = store.Close()
@@ -107,11 +106,11 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 		_ = store.Close()
 		return nil, err
 	}
-	shouldOpenVault := os.Getenv("ZARLCODE_KEY") != "" || os.Getenv("ZARLCODE_PASSPHRASE") != "" || (hasVaultRows && !legacyOff) || mode == prefs.CredentialProtectionPassphrase
+	shouldOpenVault := hasVaultRows || mode == prefs.CredentialProtectionPassphrase
 	var v *vault.Vault
 	if shouldOpenVault {
 		var verr error
-		v, verr = vault.Open(passphrase)
+		v, verr = vault.Open(dir, passphrase)
 		if verr != nil {
 			// ErrUninitialised / ErrLocked are the expected "no usable vault"
 			// signals; plaintext credentials still work. Encrypted rows surface as
@@ -127,13 +126,18 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 		return nil, fmt.Errorf("reload provider registry: %w", err)
 	}
 	s.ownsStore = true
-	if legacyOff {
-		if n, derr := s.Svc.DisableCredentialProtection(ctx, passphrase); derr != nil {
+	if n, derr := s.Svc.MigrateCredentialProtection(ctx); derr != nil {
+		if errors.Is(derr, prefs.ErrCredentialsLocked) {
+			// A non-interactive process can still use ordinary settings while
+			// legacy encrypted credentials remain locked. A later interactive
+			// startup can unlock and complete the atomic migration.
+			slog.WarnContext(ctx, "legacy credential migration deferred; credentials locked")
+		} else {
 			_ = store.Close()
-			return nil, fmt.Errorf("disable credential protection: %w", derr)
-		} else if n > 0 {
-			slog.InfoContext(ctx, "disabled credential protection; decrypted stored credentials", "count", n)
+			return nil, fmt.Errorf("migrate credential protection: %w", derr)
 		}
+	} else if n > 0 {
+		slog.InfoContext(ctx, "disabled legacy credential protection; decrypted stored credentials", "count", n)
 	}
 	if v != nil {
 		if n, merr := s.Svc.MigrateVaultKeys(ctx); merr != nil {
@@ -379,6 +383,55 @@ func (s *Settings) Temperature(ctx context.Context) float32 {
 	return float32(f)
 }
 
+// TextVerbosity resolves a supported request-level text verbosity for target.
+// Unsupported targets and invalid persisted values return empty so callers
+// never send a setting the active adapter cannot honor.
+func (s *Settings) TextVerbosity(ctx context.Context, target ProviderSpec) string {
+	if !SupportsTextVerbosity(target) {
+		return ""
+	}
+	verbosity := strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyTextVerbosity, "")))
+	switch verbosity {
+	case "low", "medium", "high":
+		return verbosity
+	default:
+		return ""
+	}
+}
+
+// CodexEffort resolves the persisted Codex effort only when the selected model
+// supports it. The persisted value is left untouched for compatibility with a
+// later model switch.
+func (s *Settings) CodexEffort(ctx context.Context, target ProviderSpec) string {
+	return validCodexEffort(target, s.setting(ctx, prefs.KeyCodexEffort, ""))
+}
+
+func validCodexEffort(target ProviderSpec, raw string) string {
+	id, _ := llm.ParseLLMProvider(target.Name)
+	if id != backends.NameOpenAICodex {
+		return ""
+	}
+	effort := strings.ToLower(strings.TrimSpace(raw))
+	for _, supported := range openaicodex.EffortVariants(target.Model) {
+		if effort == supported {
+			return effort
+		}
+	}
+	return ""
+}
+
+// SupportsTextVerbosity reports the deliberately narrow adapter/model surface
+// that currently maps text_verbosity onto the wire.
+func SupportsTextVerbosity(target ProviderSpec) bool {
+	id, _ := llm.ParseLLMProvider(target.Name)
+	if id == backends.NameOpenAICodex {
+		return true
+	}
+	model := strings.ToLower(strings.TrimSpace(target.Model))
+	return id == llm.LLMProviders.OPENAI &&
+		(model == "gpt-6-astra" || model == "gpt-5.6" || strings.HasPrefix(model, "gpt-5.6-"))
+}
+
 // ToolResultMaxBytes resolves the per-tool-result byte cap before tail
 // truncation + spill, in bytes. Default 50 KB, matching the runner default.
 func (s *Settings) ToolResultMaxBytes(ctx context.Context) int {
@@ -465,19 +518,10 @@ func (s *Settings) Setting(ctx context.Context, key, def string) string {
 	return s.setting(ctx, key, def)
 }
 
-// SearxngURL resolves the web_search tool's SearXNG endpoint, mirroring the
-// v1 precedence: the search_searxng_url setting (effective scope) → the
-// SEARXNG_URL env var → the conventional local default. Never empty, so
-// web_search is always wired; an unreachable endpoint fails the call with a
-// friendly error rather than hiding the tool.
+// SearxngURL resolves the database-backed endpoint or the conventional local
+// default. An unreachable endpoint fails the tool call rather than hiding it.
 func (s *Settings) SearxngURL(ctx context.Context) string {
-	if v := s.setting(ctx, prefs.KeySearxngURL, ""); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("SEARXNG_URL")); v != "" {
-		return v
-	}
-	return DefaultSearxngURL
+	return s.setting(ctx, prefs.KeySearxngURL, DefaultSearxngURL)
 }
 
 // SearchKeyProviderBrave is the api_keys provider tag under which the Brave
@@ -518,6 +562,12 @@ func (s *Settings) ChromeBinPath(ctx context.Context) string {
 	return strings.TrimSpace(s.setting(ctx, prefs.KeyChromeBinPath, ""))
 }
 
+// ComputerBrowserVisible resolves whether computer_act and computer_observe use
+// a visible Chrome window. Off by default.
+func (s *Settings) ComputerBrowserVisible(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyComputerBrowserVisible, "off") == "on"
+}
+
 // Editor returns the configured external editor command (effective scope), or
 // "" when unset — the caller then falls back to $ZARLCODE_EDITOR / $VISUAL /
 // $EDITOR, then vi. The value may carry flags, e.g. "code -w".
@@ -537,17 +587,16 @@ func (s *Settings) TraceFile(ctx context.Context) string {
 	return strings.TrimSpace(s.setting(ctx, prefs.KeyTraceFile, ""))
 }
 
-// ActiveProvider resolves the active ProviderSpec from settings, falling
-// back to fb (caller's env-derived defaults) for any unset field. The env
-// BaseURL/APIKey overrides only apply to the fallback provider itself; for
-// any other backend they'd be wrong (e.g. a local llama.cpp URL leaking onto
-// openai), so other providers resolve those through the registry chain.
+// ActiveProvider resolves the selection from settings, falling back to the
+// caller's explicit defaults. BaseURL/APIKey apply only to that fallback provider
+// so its credentials cannot leak to a different provider selected in settings.
 func (s *Settings) ActiveProvider(ctx context.Context, fb ProviderSpec) ProviderSpec {
 	spec := ProviderSpec{
 		Name:        s.resolveProvider(ctx, fb.Name),
 		Model:       s.setting(ctx, prefs.KeyModel, fb.Model),
 		CodexEffort: s.setting(ctx, prefs.KeyCodexEffort, fb.CodexEffort),
 	}
+	spec.CodexEffort = validCodexEffort(spec, spec.CodexEffort)
 	if spec.Name == fb.Name {
 		spec.BaseURL = fb.BaseURL
 		spec.APIKey = fb.APIKey

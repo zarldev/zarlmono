@@ -266,6 +266,12 @@ func WithComputerSessionFactory(factory ComputerSessionFactory) options.Option[L
 	return func(l *LiveRunner) { l.computer.newSession = factory }
 }
 
+// WithComputerHeadless forces the reusable computer browser to run without a
+// visible window, overriding the persisted visibility preference.
+func WithComputerHeadless(headless bool) options.Option[LiveRunner] {
+	return func(l *LiveRunner) { l.computer.forceHeadless = headless }
+}
+
 // WithLiveSink overrides the no-op event sink. Passing nil is invalid.
 func WithLiveSink(s LiveSink) options.Option[LiveRunner] {
 	if s == nil {
@@ -1012,6 +1018,7 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	// settings change applies next turn without a restart.
 	var temperature float32
 	var streamIdle time.Duration
+	var modelOptions llm.ModelOptions
 	autoCompact := true
 	if settings != nil {
 		sctx := ctx
@@ -1020,6 +1027,15 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 		temperature = settings.Temperature(sctx)
 		streamIdle = settings.ResponseTimeout(sctx)
 		autoCompact = settings.AutoCompact(sctx)
+		if verbosity := settings.TextVerbosity(sctx, tgt.Spec); verbosity != "" {
+			modelOptions = llm.ModelOptions{"text_verbosity": verbosity}
+		}
+		if effort := settings.CodexEffort(sctx, tgt.Spec); effort != "" {
+			if modelOptions == nil {
+				modelOptions = make(llm.ModelOptions)
+			}
+			modelOptions["reasoning_effort"] = effort
+		}
 	}
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{
@@ -1031,9 +1047,11 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	var visible tools.Source
 	opts = append(opts,
 		runner.WithSteerer(l.queue),
+		runner.WithModelIdentity(prov.Name(), model),
 		runner.WithPrompt(l.promptFunc(func() tools.Source { return visible })),
 		runner.WithResultTruncator(l.truncator),
 		runner.WithTemperature(temperature),
+		runner.WithModelOptions(modelOptions),
 	)
 	// Arm the auto-compactor only in auto mode. In manual mode the user
 	// compacts on demand (CompactNow builds its own compactor, so it still

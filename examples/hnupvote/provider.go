@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
@@ -54,21 +55,34 @@ func buildClient(ctx context.Context) (runner.Client, func(), error) {
 // .env; it's decrypted from ~/.zarlcode/state.db at request time and
 // refreshed automatically.
 func buildCodexClient(ctx context.Context) (runner.Client, func(), error) {
-	store, err := db.Open(ctx, "")
+	dir, err := db.DefaultDir()
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve state directory: %w", err)
+	}
+	store, err := db.Open(ctx, filepath.Join(dir, "state.db"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("open state.db: %w", err)
 	}
-	// Interactive demo: prompt to unlock a passphrase-protected vault (no-op
-	// when $ZARLCODE_KEY / $ZARLCODE_PASSPHRASE is set, or when no vault
-	// exists). Decrypting the stored Codex OAuth credential needs the real key.
-	v, err := vault.Open(vault.TerminalPassphrase)
+	// Database protection policy controls whether this interactive demo prompts.
+	svc := prefs.NewService(store, nil, "")
+	hasProtectedRows, err := svc.HasVaultBackedKeys(ctx)
 	if err != nil {
 		_ = store.Close()
-		return nil, nil, fmt.Errorf("open vault: %w", err)
+		return nil, nil, err
 	}
-	// Global scope (wsRoot="") — the codex OAuth credential is stored
-	// global, so GetKeyEffective resolves it without a workspace.
-	svc := prefs.NewService(store, v, "")
+	mode, err := svc.CredentialProtection(ctx)
+	if err != nil {
+		_ = store.Close()
+		return nil, nil, fmt.Errorf("read credential protection: %w", err)
+	}
+	if hasProtectedRows || mode == prefs.CredentialProtectionPassphrase {
+		v, err := vault.Open(dir, vault.TerminalPassphrase)
+		if err != nil {
+			_ = store.Close()
+			return nil, nil, fmt.Errorf("open vault: %w", err)
+		}
+		svc.SetVault(v)
+	}
 	tokens := codex.NewTokenSource(svc)
 
 	opts := []options.Option[openaicodex.Provider]{

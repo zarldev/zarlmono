@@ -51,6 +51,13 @@ func costForAdapter(at AdapterType, model string) (float64, float64, bool) {
 	}
 }
 
+func adjustCostForPrompt(at AdapterType, model string, promptTokens int, input, output float64) (float64, float64) {
+	if at == AdapterTypes.OPENAICOMPATIBLE {
+		return openai.AdjustCostPer1kForPrompt(model, promptTokens, input, output)
+	}
+	return input, output
+}
+
 // Capabilities reports what a (provider, model) supports — used to gate UI
 // affordances (a thinking toggle, image attach) on what the model can
 // actually do. Unknown providers/models return the zero value (nothing
@@ -128,6 +135,35 @@ func (r *ProviderRegistry) ResolveCost(ctx context.Context, name, model string) 
 	}
 	// 3. Static per-package table.
 	return costForAdapter(def.AdapterType, model)
+}
+
+// ResolveCostForPrompt resolves the effective per-1k rates for one request,
+// including provider-specific prompt-length pricing tiers. Explicit provider
+// price overrides remain authoritative and are not multiplied.
+func (r *ProviderRegistry) ResolveCostForPrompt(ctx context.Context, name, model string, promptTokens int) (float64, float64, bool) {
+	if r.IsLocal(name) {
+		return 0, 0, false
+	}
+	def, err := r.Parse(name)
+	if err != nil {
+		return 0, 0, false
+	}
+	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
+		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
+	}
+	if r.modelsDevSource != nil {
+		if entry, ok := r.modelsDevSource.Lookup(ctx, name, model); ok && (entry.InputCostPerMTok > 0 || entry.OutputCostPerMTok > 0) {
+			input, output := entry.InputCostPerMTok/1000, entry.OutputCostPerMTok/1000
+			input, output = adjustCostForPrompt(def.AdapterType, model, promptTokens, input, output)
+			return input, output, true
+		}
+	}
+	input, output, ok := costForAdapter(def.AdapterType, model)
+	if !ok {
+		return 0, 0, false
+	}
+	input, output = adjustCostForPrompt(def.AdapterType, model, promptTokens, input, output)
+	return input, output, true
 }
 
 // ResolveCostCached resolves pricing from explicit overrides, the process-local
@@ -233,11 +269,12 @@ type CostEstimate struct {
 	Reason     string
 }
 
-// EstimateCost estimates the cost for usage using ResolveCost's provider/model
-// rate resolution. ok=false means the provider/model has no metered token rate
-// known to the registry (local, subscription, unknown, or unavailable).
+// EstimateCost estimates the cost for one request using effective provider/model
+// rates, including prompt-length tiers. ok=false means the provider/model has no
+// metered token rate known to the registry (local, subscription, unknown, or
+// unavailable).
 func (r *ProviderRegistry) EstimateCost(ctx context.Context, provider, model string, usage llm.Usage) (CostEstimate, bool) {
-	inPer1K, outPer1K, ok := r.ResolveCost(ctx, provider, model)
+	inPer1K, outPer1K, ok := r.ResolveCostForPrompt(ctx, provider, model, usage.PromptTokens)
 	if !ok {
 		return CostEstimate{Incomplete: true, Reason: "unknown_or_unmetered"}, false
 	}

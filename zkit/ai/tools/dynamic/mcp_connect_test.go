@@ -109,6 +109,38 @@ func TestMCPConnectValidatesDiscoveredTools(t *testing.T) {
 	}
 }
 
+func TestMCPRegistryCapsConnectionsBeforeTransport(t *testing.T) {
+	server := buildMCPDiscoveryServer(t)
+	mcpReg := dynamic.NewMCPRegistry(tools.NewRegistry(), nil)
+	t.Cleanup(func() { _ = mcpReg.CloseAll() })
+	connect := dynamic.NewMCPConnect(mcpReg)
+
+	for i := range 8 {
+		result, err := connect.Execute(t.Context(), tools.ToolCall{
+			ID: "connect",
+			Arguments: tools.ToolParameters{
+				"name": fmt.Sprintf("conn%d", i), "transport": "stdio", "command": server, "args": []string{"0"},
+			},
+		})
+		if err != nil || !result.Success {
+			t.Fatalf("connect %d: result=%+v err=%v", i, result, err)
+		}
+	}
+
+	result, err := connect.Execute(t.Context(), tools.ToolCall{
+		ID: "connect",
+		Arguments: tools.ToolParameters{
+			"name": "overflow", "transport": "stdio", "command": filepath.Join(t.TempDir(), "does-not-exist"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("overflow Execute: %v", err)
+	}
+	if result.Success || !strings.Contains(result.Error, "connection limit (8) reached") {
+		t.Fatalf("overflow result = %+v, want connection-limit rejection before transport", result)
+	}
+}
+
 func TestMCPRegistryConnectPolicyRunsBeforeTransport(t *testing.T) {
 	t.Parallel()
 	mcpReg := dynamic.NewMCPRegistry(tools.NewRegistry(), nil)

@@ -2,7 +2,6 @@ package backends
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -20,18 +19,14 @@ import (
 // ProviderDefinition is the public shape the registry surfaces to
 // callers: the merged set of built-in + DB-backed providers.
 type ProviderDefinition struct {
-	Name        string
-	DisplayName string
-	AdapterType AdapterType
-	BaseURL     string
-	// BaseURLEnv is the env var that overrides BaseURL at resolution
-	// time (e.g. LLAMACPP_BASE_URL). Empty for providers whose endpoint
-	// is fixed by the SDK or pinned in BaseURL. Built-ins only — custom
-	// DB-backed providers carry their absolute URL in BaseURL.
-	BaseURLEnv    string
-	DefaultModel  string
-	SeedModels    []string
-	EnvAPIKeyVars []string // e.g. ["OPENAI_API_KEY"]
+	Name         string
+	DisplayName  string
+	AdapterType  AdapterType
+	BaseURL      string
+	DefaultModel string
+	SeedModels   []string
+	// APIKeyRequired marks hosted built-ins that need an explicitly supplied key.
+	APIKeyRequired bool
 	// ReasoningHistory is how this provider echoes prior-turn assistant
 	// reasoning back in request history. The zero value is INLINE (today's
 	// default); thinking models added as custom providers (Moonshot/Kimi)
@@ -54,28 +49,20 @@ type ProviderDefinition struct {
 	Enabled           bool
 }
 
-// RequiresKey reports whether this provider declares env-var sources for
-// its API key (the hosted built-ins do; local backends like llamacpp and
-// ollama don't). It drives the env-var fallback chain and the keyless
-// build placeholder — NOT whether the provider authenticates at all. Use
-// UsesAPIKey for that.
+// RequiresKey reports whether a hosted built-in requires an API key rather than
+// the keyless placeholder used by local adapters. UsesAPIKey controls UI fields.
 func (d ProviderDefinition) RequiresKey() bool {
-	return len(d.EnvAPIKeyVars) > 0
+	return d.APIKeyRequired
 }
 
-// UsesAPIKey reports whether a key field should be offered for this
-// provider in the UI. Built-ins signal it by declaring env-var sources;
-// DB-backed custom providers are hosted endpoints assumed to take a key
-// (they declare no env vars, so RequiresKey alone would hide the field).
-// Local built-ins (llamacpp/ollama) and OAuth backends are neither, so
-// they report false.
+// UsesAPIKey reports whether the UI should offer a key field. Hosted built-ins
+// and custom endpoints do; local built-ins and OAuth providers do not.
 func (d ProviderDefinition) UsesAPIKey() bool {
 	return d.RequiresKey() || !d.Builtin
 }
 
-// DefaultBuiltinName is the provider the shell falls back to when
-// LLM_PROVIDER is unset — the local llama.cpp server. The goenums enum
-// value is the source of truth; call .String() for the wire/DB name.
+// DefaultBuiltinName is the provider used when no provider is configured.
+// The generated enum is the source of truth for its wire/DB name.
 var DefaultBuiltinName = llm.LLMProviders.LLAMACPP
 
 // Built-in providers that callers branch on (OAuth construction, codex
@@ -88,10 +75,8 @@ var (
 	NameOllama      = llm.LLMProviders.OLLAMA
 )
 
-// Builtin returns the built-in ProviderDefinition for name from the
-// pure, DB-free catalogue. The env-bootstrap path (loadConfig) uses
-// this to resolve a provider before the registry/DB exist. ok=false
-// for unknown names.
+// Builtin returns a provider from the pure, DB-free catalogue. It returns false
+// for unknown names and does not resolve credentials or application settings.
 func Builtin(name string) (ProviderDefinition, bool) {
 	for _, d := range BuiltinDefinitions() {
 		if d.Name == name {
@@ -99,21 +84,6 @@ func Builtin(name string) (ProviderDefinition, bool) {
 		}
 	}
 	return ProviderDefinition{}, false
-}
-
-// EnvAPIKey resolves a provider's API key from the environment only —
-// its declared EnvAPIKeyVars first, then the generic LLM_API_KEY. No
-// vault read, so it is safe during bootstrap before the vault opens.
-// Unknown / local providers fall straight through to LLM_API_KEY.
-func EnvAPIKey(name string) string {
-	if d, ok := Builtin(name); ok {
-		for _, v := range d.EnvAPIKeyVars {
-			if k := os.Getenv(v); k != "" {
-				return k
-			}
-		}
-	}
-	return os.Getenv("LLM_API_KEY")
 }
 
 // defaultGeminiModel is the shared default for both Google surfaces —
@@ -133,50 +103,46 @@ func BuiltinDefinitions() []ProviderDefinition {
 			BaseURL:      "https://api.openai.com/v1",
 			DefaultModel: "gpt-4o-mini",
 			SeedModels: []string{
+				"gpt-6-astra",
 				"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 				"gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
 				"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini",
 				"o1", "o1-mini", "o3-mini",
 			},
-			EnvAPIKeyVars: []string{"OPENAI_API_KEY"},
-			Builtin:       true,
-			Enabled:       true,
+			APIKeyRequired: true,
+			Builtin:        true,
+			Enabled:        true,
 		},
 		{
-			Name:          "deepseek",
-			DisplayName:   "DeepSeek",
-			AdapterType:   AdapterTypes.DEEPSEEKCOMPATIBLE,
-			BaseURL:       deepseek.DefaultBaseURL,
-			BaseURLEnv:    "DEEPSEEK_BASE_URL",
-			DefaultModel:  "deepseek-chat",
-			SeedModels:    []string{"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"},
-			EnvAPIKeyVars: []string{"DEEPSEEK_API_KEY"},
-			Builtin:       true,
-			Enabled:       true,
+			Name:           "deepseek",
+			DisplayName:    "DeepSeek",
+			AdapterType:    AdapterTypes.DEEPSEEKCOMPATIBLE,
+			BaseURL:        deepseek.DefaultBaseURL,
+			DefaultModel:   "deepseek-chat",
+			SeedModels:     []string{"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"},
+			APIKeyRequired: true,
+			Builtin:        true,
+			Enabled:        true,
 		},
 		{
-			Name:          DefaultBuiltinName.String(),
-			DisplayName:   "llama.cpp",
-			AdapterType:   AdapterTypes.OPENAICOMPATIBLE,
-			BaseURL:       llamacpp.DefaultBaseURL,
-			BaseURLEnv:    "LLAMACPP_BASE_URL",
-			DefaultModel:  "",
-			SeedModels:    nil,
-			EnvAPIKeyVars: nil,
-			Builtin:       true,
-			Enabled:       true,
+			Name:         DefaultBuiltinName.String(),
+			DisplayName:  "llama.cpp",
+			AdapterType:  AdapterTypes.OPENAICOMPATIBLE,
+			BaseURL:      llamacpp.DefaultBaseURL,
+			DefaultModel: "",
+			SeedModels:   nil,
+			Builtin:      true,
+			Enabled:      true,
 		},
 		{
-			Name:          NameOllama.String(),
-			DisplayName:   "Ollama",
-			AdapterType:   AdapterTypes.OPENAICOMPATIBLE,
-			BaseURL:       ollama.DefaultBaseURL,
-			BaseURLEnv:    "OLLAMA_BASE_URL",
-			DefaultModel:  "",
-			SeedModels:    nil,
-			EnvAPIKeyVars: nil,
-			Builtin:       true,
-			Enabled:       true,
+			Name:         NameOllama.String(),
+			DisplayName:  "Ollama",
+			AdapterType:  AdapterTypes.OPENAICOMPATIBLE,
+			BaseURL:      ollama.DefaultBaseURL,
+			DefaultModel: "",
+			SeedModels:   nil,
+			Builtin:      true,
+			Enabled:      true,
 		},
 		{
 			Name:         "anthropic",
@@ -189,9 +155,9 @@ func BuiltinDefinitions() []ProviderDefinition {
 				"claude-sonnet-4-6", "claude-sonnet-4-5",
 				"claude-haiku-4-5",
 			},
-			EnvAPIKeyVars: []string{"ANTHROPIC_API_KEY"},
-			Builtin:       true,
-			Enabled:       true,
+			APIKeyRequired: true,
+			Builtin:        true,
+			Enabled:        true,
 		},
 		{
 			Name:         "gemini",
@@ -204,9 +170,9 @@ func BuiltinDefinitions() []ProviderDefinition {
 				"gemini-2.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite",
 				"gemini-1.5-pro", "gemini-1.5-flash",
 			},
-			EnvAPIKeyVars: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
-			Builtin:       true,
-			Enabled:       true,
+			APIKeyRequired: true,
+			Builtin:        true,
+			Enabled:        true,
 		},
 		{
 			Name:         "google-vertex",
@@ -222,9 +188,8 @@ func BuiltinDefinitions() []ProviderDefinition {
 			// Default Credentials, with project/location from the
 			// GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION environment
 			// (the GCP-native convention — anyone using Vertex has them).
-			EnvAPIKeyVars: nil,
-			Builtin:       true,
-			Enabled:       true,
+			Builtin: true,
+			Enabled: true,
 		},
 		{
 			Name:         "openai-codex",
@@ -236,10 +201,9 @@ func BuiltinDefinitions() []ProviderDefinition {
 			// clients, but the generic registry has no OAuth TokenSource. The
 			// picker falls back to these presets; zarlcode's Settings layer uses
 			// openaicodex.FetchContextWindow for the live context-window cap.
-			SeedModels:    openAICodexSeedModelIDs(),
-			EnvAPIKeyVars: nil, // OAuth-backed — key resolution is different
-			Builtin:       true,
-			Enabled:       true,
+			SeedModels: openAICodexSeedModelIDs(),
+			Builtin:    true,
+			Enabled:    true,
 		},
 		{
 			Name:         "claude-code",
@@ -249,10 +213,9 @@ func BuiltinDefinitions() []ProviderDefinition {
 			DefaultModel: "",
 			// OAuth-backed; the generic registry has no TokenSource, so surface
 			// the package's preset catalogue or the picker shows an empty list.
-			SeedModels:    claudecode.ListPresetModels(),
-			EnvAPIKeyVars: nil, // OAuth-backed — key resolution is different
-			Builtin:       true,
-			Enabled:       true,
+			SeedModels: claudecode.ListPresetModels(),
+			Builtin:    true,
+			Enabled:    true,
 		},
 	}
 }

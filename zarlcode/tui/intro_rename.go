@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/zarldev/zarlmono/zkit/db"
 )
 
 type introSessionRenamedMsg struct {
@@ -21,6 +24,17 @@ type introSessionPinnedMsg struct {
 	PinnedAt time.Time
 }
 
+func ensureSessionWorkspace(ctx context.Context, store *db.Store, id, workspace string) error {
+	record, err := store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if record.Workspace != workspace {
+		return fmt.Errorf("session %q belongs to workspace %q", id, record.Workspace)
+	}
+	return nil
+}
+
 type introSessionPinFailedMsg struct{ Error string }
 
 type introSessionRenameFailedMsg struct{ Error string }
@@ -32,7 +46,11 @@ func (m *UI) renameIntroSession(id, label string) tea.Cmd {
 	}
 	store := m.settings.Store
 	ctx := m.appContext()
+	workspace := m.settings.WorkspaceRoot()
 	return func() tea.Msg {
+		if err := ensureSessionWorkspace(ctx, store, id, workspace); err != nil {
+			return introSessionRenameFailedMsg{Error: err.Error()}
+		}
 		if err := store.RenameSession(ctx, id, label); err != nil {
 			return introSessionRenameFailedMsg{Error: err.Error()}
 		}
@@ -46,8 +64,13 @@ func (m *UI) deleteIntroSession(id string) tea.Cmd {
 	}
 	store := m.settings.Store
 	ctx := m.appContext()
+	settings := m.settings
+	workspace := settings.WorkspaceRoot()
 	return func() tea.Msg {
-		if err := store.DeleteSession(ctx, id); err != nil {
+		if err := ensureSessionWorkspace(ctx, store, id, workspace); err != nil {
+			return introSessionDeleteFailedMsg{Error: err.Error()}
+		}
+		if err := clearPersistedSession(ctx, settings, id); err != nil {
 			return introSessionDeleteFailedMsg{Error: err.Error()}
 		}
 		return introSessionDeletedMsg{ID: id}
@@ -64,7 +87,11 @@ func (m *UI) setIntroSessionPinned(id string, pinned bool) tea.Cmd {
 	}
 	store := m.settings.Store
 	ctx := m.appContext()
+	workspace := m.settings.WorkspaceRoot()
 	return func() tea.Msg {
+		if err := ensureSessionWorkspace(ctx, store, id, workspace); err != nil {
+			return introSessionPinFailedMsg{Error: err.Error()}
+		}
 		if err := store.SetSessionPinned(ctx, id, pinned, pinnedAt); err != nil {
 			return introSessionPinFailedMsg{Error: err.Error()}
 		}

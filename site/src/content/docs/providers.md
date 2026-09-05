@@ -39,24 +39,26 @@ p, err := llamacpp.NewProvider(llamacpp.WithBaseURL("http://127.0.0.1:8081"))
 
 Hand-rolled `switch name { case "openai": … }` blocks rot. The
 `backends` package owns the closed set of provider definitions —
-canonical name, constructor, API-key env vars, seed model IDs, live
+canonical name, constructor, API-key requirements, seed model IDs, live
 model-list fetcher, context-window and cost metadata — and builds
 providers from names:
 
 ```go
-reg := backends.NewRegistry() // builtins, env-var keys — the zero-dep config
+reg := backends.NewRegistry() // builtins with explicitly supplied configuration
 p, err := reg.BuildWithConfig(ctx, "anthropic", backends.BuildConfig{
 	Model: "claude-sonnet-4-6",
+	APIKey: configuredAPIKey,
 })
 ```
 
-Key resolution walks vault → provider env vars (`OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`, …) → generic `LLM_API_KEY`. Applications layer
-persistence on top with options: `WithStore` adds user-defined
-providers from your storage, `WithSettingsService` adds vault-backed
-key lookup, `WithProviderDefinitions` replaces the builtin seed set.
-Local backends (llamacpp, ollama) declare no key requirement and
-never inherit an unrelated `LLM_API_KEY`.
+Credentials come from an explicit `BuildConfig.APIKey`, then the credential
+source supplied through `WithSettingsService`. There are no environment-variable
+fallbacks for API keys or provider URLs. Zarlcode supplies its database-backed
+preference service; protected credentials require an explicitly unlocked vault.
+
+`WithStore` adds user-defined providers from your storage;
+`WithProviderDefinitions` replaces the builtin seed set. Local backends
+(llamacpp, ollama) declare no key requirement.
 
 If you find yourself writing a name→constructor switch outside this
 package, the registry already does it.

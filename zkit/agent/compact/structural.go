@@ -88,7 +88,7 @@ func (s Structural) Compact(_ context.Context, history []llm.Message, keepRecent
 	}
 	if len(history) <= keepRecent {
 		return Result{
-			History: append([]llm.Message{}, history...),
+			History: llm.CloneMessages(history),
 			Engine:  EngineStructural,
 		}, nil
 	}
@@ -98,11 +98,12 @@ func (s Structural) Compact(_ context.Context, history []llm.Message, keepRecent
 	var trimmedBytes int
 	out := make([]llm.Message, 0, len(older)+len(recent))
 	for _, msg := range older {
+		msg = msg.Clone()
 		trimmed, saved := s.structuralTrim(msg)
 		out = append(out, trimmed)
 		trimmedBytes += saved
 	}
-	out = append(out, recent...)
+	out = append(out, llm.CloneMessages(recent)...)
 
 	var warning string
 	if trimmedBytes == 0 {
