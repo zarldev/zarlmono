@@ -8,9 +8,10 @@ import (
 	"math"
 	"time"
 
+	"google.golang.org/genai"
+
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/options"
-	"google.golang.org/genai"
 )
 
 // defaultModel is the model both constructors fall back to when

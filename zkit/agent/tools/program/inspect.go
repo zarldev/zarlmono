@@ -3,8 +3,9 @@ package program
 import (
 	"fmt"
 
-	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"go.starlark.net/syntax"
+
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
 // InspectedCall is a statically discovered program call site.

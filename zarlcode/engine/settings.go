@@ -15,13 +15,10 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
-	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/db"
-	"github.com/zarldev/zarlmono/zkit/oauth/codex"
 	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
@@ -81,70 +78,57 @@ func (r providerKeyResolver) GetKey(ctx context.Context, provider string) (strin
 // "unavailable" rather than blocking startup. A failed store IS fatal —
 // without it there's nowhere to read configuration from.
 //
-// passphrase supplies unlock input when database settings or existing encrypted
-// rows require a vault. It may be nil for non-interactive callers; protected
-// credentials then remain locked, while plaintext credentials stay available.
-// When the vault opens with a legacy master.key, stored credentials migrate to
+// passphrase is the interactive passphrase prompt; it may be nil for callers
+// that rely on $ZARLCODE_KEY / $ZARLCODE_PASSPHRASE (headless / eval), or
+// when no vault exists yet (a fresh install isn't prompted). When the vault
+// opens with a legacy master.key still present, its credentials are migrated to
 // the passphrase-derived key here, once, transparently.
 func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.PassphraseFunc) (*Settings, error) {
-	dir, err := db.DefaultDir()
-	if err != nil {
-		return nil, fmt.Errorf("resolve state directory: %w", err)
-	}
-	store, err := db.Open(ctx, filepath.Join(dir, "state.db"))
+	store, err := db.Open(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("open state.db: %w", err)
 	}
-	probe := prefs.NewService(store, nil, wsRoot)
-	hasVaultRows, err := probe.HasVaultBackedKeys(ctx)
+	svc := prefs.NewService(store, nil, wsRoot)
+	hasRows, err := svc.HasVaultBackedKeys(ctx)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	mode, err := probe.CredentialProtection(ctx)
+	mode, err := svc.CredentialProtection(ctx)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	shouldOpenVault := hasVaultRows || mode == prefs.CredentialProtectionPassphrase
 	var v *vault.Vault
-	if shouldOpenVault {
-		var verr error
-		v, verr = vault.Open(dir, passphrase)
-		if verr != nil {
-			// ErrUninitialised / ErrLocked are the expected "no usable vault"
-			// signals; plaintext credentials still work. Encrypted rows surface as
-			// ErrCredentialsLocked from the credential service.
-			slog.WarnContext(ctx, "vault unavailable; encrypted credentials locked", "err", verr)
+	if hasRows || mode == prefs.CredentialProtectionPassphrase {
+		dir, derr := db.DefaultDir()
+		if derr != nil {
+			_ = store.Close()
+			return nil, derr
+		}
+		v, err = vault.Open(dir, passphrase)
+		if err != nil {
+			slog.WarnContext(ctx, "vault unavailable; encrypted credentials locked", "err", err)
 			v = nil
 		}
 	}
-	src := newModelsDevSource()
-	s := NewSettings(store, v, src, wsRoot)
+	s := NewSettings(store, v, newModelsDevSource(), wsRoot)
 	if err := s.Registry.Reload(ctx); err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("reload provider registry: %w", err)
 	}
 	s.ownsStore = true
-	if n, derr := s.Svc.MigrateCredentialProtection(ctx); derr != nil {
-		if errors.Is(derr, prefs.ErrCredentialsLocked) {
-			// A non-interactive process can still use ordinary settings while
-			// legacy encrypted credentials remain locked. A later interactive
-			// startup can unlock and complete the atomic migration.
-			slog.WarnContext(ctx, "legacy credential migration deferred; credentials locked")
-		} else {
-			_ = store.Close()
-			return nil, fmt.Errorf("migrate credential protection: %w", derr)
-		}
-	} else if n > 0 {
-		slog.InfoContext(ctx, "disabled legacy credential protection; decrypted stored credentials", "count", n)
-	}
 	if v != nil {
 		if n, merr := s.Svc.MigrateVaultKeys(ctx); merr != nil {
-			slog.WarnContext(ctx, "vault key migration incomplete", "migrated", n, "err", merr)
+			slog.WarnContext(ctx, "vault key migration incomplete", "err", merr)
 		} else if n > 0 {
-			slog.InfoContext(ctx, "migrated credentials to passphrase-derived key", "count", n)
+			slog.InfoContext(ctx, "migrated credentials", "count", n)
 		}
+	}
+	if n, merr := s.Svc.MigrateCredentialProtection(ctx); merr != nil {
+		slog.WarnContext(ctx, "credential migration deferred", "err", merr)
+	} else if n > 0 {
+		slog.InfoContext(ctx, "migrated credentials", "count", n)
 	}
 	s.startModelsDevWarm(ctx)
 	return s, nil
@@ -383,55 +367,6 @@ func (s *Settings) Temperature(ctx context.Context) float32 {
 	return float32(f)
 }
 
-// TextVerbosity resolves a supported request-level text verbosity for target.
-// Unsupported targets and invalid persisted values return empty so callers
-// never send a setting the active adapter cannot honor.
-func (s *Settings) TextVerbosity(ctx context.Context, target ProviderSpec) string {
-	if !SupportsTextVerbosity(target) {
-		return ""
-	}
-	verbosity := strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyTextVerbosity, "")))
-	switch verbosity {
-	case "low", "medium", "high":
-		return verbosity
-	default:
-		return ""
-	}
-}
-
-// CodexEffort resolves the persisted Codex effort only when the selected model
-// supports it. The persisted value is left untouched for compatibility with a
-// later model switch.
-func (s *Settings) CodexEffort(ctx context.Context, target ProviderSpec) string {
-	return validCodexEffort(target, s.setting(ctx, prefs.KeyCodexEffort, ""))
-}
-
-func validCodexEffort(target ProviderSpec, raw string) string {
-	id, _ := llm.ParseLLMProvider(target.Name)
-	if id != backends.NameOpenAICodex {
-		return ""
-	}
-	effort := strings.ToLower(strings.TrimSpace(raw))
-	for _, supported := range openaicodex.EffortVariants(target.Model) {
-		if effort == supported {
-			return effort
-		}
-	}
-	return ""
-}
-
-// SupportsTextVerbosity reports the deliberately narrow adapter/model surface
-// that currently maps text_verbosity onto the wire.
-func SupportsTextVerbosity(target ProviderSpec) bool {
-	id, _ := llm.ParseLLMProvider(target.Name)
-	if id == backends.NameOpenAICodex {
-		return true
-	}
-	model := strings.ToLower(strings.TrimSpace(target.Model))
-	return id == llm.LLMProviders.OPENAI &&
-		(model == "gpt-6-astra" || model == "gpt-5.6" || strings.HasPrefix(model, "gpt-5.6-"))
-}
-
 // ToolResultMaxBytes resolves the per-tool-result byte cap before tail
 // truncation + spill, in bytes. Default 50 KB, matching the runner default.
 func (s *Settings) ToolResultMaxBytes(ctx context.Context) int {
@@ -518,8 +453,11 @@ func (s *Settings) Setting(ctx context.Context, key, def string) string {
 	return s.setting(ctx, key, def)
 }
 
-// SearxngURL resolves the database-backed endpoint or the conventional local
-// default. An unreachable endpoint fails the tool call rather than hiding it.
+// SearxngURL resolves the web_search tool's SearXNG endpoint, mirroring the
+// v1 precedence: the search_searxng_url setting (effective scope) → the
+// SEARXNG_URL env var → the conventional local default. Never empty, so
+// web_search is always wired; an unreachable endpoint fails the call with a
+// friendly error rather than hiding the tool.
 func (s *Settings) SearxngURL(ctx context.Context) string {
 	return s.setting(ctx, prefs.KeySearxngURL, DefaultSearxngURL)
 }
@@ -562,12 +500,6 @@ func (s *Settings) ChromeBinPath(ctx context.Context) string {
 	return strings.TrimSpace(s.setting(ctx, prefs.KeyChromeBinPath, ""))
 }
 
-// ComputerBrowserVisible resolves whether computer_act and computer_observe use
-// a visible Chrome window. Off by default.
-func (s *Settings) ComputerBrowserVisible(ctx context.Context) bool {
-	return s.setting(ctx, prefs.KeyComputerBrowserVisible, "off") == "on"
-}
-
 // Editor returns the configured external editor command (effective scope), or
 // "" when unset — the caller then falls back to $ZARLCODE_EDITOR / $VISUAL /
 // $EDITOR, then vi. The value may carry flags, e.g. "code -w".
@@ -587,321 +519,7 @@ func (s *Settings) TraceFile(ctx context.Context) string {
 	return strings.TrimSpace(s.setting(ctx, prefs.KeyTraceFile, ""))
 }
 
-// ActiveProvider resolves the selection from settings, falling back to the
-// caller's explicit defaults. BaseURL/APIKey apply only to that fallback provider
-// so its credentials cannot leak to a different provider selected in settings.
-func (s *Settings) ActiveProvider(ctx context.Context, fb ProviderSpec) ProviderSpec {
-	spec := ProviderSpec{
-		Name:        s.resolveProvider(ctx, fb.Name),
-		Model:       s.setting(ctx, prefs.KeyModel, fb.Model),
-		CodexEffort: s.setting(ctx, prefs.KeyCodexEffort, fb.CodexEffort),
-	}
-	spec.CodexEffort = validCodexEffort(spec, spec.CodexEffort)
-	if spec.Name == fb.Name {
-		spec.BaseURL = fb.BaseURL
-		spec.APIKey = fb.APIKey
-	}
-	return spec
-}
-
-// resolveProvider returns the configured provider, but refuses to let the
-// subprocess-spawning claude-code backend be a *default*: it's honoured only
-// when explicitly pinned to this workspace, never when merely inherited from
-// the global scope (e.g. carried over from the v1 shell on the shared
-// state.db). This stops zarlcode-v2 from auto-running the `claude` CLI on
-// launch just because v1 had it set; pick it for the workspace to use it.
-func (s *Settings) resolveProvider(ctx context.Context, def string) string {
-	if s == nil || s.Svc == nil {
-		return def
-	}
-	sv, err := s.Svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyProvider)
-	if err != nil || sv.Value == "" {
-		return def
-	}
-	if id, _ := llm.ParseLLMProvider(sv.Value); id == backends.NameClaudeCode && sv.Source != prefs.ScopeWorkspace {
-		slog.WarnContext(ctx, "ignoring inherited claude-code default; using local default — pin claude-code to this workspace to use it",
-			"default", def, "source", sv.Source.String())
-		return def
-	}
-	return sv.Value
-}
-
-// BuildActive resolves the active provider (settings over fb) and builds
-// it, covering every backend method (registry for API-key providers,
-// vault-backed token source for OAuth). Returns the built provider plus the
-// resolved spec so the caller can label the UI with the real model.
-func (s *Settings) BuildActive(ctx context.Context, fb ProviderSpec) (llm.Provider, ProviderSpec, error) {
-	spec := s.ActiveProvider(ctx, fb)
-	prov, err := BuildProvider(ctx, s.Registry, s.Svc, spec)
-	return prov, spec, err
-}
-
-// ContextWindow resolves the compaction budget for the active provider.
-// The ChatGPT-account Codex backend advertises model caps from /codex/models,
-// including auto_compact_token_limit. Prefer that live value when OAuth is
-// available; fall back to the registry's static table when the probe fails so
-// startup and provider switching never block on it.
-func (s *Settings) ContextWindow(ctx context.Context, spec ProviderSpec) int {
-	if id, _ := llm.ParseLLMProvider(spec.Name); s != nil && s.Svc != nil && id == backends.NameOpenAICodex {
-		if cw, err := openaicodex.FetchContextWindow(ctx, codex.NewTokenSource(s.Svc), spec.BaseURL, spec.Model); err == nil && cw > 0 {
-			return cw
-		}
-	}
-	if s == nil || s.Registry == nil {
-		return 0
-	}
-	return s.Registry.ResolveContextWindow(ctx, spec.Name, spec.BaseURL, spec.Model)
-}
-
-// ValidateCodexModel checks an OAuth Codex model against the account's live
-// catalogue. If a persisted model disappeared, it selects and persists the
-// first supported model so subsequent launches do not repeat the failure.
-// Other providers and catalogue probe failures leave the selection unchanged.
-func (s *Settings) ValidateCodexModel(ctx context.Context, spec ProviderSpec) (ProviderSpec, bool, error) {
-	if s == nil || s.Svc == nil {
-		return spec, false, nil
-	}
-	id, _ := llm.ParseLLMProvider(spec.Name)
-	if id != backends.NameOpenAICodex {
-		return spec, false, nil
-	}
-	models, err := openaicodex.FetchModels(ctx, codex.NewTokenSource(s.Svc), spec.BaseURL)
-	if err != nil {
-		return spec, false, err
-	}
-	for _, model := range models {
-		if strings.EqualFold(model.ID, spec.Model) {
-			return spec, false, nil
-		}
-	}
-	if len(models) == 0 {
-		return spec, false, errors.New("codex account returned no supported models")
-	}
-	spec.Model = models[0].ID
-	selection := prefs.ModelSelection{Provider: spec.Name, Model: spec.Model}
-	if err := s.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
-		return spec, false, fmt.Errorf("persist supported Codex model: %w", err)
-	}
-	return spec, true, nil
-}
-
-// Theme resolves the configured theme name, or def when unset.
-func (s *Settings) Theme(ctx context.Context, def string) string {
-	return s.setting(ctx, prefs.KeyTheme, def)
-}
-
-// CompactEngine resolves the chosen compaction engine, defaulting to tiered
-// (the quiet, no-LLM progressive trimmer) when unset.
-func (s *Settings) CompactEngine(ctx context.Context) string {
-	return s.setting(ctx, prefs.KeyCompactEngine, "tiered")
-}
-
-// CompactorProvider resolves the LLM target for the summary/executive
-// compaction engines. The compact_provider / compact_model settings win when
-// set (so daily work can run on a cheap model while briefings use a bigger
-// one); otherwise it reuses the active provider + model. A build failure
-// falls back to the active provider so a misconfigured override never breaks
-// compaction.
-func (s *Settings) CompactorProvider(ctx context.Context, active llm.Provider, activeModel string) (llm.Provider, string) {
-	cp := s.setting(ctx, prefs.KeyCompactProvider, "")
-	cm := s.setting(ctx, prefs.KeyCompactModel, "")
-	if cm == "" {
-		cm = activeModel
-	}
-	if cp == "" {
-		return active, cm // reuse the active backend, optional model override
-	}
-	prov, err := BuildProvider(ctx, s.Registry, s.Svc, ProviderSpec{Name: cp, Model: cm})
-	if err != nil || prov == nil {
-		return active, activeModel
-	}
-	return prov, cm
-}
-
-// DecomposeJudgeProvider resolves the LLM target for the decompose
-// guardrail's constrained-verdict judge. It returns nil while decompose_judge
-// is off (the default) — the guardrail keeps its deterministic advisory path.
-// When on, judge_provider / judge_model override the target the same way the
-// compact_* pair does (verdicts want a small fast model); both unset reuses
-// the active provider. A build failure falls back to the active provider so a
-// misconfigured override never silently disables a judge the user enabled.
-func (s *Settings) DecomposeJudgeProvider(ctx context.Context, active llm.Provider, activeSpec ProviderSpec) llm.Provider {
-	if s.setting(ctx, prefs.KeyDecomposeJudge, "off") != "on" {
-		return nil
-	}
-	jp := s.setting(ctx, prefs.KeyJudgeProvider, "")
-	jm := s.setting(ctx, prefs.KeyJudgeModel, "")
-	if jp == "" && jm == "" {
-		return active
-	}
-	spec := activeSpec // model-only override keeps the active backend's URL/key
-	if jp != "" {
-		spec = ProviderSpec{Name: jp}
-	}
-	spec.Model = jm
-	if jm == "" {
-		spec.Model = activeSpec.Model
-	}
-	prov, err := BuildProvider(ctx, s.Registry, s.Svc, spec)
-	if err != nil || prov == nil {
-		slog.WarnContext(ctx, "decompose judge override unbuildable; reusing active provider",
-			"judge_provider", jp, "judge_model", jm, "err", err)
-		return active
-	}
-	return prov
-}
-
-// VerifyLoop resolves the headless verified re-drive configuration: the
-// shell command that acts as the verification oracle (verify_tests) and the
-// attempt cap (verify_attempts; default 1 = single-shot, loop off). The
-// engine arms the loop only when the command is non-empty AND attempts > 1.
-func (s *Settings) VerifyLoop(ctx context.Context) (string, int) {
-	cmd := strings.TrimSpace(s.setting(ctx, prefs.KeyVerifyTests, ""))
-	attempts := s.intSetting(ctx, prefs.KeyVerifyAttempts, 1)
-	return cmd, attempts
-}
-
-// Limits is the resolved run-budget configuration. Zero-valued budget fields
-// resolve to runner defaults. SpawnMaxDepth defaults to one; the separate
-// SpawnEnabled capability gate controls whether spawning is available at all.
-type Limits struct {
-	ReserveTokens        int // compactor headroom held back from the window
-	MaxIterations        int // cap on the agent loop per turn
-	SpawnMaxIterations   int // cap on sub-agent loop per agent_spawn call; 0 = inherit parent
-	SpawnMaxDepth        int // sub-agent recursion ceiling; defaults to 1 when enabled
-	SpawnAwaitTimeout    int // seconds one agent_await blocks; non-positive uses the tool default
-	SpawnAwaitMaxTimeout int // maximum model-requested wait seconds; non-positive disables the ceiling
-}
-
-// Limits resolves the run-budget settings (effective scope).
-func (s *Settings) Limits(ctx context.Context) Limits {
-	return Limits{
-		ReserveTokens:        s.intSetting(ctx, prefs.KeyReserveTokens, 0),
-		MaxIterations:        s.intSetting(ctx, prefs.KeyMaxIterations, 0),
-		SpawnMaxIterations:   s.intSetting(ctx, prefs.KeySpawnMaxIterations, 0),
-		SpawnMaxDepth:        s.intSetting(ctx, prefs.KeySpawnMaxDepth, 1),
-		SpawnAwaitTimeout:    s.intSetting(ctx, prefs.KeySpawnAwaitTimeout, 30),
-		SpawnAwaitMaxTimeout: s.intSetting(ctx, prefs.KeySpawnAwaitMaxTimeout, 300),
-	}
-}
-
-// SpawnModeConfig is the resolved policy for one sub-agent work mode.
-type SpawnModeConfig struct {
-	DefaultAgent  string
-	DefaultTarget ProviderSpec
-	MaxIterations int
-}
-
-// SpawnModesConfig is the complete typed per-mode sub-agent policy. Explicit
-// fields make mode additions compile-visible instead of silently missing from
-// string-keyed maps.
-type SpawnModesConfig struct {
-	Explore   SpawnModeConfig
-	Verify    SpawnModeConfig
-	Implement SpawnModeConfig
-}
-
-// SpawnModes resolves named-agent defaults, direct provider/model defaults, and
-// per-mode child budgets while preserving the stable persisted preference keys.
-func (s *Settings) SpawnModes(ctx context.Context) SpawnModesConfig {
-	return SpawnModesConfig{
-		Explore: SpawnModeConfig{
-			DefaultAgent: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultExploreAgent, "")),
-			DefaultTarget: ProviderSpec{
-				Name:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultExploreProvider, "")),
-				Model: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultExploreModel, "")),
-			},
-			MaxIterations: s.intSetting(ctx, prefs.KeySpawnExploreMaxIterations, 0),
-		},
-		Verify: SpawnModeConfig{
-			DefaultAgent: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultVerifyAgent, "")),
-			DefaultTarget: ProviderSpec{
-				Name:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultVerifyProvider, "")),
-				Model: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultVerifyModel, "")),
-			},
-			MaxIterations: s.intSetting(ctx, prefs.KeySpawnVerifyMaxIterations, 0),
-		},
-		Implement: SpawnModeConfig{
-			DefaultAgent: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultImplementAgent, "")),
-			DefaultTarget: ProviderSpec{
-				Name:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultImplementProvider, "")),
-				Model: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultImplementModel, "")),
-			},
-			MaxIterations: s.intSetting(ctx, prefs.KeySpawnImplementMaxIterations, 0),
-		},
-	}
-}
-
-// SpawnMaxConcurrent resolves the simultaneous child cap. Zero is unbounded.
-func (s *Settings) SpawnMaxConcurrent(ctx context.Context) int {
-	return s.intSetting(ctx, prefs.KeySpawnMaxConcurrent, 0)
-}
-
-// SpawnFallback resolves unresolved agent routing: planner, parent, or error.
-func (s *Settings) SpawnFallback(ctx context.Context) string {
-	switch value := strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeySpawnFallback, "planner"))); value {
-	case "parent", "error":
-		return value
-	default:
-		return "planner"
-	}
-}
-
-// SpawnMaxRuntime resolves the maximum lifetime of each child task. Zero leaves
-// child runtime unbounded; Group.Close remains the owner shutdown path.
-func (s *Settings) SpawnMaxRuntime(ctx context.Context) time.Duration {
-	seconds := s.intSetting(ctx, prefs.KeySpawnMaxRuntime, 0)
-	if seconds <= 0 {
-		return 0
-	}
-	return time.Duration(seconds) * time.Second
-}
-
-// ProcessLimits resolves the background-process manager knobs (effective
-// scope), falling back to the built-in defaults when unset. Read once at
-// startup when the ProcessManager is constructed.
-func (s *Settings) ProcessLimits(ctx context.Context) (int, int) {
-	maxAlive := s.intSetting(ctx, prefs.KeyMaxAliveProcesses, defaultMaxAliveProcesses)
-	if maxAlive <= 0 {
-		maxAlive = defaultMaxAliveProcesses
-	}
-	bufferLines := s.intSetting(ctx, prefs.KeyProcessOutputBuffer, defaultProcessOutputBuffer)
-	if bufferLines <= 0 {
-		bufferLines = defaultProcessOutputBuffer
-	}
-	return maxAlive, bufferLines
-}
-
-const (
-	defaultMaxAliveProcesses   = 16
-	defaultProcessOutputBuffer = 10000
-)
-
-// intSetting reads a setting as a non-negative int, returning def when unset
-// or unparseable (the settings pane validates on entry, but be defensive).
-func (s *Settings) intSetting(ctx context.Context, key string, def int) int {
-	v := s.setting(ctx, key, "")
-	if v == "" {
-		return def
-	}
-	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
-		return n
-	}
-	return def
-}
-
-// DefaultModelSelection returns the provider paired with its configured
-// default model. An empty model means the provider supplies its own runtime
-// model and the workspace model override must be absent.
-func (s *Settings) DefaultModelSelection(provider string) prefs.ModelSelection {
-	model := ""
-	if s != nil && s.Registry != nil {
-		if def, err := s.Registry.Parse(provider); err == nil {
-			model = def.DefaultModel
-			if model == "" && len(def.SeedModels) > 0 {
-				model = def.SeedModels[0]
-			}
-		}
-	}
-	return prefs.ModelSelection{Provider: provider, Model: model}
+// ComputerBrowserVisible resolves whether the browser runs visibly.
+func (s *Settings) ComputerBrowserVisible(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyComputerBrowserVisible, "off") == "on"
 }

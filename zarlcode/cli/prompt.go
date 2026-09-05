@@ -1,16 +1,19 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 )
 
-// ResolvePrompt loads the task prompt from whichever source the
-// invocation provided: --prompt-text wins when set, --prompt-file is
-// the SWE-bench-shaped form. Returning ("", nil) means the user
-// asked for no prompt — bail with the bad-invocation exit code.
+// ResolvePrompt loads a headless task prompt from either an inline value or a
+// file. Supplying both sources is an invocation error; an empty source resolves
+// to an empty prompt.
 func ResolvePrompt(promptFile, promptText string) (string, error) {
+	if promptFile != "" && strings.TrimSpace(promptText) != "" {
+		return "", errors.New("prompt-file and prompt-text are mutually exclusive")
+	}
 	if strings.TrimSpace(promptText) != "" {
 		return promptText, nil
 	}

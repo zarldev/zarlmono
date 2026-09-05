@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"google.golang.org/genai"
+
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
 func decodeBase64(s string) ([]byte, error) {

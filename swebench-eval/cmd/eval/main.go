@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zarldev/zarlmono/swebench-eval/db"
+	"github.com/zarldev/zarlmono/swebench-eval/evalconfig"
 	"github.com/zarldev/zarlmono/swebench-eval/harness"
 	"github.com/zarldev/zarlmono/swebench-eval/report"
 	"github.com/zarldev/zarlmono/swebench-eval/runner"
@@ -54,100 +55,40 @@ func main() {
 // close, ctx cancel) always runs: errors return up to main, which is the
 // single place that exits the process.
 func run() error {
-	tasksPath := flag.String("tasks", "", "path to SWE-bench JSONL or Parquet task file (required)")
-	driversFlag := flag.String("drivers", "zarlcode", "comma-separated list of drivers to run (zarlcode)")
-	ablationsFlag := flag.String("ablations", "", "comma-separated zarlcode guardrail-ablation arms, or \"all\" (baseline, no-shell, no-skill-hint, no-decompose, no-fanout, no-test-edit, no-improvement, judge); each arm runs as its own driver")
-	langFlag := flag.String("languages", "", "comma-separated language filter (empty = all)")
-	sampleN := flag.Int("sample", 0, "stratified sample size (0 = run all matching specs)")
-	envFile := flag.String("env", "", "path to .env loaded before provider construction (carries per-backend URL/key knobs)")
-	zarlcodeProvider := flag.String("zarlcode-provider", "", "pin zarlcode's backend (registry name: llamacpp, openai-codex, gemini, claude-code, …); empty = registry default (llamacpp)")
-	zarlcodeModel := flag.String("zarlcode-model", "", "pin zarlcode's model (e.g. gpt-5.5, qwen3.6-35b-a3b-mtp); empty = provider's default model")
-	zarlcodeCodexEffort := flag.String("zarlcode-codex-effort", "", "codex_reasoning_effort when provider is openai-codex (low/medium/high/xhigh/max)")
-	llamacppResetURL := flag.String("llamacpp-reset-url", "", "POSTed before each task to flush local llama-server's KV cache slot; e.g. http://localhost:8081/slots/0?action=erase (requires --slot-save-path on the server)")
-	allowRemoteResetURL := flag.Bool("allow-remote-reset-url", false, "permit a non-loopback --llamacpp-reset-url (default: loopback only, to avoid SSRF via a misconfigured URL)")
-	stateDB := flag.String("state-db", "", "path to zarlcode state.db — vault + custom-provider rows (empty = $HOME/.zarlcode/state.db)")
-	taskTimeout := flag.Duration("task-timeout", 5*time.Minute, "wall-clock budget per (task, driver)")
-	maxIter := flag.Int("max-iter", 0, "cap the agent loop's iterations (0 = loop default)")
-	toolConcurrency := flag.Int("tool-concurrency", 0, "cap concurrent tool dispatch per iteration (0 = sequential)")
-	contextWindow := flag.Int("context-window", 0, "compactor context-window size in tokens (0 = 32768)")
-	zarlcodeStreamIdle := flag.Duration("zarlcode-stream-idle", 0, "zarlcode stream-idle watchdog: gap between chunks before the stall detector fires (0 = coderunner default 90s); raise for slow-prefill local models")
-	zarlcodeIterationTimeout := flag.Duration("zarlcode-iteration-timeout", 0, "zarlcode per-iteration wall-clock backstop (0 = coderunner default 5m); raise for slow-prefill local models")
-	zarlcodeDeadlineGrace := flag.Duration("zarlcode-deadline-grace", 0, "time before the task deadline at which the wrap-up nudge fires (0 = disabled); give the model a last-chance to commit before the task-timeout cancels it")
-	zarlcodeVerifiedAttempts := flag.Int("zarlcode-verified-attempts", 0, "enable zarlcode harness re-drive with SWE-bench verifier; values >1 cap attempts, 0/1 = trust terminal reason")
-	zarlcodeVerifyWorkers := flag.Int("zarlcode-verify-workers", 1, "SWE-bench evaluator workers for per-attempt zarlcode verification")
-	zarlcodeVerifyWorkDir := flag.String("zarlcode-verify-workdir", "", "directory for per-attempt zarlcode verification logs (empty = tempdir per attempt)")
-	zarlcodeVerifyTimeout := flag.Duration("zarlcode-verify-timeout", 0, "per-attempt SWE-bench verifier timeout, independent of the agent task timeout (0 = 30m)")
-	zarlcodeThreadTranscript := flag.Bool("zarlcode-thread-transcript", false, "verified re-drives carry the full prior transcript (needs a large --context-window); default re-drives with verifier feedback only")
-	zarlcodeTranscriptDir := flag.String("zarlcode-transcript-dir", "", "persist each task's full agent transcript to <dir>/<instance_id>.json for post-hoc debugging (empty = disabled)")
-	concurrency := flag.Int("concurrency", 1, "parallel (task, driver) invocations")
-	worktreeDir := flag.String("worktree-dir", "", "where to materialize worktrees (empty = a fresh tempdir)")
-	cloneCache := flag.String("clone-cache", "", "optional --reference clone cache directory")
-	keepWorktrees := flag.Bool("keep-worktrees", false, "leave worktrees on disk after the run for post-hoc inspection")
-	score := flag.Bool("score", false, "after the harness loop, invoke SWE-bench's evaluator on each driver's diffs and report resolved/unresolved")
-	scoreDataset := flag.String("score-dataset", "SWE-bench/SWE-bench_Multilingual", "dataset name passed to the SWE-bench evaluator")
-	scoreWorkers := flag.Int("score-workers", 4, "SWE-bench evaluator --max_workers")
-	scoreWorkDir := flag.String("score-workdir", "", "directory for the evaluator's predictions + logs (empty = a fresh tempdir)")
-	scorePython := flag.String("score-python", "", "python interpreter that has the swebench package importable (empty = python3 on PATH; typical: a venv's bin/python)")
-	dbPath := flag.String("db", "", "path to swebench-eval sqlite (empty = $HOME/.zarlcode/swebench-eval.db)")
-	runID := flag.String("run-id", "", "explicit run id (empty = a generated uuid)")
-	runNotes := flag.String("run-notes", "", "free-form notes to attach to the run row — eg. 'after decompose advisory refactor'")
-	versionFlag := flag.Bool("version", false, "print the build version and exit")
-	flag.Parse()
-	if *versionFlag {
+	cfg, err := evalconfig.Parse(flag.CommandLine, os.Args[1:])
+	if err != nil {
+		return err
+	}
+	if cfg.Version {
 		fmt.Fprintln(os.Stdout, version.String())
 		return nil
 	}
 
-	if *tasksPath == "" {
+	if cfg.Input.Tasks == "" {
 		fmt.Fprintln(os.Stderr, "--tasks is required")
 		os.Exit(2)
 	}
 
-	specs, err := task.LoadAny(*tasksPath)
+	specs, err := task.LoadAny(cfg.Input.Tasks)
 	if err != nil {
 		log.Fatalf("load tasks: %v", err)
 	}
-	if *langFlag != "" {
-		langs := strings.Split(*langFlag, ",")
-		specs = task.FilterByLanguage(specs, langs...)
+	if languages := cfg.Input.LanguageFilter(); len(languages) > 0 {
+		specs = task.FilterByLanguage(specs, languages...)
 	}
-	if *sampleN > 0 {
-		specs = task.Sample(specs, *sampleN)
+	if cfg.Input.Sample > 0 {
+		specs = task.Sample(specs, cfg.Input.Sample)
 	}
 	if len(specs) == 0 {
 		fmt.Fprintln(os.Stderr, "no tasks matched the given filters")
 		os.Exit(2)
 	}
 
-	ablations, err := harness.AblationArms(*ablationsFlag)
+	ablations, err := cfg.Input.Ablations()
 	if err != nil {
 		return fmt.Errorf("--ablations: %w", err)
 	}
-	drivers, err := buildDrivers(driverBuildOpts{
-		spec:                *driversFlag,
-		ablations:           ablations,
-		envFile:             *envFile,
-		stateDB:             *stateDB,
-		maxIter:             *maxIter,
-		toolConcurrency:     *toolConcurrency,
-		contextWindow:       *contextWindow,
-		streamIdle:          *zarlcodeStreamIdle,
-		iterationTimeout:    *zarlcodeIterationTimeout,
-		deadlineGrace:       *zarlcodeDeadlineGrace,
-		provider:            *zarlcodeProvider,
-		model:               *zarlcodeModel,
-		codexEffort:         *zarlcodeCodexEffort,
-		llamacppResetURL:    *llamacppResetURL,
-		allowRemoteResetURL: *allowRemoteResetURL,
-		verifiedAttempts:    *zarlcodeVerifiedAttempts,
-		verifyDataset:       *scoreDataset,
-		verifyPython:        *scorePython,
-		verifyWorkers:       *zarlcodeVerifyWorkers,
-		verifyWorkDir:       *zarlcodeVerifyWorkDir,
-		verifyTimeout:       *zarlcodeVerifyTimeout,
-		threadTranscript:    *zarlcodeThreadTranscript,
-		transcriptDir:       *zarlcodeTranscriptDir,
-	})
+	drivers, err := buildDrivers(cfg, ablations)
 	if err != nil {
 		return fmt.Errorf("--drivers: %w", err)
 	}
@@ -160,7 +101,7 @@ func run() error {
 	// after the run.
 	defer closeDrivers(drivers)
 
-	parent := *worktreeDir
+	parent := cfg.Worktrees.Dir
 	if parent == "" {
 		parent = filepath.Join(os.TempDir(), fmt.Sprintf("swebench-eval-%d", time.Now().Unix()))
 	}
@@ -174,49 +115,49 @@ func run() error {
 	// Persist the run + results to ~/.zarlcode/swebench-eval.db so
 	// future comparisons (and the score-update step below) have a
 	// stable home.
-	store, err := db.Open(ctx, *dbPath)
+	store, err := db.Open(ctx, cfg.Persistence.DBPath)
 	if err != nil {
 		return fmt.Errorf("open swebench-eval db: %w", err)
 	}
 	defer store.Close()
 
-	if *runID == "" {
-		*runID = uuid.NewString()
+	if cfg.Persistence.RunID == "" {
+		cfg.Persistence.RunID = uuid.NewString()
 	}
 	startedAt := time.Now()
 	runRec := db.RunRecord{
-		ID:             *runID,
+		ID:             cfg.Persistence.RunID,
 		StartedAt:      startedAt,
-		DatasetName:    *scoreDataset,
-		LanguageFilter: *langFlag,
+		DatasetName:    cfg.Scoring.Dataset,
+		LanguageFilter: cfg.Input.Languages,
 		SampleSize:     len(specs),
-		Drivers:        *driversFlag,
-		TaskTimeoutMs:  taskTimeout.Milliseconds(),
-		Notes:          *runNotes,
+		Drivers:        cfg.Input.Drivers,
+		TaskTimeoutMs:  cfg.Execution.TaskTimeout.Milliseconds(),
+		Notes:          cfg.Persistence.Notes,
 	}
 	if err := store.InsertRun(ctx, runRec); err != nil {
 		return fmt.Errorf("persist run: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "swebench-eval: run_id=%s (sample=%d drivers=%s)\n",
-		*runID, len(specs), *driversFlag)
+		cfg.Persistence.RunID, len(specs), cfg.Input.Drivers)
 
 	// Per-task persistence: each (task, driver) result lands in
 	// eval_results as it finishes, not at end-of-run. Mid-run crash
 	// loses pending tasks but keeps completed ones — recoverable.
-	cfg := runner.Config{
+	runCfg := runner.Config{
 		Drivers:         drivers,
 		Specs:           specs,
 		WorktreeParent:  parent,
-		CloneCache:      *cloneCache,
-		TaskTimeout:     *taskTimeout,
-		TaskConcurrency: *concurrency,
-		KeepWorktrees:   *keepWorktrees,
+		CloneCache:      cfg.Worktrees.CloneCache,
+		TaskTimeout:     cfg.Execution.TaskTimeout,
+		TaskConcurrency: cfg.Execution.Concurrency,
+		KeepWorktrees:   cfg.Worktrees.Keep,
 		OnTaskComplete: func(rec runner.TaskResult) {
-			persistOneResult(ctx, store, *runID, rec)
+			persistOneResult(ctx, store, cfg.Persistence.RunID, rec)
 		},
 	}
 
-	results, err := runner.Run(ctx, cfg)
+	results, err := runner.Run(ctx, runCfg)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)
 	}
@@ -227,62 +168,33 @@ func run() error {
 	// but the row is idempotent enough — re-inserting the same key
 	// errors out and we log+continue.
 
-	if *score {
+	if cfg.Scoring.Enabled {
 		if scoreErr := runner.Score(ctx, &results, runner.ScoreConfig{
-			DatasetName: *scoreDataset,
-			MaxWorkers:  *scoreWorkers,
-			WorkDir:     *scoreWorkDir,
-			Python:      *scorePython,
+			DatasetName: cfg.Scoring.Dataset,
+			MaxWorkers:  cfg.Scoring.Workers,
+			WorkDir:     cfg.Scoring.WorkDir,
+			Python:      cfg.Scoring.Python,
 		}); scoreErr != nil {
 			fmt.Fprintln(os.Stderr, "score:", scoreErr)
 		} else {
-			persistResolved(ctx, store, *runID, results)
+			persistResolved(ctx, store, cfg.Persistence.RunID, results)
 		}
 	}
 
-	if err := store.FinishRun(ctx, *runID, time.Now()); err != nil {
+	if err := store.FinishRun(ctx, cfg.Persistence.RunID, time.Now()); err != nil {
 		fmt.Fprintln(os.Stderr, "finish run:", err)
 	}
 
 	report.Console(os.Stdout, results)
-	fmt.Fprintf(os.Stdout, "\nrun_id: %s\n", *runID)
+	fmt.Fprintf(os.Stdout, "\nrun_id: %s\n", cfg.Persistence.RunID)
 	return nil
-}
-
-// driverBuildOpts groups the (already-7-field, growing) parameters
-// the driver factories need. Adding a new flag → new field here,
-// flow through buildDrivers, no per-driver constructor surgery.
-type driverBuildOpts struct {
-	spec                string
-	ablations           []harness.Ablation
-	envFile             string
-	stateDB             string
-	maxIter             int
-	toolConcurrency     int
-	contextWindow       int
-	streamIdle          time.Duration
-	iterationTimeout    time.Duration
-	deadlineGrace       time.Duration
-	provider            string
-	model               string
-	codexEffort         string
-	llamacppResetURL    string
-	allowRemoteResetURL bool
-	verifiedAttempts    int
-	verifyDataset       string
-	verifyPython        string
-	verifyWorkers       int
-	verifyWorkDir       string
-	verifyTimeout       time.Duration
-	threadTranscript    bool
-	transcriptDir       string
 }
 
 // buildDrivers parses the --drivers flag and instantiates the named
 // adapters with shared per-driver config. Unknown names are rejected so a
 // typo cannot silently change the evaluation comparison set.
-func buildDrivers(o driverBuildOpts) ([]harness.Driver, error) {
-	names := strings.Split(o.spec, ",")
+func buildDrivers(cfg evalconfig.Config, ablations []harness.Ablation) ([]harness.Driver, error) {
+	names := strings.Split(cfg.Input.Drivers, ",")
 	out := make([]harness.Driver, 0, len(names))
 	for _, raw := range names {
 		name := strings.TrimSpace(raw)
@@ -292,34 +204,34 @@ func buildDrivers(o driverBuildOpts) ([]harness.Driver, error) {
 			// driver). Each arm carries its own provider handle; that's
 			// per-arm overhead on the shared state.db, accepted so an
 			// arm's judge can't share state with another arm's loop.
-			arms := o.ablations
+			arms := ablations
 			if len(arms) == 0 {
 				arms = []harness.Ablation{{}}
 			}
 			for _, arm := range arms {
 				out = append(out, &harness.ZarlcodeDriver{
 					Ablation:            arm,
-					EnvFile:             o.envFile,
-					StateDB:             o.stateDB,
-					MaxIter:             o.maxIter,
-					ToolConcurrency:     o.toolConcurrency,
-					ContextWindow:       o.contextWindow,
-					StreamIdle:          o.streamIdle,
-					IterationTimeout:    o.iterationTimeout,
-					DeadlineGrace:       o.deadlineGrace,
-					Provider:            o.provider,
-					Model:               o.model,
-					CodexEffort:         o.codexEffort,
-					LlamacppResetURL:    o.llamacppResetURL,
-					AllowRemoteResetURL: o.allowRemoteResetURL,
-					VerifiedAttempts:    o.verifiedAttempts,
-					VerifyDataset:       o.verifyDataset,
-					VerifyPython:        o.verifyPython,
-					VerifyWorkers:       o.verifyWorkers,
-					VerifyWorkDir:       o.verifyWorkDir,
-					VerifyTimeout:       o.verifyTimeout,
-					ThreadTranscript:    o.threadTranscript,
-					TranscriptDir:       o.transcriptDir,
+					EnvFile:             cfg.Zarlcode.EnvFile,
+					StateDB:             cfg.Zarlcode.StateDB,
+					MaxIter:             cfg.Zarlcode.MaxIter,
+					ToolConcurrency:     cfg.Zarlcode.ToolConcurrency,
+					ContextWindow:       cfg.Zarlcode.ContextWindow,
+					StreamIdle:          cfg.Zarlcode.StreamIdle,
+					IterationTimeout:    cfg.Zarlcode.IterationTimeout,
+					DeadlineGrace:       cfg.Zarlcode.DeadlineGrace,
+					Provider:            cfg.Zarlcode.Provider,
+					Model:               cfg.Zarlcode.Model,
+					CodexEffort:         cfg.Zarlcode.CodexEffort,
+					LlamacppResetURL:    cfg.Zarlcode.LlamacppResetURL,
+					AllowRemoteResetURL: cfg.Zarlcode.AllowRemoteResetURL,
+					VerifiedAttempts:    cfg.Zarlcode.VerifiedAttempts,
+					VerifyDataset:       cfg.Scoring.Dataset,
+					VerifyPython:        cfg.Scoring.Python,
+					VerifyWorkers:       cfg.Zarlcode.VerifyWorkers,
+					VerifyWorkDir:       cfg.Zarlcode.VerifyWorkDir,
+					VerifyTimeout:       cfg.Zarlcode.VerifyTimeout,
+					ThreadTranscript:    cfg.Zarlcode.ThreadTranscript,
+					TranscriptDir:       cfg.Zarlcode.TranscriptDir,
 				})
 			}
 		default:

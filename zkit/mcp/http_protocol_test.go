@@ -1,7 +1,6 @@
 package mcp_test
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +50,7 @@ func TestHTTPResponseRejectsTrailingOrOversizeBody(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := mcp.NewClient(server.URL, "")
 			t.Cleanup(func() { _ = client.Close() })
-			if _, err := client.Discover(context.Background()); err == nil {
+			if _, err := client.Discover(t.Context()); err == nil {
 				t.Fatal("Discover succeeded with an invalid complete response body")
 			}
 		})

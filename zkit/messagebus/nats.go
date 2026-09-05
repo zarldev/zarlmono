@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
@@ -339,6 +340,9 @@ func (b *NATSBus[T]) wrapHandler(subCtx context.Context, handler Handler[T]) nat
 			if len(v) > 0 {
 				headers[k] = v[0]
 			}
+		}
+		if msg.Reply != "" {
+			headers.Set("reply-to", msg.Reply)
 		}
 
 		var timestamp time.Time

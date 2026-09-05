@@ -15,6 +15,7 @@ tasks:
     desc: Run the complete module-isolated local pre-release gate
     cmds:
       - go test -count=1 ./tools/releasecheck/... ./tools/genformula/...
+      - task: dependency-pair
       - |
         for m in examples zkit zarlcode swebench-eval; do
           echo "==> isolated dependency check ($m)"
@@ -83,6 +84,12 @@ tasks:
     desc: Reject new same-package tests and Background contexts in tests
     cmds:
       - bash scripts/check-new-test-policy.sh "${TEST_POLICY_BASE:-HEAD}"
+
+  dependency-pair:
+    desc: Verify the validated Anthropic and JSON Schema dependency pair
+    cmds:
+      - bash scripts/check-anthropic-jsonschema-pair.sh
+
   check:
     desc: Build, vet, and test CI-covered Go modules
     cmds:
@@ -90,6 +97,7 @@ tasks:
       - task: vet
       - task: test
       - task: test-policy
+      - task: dependency-pair
 
   lint:
     desc: Run golangci-lint for CI-covered Go modules

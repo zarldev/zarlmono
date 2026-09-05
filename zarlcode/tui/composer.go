@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 )
 

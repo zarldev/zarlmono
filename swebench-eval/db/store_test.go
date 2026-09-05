@@ -8,8 +8,9 @@ import (
 	"time"
 
 	"github.com/pressly/goose/v3"
-	"github.com/zarldev/zarlmono/swebench-eval/db"
 	_ "modernc.org/sqlite"
+
+	"github.com/zarldev/zarlmono/swebench-eval/db"
 )
 
 func TestVerifyTelemetryMigratesExistingRows(t *testing.T) {

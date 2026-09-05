@@ -77,7 +77,7 @@ func Main() {
 	promptText := flag.String(
 		"prompt-text",
 		"",
-		"inline task prompt (for --headless; wins over --prompt-file when both set)",
+		"inline task prompt (for --headless; mutually exclusive with --prompt-file)",
 	)
 	promptProfileFlag := flag.String(
 		"prompt-profile",

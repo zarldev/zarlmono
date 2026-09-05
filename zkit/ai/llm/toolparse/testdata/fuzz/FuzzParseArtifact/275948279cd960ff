@@ -1,0 +1,2 @@
+go test fuzz v1
+string("\"tool_calls\"\"name\":\"0\"\"arguments\":0000")

@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zarldev/zarlmono/zkit/db"
 	_ "modernc.org/sqlite"
+
+	"github.com/zarldev/zarlmono/zkit/db"
 )
 
 func TestSessionTranscriptExposesFutureFormatVersion(t *testing.T) {
