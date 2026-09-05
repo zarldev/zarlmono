@@ -107,6 +107,9 @@ site/.astro/
 /agent-self-build
 /wallpaper.png
 
+# Homebrew formula is generated during release publishing
+/homebrew/zarlcode.rb
+
 /wordlists/
 
 dist
