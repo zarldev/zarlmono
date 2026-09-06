@@ -492,6 +492,33 @@ func TestAgentAwaitInfersSoleRunningTaskAmongCompletedTasks(t *testing.T) {
 	}
 }
 
+func TestAgentAwaitInfersSoleUnreadTerminalTask(t *testing.T) {
+	group := spawn.NewGroup()
+	t.Cleanup(func() { _ = group.Close(t.Context()) })
+	child := runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))
+	spawned, err := spawn.NewAsync(spawn.New(child), group).Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "finish"}})
+	if err != nil || !spawned.Success {
+		t.Fatalf("spawn = (%#v, %v)", spawned, err)
+	}
+	id := spawn.TaskID(spawned.Data.(map[string]any)["task_id"].(string))
+	terminal, err := group.Wait(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.State != spawn.AgentTaskStates.COMPLETED || terminal.Observed {
+		t.Fatalf("terminal snapshot = %#v, want unread COMPLETED task", terminal)
+	}
+
+	result, err := spawn.NewAwait(group).Execute(t.Context(), tools.ToolCall{ID: "await", Arguments: tools.ToolParameters{}})
+	if err != nil || !result.Success {
+		t.Fatalf("agent_await = (%#v, %v)", result, err)
+	}
+	data := result.Data.(map[string]any)
+	if data["task_id"] != string(id) || data["summary"] != "done" || data["observed"] != true {
+		t.Fatalf("agent_await data = %#v, want sole unread terminal result", data)
+	}
+}
+
 func TestAgentAwaitDoesNotTreatParentDeadlineAsPollingTimeout(t *testing.T) {
 	client := &blockingClient{started: make(chan struct{}), release: make(chan struct{})}
 	child := runner.New(client, runner.WithSink(runner.NopSink{}))
