@@ -7,20 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.19.0] — 2026-09-06
+
 ### Added
 
-- Added a searchable `Ctrl+K` command palette, session naming and Markdown export, one-key copying of the latest assistant response, and transcript visual selection with clipboard yanking.
-- Added durable composer drafts plus richer saved-session management with generated or manual names, search, pinning, rename, delete confirmation, and at-a-glance session metadata.
-- Added configurable completion and plan-progress terminal bells, and best-effort operating-system sleep inhibition while interactive or headless turns are active.
+- Added passphrase credential-protection controls with `keys protect status|on|off`, interactive unlock and migration flows, and fail-closed non-interactive startup.
+- Added runtime browser and environment controls, direct Agent activity access from the `Ctrl+K` palette, and OpenAI Codex `gpt-6-astra` model selection with low through max reasoning effort.
 
 ### Changed
 
-- Hardened module releases with shared semantic-version/changelog validation, isolated dependency checks, atomic annotated tags, deterministic archives/checksums, and exact Homebrew formula verification.
-- Aligned the root workspace, published modules, documentation, and release gate on Go 1.27.0 so the declared minimum and exact-toolchain validation cannot drift.
+- Strengthened transcript save, reopen, resume, export, crash recovery, conflict handling, and workspace ownership while preserving exact tool-result and nested sub-agent identity.
+- Persisted MCP endpoint, token, and authentication intent atomically, and reject connections when required authentication cannot be established.
+- Refined Settings into individually headed panes with clearer navigation, save feedback, provider/model editing, and credential state.
+- Hardened release validation and deterministic artifact, checksum, provenance, and Homebrew publication checks.
+- Pinned the standalone zarlcode module to `zkit/v0.19.0`.
 
 ### Fixed
 
-- Prevented no-op publish runs, duplicate or ambiguous publisher dispatches, workspace-contaminated release binaries, and archives with an invalid `dist/zarlcode` layout.
+- Prevented stalled sudo askpass socket I/O from blocking cancellation and shutdown.
+- Prevented tool output from crossing session boundaries, divergent transcript conflict retries, foreign-workspace recovery, and unsupported stored transcript or credential representations.
+
+### Migration notes
+
+- Back up `~/.zarlcode/state.db` together with `~/.zarlcode/master.kdf` before first launch if rollback or credential recovery may be required. Opening the database applies migrations `00027` and `00028`; older binaries require restoring the backup.
+- Passphrase protection is now the default. Existing plaintext credential rows remain unavailable until an interactive unlock migrates them atomically; headless startup never prompts and leaves protected credentials locked.
+- Legacy `master.key` vaults and version-1 encrypted credential rows are retained but unavailable until the affected credential is explicitly re-entered.
 
 ## [zkit/v0.19.0] — 2026-09-06
 
