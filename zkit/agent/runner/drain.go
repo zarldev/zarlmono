@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -67,25 +68,85 @@ func (r *Runner) drainStream(
 				return false
 			}
 		}
+		seenWithoutPosition := make(map[string]struct{}, len(chunk.ToolCalls))
 		for _, tc := range chunk.ToolCalls {
-			existing, ok := toolCalls[tc.ID]
+			key := toolCallCollectionKey(tc)
+			if tc.OutputIndex == nil {
+				var positionedKey string
+				positionedMatches := 0
+				for _, candidateKey := range toolCallOrder {
+					candidate := toolCalls[candidateKey]
+					if candidate.OutputIndex != nil && candidate.ID == tc.ID {
+						positionedKey = candidateKey
+						positionedMatches++
+					}
+				}
+				if positionedMatches > 1 {
+					streamErr = fmt.Errorf("%w: provider omitted the output position for reused tool call ID %q", ErrAmbiguousToolCalls, tc.ID)
+					return false
+				}
+				if positionedMatches == 1 {
+					key = positionedKey
+				}
+			}
+			if tc.OutputIndex == nil {
+				if _, duplicate := seenWithoutPosition[tc.ID]; duplicate {
+					streamErr = fmt.Errorf("%w: provider reused tool call ID %q without output positions", ErrAmbiguousToolCalls, tc.ID)
+					return false
+				}
+				seenWithoutPosition[tc.ID] = struct{}{}
+			}
+			existing, ok := toolCalls[key]
+			if !ok && tc.OutputIndex != nil {
+				wireKey := "id:" + tc.ID
+				if pending := toolCalls[wireKey]; pending != nil && pending.OutputIndex == nil {
+					existing, ok = pending, true
+					delete(toolCalls, wireKey)
+					toolCalls[key] = existing
+					for i := range toolCallOrder {
+						if toolCallOrder[i] == wireKey {
+							toolCallOrder[i] = key
+							break
+						}
+					}
+				}
+			}
+			if ok && existing.ID != tc.ID {
+				streamErr = fmt.Errorf("%w: output position identifies both %q and %q", ErrAmbiguousToolCalls, existing.ID, tc.ID)
+				return false
+			}
 			if !ok {
 				id := strings.Clone(tc.ID)
 				existing = &llm.ToolCall{ID: id, Type: strings.Clone(tc.Type)}
-				toolCalls[id] = existing
-				toolCallOrder = append(toolCallOrder, id)
+				toolCalls[key] = existing
+				toolCallOrder = append(toolCallOrder, key)
 				if tc.OutputIndex != nil {
 					existing.OutputIndex = llm.OutputPosition(*tc.OutputIndex)
 				}
 			}
 			if tc.Function.Name != "" {
+				if existing.Function.Name != "" && existing.Function.Name != tc.Function.Name {
+					streamErr = fmt.Errorf(
+						"%w: tool call ID %q changed function name from %q to %q",
+						ErrAmbiguousToolCalls,
+						tc.ID,
+						existing.Function.Name,
+						tc.Function.Name,
+					)
+					return false
+				}
 				existing.Function.Name = strings.Clone(tc.Function.Name)
 			}
 			if existing.OutputIndex == nil && tc.OutputIndex != nil {
 				existing.OutputIndex = llm.OutputPosition(*tc.OutputIndex)
 			}
 			if tc.Function.Arguments != "" {
-				existing.Function.Arguments += strings.Clone(tc.Function.Arguments)
+				arguments := existing.Function.Arguments + strings.Clone(tc.Function.Arguments)
+				if containsMultipleJSONValues(arguments) {
+					streamErr = fmt.Errorf("%w: provider emitted multiple complete calls for tool call ID %q", ErrAmbiguousToolCalls, tc.ID)
+					return false
+				}
+				existing.Function.Arguments = arguments
 			}
 		}
 		for _, item := range chunk.CompletedItems {
@@ -124,4 +185,20 @@ func (r *Runner) drainStream(
 		err:                streamErr,
 		accepted:           accepted,
 	}
+}
+
+func toolCallCollectionKey(call llm.ToolCall) string {
+	if call.OutputIndex != nil {
+		return fmt.Sprintf("output:%d", *call.OutputIndex)
+	}
+	return "id:" + call.ID
+}
+
+func containsMultipleJSONValues(arguments string) bool {
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	var value json.RawMessage
+	if err := decoder.Decode(&value); err != nil {
+		return false
+	}
+	return decoder.Decode(&value) == nil
 }

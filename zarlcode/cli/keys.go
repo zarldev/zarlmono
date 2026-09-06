@@ -24,6 +24,8 @@ type KeysCommand struct {
 	Service    *prefs.Service
 	Stdin      io.Reader
 	OAuthLogin OAuthLoginFunc
+	VaultDir   string
+	Passphrase vault.PassphraseFunc
 }
 
 // Execute runs a keys command and returns its process exit code.
@@ -65,7 +67,7 @@ func (c KeysCommand) Execute(ctx context.Context, args []string, stdout, stderr 
 		}
 		return keysOAuth(ctx, c.Service, oauthLogin, args[1], stdin, stdout, stderr)
 	case "protect":
-		return keysProtect(ctx, c.Service, "", args[1:], stdout, stderr)
+		return keysProtect(ctx, c.Service, c.VaultDir, c.Passphrase, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown subcommand %q (want list | set | delete | oauth | protect)\n", cmd)
 		return 2
@@ -101,7 +103,7 @@ func RunKeys(args []string, stdout io.Writer) int {
 		}
 		svc.SetVault(v)
 	}
-	return (KeysCommand{Service: svc}).Execute(ctx, args, stdout, os.Stderr)
+	return (KeysCommand{Service: svc, VaultDir: dir}).Execute(ctx, args, stdout, os.Stderr)
 }
 
 func needsKeysVault(ctx context.Context, svc *prefs.Service, cmd string) bool {
@@ -186,7 +188,7 @@ const (
 	cmdStatus = "status"
 )
 
-func keysProtect(ctx context.Context, svc *prefs.Service, dir string, args []string, stdout, stderr io.Writer) int {
+func keysProtect(ctx context.Context, svc *prefs.Service, dir string, passphrase vault.PassphraseFunc, args []string, stdout, stderr io.Writer) int {
 	cmd := cmdStatus
 	if len(args) > 0 {
 		cmd = strings.ToLower(strings.TrimSpace(args[0]))
@@ -201,7 +203,7 @@ func keysProtect(ctx context.Context, svc *prefs.Service, dir string, args []str
 		fmt.Fprintf(stdout, "credential protection: %s\n", mode)
 		return 0
 	case "on", "enable":
-		n, err := changeCredentialProtection(ctx, svc, dir, true)
+		n, err := changeCredentialProtection(ctx, svc, dir, passphrase, true)
 		if err != nil {
 			fmt.Fprintln(stderr, "protect on:", err)
 			return 1
@@ -209,7 +211,7 @@ func keysProtect(ctx context.Context, svc *prefs.Service, dir string, args []str
 		fmt.Fprintf(stdout, "credential protection enabled — encrypted %d key(s)\n", n)
 		return 0
 	case "off", "disable":
-		n, err := changeCredentialProtection(ctx, svc, dir, false)
+		n, err := changeCredentialProtection(ctx, svc, dir, passphrase, false)
 		if err != nil {
 			fmt.Fprintln(stderr, "protect off:", err)
 			return 1
@@ -222,13 +224,16 @@ func keysProtect(ctx context.Context, svc *prefs.Service, dir string, args []str
 	}
 }
 
-func changeCredentialProtection(ctx context.Context, svc *prefs.Service, dir string, enabled bool) (int, error) {
+func changeCredentialProtection(ctx context.Context, svc *prefs.Service, dir string, passphrase vault.PassphraseFunc, enabled bool) (int, error) {
 	hasRows, err := svc.HasVaultBackedKeys(ctx)
 	if err != nil {
 		return 0, err
 	}
 	if (enabled || hasRows) && !svc.HasVault() && dir != "" {
-		v, err := vault.Open(dir, vault.TerminalPassphrase)
+		if passphrase == nil {
+			passphrase = vault.TerminalPassphrase
+		}
+		v, err := vault.Open(dir, passphrase)
 		if err != nil {
 			return 0, err
 		}

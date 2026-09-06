@@ -3,7 +3,9 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +46,55 @@ func (p *blockingProvider) Complete(ctx context.Context, _ llm.CompletionRequest
 }
 
 func (*blockingProvider) Name() string { return "blocking" }
+
+type stubbornProvider struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *stubbornProvider) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		close(p.started)
+		<-p.release
+		yield(llm.CompletionChunk{Content: "done", FinishReason: llm.FinishReasons.STOP}, nil)
+	}
+}
+
+func (*stubbornProvider) Name() string { return "stubborn" }
+
+type gatedToolProvider struct {
+	ready   chan struct{}
+	release chan struct{}
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *gatedToolProvider) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+	if call > 1 {
+		return func(yield func(llm.CompletionChunk, error) bool) {
+			yield(llm.CompletionChunk{Content: "done", FinishReason: llm.FinishReasons.STOP}, nil)
+		}
+	}
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		close(p.ready)
+		<-p.release
+		yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{{
+			ID:   "write-1",
+			Type: "function",
+			Function: llm.ToolCallFunction{
+				Name:      string(code.ToolNameWrite),
+				Arguments: `{"path":"blocked.txt","content":"must not be written"}`,
+			},
+		}}}, nil)
+	}
+}
+
+func (*gatedToolProvider) Name() string { return "gated-tool" }
 
 func TestWithLiveSinkRejectsNil(t *testing.T) {
 	t.Parallel()
@@ -173,6 +224,66 @@ func TestLiveRunnerCloseCancelsActiveTurn(t *testing.T) {
 	}
 }
 
+func TestLiveRunnerCloseDeadlineDoesNotAbandonDrain(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov := &stubbornProvider{started: make(chan struct{}), release: make(chan struct{})}
+	live := engine.NewLiveRunner(prov, ws, "local")
+	turnCtx, stopTurn := context.WithCancel(t.Context())
+	turnDone := make(chan struct{})
+	release := sync.OnceFunc(func() { close(prov.release) })
+	defer func() {
+		release()
+		stopTurn()
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), time.Second)
+		defer cancel()
+		if err := live.Close(cleanupCtx); err != nil {
+			t.Errorf("cleanup Close: %v", err)
+		}
+		select {
+		case <-turnDone:
+		case <-cleanupCtx.Done():
+			t.Error("cleanup: turn did not drain")
+		}
+	}()
+	go func() {
+		defer close(turnDone)
+		_ = live.RunTurn(turnCtx, "wait")
+	}()
+
+	select {
+	case <-prov.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not start")
+	}
+	waitCtx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	err = live.Close(waitCtx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first Close error = %v; want deadline exceeded", err)
+	}
+
+	release()
+	drainCtx, drainCancel := context.WithTimeout(t.Context(), time.Second)
+	defer drainCancel()
+	if err := live.Close(drainCtx); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	select {
+	case <-turnDone:
+	case <-time.After(time.Second):
+		t.Fatal("turn did not drain after provider release")
+	}
+	if err := live.Close(t.Context()); err != nil {
+		t.Fatalf("repeated Close: %v", err)
+	}
+	if err := live.RunTurn(t.Context(), "after close"); err == nil {
+		t.Fatal("RunTurn after Close succeeded")
+	}
+}
+
 func TestLiveRunnerCloseReportsComputerCleanupError(t *testing.T) {
 	want := errors.New("browser close")
 	ws, err := code.NewWorkspace(t.TempDir())
@@ -184,8 +295,83 @@ func TestLiveRunnerCloseReportsComputerCleanupError(t *testing.T) {
 	if _, err := live.ComputerObserve(t.Context(), model.ObserveRequest{}); err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	if err := live.Close(t.Context()); !errors.Is(err, want) {
-		t.Fatalf("Close error = %v, want wrapped browser error", err)
+	for i := range 2 {
+		if err := live.Close(t.Context()); !errors.Is(err, want) {
+			t.Fatalf("Close %d error = %v, want wrapped browser error", i+1, err)
+		}
+	}
+	if fake.closeCalls != 1 {
+		t.Fatalf("computer close calls = %d, want 1", fake.closeCalls)
+	}
+}
+
+func TestLiveRunnerConcurrentCloseSharesCleanup(t *testing.T) {
+	want := errors.New("browser close")
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeComputerSession{closeErr: want}
+	live := engine.NewLiveRunner(nil, ws, "local", engine.WithComputerSessionFactory(func(context.Context, ...browser.Option) (engine.ComputerSession, error) { return fake, nil }))
+	if _, err := live.ComputerObserve(t.Context(), model.ObserveRequest{}); err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+
+	ctx := t.Context()
+	const callers = 8
+	start := make(chan struct{})
+	errs := make([]error, callers)
+	var wg sync.WaitGroup
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = live.Close(ctx)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if !errors.Is(err, want) {
+			t.Errorf("Close caller %d error = %v, want wrapped browser error", i, err)
+		}
+	}
+	if fake.closeCalls != 1 {
+		t.Fatalf("computer close calls = %d, want 1", fake.closeCalls)
+	}
+}
+
+func TestLiveRunnerPlanModeGatesMidTurnDispatch(t *testing.T) {
+	root := t.TempDir()
+	ws, err := code.NewWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &gatedToolProvider{ready: make(chan struct{}), release: make(chan struct{})}
+	live := engine.NewLiveRunner(provider, ws, "local")
+	release := sync.OnceFunc(func() { close(provider.release) })
+	t.Cleanup(func() {
+		release()
+		_ = live.Close(context.WithoutCancel(t.Context()))
+	})
+
+	done := make(chan error, 1)
+	ctx := t.Context()
+	go func() { done <- live.RunTurn(ctx, "write the file") }()
+	select {
+	case <-provider.ready:
+	case <-t.Context().Done():
+		t.Fatal("provider did not reach first dispatch")
+	}
+	live.SetPlanMode(true)
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("RunTurn: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "blocked.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("blocked write stat error = %v, want not exist", err)
 	}
 }
 

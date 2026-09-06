@@ -19,58 +19,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-// loopState groups the per-Run counters threaded through the iteration
-// loop, so the loop stops growing a fresh local per recovery mechanism.
-// The three recovery budgets each reset to zero on a healthy stream; the
-// finalize-warn latch fires once per Run.
-type loopState struct {
-	// toolCallJSONRecovers counts consecutive soft-recoveries from
-	// upstream "malformed tool-call JSON" 500s. Resets on any successful
-	// iteration; once it exceeds toolCallJSONRecoverLimit the error goes
-	// terminal. See [isUpstreamToolCallJSONError].
-	toolCallJSONRecovers int
-	// emptyStreamRetries counts consecutive retries of an empty-stream
-	// iteration (ErrEmptyStream). Resets on any stream that produced
-	// output; capped at emptyStreamRetryLimit. See
-	// [isEmptyStreamDecodeError].
-	emptyStreamRetries int
-	// thinkingBudgetCuts counts consecutive recoveries of an
-	// ErrThinkingBudget cut (a turn that ran past the thinking-only byte
-	// budget). Resets on any stream that produced output; capped at
-	// thinkingBudgetRecoverLimit.
-	thinkingBudgetCuts int
-	// turnQualityCorrections counts empty-turn corrections injected by the
-	// TurnQuality hook, bounded by the decision's MaxCorrections.
-	turnQualityCorrections int
-	// rateLimitRetries counts consecutive provider rate-limit recoveries.
-	// Resets on any successful iteration; capped at rateLimitRetryLimit.
-	rateLimitRetries int
-	// finalizeWarned latches the cap-warning nudge to exactly once per Run.
-	// The nudge rides a single request at shape time — NEVER appended to
-	// canonical history, so the synthetic "wrap up" message isn't
-	// persisted, threaded into the next turn, or sent to a sub-agent.
-	finalizeWarned bool
-	// mutatingCalls counts successful mutating tool calls (ToolSpec.Mutates
-	// && ToolResult.Success) across the Run — the "did the agent actually
-	// change anything" signal the CompletionGate reads. Only maintained
-	// when a gate is installed (zero overhead otherwise).
-	mutatingCalls int
-	// completionCorrections counts holds injected by the CompletionGate,
-	// bounded by the decision's MaxCorrections. Unlike the finalize-warn
-	// nudge, the gate's correction IS appended to canonical history — the
-	// model must see it on the next turn to act on it.
-	completionCorrections int
-	// forceCompactNoopAt is the message count at which a token-pressure
-	// forced compaction last freed nothing (history dominated by untrimmable
-	// content — e.g. one huge user message). Until at least keepRecent new
-	// messages accrue (pushing older ones out of the keep window so there's
-	// something fresh to trim), the runner skips re-running a forced compact
-	// it knows will no-op. Zero = no active latch; reset whenever a compaction
-	// actually trims.
-	forceCompactNoopAt     int
-	toolSurfaceFingerprint string
-}
-
 // Run executes a task to completion or terminal condition. The loop is:
 //
 //  1. Plant the current depth on ctx so spawn-agent can read it.
@@ -180,22 +128,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// Sits inside the loop body so a Run that aborts early (via
 		// ctx cancel or stream error) before reaching the threshold
 		// never injects.
-		var finalizeNudge string // request-only; non-empty on the one trip iteration
-		if !t.st.finalizeWarned {
-			if r.finalizeWarn.RemainingThreshold > 0 {
-				remaining := maxIter - iter
-				if remaining <= r.finalizeWarn.RemainingThreshold {
-					t.st.finalizeWarned = true
-					finalizeNudge = finalizeWarnMessage(remaining, r.finalizeWarn.Message)
-				}
-			}
-			if finalizeNudge == "" && r.finalizeWarn.DeadlineGrace > 0 {
-				if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= r.finalizeWarn.DeadlineGrace {
-					t.st.finalizeWarned = true
-					finalizeNudge = finalizeWarnTimeMessage(r.finalizeWarn.DeadlineGrace, r.finalizeWarn.Message)
-				}
-			}
-		}
+		finalizeNudge := t.finalizeNudge(ctx)
 
 		// Auto-compaction policy: skips iter 0, applies the token-pressure
 		// force-path + Prober gate, and trims history when warranted. A
@@ -276,10 +209,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// failure in the same task gets the full retry/recovery allowance
 		// (a stream that produced output means the gateway is healthy and
 		// the model isn't wedged in reasoning).
-		t.st.toolCallJSONRecovers = 0
-		t.st.emptyStreamRetries = 0
-		t.st.thinkingBudgetCuts = 0
-		t.st.rateLimitRetries = 0
+		t.resetStreamRecovery()
 		// Rewrite each tool call's arguments to canonical JSON before they
 		// land in history — see canonicalizeToolArgs.
 		canonicalizeToolArgs(toolCalls)
@@ -335,16 +265,8 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// with normal branching." Only consulted when the structured
 		// tool-call slice is empty — the dispatch path already covers
 		// turns with tools.
-		if r.turnQuality != nil && len(toolCallOrder) == 0 {
-			decision := r.turnQuality.Inspect(clean, nil)
-			if decision.Correction != "" && (decision.MaxCorrections == 0 || t.st.turnQualityCorrections < decision.MaxCorrections) {
-				t.st.turnQualityCorrections++
-				t.messages = append(t.messages, llm.Message{Role: llm.RoleUser, Content: decision.Correction})
-				if decision.DisableThinking {
-					t.thinking = false // permanent for this Run — see taskRun.thinking
-				}
-				continue
-			}
+		if t.applyTurnQuality(clean, len(toolCallOrder) > 0) {
+			continue
 		}
 
 		// No tool calls: we're done — record the final content and exit.
@@ -357,17 +279,10 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			// iteration (no turn left to act on the correction) and once the
 			// MaxCorrections budget is spent, so a genuinely stuck model
 			// still terminates cleanly.
-			if r.completionGate != nil && iter < maxIter-1 {
-				decision := r.completionGate.Inspect(t.st.mutatingCalls > 0, clean)
-				if decision.Correction != "" &&
-					(decision.MaxCorrections == 0 || t.st.completionCorrections < decision.MaxCorrections) {
-					t.st.completionCorrections++
-					t.messages = append(t.messages, llm.Message{Role: llm.RoleUser, Content: decision.Correction})
-					continue
-				}
+			if t.holdCompletion(clean) {
+				continue
 			}
-			// Usage=occupancy, Delta=this iteration's own usage — see
-			// IterationCompleted. Identical to the post-dispatch site below.
+
 			r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages, requestTools.surface)
 			if uo, ok := r.compactor.(compact.UsageObserver); ok {
 				uo.ObserveUsage(t.lastUsage)

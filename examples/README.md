@@ -4,6 +4,7 @@ Worked examples for building systems on top of the zarlcode runner, tool, guardr
 
 | Example | What it shows | External dependencies |
 |---|---|---|
+| [`quickstart`](quickstart/) | The compiled source for the root README's minimal Anthropic runner and typed weather tool. | Anthropic API key and network when run; none to compile. |
 | [`hnupvote`](hnupvote/) | Real browser automation harness with auth guardrail, world-state oracle, and re-drive against Hacker News. | Chrome, HN account, LLM backend. |
 | [`releasegate`](releasegate/) | Release-publishing harness with a real LLM by default, JSON schema validation, pre-call guardrail, post-call guardrail, and scripted deterministic test mode. | LLM backend for default run; none with `-scripted`. |
 | [`healthcheck`](healthcheck/) | Infrastructure monitoring with SchemaGuardrail + FanoutGuardrail, transient-failure auto-retry, and all-healthy oracle. | LLM backend for default run; none with `-scripted`. |

@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
@@ -66,6 +67,39 @@ func TestLiveComputerReusesSession(t *testing.T) {
 	}
 	if fake.closeCalls != 1 {
 		t.Fatalf("close calls = %d, want 1", fake.closeCalls)
+	}
+}
+
+func TestLiveComputerSetupFailureDoesNotAcquireSession(t *testing.T) {
+	ws, err := code.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("browser startup")
+	fake := &fakeComputerSession{}
+	factoryCalls := 0
+	live := engine.NewLiveRunner(nil, ws, "local", engine.WithComputerSessionFactory(func(context.Context, ...browser.Option) (engine.ComputerSession, error) {
+		factoryCalls++
+		if factoryCalls == 1 {
+			return nil, want
+		}
+		return fake, nil
+	}))
+
+	if _, err := live.ComputerObserve(t.Context(), model.ObserveRequest{}); !errors.Is(err, want) {
+		t.Fatalf("first Observe error = %v, want startup error", err)
+	}
+	if fake.closeCalls != 0 {
+		t.Fatalf("failed setup acquired session with %d close calls", fake.closeCalls)
+	}
+	if _, err := live.ComputerObserve(t.Context(), model.ObserveRequest{}); err != nil {
+		t.Fatalf("Observe retry: %v", err)
+	}
+	if err := live.Close(t.Context()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if factoryCalls != 2 || fake.closeCalls != 1 {
+		t.Fatalf("calls = factory %d, close %d; want 2, 1", factoryCalls, fake.closeCalls)
 	}
 }
 

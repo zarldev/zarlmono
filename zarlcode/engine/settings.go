@@ -29,8 +29,8 @@ const DefaultSearxngURL = "http://127.0.0.1:8080"
 // Settings bundles the persistence layer the TUI reads its configuration
 // from: the sqlite store, the prefs funnel (plaintext settings + the
 // vault-encrypted api_keys), and the provider registry. It's the SAME
-// ~/.zarlcode/state.db + master.key the v1 shell uses, so preferences and
-// stored credentials carry across both front-ends.
+// ~/.zarlcode/state.db plus vault key material the v1 shell uses, so preferences
+// and stored credentials carry across both front-ends.
 //
 // Construct once at startup with OpenSettings; the settings overlay (later
 // phase) reads and writes through the same handle.
@@ -73,23 +73,23 @@ func (r providerKeyResolver) GetKey(ctx context.Context, provider string) (strin
 // vault, and builds the prefs service + provider registry (seeded with the
 // built-in providers + any persisted custom rows).
 //
-// A failed vault is non-fatal: plaintext settings still work and the
-// service reports HasVault()==false, so key/OAuth-dependent rows degrade to
-// "unavailable" rather than blocking startup. A failed store IS fatal —
-// without it there's nowhere to read configuration from.
+// Vault setup or unlock failure is non-fatal for ordinary settings and providers
+// that need no stored credential. Credential reads and writes remain locked rather
+// than falling back to plaintext. A failed store IS fatal — without it there's
+// nowhere to read configuration from.
 //
-// passphrase is the interactive passphrase prompt; it may be nil for callers
-// that rely on $ZARLCODE_KEY / $ZARLCODE_PASSPHRASE (headless / eval), or
-// when no vault exists yet (a fresh install isn't prompted). When the vault
-// opens with a legacy master.key still present, its credentials are migrated to
-// the passphrase-derived key here, once, transparently.
+// passphrase is the explicit interactive setup/unlock prompt. Nil is the
+// non-interactive path: it never reads ambient credential variables or prompts,
+// and protected credentials remain locked. Only passphrase-derived credential
+// encryption is supported. Unsupported credential rows are retained until the
+// user explicitly replaces them.
 func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.PassphraseFunc) (*Settings, error) {
 	store, err := db.Open(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("open state.db: %w", err)
 	}
 	svc := prefs.NewService(store, nil, wsRoot)
-	hasRows, err := svc.HasVaultBackedKeys(ctx)
+	hasRows, err := svc.HasCredentialRows(ctx)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -100,7 +100,7 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 		return nil, err
 	}
 	var v *vault.Vault
-	if hasRows || mode == prefs.CredentialProtectionPassphrase {
+	if hasRows && mode == prefs.CredentialProtectionPassphrase {
 		dir, derr := db.DefaultDir()
 		if derr != nil {
 			_ = store.Close()
@@ -113,22 +113,17 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 		}
 	}
 	s := NewSettings(store, v, newModelsDevSource(), wsRoot)
+	s.ownsStore = true
+	if v != nil {
+		if n, merr := s.Svc.MigrateCredentialProtection(ctx); merr != nil {
+			slog.WarnContext(ctx, "credential encryption migration deferred", "err", merr)
+		} else if n > 0 {
+			slog.InfoContext(ctx, "encrypted plaintext credentials", "count", n)
+		}
+	}
 	if err := s.Registry.Reload(ctx); err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("reload provider registry: %w", err)
-	}
-	s.ownsStore = true
-	if v != nil {
-		if n, merr := s.Svc.MigrateVaultKeys(ctx); merr != nil {
-			slog.WarnContext(ctx, "vault key migration incomplete", "err", merr)
-		} else if n > 0 {
-			slog.InfoContext(ctx, "migrated credentials", "count", n)
-		}
-	}
-	if n, merr := s.Svc.MigrateCredentialProtection(ctx); merr != nil {
-		slog.WarnContext(ctx, "credential migration deferred", "err", merr)
-	} else if n > 0 {
-		slog.InfoContext(ctx, "migrated credentials", "count", n)
 	}
 	s.startModelsDevWarm(ctx)
 	return s, nil
@@ -153,6 +148,77 @@ func NewSettings(store *db.Store, v *vault.Vault, src *modelsdev.Source, wsRoot 
 // starting workers.
 func newSettings(store *db.Store, svc *prefs.Service, reg *backends.ProviderRegistry, src *modelsdev.Source, wsRoot string) *Settings {
 	return &Settings{Store: store, Svc: svc, Registry: reg, wsRoot: wsRoot, modelsDev: src}
+}
+
+// CredentialVaultExists reports whether the settings directory already has
+// passphrase vault material. The TUI uses it to choose setup confirmation or
+// an unlock prompt without reading terminal input outside Bubble Tea.
+func (s *Settings) CredentialVaultExists() (bool, error) {
+	dir, err := db.DefaultDir()
+	if err != nil {
+		return false, err
+	}
+	return vault.Exists(dir)
+}
+
+// SetupCredentialVault opens or creates the passphrase vault in the settings
+// directory and atomically enables protection for subsequent OAuth writes.
+func (s *Settings) SetupCredentialVault(ctx context.Context, passphrase string) error {
+	dir, err := db.DefaultDir()
+	if err != nil {
+		return err
+	}
+	v, err := vault.Open(dir, func(bool, bool) (string, error) { return passphrase, nil })
+	if err != nil {
+		return err
+	}
+	s.Svc.SetVault(v)
+	if _, err := s.Svc.EnableCredentialProtection(ctx); err != nil {
+		s.Svc.SetVault(nil)
+		return err
+	}
+	return nil
+}
+
+// SetupCredentialVaultAndSetKey opens or creates the passphrase vault in the
+// settings directory and atomically enables protection with the pending key.
+func (s *Settings) SetupCredentialVaultAndSetKey(
+	ctx context.Context,
+	passphrase string,
+	scope prefs.Scope,
+	provider,
+	plaintext string,
+) error {
+	dir, err := db.DefaultDir()
+	if err != nil {
+		return err
+	}
+	v, err := vault.Open(dir, func(bool, bool) (string, error) { return passphrase, nil })
+	if err != nil {
+		return err
+	}
+	_, err = s.Svc.EnableCredentialProtectionWithKey(ctx, v, scope, provider, plaintext)
+	return err
+}
+
+// SetupCredentialVaultAndSetMCPServer opens or creates the passphrase vault and
+// atomically enables protection with the pending MCP endpoint and bearer token.
+func (s *Settings) SetupCredentialVaultAndSetMCPServer(
+	ctx context.Context,
+	passphrase string,
+	row db.MCPServerRow,
+	authToken string,
+) error {
+	dir, err := db.DefaultDir()
+	if err != nil {
+		return err
+	}
+	v, err := vault.Open(dir, func(bool, bool) (string, error) { return passphrase, nil })
+	if err != nil {
+		return err
+	}
+	_, err = s.Svc.EnableCredentialProtectionWithMCPServer(ctx, v, row, authToken)
+	return err
 }
 
 // newModelsDevSource builds a file-cached models.dev source. The cache

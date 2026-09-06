@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"sync"
 
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
@@ -44,36 +43,6 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 
 func (l *LiveRunner) RunTurn(ctx context.Context, prompt string) error {
 	return l.RunTurnWithAttachments(ctx, prompt, nil)
-}
-
-func (l *LiveRunner) beginTurn(ctx context.Context) (context.Context, func(), error) {
-	runCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-
-	l.mu.Lock()
-	if l.closing {
-		l.mu.Unlock()
-		cancel()
-		return nil, nil, errors.New("live runner is closing")
-	}
-	l.turnCancel = cancel
-	l.turnDone = done
-	l.mu.Unlock()
-
-	var once sync.Once
-	finish := func() {
-		once.Do(func() {
-			cancel()
-			close(done)
-			l.mu.Lock()
-			if l.turnDone == done {
-				l.turnCancel = nil
-				l.turnDone = nil
-			}
-			l.mu.Unlock()
-		})
-	}
-	return runCtx, finish, nil
 }
 
 func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, attachments []llm.ContentPart) error {

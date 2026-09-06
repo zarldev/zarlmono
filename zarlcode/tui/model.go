@@ -111,6 +111,7 @@ type UI struct {
 	transcriptGeneration         uint64
 	transcriptPersisted          uint64
 	transcriptPersistedSessionID string
+	rejectedDraftJSON            []byte
 	lastSessionPersistError      string
 	draftScheduleSuppressed      bool
 	sessionPersistQueue          []sessionPersistOp
@@ -190,6 +191,26 @@ func (m *UI) SetStartupFailure(wsRoot, title, err string) {
 	m.startupFailure = newStartupFailurePane(shortenHome(wsRoot), title, err)
 }
 
+// SetOnboarding keeps the intro screen in first-run setup. When blocked, only
+// settings can make the provider usable; otherwise Enter accepts the local
+// defaults without submitting a model request.
+func (m *UI) SetOnboarding(detail string, blocked bool) {
+	if m.intro == nil {
+		m.intro = newIntroPane(m.session.Workspace, nil, m.session.Provider, m.session.Model)
+	}
+	m.intro.setupRequired = true
+	m.intro.setupBlocked = blocked
+	m.intro.setupError = strings.TrimSpace(detail)
+	if blocked {
+		m.intro.provider = ""
+		m.intro.model = ""
+	} else {
+		current := m.session.ActiveProviderSpec()
+		m.intro.provider = current.Name
+		m.intro.model = current.Model
+	}
+}
+
 func (m *UI) appContext() context.Context {
 	if m != nil && m.ctx != nil {
 		return m.ctx
@@ -212,6 +233,7 @@ func (m *UI) SetLiveRunner(l *engine.LiveRunner) {
 // re-point the live runner on close.
 func (m *UI) SetProviderContext(fallback, current engine.ProviderSpec) {
 	m.session.SetProviderContext(fallback, current)
+	m.session.SetActiveProviderSpec(current)
 }
 
 // SetProvider records the active provider name (e.g. "llamacpp", "anthropic")
@@ -403,6 +425,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case liveTurnFinishedMsg:
 		m.session.reconcileTopLevelRun()
 		return m, m.saveSessionCmd()
+	case credentialVaultResultMsg:
+		return m, m.handleCredentialVaultResult(msg)
 	case askpassPromptMsg:
 		m.overlay.push(newAskpassDialog(msg.Prompt, msg.Reply))
 		return m, nil

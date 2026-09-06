@@ -207,10 +207,77 @@ func WindowAroundCursor(cursor, n, rows int) (int, int) {
 	return windowAroundCursor(cursor, n, rows)
 }
 
-// ResolveMCPAuthToken resolves and migrates an MCP server authentication token.
-func ResolveMCPAuthToken(ctx context.Context, settings *engine.Settings, row db.MCPServerRow) string {
-	return resolveMCPAuthToken(ctx, settings, row)
+// ResolveMCPAuthToken exposes startup credential resolution to black-box tests.
+func ResolveMCPAuthToken(ctx context.Context, settings *engine.Settings, name string) (string, bool, error) {
+	resolved, err := resolveMCPAuthToken(ctx, settings, name, true)
+	return resolved.token, resolved.outcome == mcpAuthBearer, err
 }
+
+// ConnectConfiguredMCPServers exposes startup connection scheduling to black-box tests.
+func ConnectConfiguredMCPServers(
+	ctx context.Context,
+	settings *engine.Settings,
+	connect func(context.Context, db.MCPServerRow, string) error,
+) {
+	connectConfiguredMCPServersWith(ctx, settings, connect)
+}
+
+// RunHeadlessWithConfiguredMCP exposes the headless startup ordering to black-box tests.
+func RunHeadlessWithConfiguredMCP(
+	ctx context.Context,
+	settings *engine.Settings,
+	connect func(context.Context, db.MCPServerRow, string) error,
+	run func() int,
+) int {
+	return runHeadlessAfterMCPSetup(ctx, settings, connect, run)
+}
+
+// PersistMCPServer exposes MCP configuration persistence to black-box tests.
+func PersistMCPServer(ctx context.Context, settings *engine.Settings, row db.MCPServerRow, authToken string) error {
+	return persistMCPServer(ctx, settings, row, authToken)
+}
+
+// MCPAddFormHarness drives the real MCP add form from black-box tests.
+type MCPAddFormHarness struct {
+	pane *mcpPane
+	ui   *UI
+}
+
+// NewMCPAddFormHarness opens the actual MCP add form for a configured UI.
+func NewMCPAddFormHarness(ctx context.Context, ui *UI, settings *engine.Settings) *MCPAddFormHarness {
+	pane := newMCPPane(ctx, settings)
+	pane.adding = true
+	return &MCPAddFormHarness{pane: pane, ui: ui}
+}
+
+// Fill replaces all six add-form fields: name, transport, command, args, URL, token.
+func (h *MCPAddFormHarness) Fill(fields [6]string) {
+	h.pane.addEds = [6]composer{}
+	for i, field := range fields {
+		h.pane.addEds[i].insert(field)
+	}
+	h.pane.addIdx = len(h.pane.addEds) - 1
+}
+
+// Submit runs the real form submission and dispatches its resulting UI action.
+func (h *MCPAddFormHarness) Submit() tea.Cmd {
+	return h.ui.handleAction(h.pane.submitAdd())
+}
+
+// View renders the actual add form.
+func (h *MCPAddFormHarness) View() string { return strings.Join(h.pane.addFormLines(), "\n") }
+
+// Status returns the form's latest persistence result.
+func (h *MCPAddFormHarness) Status() string { return h.pane.status }
+
+// Adding reports whether the form remains open.
+func (h *MCPAddFormHarness) Adding() bool { return h.pane.adding }
+
+// AuthRequired reports the sticky bearer-token intent retained across failures.
+func (h *MCPAddFormHarness) AuthRequired() bool { return h.pane.addAuthRequired }
+
+// Token returns the current token composer value so tests can assert clearing.
+func (h *MCPAddFormHarness) Token() string { return h.pane.addEds[len(h.pane.addEds)-1].text() }
 
 // MCPAuthKeyProvider returns the vault provider key used for an MCP server token.
 func MCPAuthKeyProvider(name string) string { return mcpAuthKeyProvider(name) }
@@ -469,9 +536,9 @@ func (m *UI) ReplayTranscriptEvents(events ...any) {
 		case transcript.ReasoningDelta:
 			m.timeline.appendThinking(event.TurnID, 0, event.Delta)
 		case transcript.ToolStarted:
-			m.timeline.startToolWithParent(event.TurnID, 0, event.ToolID, event.Name, event.Argument, event.ParentToolID, event.Sequence)
+			m.timeline.startToolWithParent(event.TurnID, 0, event.ExecutionID, event.ToolID, event.Name, event.Argument, event.ParentExecutionID, event.ParentToolID, event.Sequence)
 		case transcript.ToolFinished:
-			m.timeline.finishTool(event.ToolID, "", nil, time.Duration(event.DurationMS)*time.Millisecond, event.Failed, tools.Kinds.UNKNOWN, event.Effect)
+			m.timeline.finishTool(event.ExecutionID, event.ToolID, "", nil, time.Duration(event.DurationMS)*time.Millisecond, event.Failed, tools.Kinds.UNKNOWN, event.Effect)
 		case transcript.DiffAdded:
 			m.timeline.addDiff(event.TurnID, event.Path, event.Diff)
 		case transcript.PlanUpdated:

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -28,13 +29,14 @@ func (r *Runner) publishSetupFailed(ctx context.Context, spec TaskSpec, start ti
 
 func (r *Runner) publishConversationStarted(_ context.Context, spec TaskSpec) {
 	r.sink.OnConversationStarted(ConversationStarted{
-		TaskID:           spec.ID,
-		Depth:            spec.Depth,
-		Prompt:           spec.Prompt,
-		ParentToolCallID: spec.ParentToolCallID,
-		AgentName:        spec.AgentName,
-		Provider:         r.providerName,
-		Model:            r.modelName,
+		TaskID:            spec.ID,
+		Depth:             spec.Depth,
+		Prompt:            spec.Prompt,
+		ParentToolCallID:  spec.ParentToolCallID,
+		ParentExecutionID: spec.ParentExecutionID,
+		AgentName:         spec.AgentName,
+		Provider:          r.providerName,
+		Model:             r.modelName,
 	})
 }
 
@@ -60,16 +62,17 @@ func (r *Runner) publishConversationEnded(
 		}
 	}
 	r.sink.OnConversationEnded(ConversationEnded{
-		TaskID:           spec.ID,
-		Depth:            spec.Depth,
-		Reason:           reason,
-		Error:            errStr,
-		Cause:            cause,
-		RateLimit:        rateLimit,
-		Duration:         dur,
-		Iterations:       iterations,
-		TotalUsage:       total,
-		ParentToolCallID: spec.ParentToolCallID,
+		TaskID:            spec.ID,
+		Depth:             spec.Depth,
+		Reason:            reason,
+		Error:             errStr,
+		Cause:             cause,
+		RateLimit:         rateLimit,
+		Duration:          dur,
+		Iterations:        iterations,
+		TotalUsage:        total,
+		ParentToolCallID:  spec.ParentToolCallID,
+		ParentExecutionID: spec.ParentExecutionID,
 	})
 }
 
@@ -124,40 +127,72 @@ func (r *Runner) publishThinkingChunk(_ context.Context, spec TaskSpec, thinking
 
 func (r *Runner) publishToolStarted(_ context.Context, spec TaskSpec, call tools.ToolCall) {
 	r.sink.OnToolStarted(ToolStarted{
-		TaskID:     spec.ID,
-		Depth:      spec.Depth,
-		ToolID:     call.ID.String(),
-		ToolName:   call.ToolName.String(),
-		Parameters: call.Arguments,
+		TaskID:      spec.ID,
+		Depth:       spec.Depth,
+		ExecutionID: call.ExecutionID,
+		ToolID:      call.ID.String(),
+		ToolName:    call.ToolName.String(),
+		Parameters:  call.Arguments,
 	})
 }
 
 type nestedToolPublisher struct {
-	r    *Runner
-	spec TaskSpec
+	r                 *Runner
+	spec              TaskSpec
+	parentExecutionID string
+	mu                sync.Mutex
+	nested            map[nestedExecutionKey][]string
 }
 
-func (p nestedToolPublisher) OnNestedToolStarted(ctx context.Context, e tools.NestedToolCall) {
-	p.r.publishNestedToolStarted(ctx, p.spec, e)
+type nestedExecutionKey struct {
+	parentID string
+	childID  string
+	sequence int
 }
 
-func (p nestedToolPublisher) OnNestedToolFinished(ctx context.Context, e tools.NestedToolResult) {
-	p.r.publishNestedToolFinished(ctx, p.spec, e)
+func newNestedToolPublisher(r *Runner, spec TaskSpec, parentExecutionID string) *nestedToolPublisher {
+	return &nestedToolPublisher{r: r, spec: spec, parentExecutionID: parentExecutionID, nested: make(map[nestedExecutionKey][]string)}
 }
 
-func (r *Runner) publishNestedToolStarted(_ context.Context, spec TaskSpec, e tools.NestedToolCall) {
+func nestedKey(e tools.NestedToolCall) nestedExecutionKey {
+	return nestedExecutionKey{parentID: e.ParentID.String(), childID: e.ChildID.String(), sequence: e.Sequence}
+}
+
+func (p *nestedToolPublisher) OnNestedToolStarted(ctx context.Context, e tools.NestedToolCall) {
+	executionID := allocateExecutionID()
+	key := nestedKey(e)
+	p.mu.Lock()
+	p.nested[key] = append(p.nested[key], executionID)
+	p.mu.Unlock()
+	p.r.publishNestedToolStarted(ctx, p.spec, e, executionID, p.parentExecutionID)
+}
+
+func (p *nestedToolPublisher) OnNestedToolFinished(ctx context.Context, e tools.NestedToolResult) {
+	key := nestedKey(e.NestedToolCall)
+	p.mu.Lock()
+	ids := p.nested[key]
+	var executionID string
+	if len(ids) != 0 {
+		executionID = ids[0]
+		if len(ids) == 1 {
+			delete(p.nested, key)
+		} else {
+			p.nested[key] = ids[1:]
+		}
+	}
+	p.mu.Unlock()
+	p.r.publishNestedToolFinished(ctx, p.spec, e, executionID, p.parentExecutionID)
+}
+
+func (r *Runner) publishNestedToolStarted(_ context.Context, spec TaskSpec, e tools.NestedToolCall, executionID, parentExecutionID string) {
 	r.sink.OnToolStarted(ToolStarted{
-		TaskID:       spec.ID,
-		Depth:        spec.Depth,
-		ToolID:       e.ChildID.String(),
-		ToolName:     e.Call.ToolName.String(),
-		Parameters:   e.Call.Arguments,
-		ParentToolID: e.ParentID.String(),
-		Sequence:     e.Sequence,
+		ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth,
+		ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Parameters: e.Call.Arguments,
+		ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence,
 	})
 }
 
-func (r *Runner) publishNestedToolFinished(_ context.Context, spec TaskSpec, e tools.NestedToolResult) {
+func (r *Runner) publishNestedToolFinished(_ context.Context, spec TaskSpec, e tools.NestedToolResult, executionID, parentExecutionID string) {
 	effects := resultEffects(e.Result)
 	failed := e.Err != nil || e.Result == nil || !e.Result.Success || e.Error != ""
 	if failed {
@@ -173,14 +208,14 @@ func (r *Runner) publishNestedToolFinished(_ context.Context, spec TaskSpec, e t
 			kind = e.Result.Err.Kind
 			realErr = e.Result.Err
 		}
-		r.sink.OnToolFailed(ToolFailed{TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Error: errMsg, Err: realErr, Kind: kind, Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), Sequence: e.Sequence})
+		r.sink.OnToolFailed(ToolFailed{ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Error: errMsg, Err: realErr, Kind: kind, Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence})
 		return
 	}
 	var data any
 	if e.Result != nil {
 		data = e.Result.Data
 	}
-	r.sink.OnToolCompleted(ToolCompleted{TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Result: data, FormattedResult: formatToolData(data), Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), Sequence: e.Sequence})
+	r.sink.OnToolCompleted(ToolCompleted{ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Result: data, FormattedResult: formatToolData(data), Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence})
 }
 
 func (r *Runner) publishToolFinished(
@@ -225,16 +260,17 @@ func (r *Runner) publishToolFinished(
 			}
 		}
 		r.sink.OnToolFailed(ToolFailed{
-			TaskID:    spec.ID,
-			Depth:     spec.Depth,
-			ToolID:    call.ID.String(),
-			ToolName:  call.ToolName.String(),
-			Duration:  dur,
-			Error:     errMsg,
-			Err:       realErr,
-			Kind:      kind,
-			Abandoned: abandoned,
-			Effects:   effects,
+			TaskID:      spec.ID,
+			ExecutionID: call.ExecutionID,
+			Depth:       spec.Depth,
+			ToolID:      call.ID.String(),
+			ToolName:    call.ToolName.String(),
+			Duration:    dur,
+			Error:       errMsg,
+			Err:         realErr,
+			Kind:        kind,
+			Abandoned:   abandoned,
+			Effects:     effects,
 		})
 		return
 	}
@@ -244,6 +280,7 @@ func (r *Runner) publishToolFinished(
 	}
 	r.sink.OnToolCompleted(ToolCompleted{
 		TaskID:          spec.ID,
+		ExecutionID:     call.ExecutionID,
 		Depth:           spec.Depth,
 		ToolID:          call.ID.String(),
 		ToolName:        call.ToolName.String(),

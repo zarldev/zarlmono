@@ -67,6 +67,10 @@ type actionOAuthLogin struct{ provider string }
 
 func (actionOAuthLogin) isAction() {}
 
+type actionStartOAuthLogin struct{ provider string }
+
+func (actionStartOAuthLogin) isAction() {}
+
 // actionFetchModels requests an async model-list fetch for provider; the
 // root turns it into a tea.Cmd that probes the provider and returns a
 // modelsLoadedMsg.
@@ -206,6 +210,9 @@ func (m *UI) dismissConversationDialogs() {
 
 // handleAction translates a dialog's intent into a model effect.
 func (m *UI) handleAction(a action) tea.Cmd {
+	if cmd, ok := m.handleCredentialAction(a); ok {
+		return cmd
+	}
 	switch a := a.(type) {
 	case actionClose:
 		m.overlay.pop()
@@ -260,6 +267,13 @@ func (m *UI) handleAction(a action) tea.Cmd {
 	case actionFileViewerPreview:
 		return fileViewerPreviewCmd(a)
 	case actionOAuthLogin:
+		cancel := func() {
+			if pd, ok := topProvidersDialog(m); ok {
+				pd.onOAuthResult("", errVaultUnlockCancelled)
+			}
+		}
+		return m.handleAction(actionEnsureCredentialVault{next: actionStartOAuthLogin(a), cancel: cancel})
+	case actionStartOAuthLogin:
 		return m.startOAuthLogin(a.provider)
 	case actionFetchModels:
 		return m.fetchModelsCmd(a.provider)

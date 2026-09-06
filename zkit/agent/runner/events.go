@@ -31,60 +31,69 @@ type Thinking struct {
 
 // ToolStarted fires when the runner dispatches a tool call.
 type ToolStarted struct {
-	TaskID       taskscope.ID
-	Depth        int
-	ToolID       string
-	ToolName     string
-	Parameters   map[string]any
-	ParentToolID string
-	Sequence     int
+	TaskID            taskscope.ID
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Parameters        map[string]any
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // WorkspaceWaitStarted fires when a tool call enters the workspace wait queue.
 type WorkspaceWaitStarted struct {
-	TaskID       taskscope.ID
-	Depth        int
-	ToolID       string
-	ToolName     string
-	Access       tools.WorkspaceAccess
-	Paths        []string
-	BlockerCount int
-	ParentToolID string
-	Sequence     int
+	TaskID            taskscope.ID
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Access            tools.WorkspaceAccess
+	Paths             []string
+	BlockerCount      int
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // WorkspaceWaitEnded fires when a queued tool call acquires access or is cancelled.
 type WorkspaceWaitEnded struct {
-	TaskID       taskscope.ID
-	Depth        int
-	ToolID       string
-	ToolName     string
-	Outcome      tools.WorkspaceWaitOutcome
-	Duration     time.Duration
-	ParentToolID string
-	Sequence     int
+	TaskID            taskscope.ID
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Outcome           tools.WorkspaceWaitOutcome
+	Duration          time.Duration
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // ToolCompleted fires when a tool call returns successfully.
 type ToolCompleted struct {
-	TaskID          taskscope.ID
-	Depth           int
-	ToolID          string
-	ToolName        string
-	Result          any
-	FormattedResult string
-	Effects         []tools.Effect
-	Duration        time.Duration
-	ParentToolID    string
-	Sequence        int
+	TaskID            taskscope.ID
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Result            any
+	FormattedResult   string
+	Effects           []tools.Effect
+	Duration          time.Duration
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // ToolFailed fires when a tool call errors or reports failure.
 type ToolFailed struct {
-	TaskID   taskscope.ID
-	Depth    int
-	ToolID   string
-	ToolName string
+	TaskID      taskscope.ID
+	Depth       int
+	ExecutionID string
+	ToolID      string
+	ToolName    string
 	// Error is the user-facing failure message — safe to surface in a UI.
 	Error string
 	// Err is the underlying typed error (the result's *tools.Error, a
@@ -104,11 +113,12 @@ type ToolFailed struct {
 	// and "the tool timed out and stopped" from "the tool timed out and
 	// was abandoned with side effects possibly still in flight" — the one
 	// a consumer may want to surface or alert on.
-	Abandoned    bool
-	Effects      []tools.Effect
-	Duration     time.Duration
-	ParentToolID string
-	Sequence     int
+	Abandoned         bool
+	Effects           []tools.Effect
+	Duration          time.Duration
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // ConversationStarted marks the start of a Run. Prompt carries the
@@ -124,13 +134,14 @@ type ToolFailed struct {
 // agent_spawn dispatch where multiple sub-agents are in flight and
 // can't be distinguished by task ID + Depth alone.
 type ConversationStarted struct {
-	TaskID           taskscope.ID
-	Depth            int
-	Prompt           string
-	ParentToolCallID string
-	AgentName        string
-	Provider         string
-	Model            string
+	TaskID            taskscope.ID
+	Depth             int
+	Prompt            string
+	ParentToolCallID  string
+	ParentExecutionID string
+	AgentName         string
+	Provider          string
+	Model             string
 }
 
 // ConversationEnded is the single terminal event for a Run — it fires
@@ -158,11 +169,12 @@ type ConversationEnded struct {
 	// *llm.RateLimitError, so subscribers can render structured timing
 	// (retry-after / reset / permanent-quota) without re-parsing Error.
 	// Nil for every non-rate-limit outcome.
-	RateLimit        *llm.RateLimitError
-	Duration         time.Duration
-	Iterations       int
-	TotalUsage       *llm.Usage
-	ParentToolCallID string
+	RateLimit         *llm.RateLimitError
+	Duration          time.Duration
+	Iterations        int
+	TotalUsage        *llm.Usage
+	ParentToolCallID  string
+	ParentExecutionID string
 }
 
 // IterationCompleted fires at the end of each iteration of a Run, after

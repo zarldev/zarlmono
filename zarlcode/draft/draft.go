@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 )
 
 // MaxTextBytes is the largest composer draft accepted by Encode and Decode.
@@ -17,8 +18,8 @@ type document struct {
 	Text string `json:"text"`
 }
 
-// Encode serializes text for session pending_json. Empty text uses the legacy
-// empty-array representation so empty-session cleanup remains compatible.
+// Encode serializes text for session pending_json. Empty text uses the database's
+// empty-array sentinel.
 func Encode(text string) ([]byte, error) {
 	if len(text) > MaxTextBytes {
 		return nil, ErrTooLarge
@@ -29,15 +30,26 @@ func Encode(text string) ([]byte, error) {
 	return json.Marshal(document{Text: text})
 }
 
-// Decode parses a persisted draft. Empty, null, and the legacy [] value mean
-// no draft. Unknown fields are ignored for forward compatibility.
+// Decode parses a persisted draft. Empty data and the database's [] sentinel
+// mean no draft. Nonempty draft objects reject unknown fields and trailing data.
 func Decode(data []byte) (string, error) {
 	data = bytes.TrimSpace(data)
-	if len(data) == 0 || bytes.Equal(data, []byte("null")) || bytes.Equal(data, []byte("[]")) {
+	if len(data) == 0 || bytes.Equal(data, []byte("[]")) {
 		return "", nil
 	}
+	if bytes.Equal(data, []byte("null")) {
+		return "", errors.New("draft must be an object")
+	}
+
 	var value document
-	if err := json.Unmarshal(data, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+	if err := decoder.Decode(&struct{}{}); err == nil {
+		return "", errors.New("draft contains multiple JSON values")
+	} else if !errors.Is(err, io.EOF) {
 		return "", err
 	}
 	if len(value.Text) > MaxTextBytes {

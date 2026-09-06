@@ -9,6 +9,10 @@ zarlcode stores sessions locally in `~/.zarlcode/state.db`. A resumable session 
 - the **model context** is the provider-facing message history used for the next completion.
 
 The distinction matters because model context can be compacted, repaired, or reshaped to fit a provider. Those operations must not rewrite the session the user sees.
+These are local durability guarantees, not remote backup or cross-device sync. They
+apply to successfully committed state; a sudden process or machine failure can still
+lose the newest debounced streaming delta, as described below. Keep independent
+backups when the session itself matters.
 
 ## What the canonical transcript records
 

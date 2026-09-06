@@ -1,6 +1,7 @@
 package transcript_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -115,7 +116,7 @@ func TestRecordsSinceReturnsOnlyChangedEntries(t *testing.T) {
 	if len(records) != 1 || records[0].Kind != "assistant_message" {
 		t.Fatalf("records = %#v", records)
 	}
-	thread, err := transcript.FromRecords(builder.Thread().Revision(), append(mustRecords(t, transcript.NewBuilderFrom(transcriptThreadWithUser(t)).Thread(), 0), records...))
+	thread, err := transcript.FromRecords(builder.Thread().Revision(), append(mustRecords(t, transcript.NewBuilderFrom(transcriptThreadWithUser(t)).Thread()), records...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +161,95 @@ func TestNewBuilderFromContinuesActiveSemanticEntries(t *testing.T) {
 	}
 }
 
+func TestSteeredTurnSegmentsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	builder := transcript.NewBuilder()
+	builder.StartTurn("turn", "")
+	builder.AppendAssistant("turn", "", "first response")
+	builder.AppendReasoning("turn", "", "first reasoning")
+	builder.AddSkill("turn", "", "first-skill")
+	builder.FinishTurn("turn")
+
+	queuedID := builder.AddQueuedUser("steer")
+	builder.InjectQueuedUser(queuedID, "steer")
+	builder.StartTurn("turn", "")
+	builder.AppendAssistant("turn", "", "second response")
+	builder.AppendReasoning("turn", "", "second reasoning")
+	builder.AddSkill("turn", "", "second-skill")
+	builder.FinishTurn("turn")
+
+	thread := builder.Thread()
+	if err := thread.Validate(); err != nil {
+		t.Fatalf("Validate steered turn: %v", err)
+	}
+	entries := thread.Entries()
+	wantKinds := []transcript.EntryKind{
+		transcript.EntryKinds.ENTRYASSISTANTMESSAGE,
+		transcript.EntryKinds.ENTRYREASONING,
+		transcript.EntryKinds.ENTRYSKILLS,
+		transcript.EntryKinds.ENTRYQUEUEDUSER,
+		transcript.EntryKinds.ENTRYASSISTANTMESSAGE,
+		transcript.EntryKinds.ENTRYREASONING,
+		transcript.EntryKinds.ENTRYSKILLS,
+	}
+	if len(entries) != len(wantKinds) {
+		t.Fatalf("steered entries = %d, want %d", len(entries), len(wantKinds))
+	}
+	for i, want := range wantKinds {
+		if entries[i].Kind != want {
+			t.Fatalf("steered entry %d kind = %s, want %s", i, entries[i].Kind, want)
+		}
+	}
+	if !entries[0].Payload.Complete || !entries[1].Payload.Complete ||
+		!entries[4].Payload.Complete || !entries[5].Payload.Complete {
+		t.Fatal("steered response segments are not terminal")
+	}
+	if !entries[3].Payload.Injected {
+		t.Fatal("steered user entry is not marked injected")
+	}
+
+	records := mustRecords(t, thread)
+	restored, err := transcript.FromRecords(thread.Revision(), records)
+	if err != nil {
+		t.Fatalf("restore steered turn: %v", err)
+	}
+	if got := restored.Entries(); !reflect.DeepEqual(got, entries) {
+		t.Fatalf("restored steered entries = %#v, want %#v", got, entries)
+	}
+	if got := mustRecords(t, restored); !reflect.DeepEqual(got, records) {
+		t.Fatalf("restored steered records = %#v, want %#v", got, records)
+	}
+
+	continued := transcript.NewBuilderFrom(restored)
+	continued.StartTurn("turn", "")
+	continued.AppendAssistant("turn", "", "active response")
+	continued.AppendReasoning("turn", "", "active reasoning")
+	continued.AddSkill("turn", "", "active-skill")
+	continuedEntries := continued.Thread().Entries()
+	if len(continuedEntries) != len(entries)+3 {
+		t.Fatalf("continued entries = %d, want %d", len(continuedEntries), len(entries)+3)
+	}
+	if !reflect.DeepEqual(continuedEntries[:len(entries)], entries) {
+		t.Fatalf("continuing turn mutated terminal entries: got %#v, want %#v", continuedEntries[:len(entries)], entries)
+	}
+	if got := continuedEntries[len(continuedEntries)-1]; got.Kind != transcript.EntryKinds.ENTRYSKILLS ||
+		len(got.Payload.Skills) != 1 || got.Payload.Skills[0] != "active-skill" {
+		t.Fatalf("continued skills entry = %#v", got)
+	}
+	if err := continued.Thread().Validate(); err != nil {
+		t.Fatalf("Validate terminal segments followed by active segment: %v", err)
+	}
+	continuedRecords := mustRecords(t, continued.Thread())
+	continuedRestored, err := transcript.FromRecords(continued.Thread().Revision(), continuedRecords)
+	if err != nil {
+		t.Fatalf("restore terminal segments followed by active segment: %v", err)
+	}
+	if got := mustRecords(t, continuedRestored); !reflect.DeepEqual(got, continuedRecords) {
+		t.Fatalf("continued records were rewritten: got %#v, want %#v", got, continuedRecords)
+	}
+}
+
 func TestNewBuilderFromAdvancesGeneratedEntryIdentity(t *testing.T) {
 	thread, err := transcript.FromRecords(2, []transcript.Record{
 		record(1, "e1", "", "user_message", 1, `{"text":"first"}`),
@@ -184,20 +274,20 @@ func TestFromRecordsRejectsDuplicateSemanticIdentities(t *testing.T) {
 		want    string
 	}{
 		{
-			name: "tool ID",
+			name: "active turn assistant",
 			records: []transcript.Record{
-				record(1, "e1", "turn", "tool_call", 1, `{"tool_id":"tool","tool_name":"read","tool_state":"running"}`),
-				record(2, "e2", "turn", "tool_call", 2, `{"tool_id":"tool","tool_name":"read","tool_state":"running"}`),
+				record(1, "e1", "turn", "assistant_message", 1, `{"text":"first"}`),
+				record(2, "e2", "turn", "assistant_message", 2, `{"text":"second"}`),
 			},
-			want: "duplicate tool ID",
+			want: "duplicate active assistant entry",
 		},
 		{
-			name: "turn assistant",
+			name: "active turn reasoning",
 			records: []transcript.Record{
-				record(1, "e1", "turn", "assistant_message", 1, `{"text":"first","complete":true}`),
-				record(2, "e2", "turn", "assistant_message", 2, `{"text":"second","complete":true}`),
+				record(1, "e1", "turn", "reasoning", 1, `{"text":"first"}`),
+				record(2, "e2", "turn", "reasoning", 2, `{"text":"second"}`),
 			},
-			want: "duplicate assistant entry",
+			want: "duplicate active reasoning entry",
 		},
 		{
 			name: "plan",
@@ -229,14 +319,6 @@ func TestFromRecordsRejectsDuplicateSemanticIdentities(t *testing.T) {
 			},
 			want: "running subagent turn ID is empty",
 		},
-		{
-			name: "subagent spawn tool ID",
-			records: []transcript.Record{
-				record(1, "e1", "child-1", "subagent", 1, `{"agent_name":"reviewer","spawn_tool_id":"spawn","subagent":"running"}`),
-				record(2, "e2", "child-2", "subagent", 2, `{"agent_name":"tester","spawn_tool_id":"spawn","subagent":"running"}`),
-			},
-			want: "duplicate subagent spawn tool ID",
-		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -249,6 +331,76 @@ func TestFromRecordsRejectsDuplicateSemanticIdentities(t *testing.T) {
 	}
 }
 
+func TestDuplicateProviderIDsPreserveEveryOccurrence(t *testing.T) {
+	t.Parallel()
+	builder := transcript.NewBuilder()
+	first := builder.StartTool("turn", "", "reused", "", "read", "a", 0)
+	second := builder.StartTool("turn", "", "reused", "", "read", "b", 1)
+	if first == second {
+		t.Fatal("duplicate provider tool IDs collapsed to one transcript entry")
+	}
+	builder.FinishTool("reused", "first", "", 1, false)
+	builder.FinishTool("reused", "second", "", 2, false)
+
+	thread := builder.Thread()
+	if err := thread.Validate(); err != nil {
+		t.Fatalf("Validate duplicate provider IDs: %v", err)
+	}
+	restored, err := transcript.FromRecords(thread.Revision(), mustRecords(t, thread))
+	if err != nil {
+		t.Fatalf("restore duplicate provider IDs: %v", err)
+	}
+	entries := restored.Entries()
+	if len(entries) != 2 || entries[0].Payload.Effect != "first" || entries[1].Payload.Effect != "second" {
+		t.Fatalf("restored duplicate occurrences = %#v", entries)
+	}
+}
+
+func TestDuplicateSpawnIDsPreserveEveryReservation(t *testing.T) {
+	t.Parallel()
+	builder := transcript.NewBuilder()
+	first := builder.ReserveSubagent("reused", "reviewer", "first")
+	second := builder.ReserveSubagent("reused", "tester", "second")
+	if first == second {
+		t.Fatal("duplicate spawn IDs collapsed to one transcript entry")
+	}
+	builder.StartSubagent("child-1", "reused", "reviewer", "local", "model", "first")
+	builder.StartSubagent("child-2", "reused", "tester", "local", "model", "second")
+
+	thread := builder.Thread()
+	if err := thread.Validate(); err != nil {
+		t.Fatalf("Validate duplicate spawn IDs: %v", err)
+	}
+	if _, err := transcript.FromRecords(thread.Revision(), mustRecords(t, thread)); err != nil {
+		t.Fatalf("restore duplicate spawn IDs: %v", err)
+	}
+}
+
+func TestUnreservedSubagentStartDoesNotLeaveStaleReservation(t *testing.T) {
+	t.Parallel()
+	builder := transcript.NewBuilder()
+	first := builder.StartSubagent("child-1", "reused", "reviewer", "local", "model", "first")
+	second := builder.ReserveSubagent("reused", "tester", "second")
+	builder.StartSubagent("child-2", "reused", "tester", "local", "model", "second")
+
+	if first == second {
+		t.Fatal("reused spawn ID rebound the first unreserved child")
+	}
+	entries := builder.Thread().Entries()
+	if len(entries) != 2 {
+		t.Fatalf("subagent entries = %d, want 2", len(entries))
+	}
+	if entries[0].TurnID != "child-1" || entries[0].Payload.Subagent != transcript.SubagentRunning {
+		t.Errorf("first entry = %#v, want child-1 running", entries[0])
+	}
+	if entries[1].TurnID != "child-2" || entries[1].Payload.Subagent != transcript.SubagentRunning {
+		t.Errorf("second entry = %#v, want child-2 running", entries[1])
+	}
+	if err := builder.Thread().Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func record(sequence uint64, id, turnID, kind string, revision uint64, payload string) transcript.Record {
 	return transcript.Record{
 		Sequence: sequence, ID: id, TurnID: turnID,
@@ -256,9 +408,9 @@ func record(sequence uint64, id, turnID, kind string, revision uint64, payload s
 	}
 }
 
-func mustRecords(t *testing.T, thread transcript.Thread, since uint64) []transcript.Record {
+func mustRecords(t *testing.T, thread transcript.Thread) []transcript.Record {
 	t.Helper()
-	records, err := thread.RecordsSince(since)
+	records, err := thread.RecordsSince(0)
 	if err != nil {
 		t.Fatal(err)
 	}

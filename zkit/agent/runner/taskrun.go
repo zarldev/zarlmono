@@ -9,6 +9,57 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
+// loopState groups the per-Run counters threaded through the iteration loop.
+// The four stream-recovery budgets reset after a healthy stream; correction
+// budgets and one-shot latches last for the whole Run.
+type loopState struct {
+	// toolCallJSONRecovers counts consecutive soft-recoveries from
+	// upstream "malformed tool-call JSON" 500s. Resets on any successful
+	// iteration; once it exceeds toolCallJSONRecoverLimit the error goes
+	// terminal. See [isUpstreamToolCallJSONError].
+	toolCallJSONRecovers int
+	// emptyStreamRetries counts consecutive retries of an empty-stream
+	// iteration (ErrEmptyStream). Resets on any stream that produced
+	// output; capped at emptyStreamRetryLimit. See
+	// [isEmptyStreamDecodeError].
+	emptyStreamRetries int
+	// thinkingBudgetCuts counts consecutive recoveries of an
+	// ErrThinkingBudget cut (a turn that ran past the thinking-only byte
+	// budget). Resets on any stream that produced output; capped at
+	// thinkingBudgetRecoverLimit.
+	thinkingBudgetCuts int
+	// turnQualityCorrections counts empty-turn corrections injected by the
+	// TurnQuality hook, bounded by the decision's MaxCorrections.
+	turnQualityCorrections int
+	// rateLimitRetries counts consecutive provider rate-limit recoveries.
+	// Resets on any successful iteration; capped at rateLimitRetryLimit.
+	rateLimitRetries int
+	// finalizeWarned latches the cap-warning nudge to exactly once per Run.
+	// The nudge rides a single request at shape time — NEVER appended to
+	// canonical history, so the synthetic "wrap up" message isn't
+	// persisted, threaded into the next turn, or sent to a sub-agent.
+	finalizeWarned bool
+	// mutatingCalls counts successful mutating tool calls (ToolSpec.Mutates
+	// && ToolResult.Success) across the Run — the "did the agent actually
+	// change anything" signal the CompletionGate reads. Only maintained
+	// when a gate is installed (zero overhead otherwise).
+	mutatingCalls int
+	// completionCorrections counts holds injected by the CompletionGate,
+	// bounded by the decision's MaxCorrections. Unlike the finalize-warn
+	// nudge, the gate's correction IS appended to canonical history — the
+	// model must see it on the next turn to act on it.
+	completionCorrections int
+	// forceCompactNoopAt is the message count at which a token-pressure
+	// forced compaction last freed nothing (history dominated by untrimmable
+	// content — e.g. one huge user message). Until at least keepRecent new
+	// messages accrue (pushing older ones out of the keep window so there's
+	// something fresh to trim), the runner skips re-running a forced compact
+	// it knows will no-op. Zero = no active latch; reset whenever a compaction
+	// actually trims.
+	forceCompactNoopAt     int
+	toolSurfaceFingerprint string
+}
+
 // taskRun is one Run invocation's state: the immutable identity of the run
 // (spec, start time, iteration cap) plus everything the loop mutates as it
 // goes (history, usage accounting, recovery budgets, request policy). It
@@ -76,6 +127,75 @@ type taskRun struct {
 	// retry: a model that burned its budget thinking once will do it
 	// again.
 	thinking bool
+}
+
+// finalizeNudge returns the one request-only cap warning for this run. It marks
+// the latch only when a threshold actually fires; callers must not append the
+// returned text to canonical history.
+func (t *taskRun) finalizeNudge(ctx context.Context) string {
+	if t.st.finalizeWarned {
+		return ""
+	}
+	cfg := t.r.finalizeWarn
+	if cfg.RemainingThreshold > 0 {
+		remaining := t.maxIter - t.iter
+		if remaining <= cfg.RemainingThreshold {
+			t.st.finalizeWarned = true
+			return finalizeWarnMessage(remaining, cfg.Message)
+		}
+	}
+	if cfg.DeadlineGrace > 0 {
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= cfg.DeadlineGrace {
+			t.st.finalizeWarned = true
+			return finalizeWarnTimeMessage(cfg.DeadlineGrace, cfg.Message)
+		}
+	}
+	return ""
+}
+
+// resetStreamRecovery restores every consecutive stream-failure allowance after
+// one healthy stream. Correction and finalization budgets are intentionally not
+// reset: they are bounded across the whole run.
+func (t *taskRun) resetStreamRecovery() {
+	t.st.toolCallJSONRecovers = 0
+	t.st.emptyStreamRetries = 0
+	t.st.thinkingBudgetCuts = 0
+	t.st.rateLimitRetries = 0
+}
+
+// applyTurnQuality applies the no-tool turn-quality correction. A true result
+// means the correction was appended and the loop must retry.
+func (t *taskRun) applyTurnQuality(content string, hasToolCalls bool) bool {
+	if t.r.turnQuality == nil || hasToolCalls {
+		return false
+	}
+	decision := t.r.turnQuality.Inspect(content, nil)
+	if decision.Correction == "" ||
+		(decision.MaxCorrections > 0 && t.st.turnQualityCorrections >= decision.MaxCorrections) {
+		return false
+	}
+	t.st.turnQualityCorrections++
+	t.messages = append(t.messages, llm.Message{Role: llm.RoleUser, Content: decision.Correction})
+	if decision.DisableThinking {
+		t.thinking = false
+	}
+	return true
+}
+
+// holdCompletion applies the no-work completion gate. A true result means a
+// corrective user turn was appended and another iteration remains to act on it.
+func (t *taskRun) holdCompletion(content string) bool {
+	if t.r.completionGate == nil || t.iter >= t.maxIter-1 {
+		return false
+	}
+	decision := t.r.completionGate.Inspect(t.st.mutatingCalls > 0, content)
+	if decision.Correction == "" ||
+		(decision.MaxCorrections > 0 && t.st.completionCorrections >= decision.MaxCorrections) {
+		return false
+	}
+	t.st.completionCorrections++
+	t.messages = append(t.messages, llm.Message{Role: llm.RoleUser, Content: decision.Correction})
+	return true
 }
 
 // completed builds the TerminalCompleted result: the model emitted no more

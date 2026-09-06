@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -22,6 +23,12 @@ import (
 type dispatchedCall struct {
 	result *tools.ToolResult
 	err    error
+}
+
+var nextExecutionID atomic.Uint64
+
+func allocateExecutionID() string {
+	return fmt.Sprintf("execution-%d", nextExecutionID.Add(1))
 }
 
 // dispatchBatch runs every tool call in toolCallOrder through the
@@ -46,7 +53,8 @@ func (r *Runner) dispatchBatch(
 	if limit == 1 || len(toolCallOrder) <= 1 {
 		for _, id := range toolCallOrder {
 			tc := toolCalls[id]
-			res, err := r.dispatch(ctx, spec, tc)
+			executionID := allocateExecutionID()
+			res, err := r.dispatch(ctx, spec, tc, executionID)
 			out[id] = dispatchedCall{result: res, err: err}
 		}
 		return out
@@ -57,8 +65,9 @@ func (r *Runner) dispatchBatch(
 	var mu sync.Mutex // guards the result map
 	for _, id := range toolCallOrder {
 		tc := toolCalls[id]
+		executionID := allocateExecutionID()
 		g.Go(func() error {
-			res, err := r.dispatch(gctx, spec, tc)
+			res, err := r.dispatch(gctx, spec, tc, executionID)
 			mu.Lock()
 			out[id] = dispatchedCall{result: res, err: err}
 			mu.Unlock()
@@ -79,6 +88,7 @@ func (r *Runner) dispatch(
 	ctx context.Context,
 	spec TaskSpec,
 	tc *llm.ToolCall,
+	executionID string,
 ) (*tools.ToolResult, error) {
 	name := tools.ToolName(tc.Function.Name)
 	args := tools.ToolParameters{}
@@ -102,11 +112,12 @@ func (r *Runner) dispatch(
 			err))), nil
 	}
 	call := tools.ToolCall{
-		ID:        tools.ToolCallID(tc.ID),
-		ToolName:  name,
-		Arguments: args,
-		Status:    tools.ToolCallStatusExecuting,
-		CreatedAt: time.Now(),
+		ID:          tools.ToolCallID(tc.ID),
+		ExecutionID: executionID,
+		ToolName:    name,
+		Arguments:   args,
+		Status:      tools.ToolCallStatusExecuting,
+		CreatedAt:   time.Now(),
 	}
 
 	r.publishToolStarted(ctx, spec, call)
@@ -163,7 +174,8 @@ func (r *Runner) dispatch(
 					name, rec)))}
 			}
 		}()
-		nestedCtx := tools.ContextWithNestedToolObserver(execCtx, nestedToolPublisher{r: r, spec: spec})
+		nested := newNestedToolPublisher(r, spec, call.ExecutionID)
+		nestedCtx := tools.ContextWithNestedToolObserver(execCtx, nested)
 		nestedCtx = tools.ContextWithWorkspaceWaitObserver(nestedCtx, workspaceWaitPublisher{r: r, spec: spec, call: call})
 		nestedCtx = tools.ContextWithWorkspaceWaitCall(nestedCtx, tools.WorkspaceWaitCall{ToolID: call.ID, ToolName: call.ToolName})
 		result, err := r.tools.Execute(nestedCtx, call)

@@ -378,8 +378,9 @@ func (d *providersDialog) handleKeyEdit(msg tea.KeyPressMsg) action {
 	case "esc":
 		d.editing = false
 	case "enter":
-		d.commitKey(strings.TrimSpace(d.editor.submit()))
+		val := strings.TrimSpace(d.editor.submit())
 		d.editing = false
+		return d.commitKey(val)
 	case "backspace":
 		d.editor.backspace()
 	case "left":
@@ -407,24 +408,31 @@ func (d *providersDialog) handlePaste(content string) {
 	}
 }
 
-func (d *providersDialog) commitKey(val string) {
+func (d *providersDialog) commitKey(val string) action {
 	name := d.cur().Name
 	ctx := d.ctx
-	switch val {
-	case "":
+	if val == "" {
 		if err := d.s.Svc.DeleteKey(ctx, prefs.ScopeGlobal, name); err != nil {
 			d.status = "clear key: " + err.Error()
 		} else {
 			d.status = name + " key cleared"
 		}
-	default:
-		if err := d.s.Svc.SetKey(ctx, prefs.ScopeGlobal, name, val); err != nil {
-			d.status = "save key: " + err.Error()
-		} else {
-			d.status = name + " key saved (global)"
-		}
+		d.refresh()
+		return actionNone{}
 	}
-	d.refresh()
+	return actionSaveCredential{request: credentialSaveRequest{
+		provider: name,
+		value:    val,
+		done: func(err error) {
+			if err != nil {
+				d.status = "save key: " + err.Error()
+			} else {
+				d.status = name + " key saved (global)"
+			}
+			d.statusAt = time.Now()
+			d.refresh()
+		},
+	}}
 }
 
 func (d *providersDialog) setActive() {

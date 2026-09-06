@@ -171,6 +171,9 @@ func (m *UI) enqueueDraftPersist(generation uint64) tea.Cmd {
 		m.session.SetErrorToast("draft save: " + err.Error())
 		return m.toastExpiryCmd()
 	}
+	if text != "" {
+		m.rejectedDraftJSON = nil
+	}
 	if text == "" {
 		if m.session.ID == "" {
 			return nil
@@ -194,6 +197,7 @@ func (m *UI) enqueueDraftPersist(generation uint64) tea.Cmd {
 
 func (m *UI) clearDraftCmd() tea.Cmd {
 	m.draftGeneration++
+	m.rejectedDraftJSON = nil
 	if m.session.ID == "" || m.settings == nil || m.settings.Store == nil {
 		return nil
 	}

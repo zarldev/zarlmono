@@ -19,20 +19,34 @@ func (q *Queries) DeleteMCPServer(ctx context.Context, name string) error {
 }
 
 const listMCPServers = `-- name: ListMCPServers :many
-SELECT name, transport, command, args, env, base_url, auth_token, enabled, created_at, updated_at
+SELECT name, transport, command, args, env, base_url, auth_token, auth_required, enabled, created_at, updated_at
 FROM mcp_servers
 ORDER BY name
 `
 
-func (q *Queries) ListMCPServers(ctx context.Context) ([]McpServer, error) {
+type ListMCPServersRow struct {
+	Name         string
+	Transport    string
+	Command      string
+	Args         string
+	Env          string
+	BaseUrl      string
+	AuthToken    string
+	AuthRequired int64
+	Enabled      int64
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
+func (q *Queries) ListMCPServers(ctx context.Context) ([]ListMCPServersRow, error) {
 	rows, err := q.db.QueryContext(ctx, listMCPServers)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []McpServer{}
+	items := []ListMCPServersRow{}
 	for rows.Next() {
-		var i McpServer
+		var i ListMCPServersRow
 		if err := rows.Scan(
 			&i.Name,
 			&i.Transport,
@@ -41,6 +55,7 @@ func (q *Queries) ListMCPServers(ctx context.Context) ([]McpServer, error) {
 			&i.Env,
 			&i.BaseUrl,
 			&i.AuthToken,
+			&i.AuthRequired,
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -59,30 +74,32 @@ func (q *Queries) ListMCPServers(ctx context.Context) ([]McpServer, error) {
 }
 
 const upsertMCPServer = `-- name: UpsertMCPServer :exec
-INSERT INTO mcp_servers (name, transport, command, args, env, base_url, auth_token, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO mcp_servers (name, transport, command, args, env, base_url, auth_token, auth_required, enabled, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (name) DO UPDATE SET
-    transport  = excluded.transport,
-    command    = excluded.command,
-    args       = excluded.args,
-    env        = excluded.env,
-    base_url   = excluded.base_url,
-    auth_token = excluded.auth_token,
-    enabled    = excluded.enabled,
-    updated_at = excluded.updated_at
+    transport     = excluded.transport,
+    command       = excluded.command,
+    args          = excluded.args,
+    env           = excluded.env,
+    base_url      = excluded.base_url,
+    auth_token    = excluded.auth_token,
+    auth_required = excluded.auth_required,
+    enabled       = excluded.enabled,
+    updated_at    = excluded.updated_at
 `
 
 type UpsertMCPServerParams struct {
-	Name      string
-	Transport string
-	Command   string
-	Args      string
-	Env       string
-	BaseUrl   string
-	AuthToken string
-	Enabled   int64
-	CreatedAt int64
-	UpdatedAt int64
+	Name         string
+	Transport    string
+	Command      string
+	Args         string
+	Env          string
+	BaseUrl      string
+	AuthToken    string
+	AuthRequired int64
+	Enabled      int64
+	CreatedAt    int64
+	UpdatedAt    int64
 }
 
 func (q *Queries) UpsertMCPServer(ctx context.Context, arg UpsertMCPServerParams) error {
@@ -94,6 +111,7 @@ func (q *Queries) UpsertMCPServer(ctx context.Context, arg UpsertMCPServerParams
 		arg.Env,
 		arg.BaseUrl,
 		arg.AuthToken,
+		arg.AuthRequired,
 		arg.Enabled,
 		arg.CreatedAt,
 		arg.UpdatedAt,

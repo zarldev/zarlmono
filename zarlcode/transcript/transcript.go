@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	"github.com/zarldev/zarlmono/zkit/zsync"
 )
 
 // ToolState describes a durable tool-call outcome.
@@ -36,7 +37,7 @@ const (
 	SubagentCompleted SubagentState = "completed"
 	// SubagentFailed means spawning the child failed.
 	SubagentFailed SubagentState = "failed"
-	// SubagentInterrupted means process termination ended a running child.
+	// SubagentInterrupted means process termination ended a pending spawn or running child.
 	SubagentInterrupted SubagentState = "interrupted"
 )
 
@@ -148,8 +149,10 @@ type Builder struct {
 	turnReason   map[string]string
 	turnSkills   map[string]string
 	tools        map[string]string
+	legacyTools  map[string][]string
 	subagents    map[string]string
 	spawnAgents  map[string]string
+	legacySpawns map[string][]string
 	currentPlan  string
 }
 
@@ -160,8 +163,10 @@ func NewBuilder() *Builder {
 		turnReason:   make(map[string]string),
 		turnSkills:   make(map[string]string),
 		tools:        make(map[string]string),
+		legacyTools:  make(map[string][]string),
 		subagents:    make(map[string]string),
 		spawnAgents:  make(map[string]string),
+		legacySpawns: make(map[string][]string),
 	}
 }
 
@@ -169,31 +174,40 @@ func NewBuilder() *Builder {
 func NewBuilderFrom(thread Thread) *Builder {
 	builder := NewBuilder()
 	builder.thread = Thread{revision: thread.Revision(), entries: thread.Entries()}
+	activeTurnSegments := zsync.NewSet[string]()
 	for _, entry := range builder.thread.entries {
 		if number, ok := generatedEntryNumber(entry.ID); ok && number > builder.nextID {
 			builder.nextID = number
 		}
 		switch entry.Kind {
 		case EntryKinds.ENTRYASSISTANTMESSAGE:
-			if !entry.Payload.Complete && !entry.Payload.Interrupted && entry.TurnID != "" {
+			if entry.TurnID == "" {
+				break
+			}
+			delete(builder.turnSkills, entry.TurnID)
+			activeTurnSegments.Remove(entry.TurnID)
+			if !entry.Payload.Complete && !entry.Payload.Interrupted {
 				builder.turnResponse[entry.TurnID] = entry.ID
+				activeTurnSegments.Add(entry.TurnID)
 			}
 		case EntryKinds.ENTRYREASONING:
 			if !entry.Payload.Complete && !entry.Payload.Interrupted && entry.TurnID != "" {
 				builder.turnReason[entry.TurnID] = entry.ID
 			}
 		case EntryKinds.ENTRYSKILLS:
-			if entry.TurnID != "" {
+			if entry.TurnID != "" && activeTurnSegments.Contains(entry.TurnID) {
 				builder.turnSkills[entry.TurnID] = entry.ID
 			}
 		case EntryKinds.ENTRYTOOLCALL:
-			builder.tools[entry.Payload.ToolID] = entry.ID
+			if entry.Payload.ToolState == ToolRunning {
+				builder.legacyTools[entry.Payload.ToolID] = append(builder.legacyTools[entry.Payload.ToolID], entry.ID)
+			}
 		case EntryKinds.ENTRYSUBAGENT:
 			if entry.TurnID != "" {
 				builder.subagents[entry.TurnID] = entry.ID
 			}
-			if entry.Payload.SpawnToolID != "" {
-				builder.spawnAgents[entry.Payload.SpawnToolID] = entry.ID
+			if entry.Payload.SpawnToolID != "" && entry.Payload.Subagent == SubagentPending {
+				builder.legacySpawns[entry.Payload.SpawnToolID] = append(builder.legacySpawns[entry.Payload.SpawnToolID], entry.ID)
 			}
 		case EntryKinds.ENTRYPLAN:
 			builder.currentPlan = entry.ID
@@ -329,25 +343,64 @@ func (b *Builder) AddSkill(turnID, parentID, name string) {
 	})
 }
 
-// StartTool records one tool call and returns its entry identity.
+// StartTool records one legacy tool call keyed by its provider ID.
 func (b *Builder) StartTool(turnID, parentID, toolID, parentToolID, name, argument string, sequence int) string {
-	if id := b.tools[toolID]; id != "" {
-		return id
-	}
+	return b.StartToolExecution(turnID, parentID, "", toolID, "", parentToolID, name, argument, sequence)
+}
+
+// StartToolExecution records one tool invocation under its exact runner identity.
+func (b *Builder) StartToolExecution(turnID, parentID, executionID, toolID, parentExecutionID, parentToolID, name, argument string, sequence int) string {
 	id := b.append(EntryKinds.ENTRYTOOLCALL, parentID, turnID, Payload{
 		ToolID: toolID, ParentToolID: parentToolID, ToolName: name,
 		Argument: argument, ToolState: ToolRunning, Sequence: sequence,
 	})
-	b.tools[toolID] = id
+	if executionID != "" {
+		b.tools[executionID] = id
+	} else {
+		b.legacyTools[toolID] = append(b.legacyTools[toolID], id)
+	}
 	return id
 }
 
-// ToolEntryID returns the semantic entry for toolID.
-func (b *Builder) ToolEntryID(toolID string) string { return b.tools[toolID] }
+// ToolEntryID returns the most recent legacy entry for a provider tool ID.
+func (b *Builder) ToolEntryID(toolID string) string {
+	ids := b.legacyTools[toolID]
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[len(ids)-1]
+}
 
-// FinishTool records one tool call's durable terminal facts.
+// ToolExecutionEntryID returns the entry for one exact invocation.
+func (b *Builder) ToolExecutionEntryID(executionID, toolID string) string {
+	if executionID != "" {
+		return b.tools[executionID]
+	}
+	return b.ToolEntryID(toolID)
+}
+
+// FinishTool records one legacy tool call's durable terminal facts.
 func (b *Builder) FinishTool(toolID, effect, failureKind string, durationMS int64, failed bool) {
-	id := b.tools[toolID]
+	b.FinishToolExecution("", toolID, effect, failureKind, durationMS, failed)
+}
+
+// FinishToolExecution records terminal facts on the exact invocation.
+func (b *Builder) FinishToolExecution(executionID, toolID, effect, failureKind string, durationMS int64, failed bool) {
+	id := b.tools[executionID]
+	if executionID != "" {
+		delete(b.tools, executionID)
+	} else {
+		ids := b.legacyTools[toolID]
+		if len(ids) == 0 {
+			return
+		}
+		id = ids[0]
+		if len(ids) == 1 {
+			delete(b.legacyTools, toolID)
+		} else {
+			b.legacyTools[toolID] = ids[1:]
+		}
+	}
 	if id == "" {
 		return
 	}
@@ -382,25 +435,57 @@ func (b *Builder) SetPlan(turnID string, plan code.Plan) {
 	})
 }
 
-// ReserveSubagent records a requested child task before its task identity exists.
+// ReserveSubagent records a legacy requested child keyed by provider tool ID.
 func (b *Builder) ReserveSubagent(spawnToolID, agentName, prompt string) string {
-	if id := b.spawnAgents[spawnToolID]; id != "" {
-		return id
-	}
+	return b.ReserveSubagentExecution("", spawnToolID, agentName, prompt)
+}
+
+// ReserveSubagentExecution records a requested child under its exact spawn invocation.
+func (b *Builder) ReserveSubagentExecution(spawnExecutionID, spawnToolID, agentName, prompt string) string {
 	id := b.append(EntryKinds.ENTRYSUBAGENT, "", "", Payload{
 		AgentName: agentName, Prompt: prompt, SpawnToolID: spawnToolID, Subagent: SubagentPending,
 	})
-	if spawnToolID != "" {
-		b.spawnAgents[spawnToolID] = id
+	if spawnExecutionID != "" {
+		b.spawnAgents[spawnExecutionID] = id
+	} else if spawnToolID != "" {
+		b.legacySpawns[spawnToolID] = append(b.legacySpawns[spawnToolID], id)
 	}
 	return id
 }
 
-// StartSubagent binds a reserved child task or appends a running child entry.
+// StartSubagent binds a legacy reserved child task.
 func (b *Builder) StartSubagent(turnID, spawnToolID, agentName, provider, model, prompt string) string {
-	id := b.spawnAgents[spawnToolID]
+	return b.StartSubagentExecution(turnID, "", spawnToolID, agentName, provider, model, prompt)
+}
+
+// StartSubagentExecution binds the child to its exact spawn invocation.
+func (b *Builder) StartSubagentExecution(turnID, spawnExecutionID, spawnToolID, agentName, provider, model, prompt string) string {
+	id := b.spawnAgents[spawnExecutionID]
+	if spawnExecutionID != "" {
+		delete(b.spawnAgents, spawnExecutionID)
+	} else {
+		ids := b.legacySpawns[spawnToolID]
+		if len(ids) != 0 {
+			id = ids[0]
+			if len(ids) == 1 {
+				delete(b.legacySpawns, spawnToolID)
+			} else {
+				b.legacySpawns[spawnToolID] = ids[1:]
+			}
+		}
+	}
 	if id == "" {
-		id = b.ReserveSubagent(spawnToolID, agentName, prompt)
+		id = b.ReserveSubagentExecution(spawnExecutionID, spawnToolID, agentName, prompt)
+		if spawnExecutionID != "" {
+			delete(b.spawnAgents, spawnExecutionID)
+		} else if spawnToolID != "" {
+			ids := b.legacySpawns[spawnToolID]
+			if len(ids) == 1 {
+				delete(b.legacySpawns, spawnToolID)
+			} else {
+				b.legacySpawns[spawnToolID] = ids[:len(ids)-1]
+			}
+		}
 	}
 	b.update(id, func(entry *Entry) {
 		entry.TurnID = turnID
@@ -421,9 +506,31 @@ func (b *Builder) FinishSubagent(turnID string, status SubagentState) {
 	delete(b.subagents, turnID)
 }
 
-// FailSubagent marks a reserved spawn terminal before the child starts.
+// FailSubagent marks a legacy reserved spawn terminal before the child starts.
 func (b *Builder) FailSubagent(spawnToolID, detail string) {
-	id := b.spawnAgents[spawnToolID]
+	b.FailSubagentExecution("", spawnToolID, detail)
+}
+
+// FailSubagentExecution marks the exact reserved spawn terminal before child start.
+func (b *Builder) FailSubagentExecution(spawnExecutionID, spawnToolID, detail string) {
+	id := b.spawnAgents[spawnExecutionID]
+	if spawnExecutionID != "" {
+		delete(b.spawnAgents, spawnExecutionID)
+	} else {
+		ids := b.legacySpawns[spawnToolID]
+		if len(ids) == 0 {
+			return
+		}
+		id = ids[0]
+		if len(ids) == 1 {
+			delete(b.legacySpawns, spawnToolID)
+		} else {
+			b.legacySpawns[spawnToolID] = ids[1:]
+		}
+	}
+	if id == "" {
+		return
+	}
 	b.update(id, func(entry *Entry) {
 		entry.Payload.Subagent = SubagentFailed
 		if detail != "" {
@@ -471,20 +578,17 @@ func (t Thread) Validate() error {
 		}
 		return nil
 	}
-	seen := make(map[string]EntryKind, len(t.entries))
-	seenToolIDs := make(map[string]struct{})
-	seenSubagentTurns := make(map[string]struct{})
-	seenSubagentSpawns := make(map[string]struct{})
-	seenTurnResponses := make(map[string]struct{})
-	seenTurnReasoning := make(map[string]struct{})
-	seenTurnSkills := make(map[string]struct{})
+	seen := zsync.NewMap[string, EntryKind]()
+	seenSubagentTurns := zsync.NewSet[string]()
+	seenActiveTurnResponses := zsync.NewSet[string]()
+	seenActiveTurnReasoning := zsync.NewSet[string]()
 	seenPlans := 0
 	var highest uint64
 	for _, entry := range t.entries {
 		if entry.ID == "" {
 			return errors.New("validate transcript: entry ID is empty")
 		}
-		if _, exists := seen[entry.ID]; exists {
+		if _, err := seen.Get(entry.ID); err == nil {
 			return fmt.Errorf("validate transcript: duplicate entry ID %q", entry.ID)
 		}
 		if entry.Revision == 0 || entry.Revision > t.revision {
@@ -494,8 +598,8 @@ func (t Thread) Validate() error {
 			highest = entry.Revision
 		}
 		if entry.ParentID != "" {
-			parentKind, exists := seen[entry.ParentID]
-			if !exists {
+			parentKind, err := seen.Get(entry.ParentID)
+			if err != nil {
 				return fmt.Errorf("validate transcript: entry %q has unknown or later parent %q", entry.ID, entry.ParentID)
 			}
 			if parentKind != EntryKinds.ENTRYSUBAGENT && parentKind != EntryKinds.ENTRYTOOLCALL {
@@ -507,43 +611,23 @@ func (t Thread) Validate() error {
 		}
 		switch entry.Kind {
 		case EntryKinds.ENTRYTOOLCALL:
-			if _, exists := seenToolIDs[entry.Payload.ToolID]; exists {
-				return fmt.Errorf("validate transcript: duplicate tool ID %q", entry.Payload.ToolID)
-			}
-			seenToolIDs[entry.Payload.ToolID] = struct{}{}
 		case EntryKinds.ENTRYASSISTANTMESSAGE:
-			if entry.TurnID != "" {
-				if _, exists := seenTurnResponses[entry.TurnID]; exists {
-					return fmt.Errorf("validate transcript: duplicate assistant entry for turn %q", entry.TurnID)
+			if entry.TurnID != "" && !entry.Payload.Complete && !entry.Payload.Interrupted {
+				if !seenActiveTurnResponses.AddIfAbsent(entry.TurnID) {
+					return fmt.Errorf("validate transcript: duplicate active assistant entry for turn %q", entry.TurnID)
 				}
-				seenTurnResponses[entry.TurnID] = struct{}{}
 			}
 		case EntryKinds.ENTRYREASONING:
-			if entry.TurnID != "" {
-				if _, exists := seenTurnReasoning[entry.TurnID]; exists {
-					return fmt.Errorf("validate transcript: duplicate reasoning entry for turn %q", entry.TurnID)
+			if entry.TurnID != "" && !entry.Payload.Complete && !entry.Payload.Interrupted {
+				if !seenActiveTurnReasoning.AddIfAbsent(entry.TurnID) {
+					return fmt.Errorf("validate transcript: duplicate active reasoning entry for turn %q", entry.TurnID)
 				}
-				seenTurnReasoning[entry.TurnID] = struct{}{}
-			}
-		case EntryKinds.ENTRYSKILLS:
-			if entry.TurnID != "" {
-				if _, exists := seenTurnSkills[entry.TurnID]; exists {
-					return fmt.Errorf("validate transcript: duplicate skills entry for turn %q", entry.TurnID)
-				}
-				seenTurnSkills[entry.TurnID] = struct{}{}
 			}
 		case EntryKinds.ENTRYSUBAGENT:
 			if entry.TurnID != "" {
-				if _, exists := seenSubagentTurns[entry.TurnID]; exists {
+				if !seenSubagentTurns.AddIfAbsent(entry.TurnID) {
 					return fmt.Errorf("validate transcript: duplicate subagent turn ID %q", entry.TurnID)
 				}
-				seenSubagentTurns[entry.TurnID] = struct{}{}
-			}
-			if entry.Payload.SpawnToolID != "" {
-				if _, exists := seenSubagentSpawns[entry.Payload.SpawnToolID]; exists {
-					return fmt.Errorf("validate transcript: duplicate subagent spawn tool ID %q", entry.Payload.SpawnToolID)
-				}
-				seenSubagentSpawns[entry.Payload.SpawnToolID] = struct{}{}
 			}
 		case EntryKinds.ENTRYPLAN:
 			seenPlans++
@@ -551,7 +635,7 @@ func (t Thread) Validate() error {
 				return errors.New("validate transcript: multiple plan entries")
 			}
 		}
-		seen[entry.ID] = entry.Kind
+		seen.Set(entry.ID, entry.Kind)
 	}
 	if highest != t.revision {
 		return fmt.Errorf("validate transcript: highest entry revision %d does not match thread revision %d", highest, t.revision)
@@ -623,7 +707,12 @@ func validateEntry(entry Entry) error {
 			return errors.New("pending subagent has turn ID")
 		}
 		if p.Subagent != SubagentPending && entry.TurnID == "" {
-			return fmt.Errorf("%s subagent turn ID is empty", p.Subagent)
+			if p.Subagent != SubagentFailed && p.Subagent != SubagentInterrupted {
+				return fmt.Errorf("%s subagent turn ID is empty", p.Subagent)
+			}
+			if p.SpawnToolID == "" {
+				return fmt.Errorf("%s unstarted subagent spawn reference is empty", p.Subagent)
+			}
 		}
 	default:
 		return fmt.Errorf("unsupported kind %s", entry.Kind)

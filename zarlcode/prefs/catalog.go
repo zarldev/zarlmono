@@ -59,6 +59,9 @@ var (
 	ErrNoVault = shared.ErrNoVault
 	// ErrCredentialsLocked means encrypted credentials require an unlocked vault.
 	ErrCredentialsLocked = shared.ErrCredentialsLocked
+	// ErrUnsupportedCredentialFormat means a stored key uses an unsupported encryption
+	// version. The row is retained; the user must explicitly replace the credential.
+	ErrUnsupportedCredentialFormat = shared.ErrUnsupportedCredentialFormat
 )
 
 // NewService creates zarlcode's scoped preference service.
@@ -79,6 +82,30 @@ func (s *Service) SetModelSelection(ctx context.Context, scope Scope, selection 
 		changes = append(changes, shared.SettingChange{Key: KeyModel, Value: selection.Model})
 	}
 	return s.ApplySettings(ctx, scope, changes...)
+}
+
+const mcpAuthKeyPrefix = "mcp:"
+
+// MCPAuthKeyProvider returns the credential-row provider used for an MCP server.
+func MCPAuthKeyProvider(name string) string { return mcpAuthKeyPrefix + name }
+
+// SetMCPServer atomically persists an MCP endpoint and its global bearer-token
+// intent. An empty token is an explicit no-auth save and deletes any stale token.
+func (s *Service) SetMCPServer(ctx context.Context, row db.MCPServerRow, authToken string) error {
+	return s.Service.SetMCPServer(ctx, ScopeGlobal, MCPAuthKeyProvider(row.Name), row, authToken)
+}
+
+// EnableCredentialProtectionWithMCPServer atomically performs first-secret
+// protection migration and persists the MCP endpoint with its bearer token.
+func (s *Service) EnableCredentialProtectionWithMCPServer(
+	ctx context.Context,
+	v *vault.Vault,
+	row db.MCPServerRow,
+	authToken string,
+) (int, error) {
+	return s.Service.EnableCredentialProtectionWithMCPServer(
+		ctx, v, ScopeGlobal, MCPAuthKeyProvider(row.Name), row, authToken,
+	)
 }
 
 const (

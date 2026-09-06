@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -51,6 +52,7 @@ type Zarlcode struct {
 	sink     *teasink.Sink
 	model    *UI
 	live     *engine.LiveRunner
+	mcpReg   *dynamic.MCPRegistry
 	prov     llm.Provider
 	spec     engine.ProviderSpec
 }
@@ -196,18 +198,14 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 
 	// Database settings override application defaults, never ambient credentials.
 	fallback := engine.ProviderSpec{Name: backends.DefaultBuiltinName.String(), Model: "local"}
-	prov, spec, err := settings.BuildActive(ctx, fallback)
-	if err != nil {
-		model := New()
-		model.SetWorkspace(root, "")
-		model.SetStartupFailure(root, "provider startup", fmt.Sprintf("provider %q: %v", spec.Name, err))
-		model.SetSettings(settings)
-		return &Zarlcode{
-			root:  root,
-			ws:    ws,
-			model: model,
-			spec:  spec,
-		}, nil
+	_, providerPreferenceErr := settings.Svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyProvider)
+	unconfigured := errors.Is(providerPreferenceErr, prefs.ErrNotFound)
+	if providerPreferenceErr != nil && !unconfigured {
+		return nil, fmt.Errorf("read provider preference: %w", providerPreferenceErr)
+	}
+	prov, spec, providerErr := settings.BuildActive(ctx, fallback)
+	if providerErr != nil && p.Headless {
+		return nil, fmt.Errorf("provider %q: %w", spec.Name, providerErr)
 	}
 
 	// Sink first (no send yet); Run wires it to the program once it exists.
@@ -297,11 +295,21 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 
 	// Resume applies to both interactive and headless runs; only the intro is
 	// an interactive affordance and is skipped in headless mode.
-	if p.Resume {
+	switch {
+	case !p.Headless && providerErr != nil && errors.Is(providerErr, prefs.ErrCredentialsLocked):
+		m.SetStartupFailure(root, "credentials locked", "restart zarlcode and unlock credentials with the vault passphrase")
+	case !p.Headless && (unconfigured || providerErr != nil):
+		m.ActivateIntro(ctx)
+		detail := ""
+		if providerErr != nil {
+			detail = fmt.Sprintf("provider %q: %v", spec.Name, providerErr)
+		}
+		m.SetOnboarding(detail, providerErr != nil)
+	case p.Resume:
 		if err := m.resumeLatestSession(ctx); err != nil {
 			return nil, fmt.Errorf("continue: %w", err)
 		}
-	} else if !p.Headless {
+	case !p.Headless:
 		m.ActivateIntro(ctx)
 	}
 
@@ -312,6 +320,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		sink:     sink,
 		model:    m,
 		live:     live,
+		mcpReg:   mcpReg,
 		prov:     prov,
 		spec:     spec,
 	}, nil
@@ -348,7 +357,9 @@ func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) in
 		} else {
 			defer inhibitor.Close()
 		}
-		return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter, report)
+		return runHeadlessAfterMCPSetup(ctx, z.settings, startupMCPConnector(z.mcpReg), func() int {
+			return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter, report)
+		})
 	}
 	prog := tea.NewProgram(z.model, tea.WithContext(ctx))
 	if z.sink != nil {
@@ -447,102 +458,132 @@ func connectConfiguredMCPServersCmd(ctx context.Context, settings *engine.Settin
 	}
 }
 
+type startupMCPServer struct {
+	row       db.MCPServerRow
+	authToken string
+}
+
 func connectConfiguredMCPServers(ctx context.Context, settings *engine.Settings, mcpReg *dynamic.MCPRegistry) {
-	if settings == nil || settings.Store == nil || mcpReg == nil {
+	if mcpReg == nil {
+		return
+	}
+	connectConfiguredMCPServersWith(ctx, settings, startupMCPConnector(mcpReg))
+}
+
+func startupMCPConnector(mcpReg *dynamic.MCPRegistry) startupMCPConnectFunc {
+	connect := dynamic.NewMCPConnect(mcpReg)
+	return func(connectCtx context.Context, srv db.MCPServerRow, authToken string) error {
+		res, err := connect.Execute(connectCtx, tools.ToolCall{
+			ID: tools.ToolCallID("startup-mcp-" + srv.Name),
+			Arguments: tools.ToolParameters{
+				"name":       srv.Name,
+				"transport":  srv.Transport,
+				"command":    srv.Command,
+				"args":       srv.Args,
+				"env":        srv.Env,
+				"base_url":   srv.BaseURL,
+				"auth_token": authToken,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if res != nil && !res.Success {
+			return errors.New(res.Error)
+		}
+		return nil
+	}
+}
+
+func runHeadlessAfterMCPSetup(ctx context.Context, settings *engine.Settings, connect startupMCPConnectFunc, run func() int) int {
+	setupCtx, cancel := context.WithTimeout(ctx, startupMCPConnectTimeout)
+	connectConfiguredMCPServersWith(setupCtx, settings, connect)
+	cancel()
+	return run()
+}
+
+func connectConfiguredMCPServersWith(ctx context.Context, settings *engine.Settings, connect startupMCPConnectFunc) {
+	if settings == nil || settings.Store == nil {
 		return
 	}
 	servers, err := settings.Store.ListMCPServers(ctx)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "mcp: list servers:", err)
+		slog.WarnContext(ctx, "mcp: list configured servers", "err", err)
 		return
-	}
-	type startupMCPServer struct {
-		row       db.MCPServerRow
-		authToken string
 	}
 	startupServers := make([]startupMCPServer, 0, len(servers))
 	for _, srv := range servers {
 		if !srv.Enabled {
 			continue
 		}
-		// Resolve/migrate credentials before dialing concurrently. The dial path is
-		// I/O-bound and safe to fan out; keeping credential-store writes serial avoids
-		// turning startup into a burst of SQLite/vault mutations.
-		startupServers = append(startupServers, startupMCPServer{
-			row:       srv,
-			authToken: resolveMCPAuthToken(ctx, settings, srv),
-		})
+		// Resolve credentials before dialing concurrently. Credential-store reads
+		// remain serial and any ambiguous or unavailable authentication fails closed.
+		resolved, resolveErr := resolveMCPAuthToken(ctx, settings, srv.Name, srv.AuthRequired)
+		if resolveErr != nil {
+			slog.WarnContext(ctx, "mcp: resolve startup authentication", "server", srv.Name, "err", resolveErr)
+			continue
+		}
+		startupServers = append(startupServers, startupMCPServer{row: srv, authToken: resolved.token})
 	}
-	if len(startupServers) == 0 {
-		return
-	}
+	connectResolvedMCPServers(ctx, startupServers, connect)
+}
 
-	connect := dynamic.NewMCPConnect(mcpReg)
+type startupMCPConnectFunc func(context.Context, db.MCPServerRow, string) error
+
+func connectResolvedMCPServers(ctx context.Context, servers []startupMCPServer, connect startupMCPConnectFunc) {
 	var wg sync.WaitGroup
-	var errMu sync.Mutex
-	for _, srv := range startupServers {
+	for _, srv := range servers {
 		wg.Add(1)
-		go func(srv startupMCPServer) {
+		go func() {
 			defer wg.Done()
 			connectCtx, cancel := context.WithTimeout(ctx, startupMCPConnectTimeout)
 			defer cancel()
-			res, err := connect.Execute(connectCtx, tools.ToolCall{
-				ID: tools.ToolCallID("startup-mcp-" + srv.row.Name),
-				Arguments: tools.ToolParameters{
-					"name":       srv.row.Name,
-					"transport":  srv.row.Transport,
-					"command":    srv.row.Command,
-					"args":       srv.row.Args,
-					"env":        srv.row.Env,
-					"base_url":   srv.row.BaseURL,
-					"auth_token": srv.authToken,
-				},
-			})
-			errMu.Lock()
-			defer errMu.Unlock()
-			switch {
-			case err != nil:
+			if err := connect(connectCtx, srv.row, srv.authToken); err != nil {
 				slog.WarnContext(ctx, "mcp: startup connect", "server", srv.row.Name, "err", err)
-			case res != nil && !res.Success:
-				slog.WarnContext(ctx, "mcp: startup connect", "server", srv.row.Name, "err", res.Error)
 			}
-		}(srv)
+		}()
 	}
 	wg.Wait()
 }
 
-// resolveMCPAuthToken returns the bearer token for an MCP server, preferring
-// the encrypted vault (provider key mcpAuthKeyProvider(name)) over the legacy
-// plaintext column. A row that still carries a plaintext token — written
-// before tokens moved to the vault — is migrated on first launch: the value
-// is copied into the vault and the column cleared, so it stops living in the
-// DB. When no vault is available the legacy plaintext is used as-is (degraded
-// but functional). All failures are non-fatal: launch must not be blocked.
-func resolveMCPAuthToken(ctx context.Context, settings *engine.Settings, srv db.MCPServerRow) string {
-	if settings.Svc != nil {
-		if k, err := settings.Svc.GetKey(ctx, prefs.ScopeEffective, mcpAuthKeyProvider(srv.Name)); err == nil && k != "" {
-			return k
+type mcpAuthOutcome uint8
+
+const (
+	mcpAuthNone mcpAuthOutcome = iota
+	mcpAuthBearer
+)
+
+type mcpAuthResolution struct {
+	outcome mcpAuthOutcome
+	token   string
+}
+
+var errMCPAuthCredentialMissing = errors.New("encrypted credential unavailable")
+
+// resolveMCPAuthToken distinguishes an intentionally unauthenticated server from
+// one with a stored encrypted bearer credential. Plaintext mcp_servers tokens are
+// obsolete and are never inspected or modified.
+func resolveMCPAuthToken(ctx context.Context, settings *engine.Settings, serverName string, required bool) (mcpAuthResolution, error) {
+	if !required {
+		return mcpAuthResolution{outcome: mcpAuthNone}, nil
+	}
+	if settings == nil || settings.Svc == nil {
+		return mcpAuthResolution{}, errMCPAuthCredentialMissing
+	}
+	token, err := settings.Svc.GetKey(ctx, prefs.ScopeEffective, mcpAuthKeyProvider(serverName))
+	if errors.Is(err, prefs.ErrNotFound) {
+		if required {
+			return mcpAuthResolution{}, errMCPAuthCredentialMissing
 		}
+		return mcpAuthResolution{outcome: mcpAuthNone}, nil
 	}
-	if srv.AuthToken == "" {
-		return ""
+	if err != nil {
+		return mcpAuthResolution{}, fmt.Errorf("read encrypted credential: %w", err)
 	}
-	if settings.Svc == nil {
-		return srv.AuthToken
+	if token == "" {
+		return mcpAuthResolution{}, errMCPAuthCredentialMissing
 	}
-	// Legacy plaintext row: move it into the credential store, then clear the
-	// column. The store writes plaintext or encrypted material according to the
-	// user's credential_protection setting.
-	if err := settings.Svc.SetKey(ctx, prefs.ScopeGlobal, mcpAuthKeyProvider(srv.Name), srv.AuthToken); err == nil {
-		migrated := srv
-		migrated.AuthToken = ""
-		if uerr := settings.Store.UpsertMCPServer(ctx, migrated); uerr != nil {
-			fmt.Fprintf(os.Stderr, "mcp: clear legacy token for %q: %v\n", srv.Name, uerr)
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "mcp: migrate token for %q to vault: %v\n", srv.Name, err)
-	}
-	return srv.AuthToken
+	return mcpAuthResolution{outcome: mcpAuthBearer, token: token}, nil
 }
 
 func firstNonEmpty(values ...string) string {

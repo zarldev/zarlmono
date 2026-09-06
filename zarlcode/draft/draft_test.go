@@ -24,13 +24,39 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDecodeEmptyAndLegacyValues(t *testing.T) {
+func TestEncodeUsesEmptyArraySentinelForEmptyText(t *testing.T) {
 	t.Parallel()
 
-	for _, value := range [][]byte{nil, {}, []byte("null"), []byte("[]")} {
+	got, err := draft.Encode("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `[]` {
+		t.Fatalf("Encode(\"\") = %s", got)
+	}
+}
+
+func TestDecodeEmptyRepresentations(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range [][]byte{nil, {}, []byte(" "), []byte("[]")} {
 		got, err := draft.Decode(value)
 		if err != nil || got != "" {
 			t.Fatalf("Decode(%q) = (%q, %v)", value, got, err)
+		}
+	}
+}
+
+func TestDecodeRejectsInvalidNonemptyValues(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{
+		`null`,
+		`{"text":"draft","extra":true}`,
+		`{"text":"draft"} {}`,
+	} {
+		if _, err := draft.Decode([]byte(value)); err == nil {
+			t.Fatalf("Decode(%q) succeeded, want error", value)
 		}
 	}
 }

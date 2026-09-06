@@ -387,13 +387,15 @@ func (s *Sink) flush() {
 func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 	s.flush()
 	s.dispatch(ToolStartedMsg{
-		TaskID:       string(e.TaskID),
-		Depth:        e.Depth,
-		ToolID:       e.ToolID,
-		ToolName:     e.ToolName,
-		Parameters:   tools.CloneParameters(e.Parameters),
-		ParentToolID: e.ParentToolID,
-		Sequence:     e.Sequence,
+		TaskID:            string(e.TaskID),
+		Depth:             e.Depth,
+		ExecutionID:       e.ExecutionID,
+		ToolID:            e.ToolID,
+		ToolName:          e.ToolName,
+		Parameters:        tools.CloneParameters(e.Parameters),
+		ParentToolID:      e.ParentToolID,
+		ParentExecutionID: e.ParentExecutionID,
+		Sequence:          e.Sequence,
 	})
 }
 
@@ -401,9 +403,9 @@ func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 func (s *Sink) OnWorkspaceWaitStarted(e runner.WorkspaceWaitStarted) {
 	s.flush()
 	s.dispatch(WorkspaceWaitStartedMsg{
-		TaskID: string(e.TaskID), Depth: e.Depth, ToolID: e.ToolID, ToolName: e.ToolName,
+		TaskID: string(e.TaskID), Depth: e.Depth, ExecutionID: e.ExecutionID, ToolID: e.ToolID, ToolName: e.ToolName,
 		Access: e.Access, Paths: e.Paths, BlockerCount: e.BlockerCount,
-		ParentToolID: e.ParentToolID, Sequence: e.Sequence,
+		ParentToolID: e.ParentToolID, ParentExecutionID: e.ParentExecutionID, Sequence: e.Sequence,
 	})
 }
 
@@ -411,16 +413,18 @@ func (s *Sink) OnWorkspaceWaitStarted(e runner.WorkspaceWaitStarted) {
 func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 	s.flush()
 	s.dispatch(ToolCompletedMsg{
-		TaskID:          string(e.TaskID),
-		Depth:           e.Depth,
-		ToolID:          e.ToolID,
-		ToolName:        e.ToolName,
-		Result:          e.Result,
-		FormattedResult: e.FormattedResult,
-		Effects:         cloneEffects(e.Effects),
-		Duration:        e.Duration,
-		ParentToolID:    e.ParentToolID,
-		Sequence:        e.Sequence,
+		TaskID:            string(e.TaskID),
+		Depth:             e.Depth,
+		ExecutionID:       e.ExecutionID,
+		ToolID:            e.ToolID,
+		ToolName:          e.ToolName,
+		Result:            e.Result,
+		FormattedResult:   e.FormattedResult,
+		Effects:           cloneEffects(e.Effects),
+		Duration:          e.Duration,
+		ParentToolID:      e.ParentToolID,
+		ParentExecutionID: e.ParentExecutionID,
+		Sequence:          e.Sequence,
 	})
 }
 
@@ -428,17 +432,19 @@ func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 func (s *Sink) OnToolFailed(e runner.ToolFailed) {
 	s.flush()
 	s.dispatch(ToolFailedMsg{
-		TaskID:       string(e.TaskID),
-		Depth:        e.Depth,
-		ToolID:       e.ToolID,
-		ToolName:     e.ToolName,
-		Error:        e.Error,
-		Kind:         e.Kind, // flat classification only; e.Err is not forwarded to the UI
-		Abandoned:    e.Abandoned,
-		ParentToolID: e.ParentToolID,
-		Sequence:     e.Sequence,
-		Effects:      cloneEffects(e.Effects),
-		Duration:     e.Duration,
+		TaskID:            string(e.TaskID),
+		Depth:             e.Depth,
+		ExecutionID:       e.ExecutionID,
+		ToolID:            e.ToolID,
+		ToolName:          e.ToolName,
+		Error:             e.Error,
+		Kind:              e.Kind, // flat classification only; e.Err is not forwarded to the UI
+		Abandoned:         e.Abandoned,
+		ParentToolID:      e.ParentToolID,
+		ParentExecutionID: e.ParentExecutionID,
+		Sequence:          e.Sequence,
+		Effects:           cloneEffects(e.Effects),
+		Duration:          e.Duration,
 	})
 }
 
@@ -446,9 +452,9 @@ func (s *Sink) OnToolFailed(e runner.ToolFailed) {
 func (s *Sink) OnWorkspaceWaitEnded(e runner.WorkspaceWaitEnded) {
 	s.flush()
 	s.dispatch(WorkspaceWaitEndedMsg{
-		TaskID: string(e.TaskID), Depth: e.Depth, ToolID: e.ToolID, ToolName: e.ToolName,
+		TaskID: string(e.TaskID), Depth: e.Depth, ExecutionID: e.ExecutionID, ToolID: e.ToolID, ToolName: e.ToolName,
 		Outcome: e.Outcome, Duration: e.Duration,
-		ParentToolID: e.ParentToolID, Sequence: e.Sequence,
+		ParentToolID: e.ParentToolID, ParentExecutionID: e.ParentExecutionID, Sequence: e.Sequence,
 	})
 }
 
@@ -456,13 +462,14 @@ func (s *Sink) OnWorkspaceWaitEnded(e runner.WorkspaceWaitEnded) {
 func (s *Sink) OnConversationStarted(e runner.ConversationStarted) {
 	s.flush()
 	s.dispatch(ConversationStartedMsg{
-		TaskID:           string(e.TaskID),
-		Depth:            e.Depth,
-		Prompt:           e.Prompt,
-		ParentToolCallID: e.ParentToolCallID,
-		AgentName:        e.AgentName,
-		Provider:         e.Provider,
-		Model:            e.Model,
+		TaskID:            string(e.TaskID),
+		Depth:             e.Depth,
+		Prompt:            e.Prompt,
+		ParentToolCallID:  e.ParentToolCallID,
+		ParentExecutionID: e.ParentExecutionID,
+		AgentName:         e.AgentName,
+		Provider:          e.Provider,
+		Model:             e.Model,
 	})
 }
 
@@ -470,16 +477,17 @@ func (s *Sink) OnConversationStarted(e runner.ConversationStarted) {
 func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
 	s.flush()
 	s.dispatch(ConversationEndedMsg{
-		TaskID:           string(e.TaskID),
-		Depth:            e.Depth,
-		Reason:           e.Reason,
-		Cause:            e.Cause,
-		Error:            e.Error,
-		RateLimit:        cloneRateLimitError(e.RateLimit),
-		Duration:         e.Duration,
-		Iterations:       e.Iterations,
-		TotalUsage:       e.TotalUsage,
-		ParentToolCallID: e.ParentToolCallID,
+		TaskID:            string(e.TaskID),
+		Depth:             e.Depth,
+		Reason:            e.Reason,
+		Cause:             e.Cause,
+		Error:             e.Error,
+		RateLimit:         cloneRateLimitError(e.RateLimit),
+		Duration:          e.Duration,
+		Iterations:        e.Iterations,
+		TotalUsage:        e.TotalUsage,
+		ParentToolCallID:  e.ParentToolCallID,
+		ParentExecutionID: e.ParentExecutionID,
 	})
 }
 

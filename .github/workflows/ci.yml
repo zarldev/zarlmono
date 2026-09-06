@@ -52,6 +52,14 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test -count=1 ./...
 
+      - name: verify README quickstart matches compiled example
+        if: matrix.module == 'examples'
+        run: go test -count=1 ./tools/doccheck/...
+
+      - name: verify repository guidance catalogue
+        if: matrix.module == 'examples'
+        run: go test -count=1 ./tools/repohealth/...
+
   race-test:
     name: race test (zkit)
     runs-on: ubuntu-latest
@@ -79,10 +87,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: setup go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: test repository tools
+        run: go test -count=1 ./tools/...
+
+      - name: verify dependency pair
+        run: go run ./tools/dependencycheck/cmd/dependencycheck
+
       - name: reject new same-package tests and Background test contexts
         env:
           TEST_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: bash scripts/check-new-test-policy.sh "$TEST_POLICY_BASE"
+        run: go run ./tools/testpolicy/cmd/testpolicy "$TEST_POLICY_BASE"
 
   lint:
     name: golangci-lint (${{ matrix.module }})

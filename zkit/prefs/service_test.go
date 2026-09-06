@@ -1,11 +1,7 @@
 package prefs_test
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"errors"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -351,14 +347,16 @@ func TestService_SetKey_EmptyRejection(t *testing.T) {
 	}
 }
 
-func TestService_NoVaultPlaintextMode(t *testing.T) {
+func TestService_ExplicitPlaintextOptOutWithoutVault(t *testing.T) {
 	svc := openTestServiceNoVault(t)
 	ctx := t.Context()
 
 	if svc.HasVault() {
 		t.Fatal("HasVault returned true for nil vault")
 	}
-
+	if err := svc.SetSetting(ctx, prefs.ScopeGlobal, "credential_protection", prefs.CredentialProtectionOff); err != nil {
+		t.Fatalf("set explicit plaintext mode: %v", err)
+	}
 	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-test"); err != nil {
 		t.Fatalf("SetKey plaintext without vault: %v", err)
 	}
@@ -381,6 +379,22 @@ func TestService_NoVaultPlaintextMode(t *testing.T) {
 
 	if err := svc.DeleteKey(ctx, prefs.ScopeGlobal, "openai"); err != nil {
 		t.Errorf("DeleteKey without vault: %v", err)
+	}
+}
+
+func TestService_EncryptedDefaultRejectsWriteWithoutVault(t *testing.T) {
+	svc := openTestServiceNoVault(t)
+	ctx := t.Context()
+
+	mode, err := svc.CredentialProtection(ctx)
+	if err != nil || mode != prefs.CredentialProtectionPassphrase {
+		t.Fatalf("CredentialProtection = %q, %v; want passphrase, nil", mode, err)
+	}
+	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-test"); !errors.Is(err, prefs.ErrCredentialsLocked) {
+		t.Fatalf("SetKey error = %v; want ErrCredentialsLocked", err)
+	}
+	if _, err := svc.GetKey(ctx, prefs.ScopeGlobal, "openai"); !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("GetKey after rejected write = %v; want ErrNotFound", err)
 	}
 }
 
@@ -790,112 +804,71 @@ func TestService_GetSetting_Effective_WithoutWorkspace(t *testing.T) {
 	}
 }
 
-// TestService_MigrateVaultKeys exercises the legacy→passphrase migration end
-// to end: a credential encrypted under the old random master.key must come out
-// readable under the new passphrase-derived key, and master.key must be gone.
-func TestService_MigrateVaultKeys(t *testing.T) {
-	home := t.TempDir()
+func TestServiceRejectsUnsupportedCredentialVersion(t *testing.T) {
 	store := openTestStore(t)
-
-	// A random legacy key (what the pre-passphrase binary generated).
-	kOld := make([]byte, 32)
-	if _, err := rand.Read(kOld); err != nil {
-		t.Fatal(err)
-	}
-
-	// Seed the pre-passphrase persisted representation, without a runtime
-	// raw-key override. This is a migration fixture, not a current write path.
-	block, err := aes.NewCipher(kOld)
-	if err != nil {
-		t.Fatal(err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.SetAPIKey(t.Context(), "", "openai", db.APIKeyCiphertext{
-		Ciphertext: aead.Seal(nil, nonce, []byte("sk-OLD"), nil),
-		Nonce:      nonce,
+		Ciphertext: []byte("unsupported-ciphertext"),
+		Nonce:      make([]byte, 12),
 		KeyVersion: 1,
 		Storage:    db.APIKeyStorageVault,
 	}); err != nil {
 		t.Fatal(err)
 	}
-
-	// 2. Simulate the upgrade: drop kOld as the legacy master.key file and
-	//    switch to a passphrase-derived primary.
-	if err := os.WriteFile(filepath.Join(home, "master.key"), kOld, 0o600); err != nil {
-		t.Fatalf("write legacy key: %v", err)
+	svc := prefs.NewService(store, openTestVault(t), "")
+	if _, err := svc.GetKey(t.Context(), prefs.ScopeGlobal, "openai"); !errors.Is(err, prefs.ErrUnsupportedCredentialFormat) {
+		t.Fatalf("GetKey = %v; want unsupported format", err)
 	}
-	vNew, err := vault.Open(home, func(_, _ bool) (string, error) { return "pp", nil })
-	if err != nil {
-		t.Fatalf("open passphrase vault: %v", err)
-	}
-	if !vNew.HasLegacy() {
-		t.Fatal("new vault should see the legacy master.key")
-	}
-	svcNew := prefs.NewService(store, vNew, "")
-
-	// 3. Migrate.
-	n, err := svcNew.MigrateVaultKeys(t.Context())
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("migrated %d keys, want 1", n)
-	}
-	if _, err := os.Stat(filepath.Join(home, "master.key")); !os.IsNotExist(err) {
-		t.Errorf("master.key should be removed after migration, stat err = %v", err)
-	}
-
-	// 4. The credential reads back under the new key — and crucially, still
-	//    reads back when reopened with ONLY the passphrase (no legacy present).
-	got, err := svcNew.GetKey(t.Context(), prefs.ScopeGlobal, "openai")
-	if err != nil || got != "sk-OLD" {
-		t.Fatalf("GetKey after migrate = %q,%v; want sk-OLD,nil", got, err)
-	}
-	vFinal, err := vault.Open(home, func(_, _ bool) (string, error) { return "pp", nil })
-	if err != nil {
-		t.Fatalf("reopen passphrase-only: %v", err)
-	}
-	if vFinal.HasLegacy() {
-		t.Error("legacy should be gone after migration")
-	}
-	got, err = prefs.NewService(store, vFinal, "").GetKey(t.Context(), prefs.ScopeGlobal, "openai")
-	if err != nil || got != "sk-OLD" {
-		t.Fatalf("GetKey passphrase-only = %q,%v; want sk-OLD,nil", got, err)
+	row, err := store.GetAPIKeyExact(t.Context(), "", "openai")
+	if err != nil || row.KeyVersion != 1 || string(row.Ciphertext) != "unsupported-ciphertext" {
+		t.Fatalf("unsupported row changed: %#v, %v", row, err)
 	}
 }
 
-func TestService_PlaintextStorageDefaultWithoutVault(t *testing.T) {
+func TestService_EncryptedStorageDefaultWithVault(t *testing.T) {
 	store := openTestStore(t)
-	svc := prefs.NewService(store, nil, "/home/test/project")
+	v := openTestVault(t)
+	svc := prefs.NewService(store, v, "/home/test/project")
 	ctx := t.Context()
 
 	mode, err := svc.CredentialProtection(ctx)
 	if err != nil {
 		t.Fatalf("CredentialProtection: %v", err)
 	}
-	if mode != prefs.CredentialProtectionOff {
-		t.Fatalf("CredentialProtection = %q, want off", mode)
+	if mode != prefs.CredentialProtectionPassphrase {
+		t.Fatalf("CredentialProtection = %q, want passphrase", mode)
 	}
 
-	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-plain"); err != nil {
-		t.Fatalf("SetKey plaintext: %v", err)
+	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-encrypted"); err != nil {
+		t.Fatalf("SetKey encrypted: %v", err)
 	}
 	row, err := store.GetAPIKeyExact(ctx, "", "openai")
 	if err != nil {
 		t.Fatalf("GetAPIKeyExact: %v", err)
 	}
-	if row.Storage != db.APIKeyStoragePlaintext {
-		t.Fatalf("storage = %q, want plaintext", row.Storage)
+	if row.Storage != db.APIKeyStorageVault {
+		t.Fatalf("storage = %q, want vault", row.Storage)
 	}
-	if got := string(row.Ciphertext); got != "sk-plain" {
-		t.Fatalf("stored plaintext = %q, want sk-plain", got)
+	if string(row.Ciphertext) == "sk-encrypted" {
+		t.Fatal("encrypted row stores plaintext bytes")
+	}
+}
+
+func TestService_InvalidCredentialProtectionFailsClosed(t *testing.T) {
+	store := openTestStore(t)
+	svc := prefs.NewService(store, openTestVault(t), "/home/test/project")
+	ctx := t.Context()
+	if err := svc.SetSetting(ctx, prefs.ScopeGlobal, "credential_protection", "unknown"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.CredentialProtection(ctx); err == nil || !strings.Contains(err.Error(), "invalid credential protection mode") {
+		t.Fatalf("CredentialProtection error = %v; want invalid mode", err)
+	}
+	if err := svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "sk-test"); err == nil {
+		t.Fatal("SetKey succeeded with invalid protection mode")
+	}
+	if _, err := svc.GetKey(ctx, prefs.ScopeGlobal, "openai"); !errors.Is(err, prefs.ErrNotFound) {
+		t.Fatalf("GetKey after rejected write = %v; want ErrNotFound", err)
 	}
 }
 

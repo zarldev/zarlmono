@@ -7,6 +7,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 	"github.com/zarldev/zarlmono/zkit/oauth/claude"
 	"github.com/zarldev/zarlmono/zkit/prefs"
+	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
 func TestStoreTokenExtractsAndPersistsCredential(t *testing.T) {
@@ -60,5 +61,9 @@ func openTestService(t *testing.T) *prefs.Service {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return prefs.NewService(store, nil, "")
+	v, err := vault.Open(t.TempDir(), func(bool, bool) (string, error) { return "test-passphrase", nil })
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	return prefs.NewService(store, v, "")
 }

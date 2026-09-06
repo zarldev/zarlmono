@@ -63,11 +63,6 @@ func FromRecords(revision uint64, records []Record) (Thread, error) {
 		if err := decoder.Decode(&payload); err != nil {
 			return Thread{}, fmt.Errorf("decode transcript entry %q: %w", record.ID, err)
 		}
-		// Affected older builds recorded the UNKNOWN enum sentinel on successful
-		// tools. It represented no failure, so normalize that exact legacy shape.
-		if kind == EntryKinds.ENTRYTOOLCALL && payload.ToolState == ToolSucceeded && payload.FailureKind == "unknown" {
-			payload.FailureKind = ""
-		}
 		if err := decoder.Decode(&struct{}{}); err != io.EOF {
 			return Thread{}, fmt.Errorf("decode transcript entry %q: trailing payload data", record.ID)
 		}

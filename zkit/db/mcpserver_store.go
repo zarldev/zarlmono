@@ -13,14 +13,15 @@ import (
 // can auto-connect it at startup. The sqlite encoding (JSON args/env, integer
 // bool) lives in the List/Upsert method bodies.
 type MCPServerRow struct {
-	Name      string
-	Transport string // "stdio" | "http"
-	Command   string
-	Args      []string
-	Env       map[string]string
-	BaseURL   string
-	AuthToken string
-	Enabled   bool
+	Name         string
+	Transport    string // "stdio" | "http"
+	Command      string
+	Args         []string
+	Env          map[string]string
+	BaseURL      string
+	AuthToken    string
+	AuthRequired bool
+	Enabled      bool
 }
 
 // ListMCPServers returns all configured MCP servers.
@@ -32,12 +33,13 @@ func (s *Store) ListMCPServers(ctx context.Context) ([]MCPServerRow, error) {
 	out := make([]MCPServerRow, 0, len(rows))
 	for _, r := range rows {
 		row := MCPServerRow{
-			Name:      r.Name,
-			Transport: r.Transport,
-			Command:   r.Command,
-			BaseURL:   r.BaseUrl,
-			AuthToken: r.AuthToken,
-			Enabled:   r.Enabled != 0,
+			Name:         r.Name,
+			Transport:    r.Transport,
+			Command:      r.Command,
+			BaseURL:      r.BaseUrl,
+			AuthToken:    r.AuthToken,
+			AuthRequired: r.AuthRequired != 0,
+			Enabled:      r.Enabled != 0,
 		}
 		if r.Args != "" {
 			_ = json.Unmarshal([]byte(r.Args), &row.Args)
@@ -66,16 +68,17 @@ func (s *Store) UpsertMCPServer(ctx context.Context, row MCPServerRow) error {
 	}
 	now := time.Now().Unix()
 	return s.q.UpsertMCPServer(ctx, gen.UpsertMCPServerParams{
-		Name:      row.Name,
-		Transport: row.Transport,
-		Command:   row.Command,
-		Args:      argsJSON,
-		Env:       envJSON,
-		BaseUrl:   row.BaseURL,
-		AuthToken: row.AuthToken,
-		Enabled:   boolToInt(row.Enabled),
-		CreatedAt: now,
-		UpdatedAt: now,
+		Name:         row.Name,
+		Transport:    row.Transport,
+		Command:      row.Command,
+		Args:         argsJSON,
+		Env:          envJSON,
+		BaseUrl:      row.BaseURL,
+		AuthToken:    row.AuthToken,
+		AuthRequired: boolToInt(row.AuthRequired),
+		Enabled:      boolToInt(row.Enabled),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 }
 

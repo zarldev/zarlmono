@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 // name in the encrypted api_keys store, so MCP secrets share the vault path
 // used for provider keys instead of sitting plaintext in the mcp_servers
 // table. The "mcp:" prefix keeps them from colliding with real provider keys.
-func mcpAuthKeyProvider(name string) string { return "mcp:" + name }
+func mcpAuthKeyProvider(name string) string { return prefs.MCPAuthKeyProvider(name) }
 
 // mcpPane lists the persisted MCP servers and manages them: add a new server
 // (stdio or http), delete one, or toggle whether it auto-connects at startup.
@@ -29,9 +30,10 @@ type mcpPane struct {
 	servers []db.MCPServerRow
 	cursor  int
 
-	adding bool        // inline add-server form is open
-	addEds [6]composer // name, transport, command, args, base url, auth token
-	addIdx int
+	adding          bool        // inline add-server form is open
+	addEds          [6]composer // name, transport, command, args, base url, auth token
+	addIdx          int
+	addAuthRequired bool // sticky after token submission until success or form cancellation
 
 	status   string
 	statusAt time.Time
@@ -121,6 +123,7 @@ func (d *mcpPane) handleKeyInner(msg tea.KeyPressMsg) action {
 		d.adding = true
 		d.addEds = [6]composer{}
 		d.addIdx = 0
+		d.addAuthRequired = false
 		d.status = ""
 	case "x", "delete":
 		d.deleteCur()
@@ -131,16 +134,16 @@ func (d *mcpPane) handleKeyInner(msg tea.KeyPressMsg) action {
 }
 
 func (d *mcpPane) handleAddKey(msg tea.KeyPressMsg) action {
-	return handleAddFormKey(msg, d.addEds[:], &d.addIdx, func() { d.adding = false }, d.submitAdd)
+	if (msg.String() == "enter" && d.addIdx == len(d.addEds)-1) || msg.String() == "ctrl+s" {
+		return d.submitAdd()
+	}
+	return handleAddFormKey(msg, d.addEds[:], &d.addIdx, func() { d.adding = false }, func() {})
 }
 
-// submitAdd validates the form and upserts the server config. Transport must
-// be stdio (command required) or http (base url required); args are split on
-// whitespace.
-func (d *mcpPane) submitAdd() {
+func (d *mcpPane) submitAdd() action {
 	if d.s == nil || d.s.Store == nil {
 		d.adding = false
-		return
+		return actionNone{}
 	}
 	name := strings.TrimSpace(d.addEds[0].text())
 	transport := strings.ToLower(strings.TrimSpace(d.addEds[1].text()))
@@ -151,50 +154,64 @@ func (d *mcpPane) submitAdd() {
 
 	if name == "" {
 		d.status = "name required"
-		return
+		return actionNone{}
 	}
 	switch transport {
 	case "stdio":
 		if command == "" {
 			d.status = "stdio: command required"
-			return
+			return actionNone{}
 		}
 	case "http":
 		if baseURL == "" {
 			d.status = "http: base url required"
-			return
+			return actionNone{}
 		}
 	default:
 		d.status = "transport must be 'stdio' or 'http'"
-		return
+		return actionNone{}
 	}
 
-	if d.s == nil || d.s.Svc == nil {
-		d.status = "credential service unavailable"
-		return
-	}
 	if authToken != "" {
-		if err := d.s.Svc.SetKey(d.ctx, prefs.ScopeGlobal, mcpAuthKeyProvider(name), authToken); err != nil {
-			d.status = "store auth token: " + err.Error()
-			return
-		}
+		d.addAuthRequired = true
+	}
+	if d.addAuthRequired && authToken == "" {
+		d.status = "auth token required; re-enter it or cancel and choose no auth"
+		return actionNone{}
 	}
 	row := db.MCPServerRow{
-		Name:      name,
-		Transport: transport,
-		Command:   command,
-		Args:      args,
-		BaseURL:   baseURL,
-		AuthToken: "", // secret lives in the vault under mcpAuthKeyProvider(name)
-		Enabled:   true,
+		Name: name, Transport: transport, Command: command, Args: args,
+		BaseURL: baseURL, AuthRequired: d.addAuthRequired, Enabled: true,
 	}
-	if err := d.s.Store.UpsertMCPServer(d.ctx, row); err != nil {
-		d.status = "add: " + err.Error()
-		return
+	finish := func(err error) {
+		d.addEds[5] = composer{}
+		if err != nil {
+			d.status, d.statusAt = "save mcp server: "+err.Error(), time.Now()
+			return
+		}
+		d.addAuthRequired = false
+		d.adding = false
+		d.status, d.statusAt = name+" added (connects next launch)", time.Now()
+		d.refresh()
 	}
-	d.adding = false
-	d.status = name + " added (connects next launch)"
-	d.refresh()
+	if authToken == "" {
+		finish(persistMCPServer(d.ctx, d.s, row, ""))
+		return actionNone{}
+	}
+	if d.s.Svc == nil {
+		finish(errors.New("credential service unavailable"))
+		return actionNone{}
+	}
+	return actionSaveCredential{request: credentialSaveRequest{
+		provider: mcpAuthKeyProvider(name), value: authToken, mcpServer: &row, done: finish,
+	}}
+}
+
+func persistMCPServer(ctx context.Context, settings *engine.Settings, row db.MCPServerRow, authToken string) error {
+	if settings == nil || settings.Store == nil || settings.Svc == nil {
+		return errors.New("credential service unavailable")
+	}
+	return settings.Svc.SetMCPServer(ctx, row, authToken)
 }
 
 func (d *mcpPane) deleteCur() {
@@ -263,9 +280,18 @@ func (d *mcpPane) addFormLines() []string {
 	for i := range d.addEds {
 		label := pad(mcpAddLabels[i], 12)
 		val := d.addEds[i].text()
+		if i == len(d.addEds)-1 {
+			val = strings.Repeat("•", len(d.addEds[i].value))
+		}
 		if i == d.addIdx {
-			val = string(d.addEds[i].value[:d.addEds[i].cursor]) +
-				palette.Primary.On("▏") + string(d.addEds[i].value[d.addEds[i].cursor:])
+			cursor := d.addEds[i].cursor
+			if i == len(d.addEds)-1 {
+				masked := []rune(val)
+				val = string(masked[:cursor]) + palette.Primary.On("▏") + string(masked[cursor:])
+			} else {
+				val = string(d.addEds[i].value[:cursor]) +
+					palette.Primary.On("▏") + string(d.addEds[i].value[cursor:])
+			}
 			label = palette.Primary.On(label)
 		} else {
 			label = palette.Subtle.On(label)

@@ -82,8 +82,8 @@ func (s *Session) applyThinking(e teasink.ThinkingMsg) {
 }
 
 func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
-	if e.ParentToolID != "" {
-		s.Run.startNestedTool(e.ToolID)
+	if e.ParentToolID != "" || e.ParentExecutionID != "" {
+		s.Run.startNestedTool(toolEventKey(e.ExecutionID, e.ToolID))
 		s.logEvent("nested tool started", e.ToolName)
 		return
 	}
@@ -97,7 +97,7 @@ func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
 			if s.PendingSkillNames == nil {
 				s.PendingSkillNames = make(map[string]string)
 			}
-			s.PendingSkillNames[e.ToolID] = name
+			s.PendingSkillNames[toolEventKey(e.ExecutionID, e.ToolID)] = name
 		}
 	}
 }
@@ -111,8 +111,8 @@ func (s *Session) applyWorkspaceWaitEnded(e teasink.WorkspaceWaitEndedMsg) {
 }
 
 func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEffect {
-	if e.ParentToolID != "" {
-		s.Run.finishNestedTool(e.ToolID, e.ToolName, e.Duration, false)
+	if e.ParentToolID != "" || e.ParentExecutionID != "" {
+		s.Run.finishNestedTool(toolEventKey(e.ExecutionID, e.ToolID), e.ToolName, e.Duration, false)
 		s.logEvent("nested tool completed", e.ToolName)
 		return toolCompletedEffect{}
 	}
@@ -124,16 +124,16 @@ func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEf
 	if e.ToolName != "skill_load" {
 		return toolCompletedEffect{}
 	}
-	name, ok := s.PendingSkillNames[e.ToolID]
+	name, ok := s.PendingSkillNames[toolEventKey(e.ExecutionID, e.ToolID)]
 	if ok {
-		delete(s.PendingSkillNames, e.ToolID)
+		delete(s.PendingSkillNames, toolEventKey(e.ExecutionID, e.ToolID))
 	}
 	return toolCompletedEffect{LoadedSkillName: name}
 }
 
 func (s *Session) applyToolFailed(e teasink.ToolFailedMsg) {
-	if e.ParentToolID != "" {
-		s.Run.finishNestedTool(e.ToolID, e.ToolName, e.Duration, true)
+	if e.ParentToolID != "" || e.ParentExecutionID != "" {
+		s.Run.finishNestedTool(toolEventKey(e.ExecutionID, e.ToolID), e.ToolName, e.Duration, true)
 		s.logEvent("nested tool failed", e.ToolName+" ✗")
 		return
 	}
@@ -141,7 +141,7 @@ func (s *Session) applyToolFailed(e teasink.ToolFailedMsg) {
 	s.logEvent("tool failed", e.ToolName+" ✗")
 	s.Run.foldTool(e.ToolName, e.Duration, true)
 	if e.ToolName == "skill_load" {
-		delete(s.PendingSkillNames, e.ToolID)
+		delete(s.PendingSkillNames, toolEventKey(e.ExecutionID, e.ToolID))
 	}
 }
 

@@ -67,6 +67,7 @@ type savedSession struct {
 	Context            []llm.Message
 	Transcript         transcript.Thread
 	DraftText          string
+	rejectedDraftJSON  []byte
 	restoreDiagnostics []sessionRestoreDiagnostic
 }
 
@@ -251,6 +252,7 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	}
 	draftText, err := draft.Decode(rec.PendingJSON)
 	if err != nil {
+		s.rejectedDraftJSON = append([]byte(nil), rec.PendingJSON...)
 		s.addRestoreDiagnostic(sessionRestoreDraftCorrupt)
 	} else {
 		s.DraftText = draftText
@@ -308,6 +310,7 @@ func (m *UI) dismissIntroFresh(prompt string) tea.Cmd {
 	m.draftGeneration++
 	m.composer.setText("")
 	m.pendingAttachments = nil
+	m.rejectedDraftJSON = nil
 	m.transcriptGeneration++
 	m.resetTranscriptPersistence()
 	if m.live != nil {
@@ -374,6 +377,7 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	m.timeline.restoreThread(s.Transcript)
 	m.transcriptPersisted = s.Transcript.Revision()
 	m.transcriptPersistedSessionID = s.ID
+	m.rejectedDraftJSON = append(m.rejectedDraftJSON[:0], s.rejectedDraftJSON...)
 	m.composer.setText(s.DraftText)
 	m.resetInputHistoryBrowse()
 	// Rehydrate the per-session working state so the plan overlay, Files
@@ -458,6 +462,9 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 	pendingJSON, err := draft.Encode(m.composer.text())
 	if err != nil {
 		return nil, fmt.Errorf("encode draft: %w", err)
+	}
+	if m.composer.text() == "" && len(m.rejectedDraftJSON) != 0 {
+		pendingJSON = append([]byte(nil), m.rejectedDraftJSON...)
 	}
 	changedFileCount := len(m.session.WorkingSet.FilesChangedThisSession())
 	planCompletedCount := 0
@@ -610,6 +617,7 @@ func (m *UI) clearContextAndTimeline() tea.Cmd {
 	m.draftGeneration++
 	m.composer.setText("")
 	m.pendingAttachments = nil
+	m.rejectedDraftJSON = nil
 	m.transcriptGeneration++
 	m.resetTranscriptPersistence()
 	if m.live != nil {

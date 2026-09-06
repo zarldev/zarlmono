@@ -547,5 +547,5 @@ func prepare(ctx context.Context, call tools.ToolCall, t *Tool) (invocation, *to
 			return args.Agent
 		}
 		return ""
-	}()}, agent: args.Agent, agentLoaded: agentLoaded, notices: []string{plannerNote, fallbackNotice}, mode: mode}, nil
+	}(), ParentExecutionID: call.ExecutionID}, agent: args.Agent, agentLoaded: agentLoaded, notices: []string{plannerNote, fallbackNotice}, mode: mode}, nil
 }

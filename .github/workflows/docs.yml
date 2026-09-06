@@ -1,27 +1,43 @@
 name: docs
 
 on:
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'tools/doccheck/**'
+      - 'examples/quickstart/**'
+      - 'README.md'
+      - 'zarlcode/README.md'
+      - '.github/workflows/docs.yml'
   push:
     branches: [main]
     paths:
       - 'site/**'
+      - 'tools/doccheck/**'
+      - 'examples/quickstart/**'
+      - 'README.md'
+      - 'zarlcode/README.md'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: docs-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./tools/doccheck
+      - run: go test -C examples ./quickstart
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -31,13 +47,19 @@ jobs:
         working-directory: site
       - run: npm run build
         working-directory: site
-      - uses: actions/upload-pages-artifact@v4
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
         with:
           path: site/dist
 
   deploy:
-    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

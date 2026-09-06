@@ -27,6 +27,31 @@ go tool task race    # zkit race suite
 
 Root check/lint cover `examples`, `zkit`, `zarlcode`, and `swebench-eval`.
 
+## Go skill policy
+
+For substantive Go work, load repository-local [go-style](.zarlcode/skills/go-style/SKILL.md), the single normative Go skill and topic index. Load only the focused owner implicated by the change:
+
+- [go-errors](.zarlcode/skills/go-errors/SKILL.md): semantic identities, diagnostics, translation, logging.
+- [go-concurrency](.zarlcode/skills/go-concurrency/SKILL.md): goroutines, synchronization, cancellation, shutdown.
+- [go-testing](.zarlcode/skills/go-testing/SKILL.md): external-package tests, fixtures, contracts, race checks.
+- [go-data](.zarlcode/skills/go-data/SKILL.md): repositories, databases, migrations, transactions; SQLC mechanics are an on-demand reference.
+- [go-connectrpc](.zarlcode/skills/go-connectrpc/SKILL.md): Protobuf, Buf, handlers, streaming where adopted.
+- [go-zkit](.zarlcode/skills/go-zkit/SKILL.md): reusable library development and current package APIs.
+- [agent-tool-security](.zarlcode/skills/agent-tool-security/SKILL.md): model-selected execution, filesystem/network boundaries, MCP, sandboxing, and secrets.
+
+Design/naming and construction examples are linked reference documents under `go-style`, not universally loaded skills. These eight skills supplement this file and do not override owning module/package `AGENTS.md` requirements. Select zarlmono as the workspace to discover this repository-local set; a session rooted at its parent uses the parent's catalogue instead.
+
+## Delegation policy
+
+Repository-local profiles are the canonical delegated roles:
+
+- [researcher](.zarlcode/agents/researcher.md): read-only architecture, ownership, and API investigation.
+- [tester](.zarlcode/agents/tester.md): reproduction and verification without file edits.
+- [reviewer](.zarlcode/agents/reviewer.md): independent correctness, lifecycle, compatibility, and security review.
+- [git](.zarlcode/agents/git.md): explicitly requested Git inspection and operations while preserving user work.
+
+The parent agent owns planning, implementation, integration, and final reporting. Delegated agents load the same applicable `AGENTS.md` hierarchy; their bodies define role behavior rather than duplicating repository policy.
+
 ## Universal Go and repository invariants
 
 - Go/tool versions come from root `go.mod` and `go.work`; Task is invoked as `go tool task ...`.

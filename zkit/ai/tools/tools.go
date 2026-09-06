@@ -379,11 +379,12 @@ func (s ToolCallStatus) String() string { return string(s) }
 
 // ToolCall is a structured tool invocation.
 type ToolCall struct {
-	ID        ToolCallID     `json:"id"`
-	ToolName  ToolName       `json:"tool_name"`
-	Arguments ToolParameters `json:"arguments"`
-	Status    ToolCallStatus `json:"status"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID          ToolCallID     `json:"id"`
+	ExecutionID string         `json:"-"`
+	ToolName    ToolName       `json:"tool_name"`
+	Arguments   ToolParameters `json:"arguments"`
+	Status      ToolCallStatus `json:"status"`
+	CreatedAt   time.Time      `json:"created_at"`
 }
 
 // ToolResult is the outcome of executing a tool.

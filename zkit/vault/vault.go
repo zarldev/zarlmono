@@ -3,9 +3,8 @@
 // resolve application settings, environment variables, or database locations.
 //
 // The master key is derived via Argon2id. Its salt, KDF parameters, and verifier
-// live in master.kdf within the supplied directory. A legacy master.key remains
-// available for decryption until the caller migrates stored ciphertext and
-// explicitly removes it. Persisted formats are unchanged by path injection.
+// live in master.kdf within the supplied directory. Random-key master.key
+// vaults are no longer supported; this package never reads or removes them.
 package vault
 
 import (
@@ -26,15 +25,14 @@ import (
 )
 
 const (
-	legacyKeyFileRelPath = "master.key" // pre-passphrase random key
-	kdfFileRelPath       = "master.kdf" // salt + KDF params + verifier
-	masterKeySize        = 32           // AES-256
+	kdfFileRelPath = "master.kdf" // salt + KDF params + verifier
+	masterKeySize  = 32           // AES-256
 
 	maxPassphraseAttempts = 3
 )
 
-// CurrentKeyVersion identifies the key scheme stamped onto stored ciphertext:
-// v1 used a random master.key; v2 uses an Argon2id passphrase-derived key.
+// CurrentKeyVersion identifies the supported Argon2id passphrase-derived
+// key scheme stamped onto stored ciphertext.
 const CurrentKeyVersion = 2
 
 // verifierPlaintext is encrypted under a freshly-derived key and stored in the
@@ -72,13 +70,9 @@ var (
 type PassphraseFunc func(setup, retry bool) (string, error)
 
 // Vault wraps the AEAD primitive used to encrypt API keys at rest. The master
-// key never leaves this process. legacy is non-nil while a pre-passphrase
-// master.key is still on disk, so old ciphertext keeps decrypting until
-// the caller migrates it.
+// key never leaves this process.
 type Vault struct {
-	primary    cipher.AEAD
-	legacy     cipher.AEAD
-	legacyPath string
+	primary cipher.AEAD
 }
 
 // kdfFile is the on-disk KDF material: a random salt, the Argon2id cost it was
@@ -93,19 +87,16 @@ type kdfFile struct {
 	KeyLength uint32 `json:"key_length"`
 }
 
-// Exists reports whether dir contains master.kdf or a legacy master.key.
+// Exists reports whether dir contains the passphrase vault's master.kdf.
 func Exists(dir string) (bool, error) {
-	for _, name := range []string{kdfFileRelPath, legacyKeyFileRelPath} {
-		switch _, err := os.Stat(filepath.Join(dir, name)); {
-		case err == nil:
-			return true, nil
-		case errors.Is(err, fs.ErrNotExist):
-			// keep checking
-		default:
-			return false, fmt.Errorf("stat %s: %w", name, err)
-		}
+	_, err := os.Stat(filepath.Join(dir, kdfFileRelPath))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
 	}
-	return false, nil
+	if err != nil {
+		return false, fmt.Errorf("stat %s: %w", kdfFileRelPath, err)
+	}
+	return true, nil
 }
 
 // Open loads or initialises a passphrase-derived master key in dir.
@@ -113,15 +104,6 @@ func Exists(dir string) (bool, error) {
 // ErrLocked if existing material requires unlocking. Open never reads secrets
 // from the environment and does not choose a default directory.
 func Open(dir string, passphrase PassphraseFunc) (*Vault, error) {
-	legacyPath := filepath.Join(dir, legacyKeyFileRelPath)
-	legacyAEAD, err := loadLegacy(legacyPath)
-	if errors.Is(err, ErrNotFound) {
-		legacyAEAD, err = nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
 	// Load KDF material from the explicitly selected vault directory.
 	if err := os.MkdirAll(dir, filesystem.ModePrivateDir); err != nil {
 		return nil, fmt.Errorf("vault dir: %w", err)
@@ -138,7 +120,7 @@ func Open(dir string, passphrase PassphraseFunc) (*Vault, error) {
 
 	if passphrase == nil {
 		// No way to obtain a passphrase.
-		if kdfExists || legacyAEAD != nil {
+		if kdfExists {
 			return nil, ErrLocked
 		}
 		return nil, ErrUninitialised
@@ -153,7 +135,7 @@ func Open(dir string, passphrase PassphraseFunc) (*Vault, error) {
 		}
 		key, derr := deriveOrInit(pass, &kdf, kdfExists, kdfPath)
 		if derr == nil {
-			return newVault(key, legacyAEAD, legacyPath)
+			return newVault(key)
 		}
 		if !errors.Is(derr, ErrWrongPassphrase) {
 			return nil, derr
@@ -211,12 +193,12 @@ func deriveOrInit(pass string, kdf *kdfFile, exists bool, kdfPath string) ([]byt
 	return derived, nil
 }
 
-func newVault(key []byte, legacy cipher.AEAD, legacyPath string) (*Vault, error) {
+func newVault(key []byte) (*Vault, error) {
 	primary, err := aeadFromKey(key)
 	if err != nil {
 		return nil, err
 	}
-	return &Vault{primary: primary, legacy: legacy, legacyPath: legacyPath}, nil
+	return &Vault{primary: primary}, nil
 }
 
 func aeadFromKey(key []byte) (cipher.AEAD, error) {
@@ -258,25 +240,6 @@ func loadKDF(path string) (kdfFile, error) {
 	return f, nil
 }
 
-// loadLegacy builds an AEAD from legacy key material or returns ErrNotFound.
-func loadLegacy(path string) (cipher.AEAD, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
-	if len(data) != masterKeySize {
-		return nil, fmt.Errorf("%s: %d bytes, want %d (legacy master key corrupt)", path, len(data), masterKeySize)
-	}
-	aead, err := aeadFromKey(data)
-	if err != nil {
-		return nil, err
-	}
-	return aead, nil
-}
-
 // Encrypt returns ciphertext + nonce for plaintext, under the primary
 // (current) key. AES-GCM nonces must be unique under the same key — a fresh
 // random 12-byte nonce per call ensures callers never have to think about reuse.
@@ -289,9 +252,7 @@ func (v *Vault) Encrypt(plaintext string) ([]byte, []byte, error) {
 	return ciphertext, nc, nil
 }
 
-// Decrypt reverses Encrypt. It tries the primary key, then the legacy key when
-// one is still present, so rows written under the old master.key keep
-// decrypting through the migration window.
+// Decrypt reverses Encrypt using the unlocked passphrase-derived key.
 //
 // A wrong-length nonce is reported as a decrypt error rather than reaching
 // GCM.Open, which panics on a mismatched nonce length. A malformed stored row
@@ -304,30 +265,7 @@ func (v *Vault) Decrypt(ciphertext, nonce []byte) (string, error) {
 	if plain, err := v.primary.Open(nil, nonce, ciphertext, nil); err == nil {
 		return string(plain), nil
 	}
-	if v.legacy != nil {
-		if plain, err := v.legacy.Open(nil, nonce, ciphertext, nil); err == nil {
-			return string(plain), nil
-		}
-	}
 	return "", errors.New("decrypt: authentication failed (key changed or ciphertext corrupt)")
-}
-
-// HasLegacy reports whether a pre-passphrase master.key is still present (so
-// prefs knows it has rows to migrate).
-func (v *Vault) HasLegacy() bool { return v.legacy != nil }
-
-// RemoveLegacy deletes the legacy master.key and drops the in-memory legacy
-// key. Called by prefs.Service ONLY after every row has been re-encrypted
-// under the primary key, so nothing becomes unreadable.
-func (v *Vault) RemoveLegacy() error {
-	if v.legacy == nil {
-		return nil
-	}
-	if err := os.Remove(v.legacyPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove legacy master key: %w", err)
-	}
-	v.legacy = nil
-	return nil
 }
 
 // writeNewFileAtomic installs a complete file only when path does not already

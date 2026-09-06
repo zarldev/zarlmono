@@ -49,9 +49,41 @@ zarlcode keys oauth claude-code
 zarlcode keys oauth openai-codex
 ```
 
+On an interactive first run with no explicit provider, zarlcode opens the setup
+screen. Press `Enter` to accept the local defaults or `Ctrl+S` to choose a provider
+and model. Headless runs do not enter this wizard.
+
 Run `zarlcode keys --help` for credential commands. Supported providers include
 `anthropic`, `openai`, `deepseek`, `gemini`, `google-vertex`, `llamacpp`,
 `ollama`, plus OAuth-backed `claude-code` and `openai-codex`.
+
+### Credential storage
+
+Provider credentials are stored in `~/.zarlcode/state.db` and use passphrase
+encryption by default. Fresh local-only startup does not create an unused vault; the
+first credential-writing command creates it. Later interactive startup prompts to unlock
+when credential rows exist. There is no passphrase recovery or environment-variable
+passphrase fallback, so keep the passphrase separately.
+`zarlcode keys protect status` reports the database-wide protection mode;
+`zarlcode keys protect off` is an explicit plaintext-storage opt-out.
+
+Vault initialization persists even if a subsequent credential/database save fails:
+`master.kdf` remains, and the next attempt unlocks it with the same passphrase.
+The failed save does not commit a credential or fall back to plaintext. MCP endpoint
+and token changes are committed together. Cancelling authenticated MCP setup requires
+explicit token re-entry rather than silently switching to unauthenticated access.
+
+Headless and other non-interactive startup never prompt. Settings and providers that
+do not need a stored secret remain usable, while an operation requiring a locked
+stored credential fails closed. Unmarked plaintext rows require an interactive unlock
+before they are migrated. Migration is not forensic erasure: SQLite free pages, WAL
+files, and backups may retain historical plaintext.
+
+Random-key `master.key` credentials from previous formats are unsupported and are not
+converted automatically. Re-enter those credentials to store them under passphrase
+protection; zarlcode does not automatically delete the unsupported rows or key file.
+Back up `state.db` together with `master.kdf` while protection is enabled, and do not
+assume older zarlcode versions can read newer protection metadata.
 
 ### Local or OpenAI-compatible provider
 
@@ -108,7 +140,7 @@ canonical transcript remains separate from compactable provider history, so the
 visible timeline and Markdown export keep earlier events after compaction. See
 [Sessions and transcripts](/zarlmono/sessions-transcripts/) for the persistence
 and resume model. Provider keys and settings are stored locally under
-`~/.zarlcode`.
+`~/.zarlcode`; local storage is not a remote backup or cross-machine sync service.
 
 ## Plan mode and build mode
 
@@ -130,8 +162,7 @@ to Build when you want the agent to execute.
 | `zkit/ai/tools/code` | `read`, `write`, `edit`, `bash`, `grep`, `ls`, process, and plan tools. |
 | `zkit/agent/guardrails` | Schema repair, shell policy, fan-out caps, Go verifiers. |
 | `zkit/agent/coderunner` | Standard coding toolset + guarded source assembly. |
-| `zkit/agent/tools/spawn` | Sub-agent delegation. |
-| `zkit/prefs` | Encrypted API keys and scoped settings. |
+| `zkit/prefs` and `zkit/vault` | Scoped settings and encrypted credential storage. |
 
 ## Trust boundary
 

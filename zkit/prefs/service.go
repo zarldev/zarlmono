@@ -85,10 +85,14 @@ var ErrInvalidScope = errors.New("settings: ScopeEffective is read-only")
 // XDG state dir.
 var ErrNoVault = errors.New("settings: vault not initialised")
 
-// ErrCredentialsLocked is returned when a stored credential row is encrypted
-// but no vault is currently unlocked. Plaintext rows remain readable without a
-// vault; callers see this only for passphrase-protected material.
+// ErrCredentialsLocked is returned when protected credentials have no unlocked
+// vault. Plaintext rows are readable only after an explicit database-wide opt-out;
+// under the encrypted default they remain unavailable until migration succeeds.
 var ErrCredentialsLocked = errors.New("settings: encrypted credentials are locked")
+
+// ErrUnsupportedCredentialFormat means a stored key uses an unsupported encryption
+// version. The row is retained; the user must explicitly replace the credential.
+var ErrUnsupportedCredentialFormat = errors.New("settings: unsupported credential format; re-enter credential")
 
 // ErrNotFound is returned when no preference exists at the requested scope.
 var ErrNotFound = errors.New("settings: not found")
@@ -131,31 +135,24 @@ func (s *Service) HasVault() bool {
 
 // CredentialProtection reports the database-wide credential storage mode. An
 // explicit global setting wins. Workspace settings never affect key storage.
-// Without one, any existing vault-backed row preserves passphrase mode for
-// upgraded installs; otherwise fresh/plaintext installs default to off.
+// Without one, passphrase protection is the fail-closed default, including for
+// stores containing legacy plaintext rows that still need migration.
 func (s *Service) CredentialProtection(ctx context.Context) (string, error) {
 	sv, err := s.GetSetting(ctx, ScopeGlobal, credentialProtectionSetting)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return "", err
 	}
-	if err == nil {
-		switch sv.Value {
-		case CredentialProtectionPassphrase:
-			return CredentialProtectionPassphrase, nil
-		case CredentialProtectionOff:
-			return CredentialProtectionOff, nil
-		}
+	if errors.Is(err, ErrNotFound) {
+		return CredentialProtectionPassphrase, nil
 	}
-	rows, err := s.store.AllAPIKeys(ctx)
-	if err != nil {
-		return "", fmt.Errorf("settings: inspect credential rows: %w", err)
+	switch sv.Value {
+	case CredentialProtectionPassphrase:
+		return CredentialProtectionPassphrase, nil
+	case CredentialProtectionOff:
+		return CredentialProtectionOff, nil
+	default:
+		return "", fmt.Errorf("settings: invalid credential protection mode %q", sv.Value)
 	}
-	for _, r := range rows {
-		if r.Storage == db.APIKeyStorageVault {
-			return CredentialProtectionPassphrase, nil
-		}
-	}
-	return CredentialProtectionOff, nil
 }
 
 // HasVaultBackedKeys reports whether any credential row still requires a vault
@@ -171,6 +168,17 @@ func (s *Service) HasVaultBackedKeys(ctx context.Context) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// HasCredentialRows reports whether any persisted credential exists, regardless
+// of storage format. Startup uses this with the configured protection mode so a
+// fresh local-only installation does not create or unlock an unused vault.
+func (s *Service) HasCredentialRows(ctx context.Context) (bool, error) {
+	rows, err := s.store.AllAPIKeys(ctx)
+	if err != nil {
+		return false, fmt.Errorf("settings: inspect credential rows: %w", err)
+	}
+	return len(rows) > 0, nil
 }
 
 // SetVault replaces the currently unlocked vault. It is used by startup and
@@ -392,10 +400,20 @@ func (s *Service) exactKey(ctx context.Context, workspace, provider string) (str
 		return "", err
 	}
 	if ct.Storage == db.APIKeyStoragePlaintext {
+		mode, modeErr := s.CredentialProtection(ctx)
+		if modeErr != nil {
+			return "", modeErr
+		}
+		if mode != CredentialProtectionOff {
+			return "", ErrCredentialsLocked
+		}
 		return string(ct.Ciphertext), nil
 	}
 	if s.vault == nil {
 		return "", ErrCredentialsLocked
+	}
+	if ct.KeyVersion != vault.CurrentKeyVersion {
+		return "", fmt.Errorf("api key for %q (version %d): %w", provider, ct.KeyVersion, ErrUnsupportedCredentialFormat)
 	}
 	plain, err := s.vault.Decrypt(ct.Ciphertext, ct.Nonce)
 	if err != nil {
@@ -464,50 +482,43 @@ func (s *Service) writeKeyToStore(store *db.Store, ctx context.Context, workspac
 	})
 }
 
-// MigrateVaultKeys re-encrypts every stored credential under the vault's
-// current (primary) key when a legacy master.key is still present, then
-// removes the legacy key. It's the automatic, no-rekey-command migration from
-// the old random-key scheme to the passphrase-derived one.
-//
-// Each row is decrypted (the vault transparently tries the legacy key) and
-// re-encrypted under the primary key. The legacy key is removed only when
-// EVERY row migrated cleanly — a partial failure leaves master.key in place so
-// the still-old rows remain decryptable (both keys stay available). Returns the
-// number of rows re-encrypted. A no-op (returns 0, nil) when there's no vault
-// or no legacy key.
-func (s *Service) MigrateVaultKeys(ctx context.Context) (int, error) {
+// SetMCPServer atomically stores an MCP server and its credential state. The
+// provider identifies the credential row; plaintext empty means explicit no-auth
+// and deletes any prior credential. AuthRequired is derived from plaintext so the
+// endpoint can never commit with credential state from another transaction.
+func (s *Service) SetMCPServer(
+	ctx context.Context,
+	sc Scope,
+	provider string,
+	row db.MCPServerRow,
+	plaintext string,
+) error {
+	workspace, err := s.writeWorkspace(sc)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.vault == nil || !s.vault.HasLegacy() {
-		return 0, nil
+	mode, err := s.CredentialProtection(ctx)
+	if err != nil {
+		return err
 	}
-	migrated := 0
-	if err := s.store.WithTx(ctx, func(tx *db.Store) error {
-		rows, err := tx.AllAPIKeys(ctx)
-		if err != nil {
-			return fmt.Errorf("list keys for migration: %w", err)
+	row.AuthToken = ""
+	row.AuthRequired = plaintext != ""
+	return s.store.WithTx(ctx, func(tx *db.Store) error {
+		if plaintext == "" {
+			if err := tx.DeleteAPIKey(ctx, workspace, provider); err != nil {
+				return fmt.Errorf("delete mcp auth token: %w", err)
+			}
+		} else if err := s.writeKeyToStore(tx, ctx, workspace, provider, plaintext, mode); err != nil {
+			return fmt.Errorf("store mcp auth token: %w", err)
 		}
-		for _, r := range rows {
-			if r.Storage == db.APIKeyStoragePlaintext {
-				continue
-			}
-			plain, err := s.vault.Decrypt(r.Ciphertext, r.Nonce)
-			if err != nil {
-				return fmt.Errorf("decrypt key %q: %w", r.Provider, err)
-			}
-			if err := s.writeKeyToStore(tx, ctx, r.Workspace, r.Provider, plain, CredentialProtectionPassphrase); err != nil {
-				return err
-			}
-			migrated++
+		if err := tx.UpsertMCPServer(ctx, row); err != nil {
+			return fmt.Errorf("save mcp server: %w", err)
 		}
 		return nil
-	}); err != nil {
-		return migrated, fmt.Errorf("settings: migrate legacy vault keys: %w", err)
-	}
-	if err := s.vault.RemoveLegacy(); err != nil {
-		return migrated, fmt.Errorf("settings: remove legacy master key: %w", err)
-	}
-	return migrated, nil
+	})
 }
 
 // EnableCredentialProtection encrypts every plaintext credential row and marks
@@ -553,6 +564,134 @@ func (s *Service) EnableCredentialProtection(ctx context.Context) (int, error) {
 	return migrated, nil
 }
 
+// EnableCredentialProtectionWithKey atomically enables passphrase protection,
+// migrates any plaintext credential rows, and writes plaintext at sc. The new
+// vault is attached only after the transaction commits.
+func (s *Service) EnableCredentialProtectionWithKey(
+	ctx context.Context,
+	v *vault.Vault,
+	sc Scope,
+	provider,
+	plaintext string,
+) (int, error) {
+	if plaintext == "" {
+		return 0, errors.New("settings: credential plaintext is empty")
+	}
+	workspace, err := s.writeWorkspace(sc)
+	if err != nil {
+		return 0, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.store.AllAPIKeys(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("settings: list keys for protection enable: %w", err)
+	}
+	migrated := 0
+	if err := s.store.WithTx(ctx, func(tx *db.Store) error {
+		for _, r := range rows {
+			if r.Storage == db.APIKeyStorageVault {
+				continue
+			}
+			ct, nonce, encryptErr := v.Encrypt(string(r.Ciphertext))
+			if encryptErr != nil {
+				return fmt.Errorf("encrypt key %q: %w", r.Provider, encryptErr)
+			}
+			if setErr := tx.SetAPIKey(ctx, r.Workspace, r.Provider, db.APIKeyCiphertext{
+				Ciphertext: ct, Nonce: nonce, KeyVersion: vault.CurrentKeyVersion, Storage: db.APIKeyStorageVault,
+			}); setErr != nil {
+				return setErr
+			}
+			migrated++
+		}
+		ct, nonce, encryptErr := v.Encrypt(plaintext)
+		if encryptErr != nil {
+			return fmt.Errorf("encrypt api key for %q: %w", provider, encryptErr)
+		}
+		if setErr := tx.SetAPIKey(ctx, workspace, provider, db.APIKeyCiphertext{
+			Ciphertext: ct, Nonce: nonce, KeyVersion: vault.CurrentKeyVersion, Storage: db.APIKeyStorageVault,
+		}); setErr != nil {
+			return setErr
+		}
+		if setErr := tx.SetSetting(ctx, "", credentialProtectionSetting, CredentialProtectionPassphrase); setErr != nil {
+			return fmt.Errorf("set credential protection: %w", setErr)
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	s.vault = v
+	return migrated, nil
+}
+
+// EnableCredentialProtectionWithMCPServer atomically enables passphrase
+// protection, migrates plaintext credentials, and stores one MCP endpoint with
+// its pending token. The new vault is attached only after the transaction commits.
+func (s *Service) EnableCredentialProtectionWithMCPServer(
+	ctx context.Context,
+	v *vault.Vault,
+	sc Scope,
+	provider string,
+	row db.MCPServerRow,
+	plaintext string,
+) (int, error) {
+	if plaintext == "" {
+		return 0, errors.New("settings: mcp credential plaintext is empty")
+	}
+	workspace, err := s.writeWorkspace(sc)
+	if err != nil {
+		return 0, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.store.AllAPIKeys(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("settings: list keys for protection enable: %w", err)
+	}
+	migrated := 0
+	row.AuthToken = ""
+	row.AuthRequired = true
+	if err := s.store.WithTx(ctx, func(tx *db.Store) error {
+		for _, credential := range rows {
+			if credential.Storage == db.APIKeyStorageVault {
+				continue
+			}
+			ct, nonce, encryptErr := v.Encrypt(string(credential.Ciphertext))
+			if encryptErr != nil {
+				return fmt.Errorf("encrypt key %q: %w", credential.Provider, encryptErr)
+			}
+			if setErr := tx.SetAPIKey(ctx, credential.Workspace, credential.Provider, db.APIKeyCiphertext{
+				Ciphertext: ct, Nonce: nonce, KeyVersion: vault.CurrentKeyVersion, Storage: db.APIKeyStorageVault,
+			}); setErr != nil {
+				return setErr
+			}
+			migrated++
+		}
+		ct, nonce, encryptErr := v.Encrypt(plaintext)
+		if encryptErr != nil {
+			return fmt.Errorf("encrypt api key for %q: %w", provider, encryptErr)
+		}
+		if setErr := tx.SetAPIKey(ctx, workspace, provider, db.APIKeyCiphertext{
+			Ciphertext: ct, Nonce: nonce, KeyVersion: vault.CurrentKeyVersion, Storage: db.APIKeyStorageVault,
+		}); setErr != nil {
+			return setErr
+		}
+		if setErr := tx.SetSetting(ctx, "", credentialProtectionSetting, CredentialProtectionPassphrase); setErr != nil {
+			return fmt.Errorf("set credential protection: %w", setErr)
+		}
+		if setErr := tx.UpsertMCPServer(ctx, row); setErr != nil {
+			return fmt.Errorf("save mcp server: %w", setErr)
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	s.vault = v
+	return migrated, nil
+}
+
 // DisableCredentialProtection decrypts every encrypted credential row and marks
 // future writes as plaintext. Encrypted rows require a vault already unlocked
 // by the caller; the service never prompts or chooses a vault location. The
@@ -580,6 +719,9 @@ func (s *Service) DisableCredentialProtection(ctx context.Context) (int, error) 
 			if s.vault == nil {
 				return ErrCredentialsLocked
 			}
+			if r.KeyVersion != vault.CurrentKeyVersion {
+				return fmt.Errorf("key %q (version %d): %w", r.Provider, r.KeyVersion, ErrUnsupportedCredentialFormat)
+			}
 			plain, err := s.vault.Decrypt(r.Ciphertext, r.Nonce)
 			if err != nil {
 				return fmt.Errorf("decrypt key %q: %w", r.Provider, err)
@@ -597,10 +739,6 @@ func (s *Service) DisableCredentialProtection(ctx context.Context) (int, error) 
 		if err := tx.SetSetting(ctx, "", credentialProtectionSetting, CredentialProtectionOff); err != nil {
 			return fmt.Errorf("set credential protection: %w", err)
 		}
-		_ = tx.DeleteSetting(ctx, "", legacyVaultPromptSetting)
-		if s.wsRoot != "" {
-			_ = tx.DeleteSetting(ctx, s.wsRoot, legacyVaultPromptSetting)
-		}
 		return nil
 	}); err != nil {
 		return 0, err
@@ -608,17 +746,16 @@ func (s *Service) DisableCredentialProtection(ctx context.Context) (int, error) 
 	return migrated, nil
 }
 
-// MigrateCredentialProtection consumes a global legacy vault_prompt=off marker
-// by applying the current plaintext mode transition and deleting the marker.
-// Workspace preferences cannot change the database-wide credential policy. It
-// is idempotent and returns zero when no global migration is pending.
+// MigrateCredentialProtection applies the current database-wide storage policy.
+// Protected mode encrypts plaintext rows atomically; an explicit off setting
+// remains an opt-out. Unsupported encrypted formats are never converted.
 func (s *Service) MigrateCredentialProtection(ctx context.Context) (int, error) {
-	sv, err := s.GetSetting(ctx, ScopeGlobal, legacyVaultPromptSetting)
-	if errors.Is(err, ErrNotFound) || (err == nil && sv.Value != CredentialProtectionOff) {
-		return 0, nil
-	}
+	mode, err := s.CredentialProtection(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("read legacy credential protection: %w", err)
+		return 0, fmt.Errorf("read credential protection: %w", err)
+	}
+	if mode == CredentialProtectionPassphrase {
+		return s.EnableCredentialProtection(ctx)
 	}
 	return s.DisableCredentialProtection(ctx)
 }
