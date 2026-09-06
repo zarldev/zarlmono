@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,13 @@ func TestTranscriptPersistRejectsDivergentEqualRevision(t *testing.T) {
 	}
 	if string(stored.Entries[0].PayloadJSON) != `{"text":"durable divergence"}` {
 		t.Fatalf("divergent durable prefix was overwritten: %s", stored.Entries[0].PayloadJSON)
+	}
+	status := renderStatus(t, ui, 120)
+	if strings.Contains(status, "transcript revision conflict") || strings.Contains(status, "durable transcript diverges") {
+		t.Fatalf("status exposed internal transcript conflict: %q", status)
+	}
+	if !strings.Contains(status, "session changed elsewhere") {
+		t.Fatalf("status did not summarize transcript conflict: %q", status)
 	}
 	if stored.Revision != ui.CanonicalThread().Revision() {
 		t.Fatalf("revision = %d, want %d", stored.Revision, ui.CanonicalThread().Revision())

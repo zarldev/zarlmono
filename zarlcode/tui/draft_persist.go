@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -89,11 +90,21 @@ func (m *UI) handleDraftPersistenceMsg(msg tea.Msg) (tea.Cmd, bool) {
 			if msg.sessionID != "" && msg.sessionID != m.session.ID && msg.kind != sessionPersistDelete {
 				return m.startNextSessionPersist(), true
 			}
+			transcriptConflict := errors.Is(msg.err, db.ErrTranscriptConflict)
 			errorKey := fmt.Sprintf("%d:%s:%v", msg.kind, msg.sessionID, msg.err)
+			if transcriptConflict {
+				errorKey = "transcript-conflict:" + msg.sessionID
+			}
 			if errorKey == m.lastSessionPersistError {
 				return m.startNextSessionPersist(), true
 			}
 			m.lastSessionPersistError = errorKey
+			if transcriptConflict {
+				slog.WarnContext(m.appContext(), "transcript persistence conflict", "session", msg.sessionID, "err", msg.err)
+				m.session.SetToastTone("session changed elsewhere; transcript updates are not being saved", toastWarn)
+				cmd := m.startNextSessionPersist()
+				return tea.Batch(m.toastExpiryCmd(), cmd), true
+			}
 			label := "session save"
 			switch msg.kind {
 			case sessionPersistClearDraft:

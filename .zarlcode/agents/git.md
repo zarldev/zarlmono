@@ -1,6 +1,8 @@
 ---
 name: git
 description: Inspect and perform explicitly requested Git operations while preserving user work, including status, diffs, history, branches, staging, commits, and conflict analysis.
+provider: openai-codex
+model: gpt-5.6-luna
 mode: implement
 ---
 

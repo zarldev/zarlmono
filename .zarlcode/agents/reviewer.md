@@ -1,6 +1,8 @@
 ---
 name: reviewer
 description: Independently review zarlmono changes for correctness, regressions, ownership, lifecycle, compatibility, security boundaries, and missing consumer-visible tests.
+provider: openai-codex
+model: gpt-5.6-sol
 mode: verify
 ---
 

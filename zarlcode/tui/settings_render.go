@@ -20,25 +20,25 @@ const (
 // suppresses the panes + global status bar behind it (one footer, not two).
 func (d *settingsDialog) fullScreen() bool { return true }
 
-// draw paints settings as an open full-screen utility: one identity row and
-// divider, a category nav/detail split, and one contextual footer with transient
-// save feedback. Persistence and focus behavior remain owned by settingsDialog.
+// draw paints individually headed settings panes and a single contextual footer.
+// Category and help headings use the same frame/section rules as other panes.
 func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
-	l, ok := drawUtilitySplitPane(scr, area, settingsNavW)
-	if !ok {
-		return // too small to lay out
+	if area.Dx() < 12 || area.Dy() < 5 {
+		return
 	}
-	bodyH := l.Body.Dy()
-	detailW := min(l.Detail.Dx(), settingsDetailMax)
+	navW := min(settingsNavW+2, area.Dx()/3)
+	paneH := area.Dy() - 1
+	nav := drawFrame(scr, uv.Rect(area.Min.X, area.Min.Y, navW, paneH), frameStyle{
+		Label: ansi.Truncate("settings", navW-4, "…"),
+	})
+	detail := drawFrame(scr, uv.Rect(area.Min.X+navW, area.Min.Y, area.Dx()-navW, paneH), frameStyle{
+		Label: ansi.Truncate(d.cats[d.cat].name, area.Dx()-navW-4, "…"),
+	})
+	footer := uv.Rect(area.Min.X, area.Max.Y-1, area.Dx(), 1)
+	detailW := min(detail.Dx(), settingsDetailMax)
+	bodyH := detail.Dy()
 
-	// Surface identity. Category navigation stays in the nav rail rather than
-	// being duplicated as a second tab strip in the header.
-	header := overlayTopBar("settings", nil, 0, d.cats[d.cat].name, l.Context.Dx())
-	drawOverlayContext(scr, l, header, palette.Border)
-
-	// Nav rail. Match the other full-screen utilities with a labelled strip
-	// above the selectable entries.
-	nav := drawNavStrip(scr, l.Nav, palette.Muted.On(" categories · preferences"))
+	// Nav rail.
 	catStart, catEnd := windowAroundCursor(d.cat, len(d.cats), nav.Dy())
 	for i, c := range d.cats[catStart:catEnd] {
 		catIndex := catStart + i
@@ -90,26 +90,30 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 			break
 		}
 		if strings.HasPrefix(ansi.Strip(ln), "├") {
-			drawSectionRule(scr, l.Detail, l.Detail.Min.Y+i, ln)
+			drawSectionRule(scr, detail, detail.Min.Y+i, ln)
 			continue
 		}
-		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i, detailW, 1), ln)
+		drawLine(scr, uv.Rect(detail.Min.X, detail.Min.Y+i, detailW, 1), ln)
 	}
 
 	// Help panel: a description + default + resolved-source block below the
 	// detail, filling the space the full screen gives us.
 	if help := d.helpLines(detailW); len(help) > 0 {
-		hy := l.Detail.Min.Y + len(lines) + 1
+		hy := detail.Min.Y + len(lines) + 1
 		for i, ln := range help {
-			if hy+i >= l.Body.Max.Y {
+			if hy+i >= detail.Max.Y {
 				break
 			}
-			drawLine(scr, uv.Rect(l.Detail.Min.X, hy+i, detailW, 1), ln)
+			if strings.HasPrefix(ansi.Strip(ln), "├") {
+				drawSectionRule(scr, detail, hy+i, ln)
+				continue
+			}
+			drawLine(scr, uv.Rect(detail.Min.X, hy+i, detailW, 1), ln)
 		}
 	}
 
 	// Single footer: stable keymap left, transient toast right.
-	drawPaneRow(scr, l.Footer, " "+d.footerHint(), d.toast()+" ")
+	drawPaneRow(scr, footer, " "+d.footerHint(), d.toast()+" ")
 }
 
 // helpLines is the description + default + resolved-source block for the
@@ -117,30 +121,27 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 // panels (providers / gallery) get a one-line orientation.
 func (d *settingsDialog) helpLines(width int) []string {
 	cat := d.cats[d.cat]
+	helpHead := sectionHead("help", width)
 	switch {
 	case cat.providers:
-		return []string{palette.Subtle.On("manage providers — api keys, oauth sign-in, custom openai-compatible backends.")}
+		return []string{helpHead, palette.Subtle.On("manage providers — api keys, oauth sign-in, custom openai-compatible backends.")}
 	case cat.gallery:
 		name, scope := d.themeSource()
 		if d.gallery != nil && d.gallery.isPreviewing() {
-			return []string{palette.Warning.On("previewing "+d.gallery.selectedName()) +
+			return []string{helpHead, palette.Warning.On("previewing "+d.gallery.selectedName()) +
 				palette.Muted.On(" · enter keeps it · esc restores "+d.gallery.origin)}
 		}
-		return []string{palette.Subtle.On("kept theme ") + palette.Muted.On(name+" · "+scope)}
+		return []string{helpHead, palette.Subtle.On("kept theme ") + palette.Muted.On(name+" · "+scope)}
 	case cat.catalog:
-		return []string{palette.Subtle.On("discovered agents / skills / hooks (read-only) — [ and ] switch between them.")}
+		return []string{helpHead, palette.Subtle.On("discovered agents / skills / hooks (read-only) — [ and ] switch between them.")}
 	case cat.mcp:
-		return []string{palette.Subtle.On("mcp servers — connected at launch; the agent can also mcp_connect ad-hoc. n: new · x: delete · t: toggle.")}
+		return []string{helpHead, palette.Subtle.On("mcp servers — connected at launch; the agent can also mcp_connect ad-hoc. n: new · x: delete · t: toggle.")}
 	}
 	r := d.curRow()
 	if r.desc == "" {
 		return nil
 	}
-	head := "── " + r.label + " "
-	if pad := width - len(head); pad > 0 {
-		head += strings.Repeat("─", pad)
-	}
-	out := []string{palette.Border.On(head)}
+	out := []string{sectionHead(r.label, width)}
 	out = append(out, renderPlain(width, r.desc, withStyle(palette.Muted.On))...)
 	out = append(out, palette.Subtle.On("built-in default ")+palette.Muted.On(r.def)+
 		palette.Subtle.On("  ·  effective source ")+d.rowSourceLabel(r))

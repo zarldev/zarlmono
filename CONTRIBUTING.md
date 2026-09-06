@@ -14,8 +14,8 @@ This is a Go multi-module workspace:
 - [`swebench-eval/`](swebench-eval/) — the SWE-bench evaluation driver
   (own Go module); drives the same loop as the TUI via
   `zkit/agent/coderunner` so the two cannot drift.
-- [`examples/`](examples/) — six runnable examples (own module), each
-  demonstrating one pattern; most run without an LLM via `-scripted`.
+- [`examples/`](examples/) — runnable patterns in their own module; see the
+  [example catalog](examples/README.md) for prerequisites and scripted modes.
 
 [zarldev.github.io/zarlmono](https://zarldev.github.io/zarlmono) is the
 user-facing documentation (source in [`site/`](site/) — Astro
@@ -25,10 +25,10 @@ Starlight; `cd site && npm run build` must pass when touching it).
 
 - Branch off `main` — `feat/...`, `fix/...`, `chore/...`, `docs/...`
   per the existing convention. Keep PRs focused: one logical change.
-- Verify locally before pushing — CI runs exactly this per module:
+- Run the repository checks before pushing:
 
   ```bash
-  go tool task check   # build + vet + test for every CI module
+  go tool task check   # build, vet, tests, and repository policy checks
   go tool task lint    # golangci-lint, root .golangci.yaml config
   go tool task race    # zkit race suite
   ```
@@ -63,8 +63,33 @@ Go style lives in [`AGENTS.md`](AGENTS.md); the load-bearing rules:
 - Provider registration uses `init()` side effects in
   `zkit/ai/llm/...` deliberately; don't remove "unused" imports there.
 
+## Maintainer releases
+
+Releases run from the current `origin/main` tip through the GitHub Actions
+**release-dispatch** workflow. Before dispatching, run the complete local gate:
+
+```bash
+go tool task release-check
+go tool task tui-smoke       # when releasing zarlcode; needs tmux
+```
+
+Use a credentialed terminal soak when provider, streaming, tool, or cancellation
+paths changed. Give every selected module exactly one dated
+`## [module/vX.Y.Z] — YYYY-MM-DD` heading in `CHANGELOG.md`, and always dispatch
+`dry-run` before `publish`. Release `zkit` alone and
+before its consumers; wait for the public Go proxy to resolve the new version, pin
+that version in consumer `go.mod` files, and verify with `GOWORK=off` before releasing
+consumers. The dispatch workflow repeats isolated verify/build/vet/test/lint checks
+for the selected modules; the broader race, exact-Go, repository-tool, and docs gate
+remains the local `release-check` task.
+
+If publication fails after a valid annotated `zarlcode/vX.Y.Z` tag exists, rerun
+`release.yml` with that exact tag. Do not move or delete a published tag to repair
+source; issue a patch release. The publisher verifies archives, checksums, embedded
+versions, build-provenance attestations, and the Homebrew formula.
+
 ## Security
 
-The tools in this repository execute processes and mutate files by
-design — `zkit` is shared infrastructure, not a sandbox. Report
-vulnerabilities privately to a maintainer.
+The tools in this repository execute processes and mutate files by design — `zkit`
+is shared infrastructure, not a sandbox. Report vulnerabilities through the
+[security policy](SECURITY.md), not a public issue.

@@ -27,3 +27,27 @@ func TestCommandPaletteAcceptsPastedSearchText(t *testing.T) {
 		t.Fatalf("pasted query did not filter unrelated commands:\n%s", out)
 	}
 }
+
+func TestCommandPaletteOpensAgentActivity(t *testing.T) {
+	var model tea.Model = tui.New()
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	model, _ = model.Update(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'k'})
+	model, _ = model.Update(tea.PasteMsg{Content: "agent"})
+
+	out := ansi.Strip(model.View().Content)
+	if !strings.Contains(out, "Open agent activity") {
+		t.Fatalf("agent query did not find the activity command:\n%s", out)
+	}
+
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	out = ansi.Strip(model.View().Content)
+	for _, want := range []string{
+		"agent activity",
+		"no delegated agents this session",
+		"delegate a task to see its live output and activity here",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("agent activity view missing %q:\n%s", want, out)
+		}
+	}
+}

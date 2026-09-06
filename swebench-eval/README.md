@@ -6,7 +6,7 @@
 
 ```bash
 go tool task sweeval
-nix/bin/sweeval -version
+~/.local/bin/sweeval -version
 ```
 
 Release builds inject the module tag. `go install .../cmd/eval@version` reports its module version; local builds fall back to VCS metadata.
