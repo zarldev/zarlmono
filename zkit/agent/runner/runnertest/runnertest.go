@@ -10,8 +10,11 @@
 //	    {runnertest.ChunkText("done")},
 //	})
 //	sink := runnertest.NewSink()
-//	r := runner.New(client, registry, runner.WithSink(sink))
-//	res, _ := r.Run(ctx, runner.TaskSpec{Prompt: "ping"})
+//	r := runner.New(client, runner.WithTools(registry), runner.WithSink(sink))
+//	result := r.Run(ctx, runner.TaskSpec{Prompt: "ping"})
+//	if result.Err != nil {
+//	    t.Fatal(result.Err)
+//	}
 //	if sink.ContentCount() == 0 {
 //	    t.Fatal("no content emitted")
 //	}

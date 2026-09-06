@@ -74,9 +74,10 @@ func (r providerKeyResolver) GetKey(ctx context.Context, provider string) (strin
 // built-in providers + any persisted custom rows).
 //
 // Vault setup or unlock failure is non-fatal for ordinary settings and providers
-// that need no stored credential. Credential reads and writes remain locked rather
-// than falling back to plaintext. A failed store IS fatal — without it there's
-// nowhere to read configuration from.
+// that need no stored credential. Explicit prompt cancellation is returned to the
+// caller; otherwise credential reads and writes remain locked rather than falling
+// back to plaintext. A failed store IS fatal — without it there's nowhere to read
+// configuration from.
 //
 // passphrase is the explicit interactive setup/unlock prompt. Nil is the
 // non-interactive path: it never reads ambient credential variables or prompts,
@@ -107,6 +108,10 @@ func OpenSettings(ctx context.Context, wsRoot string, passphrase vault.Passphras
 			return nil, derr
 		}
 		v, err = vault.Open(dir, passphrase)
+		if errors.Is(err, context.Canceled) {
+			_ = store.Close()
+			return nil, err
+		}
 		if err != nil {
 			slog.WarnContext(ctx, "vault unavailable; encrypted credentials locked", "err", err)
 			v = nil

@@ -22,6 +22,15 @@ const tieredToolTruncateChars = 256
 // for each older assistant message in Phases 2 and 3.
 const tieredAssistantTruncateChars = 256
 
+const (
+	tieredToolTruncationStart      = "\n[truncated — "
+	tieredToolTruncationEnd        = " chars elided post-compact]"
+	tieredAssistantTruncationStart = "\n[reasoning trimmed — "
+	tieredAssistantTruncationEnd   = " chars elided; operational tail retained]\n"
+	tieredToolElisionStart         = "[tool result elided post-compact — original ~"
+	tieredToolElisionEnd           = " bytes. Re-run to recover.]"
+)
+
 const tieredAssistantCapsuleEdgeChars = tieredAssistantTruncateChars / 2
 
 // Tiered is a progressive compactor that escalates aggressiveness in
@@ -35,16 +44,15 @@ const tieredAssistantCapsuleEdgeChars = tieredAssistantTruncateChars / 2
 // Reasoning (assistant content) is preserved longest — that's the
 // model's interpretive context for the next turn.
 //
-// Phase 1 (>= 60% budget): truncate tool result bodies to the first
-// ~256 chars. ToolCallID preserved so the call -> result link stays
-// valid; assistant content untouched.
+// ~256 chars and profitably elide older tool attachments. ToolCallID is
+// preserved so the call -> result link stays valid; assistant content is untouched.
 //
 // Phase 2 (>= 75% budget): Phase 1 + assistant narrative content
 // trimmed to the first ~256 chars. ToolCalls on assistant messages
 // preserved verbatim — only the prose alongside them is cut.
 //
 // Phase 3 (>= 90% budget): Phase 2 + tool result bodies replaced
-// with a single-line placeholder regardless of size. The bounded
+// with a single-line placeholder when that is smaller. The bounded
 // head-and-tail assistant capsules, ToolCalls, and ToolCallIDs remain,
 // preserving projected operational state and provider-required tool pairing.
 // As an explicit native replay boundary, complete ContinuationItems are dropped
@@ -98,12 +106,9 @@ func NewTiered(ctxWindowTokens int) *Tiered {
 	}
 }
 
-// WouldReduceBytes implements [Prober]. Tiered is a no-op below its
-// Phase 1 trigger — the runner's compaction gate uses this to skip
-// the engine entirely when the history is under pressure. Returns
-// an estimate (total bytes above the phase-1 trigger) rather than a
-// precise count; the runner only checks for `> 0` so the magnitude
-// only matters for telemetry.
+// WouldReduceBytes implements [Prober]. It mirrors Tiered's pressure-selected
+// phases and reports only profitable reductions in the eligible older range.
+// The estimate is allocation-free and exact for the retained byte accounting.
 func (t *Tiered) WouldReduceBytes(history []llm.Message, keepRecent int) int {
 	if keepRecent < 0 {
 		keepRecent = 0
@@ -116,17 +121,61 @@ func (t *Tiered) WouldReduceBytes(history []llm.Message, keepRecent int) int {
 		target = TieredDefaultTargetBytes
 	}
 	p1 := t.Phase1Threshold
+	p2 := t.Phase2Threshold
+	p3 := t.Phase3Threshold
 	if p1 <= 0 {
 		p1 = 0.60
 	}
-	totalBytes := historyBytes(history)
-	trigger := int(float64(target) * p1)
-	if totalBytes < trigger {
+	if p2 <= 0 {
+		p2 = 0.75
+	}
+	if p3 <= 0 {
+		p3 = 0.90
+	}
+	t1 := int(float64(target) * p1)
+	t2 := int(float64(target) * p2)
+	t3 := int(float64(target) * p3)
+
+	head := 0
+	if history[0].Role == llm.RoleSystem {
+		head = 1
+	}
+	end := len(history) - keepRecent
+	if end <= head {
 		return 0
 	}
-	// Conservative estimate — the difference between current size
-	// and the Phase 1 trigger is the minimum the engine would trim.
-	return totalBytes - trigger
+
+	var totalBytes, phase1Savings, phase2Savings, phase3Savings int
+	for i, msg := range history {
+		totalBytes += messageChars(msg)
+		if i < head || i >= end {
+			continue
+		}
+		if msg.Role == llm.RoleTool {
+			plan := planTieredToolPhase1(msg)
+			phase1Savings += plan.saved
+			placeholderBytes := len(tieredToolElisionStart) + decimalDigits(plan.contentBytes) + len(tieredToolElisionEnd)
+			phase3Savings += max(plan.contentBytes-placeholderBytes, 0)
+		}
+		if msg.Role == llm.RoleAssistant {
+			phase2Savings += tieredAssistantSavings(msg.Content)
+		}
+		for _, item := range msg.ContinuationItems {
+			phase3Savings += item.ByteLen()
+		}
+	}
+	if totalBytes < t1 {
+		return 0
+	}
+	afterPhase1 := totalBytes - phase1Savings
+	if afterPhase1 < t2 {
+		return phase1Savings
+	}
+	afterPhase2 := afterPhase1 - phase2Savings
+	if afterPhase2 < t3 {
+		return phase1Savings + phase2Savings
+	}
+	return phase1Savings + phase2Savings + phase3Savings
 }
 
 // Compact implements [Compactor].
@@ -220,8 +269,8 @@ func historyBytes(messages []llm.Message) int {
 	return n
 }
 
-// tieredPhase1 truncates tool result bodies in the older range.
-// Returns a new slice; input is not mutated.
+// tieredPhase1 truncates tool result bodies and elides their attachments in
+// the older range. It returns a new slice without mutating history.
 func tieredPhase1(history []llm.Message, head, end int) []llm.Message {
 	out := llm.CloneMessages(history)
 	for i := head; i < end; i++ {
@@ -229,17 +278,58 @@ func tieredPhase1(history []llm.Message, head, end int) []llm.Message {
 		if msg.Role != llm.RoleTool {
 			continue
 		}
-		if len(msg.Content) <= tieredToolTruncateChars {
-			continue
+		plan := planTieredToolPhase1(msg)
+		if plan.trimContent {
+			kept := clipToRune(msg.Content, tieredToolTruncateChars)
+			removed := len(msg.Content) - len(kept)
+			msg.Content = fmt.Sprintf("%s%s%d%s", kept, tieredToolTruncationStart, removed, tieredToolTruncationEnd)
 		}
-		kept := clipToRune(msg.Content, tieredToolTruncateChars)
-		removed := len(msg.Content) - len(kept)
-		msg.Content = fmt.Sprintf(
-			"%s\n[truncated — %d chars elided post-compact]",
-			kept, removed)
+		if plan.trimAttachments {
+			if msg.Content != "" {
+				msg.Content += "\n"
+			}
+			msg.Content += toolAttachmentElision
+			msg.Parts = nil
+		}
 		out[i] = msg
 	}
 	return out
+}
+
+type tieredToolPhase1Plan struct {
+	contentBytes    int
+	trimContent     bool
+	trimAttachments bool
+	saved           int
+}
+
+func planTieredToolPhase1(msg llm.Message) tieredToolPhase1Plan {
+	before := len(msg.Content) + llm.ContentPartsByteLen(msg.Parts)
+	plan := tieredToolPhase1Plan{contentBytes: len(msg.Content)}
+	if len(msg.Content) > tieredToolTruncateChars {
+		keptBytes := len(clipToRune(msg.Content, tieredToolTruncateChars))
+		removedBytes := len(msg.Content) - keptBytes
+		candidateBytes := keptBytes + len(tieredToolTruncationStart) + decimalDigits(removedBytes) + len(tieredToolTruncationEnd)
+		if candidateBytes < plan.contentBytes {
+			plan.contentBytes = candidateBytes
+			plan.trimContent = true
+		}
+	}
+	partsBytes := llm.ContentPartsByteLen(msg.Parts)
+	afterParts := partsBytes
+	if len(msg.Parts) > 0 {
+		markerBytes := len(toolAttachmentElision)
+		if plan.contentBytes > 0 {
+			markerBytes++
+		}
+		if markerBytes < partsBytes {
+			plan.contentBytes += markerBytes
+			afterParts = 0
+			plan.trimAttachments = true
+		}
+	}
+	plan.saved = before - plan.contentBytes - afterParts
+	return plan
 }
 
 // tieredPhase2 trims assistant narrative content (the prose
@@ -250,28 +340,40 @@ func tieredPhase2(history []llm.Message, head, end int) []llm.Message {
 	out := llm.CloneMessages(history)
 	for i := head; i < end; i++ {
 		msg := out[i]
-		if msg.Role != llm.RoleAssistant {
-			continue
-		}
-		if len(msg.Content) <= tieredAssistantTruncateChars {
+		if msg.Role != llm.RoleAssistant || tieredAssistantSavings(msg.Content) == 0 {
 			continue
 		}
 		prefix := clipToRune(msg.Content, tieredAssistantCapsuleEdgeChars)
-		suffixStart := len(msg.Content) - tieredAssistantCapsuleEdgeChars
-		for suffixStart < len(msg.Content) && suffixStart > 0 && (msg.Content[suffixStart]&0xc0) == 0x80 {
-			suffixStart++
-		}
+		suffixStart := tieredAssistantSuffixStart(msg.Content)
 		suffix := msg.Content[suffixStart:]
 		removed := len(msg.Content) - len(prefix) - len(suffix)
-		msg.Content = fmt.Sprintf(
-			"%s\n[reasoning trimmed — %d chars elided; operational tail retained]\n%s",
-			prefix, removed, suffix)
+		msg.Content = fmt.Sprintf("%s%s%d%s%s", prefix, tieredAssistantTruncationStart, removed, tieredAssistantTruncationEnd, suffix)
 		out[i] = msg
 	}
 	return out
 }
 
-// tieredPhase3 collapses tool result bodies to a single-line placeholder
+func tieredAssistantSavings(content string) int {
+	if len(content) <= tieredAssistantTruncateChars {
+		return 0
+	}
+	prefixBytes := len(clipToRune(content, tieredAssistantCapsuleEdgeChars))
+	suffixStart := tieredAssistantSuffixStart(content)
+	suffixBytes := len(content) - suffixStart
+	removedBytes := len(content) - prefixBytes - suffixBytes
+	candidateBytes := prefixBytes + len(tieredAssistantTruncationStart) + decimalDigits(removedBytes) + len(tieredAssistantTruncationEnd) + suffixBytes
+	return max(len(content)-candidateBytes, 0)
+}
+
+func tieredAssistantSuffixStart(content string) int {
+	suffixStart := len(content) - tieredAssistantCapsuleEdgeChars
+	for suffixStart < len(content) && suffixStart > 0 && (content[suffixStart]&0xc0) == 0x80 {
+		suffixStart++
+	}
+	return suffixStart
+}
+
+// tieredPhase3 collapses tool result bodies to a smaller single-line placeholder
 // while retaining the bounded assistant operational-state capsules created by
 // Phase 2. ToolCalls + ToolCallIDs remain unchanged so provider-required
 // tool_call / tool_result pairs stay valid. Complete ContinuationItems are
@@ -284,10 +386,10 @@ func tieredPhase3(history []llm.Message, head, end int) []llm.Message {
 		msg.ContinuationItems = nil
 		switch msg.Role {
 		case llm.RoleTool:
-			placeholder := fmt.Sprintf(
-				"[tool result elided post-compact — original ~%d bytes. Re-run to recover.]",
-				len(msg.Content))
-			msg.Content = placeholder
+			placeholder := fmt.Sprintf("%s%d%s", tieredToolElisionStart, len(msg.Content), tieredToolElisionEnd)
+			if len(placeholder) < len(msg.Content) {
+				msg.Content = placeholder
+			}
 		case llm.RoleAssistant:
 			// Phase 2 already reduced visible assistant prose to a bounded
 			// head-and-tail capsule. Retain it so high pressure does not erase

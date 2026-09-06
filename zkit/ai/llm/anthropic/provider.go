@@ -426,7 +426,7 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 		}
 	}
 
-	for _, msg := range messages {
+	for _, msg := range llm.ExpandToolResultParts(messages) {
 		switch msg.Role {
 		case llm.RoleSystem:
 			// Handled separately via extractSystemPrompt.

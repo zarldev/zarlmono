@@ -1,47 +1,60 @@
-# Working set (Ctrl+W): files/turns the agent mutated -> diff browser -> rollback.
-# NOTE: this records a real file edit. Run it in a throwaway workspace, not the repo.
-# Timing: bump Sleep values 1.5x–2x if your model/connection is slow.
-# Render:  cd /path/to/scratch && vhs /abs/path/screen-workingset.tape
+# Deterministic working set: local edit, diff browser, and rollback.
 Output zarlcode/docs/images/screen-workingset.gif
-
 Require bash
 Require go
-
+Require curl
 Set Shell bash
-Set FontSize 12
+Set FontSize 18
 Set Width 1440
-Set Height 1024
+Set Height 900
 Set Theme "Catppuccin Mocha"
+Set TypingSpeed 40ms
+Set Framerate 15
 
-Type "zarlcode"
+Hide
+Type "source zarlcode/docs/images/recording-setup.sh || exit 1"
 Enter
-Sleep 3s
-
-# Ask zarlcode to clone a real project so it has a file to edit.
-Type "clone https://github.com/gohugoio/hugo.git --depth=1 into demo-repo"
+Wait@2m
+Type "$REC_ROOT/zarlcode"
 Enter
-Sleep 8s
-Type "cd demo-repo"
+Wait+Screen /first-run setup/
 Enter
-Sleep 3s
-
-# A small, contained edit so the working set has something to show.
-Type "add a one-line top-of-file comment to README.md describing this folder"
-Enter
-Sleep 20s
-
-# Inspect what changed, open the diff, then back out.
-Ctrl+W
+Wait+Screen /build mode/
+Show
 Sleep 2s
-Down 1
-Sleep 1s
-Enter
-Sleep 3s
-Escape
-Sleep 1s
-Escape
-Sleep 1s
 
-Ctrl+C
-Sleep 1s
+Type "Extract the greeting prefix and run the test."
 Enter
+Wait+Screen@30s /Ready to review/
+Sleep 3s
+Ctrl+W
+Wait+Screen /greet.go/
+Sleep 2s
+Enter
+Wait+Screen /diff browser/
+Wait+Screen /const greeting/
+Sleep 4s
+Screenshot zarlcode/docs/images/screen-workingset-poster.png
+Sleep 500ms
+Type "r"
+Wait+Screen /Rollback/
+Sleep 2s
+Enter
+Sleep 500ms
+Enter
+Sleep 500ms
+Escape
+Wait+Screen /build mode/
+Wait+Screen /rolled back greet.go/
+Sleep 3s
+Screenshot zarlcode/docs/images/screen-workingset-rollback.png
+Sleep 500ms
+
+Hide
+Ctrl+C
+Wait+Screen /quit ƶarl\/code\?/
+Enter
+Wait
+Type "recording_cleanup"
+Enter
+Wait

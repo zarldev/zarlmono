@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added offline, read-only `zarlcode doctor` checks for the running binary, home layout, state database file, and credential-vault presence with actionable status and exit codes.
+
+### Changed
+
+- Promoted the deterministic PTY onboarding, encrypted-credential, restart, unlock, resize, and shutdown walkthrough to a required CI golden workflow.
+
+### Fixed
+
+- Made Escape and Ctrl+C at the startup credential-unlock prompt exit cleanly instead of continuing with locked credentials, and covered the path in the PTY golden workflow.
+
 ## [zarlcode/v0.19.0] — 2026-09-06
 
 ### Added

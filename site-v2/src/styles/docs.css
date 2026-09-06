@@ -1,0 +1,43 @@
+/* Keep Starlight's responsive header, search, navigation and theme controls. */
+:root {
+  --sl-font: Inter, 'Helvetica Neue', Arial, sans-serif;
+  --sl-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --sl-color-accent-low: #293522;
+  --sl-color-accent: #a2cb69;
+  --sl-color-accent-high: #d1efa9;
+  --sl-color-white: #f0f1e9;
+  --sl-color-gray-1: #d7ddd1;
+  --sl-color-gray-2: #b4beb0;
+  --sl-color-gray-3: #8e9b89;
+  --sl-color-gray-4: #56634f;
+  --sl-color-gray-5: #353d35;
+  --sl-color-gray-6: #20261f;
+  --sl-color-black: #151816;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #e1edcf;
+  --sl-color-accent: #436b25;
+  --sl-color-accent-high: #2d4e17;
+  --sl-color-white: #182016;
+  --sl-color-gray-1: #293324;
+  --sl-color-gray-2: #424f3b;
+  --sl-color-gray-3: #63705c;
+  --sl-color-gray-4: #919b88;
+  --sl-color-gray-5: #c8d0be;
+  --sl-color-gray-6: #edf0e5;
+  --sl-color-black: #fafbf6;
+}
+.site-title { font-weight: 650; letter-spacing: -.04em; }
+.sl-markdown-content :is(h1, h2, h3) { letter-spacing: -.035em; }
+.sl-markdown-content img { max-width: 100%; height: auto; border: 1px solid var(--sl-color-gray-5); border-radius: 4px; }
+/* Existing architecture content uses these semantic diagram classes. */
+.arch-stack { margin-block: 2rem; }
+.arch-layer { position: relative; border: 1px solid var(--sl-color-gray-5); border-inline-start: 3px solid var(--sl-color-accent); border-radius: 4px; padding: 1.7rem 1rem 1rem; background: var(--sl-color-gray-6); }
+.arch-tag { position: absolute; top: -.7rem; left: .8rem; padding: .2rem .6rem; background: var(--sl-color-black); border: 1px solid var(--sl-color-gray-5); border-radius: 3px; color: var(--sl-color-gray-2); font: .65rem/1.5 var(--sl-font-mono); }
+.arch-cells { display: flex; flex-wrap: wrap; gap: .5rem; }
+.arch-cell { display: flex; flex-direction: column; gap: .2rem; padding: .6rem .75rem; border: 1px solid var(--sl-color-gray-5); border-radius: 3px; text-decoration: none; font: .8rem/1.5 var(--sl-font-mono); background: var(--sl-color-black); }
+.arch-cell small { font: .7rem/1.5 var(--sl-font); color: var(--sl-color-gray-2); }
+.arch-cell-key { border-color: var(--sl-color-accent); }
+.arch-cell:hover { border-color: var(--sl-color-accent-high); }
+.arch-cell-ghost { flex: 1; border-style: dashed; }
+.arch-flow { text-align: center; padding-block: .4rem; font: .65rem/1.5 var(--sl-font-mono); color: var(--sl-color-gray-3); }

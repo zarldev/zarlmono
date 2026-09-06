@@ -315,11 +315,16 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 					Effects:    append([]tools.Effect(nil), d.result.Effects...),
 				})
 			}
-			t.messages = append(t.messages, llm.Message{
+			message := llm.Message{
 				Role:       llm.RoleTool,
 				Content:    r.toolResultText(d.result, tc.Function.Name),
 				ToolCallID: tc.ID,
-			})
+			}
+			if d.result != nil && d.result.Success {
+				message.Parts = d.result.Parts
+			}
+			// Retain an owned snapshot; attachment bytes never enter text truncation.
+			t.messages = append(t.messages, message.Clone())
 		}
 		t.totalToolCalls += len(toolCallOrder)
 		// Persist progress after dispatch so a SIGKILL on the outer

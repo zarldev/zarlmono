@@ -93,7 +93,10 @@ Three reference shapes, by complexity:
 
 ```go
 r := runner.New(client, runner.WithTools(tools))
-result, _ := r.Run(ctx, runner.TaskSpec{Prompt: "..."})
+result := r.Run(ctx, runner.TaskSpec{Prompt: "..."})
+if result.Err != nil {
+    // Handle the terminal error.
+}
 ```
 
 **Interactive TUI** (`zarlcode/tui`): a sink translates runner events into UI messages; a steerer accepts queued user lines; the prompt source re-renders from skills + workspace each turn. See `zarlcode/tui/live.go` and `zarlcode/tui/teasink/`.

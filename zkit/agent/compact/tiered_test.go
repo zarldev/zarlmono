@@ -79,6 +79,78 @@ func TestTiered_Phase1TrimsToolResults(t *testing.T) {
 	}
 }
 
+func TestTiered_Phase1ElidesOldToolAttachments(t *testing.T) {
+	t.Parallel()
+	oldDataURI := "data:image/png;base64," + strings.Repeat("a", 700)
+	recentDataURI := "data:image/png;base64," + strings.Repeat("b", 700)
+	c := &compact.Tiered{
+		TargetBytes:     2000,
+		Phase1Threshold: 0.60,
+		Phase2Threshold: 0.75,
+		Phase3Threshold: 0.90,
+	}
+	history := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "old"}}},
+		{Role: llm.RoleTool, ToolCallID: "old", Content: "old metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI(oldDataURI, "image/png")}},
+		{Role: llm.RoleTool, ToolCallID: "recent", Content: "recent metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI(recentDataURI, "image/png")}},
+	}
+	if got := c.WouldReduceBytes(history, 1); got <= 0 {
+		t.Fatalf("WouldReduceBytes = %d, want media payload to trigger compaction", got)
+	}
+	res, err := c.Compact(t.Context(), history, 1)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if !strings.Contains(res.Warning, "phase 1") {
+		t.Fatalf("warning = %q, want phase 1", res.Warning)
+	}
+	if res.BytesTrimmed <= 0 {
+		t.Fatalf("BytesTrimmed = %d, want attachment savings", res.BytesTrimmed)
+	}
+	if len(res.History[2].Parts) != 0 || !strings.Contains(res.History[2].Content, "tool attachments elided") {
+		t.Fatalf("old attachment was not visibly elided: %+v", res.History[2])
+	}
+	if got := res.History[3].Parts[0].Image.DataURI; got != recentDataURI {
+		t.Fatalf("recent attachment = %q, want preserved data URI", got)
+	}
+	if got := history[2].Parts[0].Image.DataURI; got != oldDataURI {
+		t.Fatal("compaction mutated input history")
+	}
+}
+
+func TestTiered_Phase1RetainsTinyAttachment(t *testing.T) {
+	t.Parallel()
+	compactor := &compact.Tiered{
+		TargetBytes:     1000,
+		Phase1Threshold: 0.10,
+		Phase2Threshold: 0.90,
+		Phase3Threshold: 0.95,
+	}
+	history := []llm.Message{
+		{Role: llm.RoleUser, Content: strings.Repeat("u", 100)},
+		{Role: llm.RoleTool, ToolCallID: "tiny", Content: "metadata", Parts: []llm.ContentPart{llm.TextPart("x")}},
+	}
+	before := retainedHistoryBytes(history)
+	if got := compactor.WouldReduceBytes(history, 0); got != 0 {
+		t.Fatalf("WouldReduceBytes = %d, want 0 for unprofitable attachment", got)
+	}
+	result, err := compactor.Compact(t.Context(), history, 0)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	after := retainedHistoryBytes(result.History)
+	if !strings.Contains(result.Warning, "phase 1") {
+		t.Fatalf("warning = %q, want phase 1", result.Warning)
+	}
+	if result.BytesTrimmed != 0 || after != before {
+		t.Fatalf("tiny attachment compaction: before=%d after=%d trimmed=%d", before, after, result.BytesTrimmed)
+	}
+	if len(result.History[1].Parts) != 1 || result.History[1].Parts[0].Text != "x" {
+		t.Fatalf("tiny attachment changed: %+v", result.History[1].Parts)
+	}
+}
+
 func TestTiered_Phase2TrimsAssistantContent(t *testing.T) {
 	t.Parallel()
 	c := tinyBudgetTiered()
@@ -157,6 +229,120 @@ func TestTiered_Phase3PreservesOperationalStateAndToolPairs(t *testing.T) {
 		if msg.Role == llm.RoleTool && !declared[msg.ToolCallID] {
 			t.Errorf("phase 3 produced orphan tool result %q", msg.ToolCallID)
 		}
+	}
+}
+
+func TestTiered_LaterPhasesNeverGrowHistory(t *testing.T) {
+	t.Parallel()
+	compactor := tinyBudgetTiered()
+	assistantContent := strings.Repeat("a", 257)
+	history := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleTool, ToolCallID: "tiny", Content: "ok", Parts: []llm.ContentPart{llm.TextPart("x")}},
+		{Role: llm.RoleAssistant, Content: assistantContent},
+		{Role: llm.RoleUser, Content: strings.Repeat("pressure", 200)},
+	}
+	before := retainedHistoryBytes(history)
+	if got := compactor.WouldReduceBytes(history, 1); got != 0 {
+		t.Fatalf("WouldReduceBytes = %d, want 0 when selected phases cannot shrink history", got)
+	}
+	result, err := compactor.Compact(t.Context(), history, 1)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	after := retainedHistoryBytes(result.History)
+	if !strings.Contains(result.Warning, "phase 3") {
+		t.Fatalf("warning = %q, want phase 3", result.Warning)
+	}
+	if result.BytesTrimmed < 0 || after > before {
+		t.Fatalf("compaction grew history: before=%d after=%d trimmed=%d", before, after, result.BytesTrimmed)
+	}
+	if result.BytesTrimmed != before-after {
+		t.Fatalf("BytesTrimmed = %d, want %d", result.BytesTrimmed, before-after)
+	}
+	if result.History[1].Content != "ok" || len(result.History[1].Parts) != 1 {
+		t.Fatalf("unprofitable tool replacements changed message: %+v", result.History[1])
+	}
+	if result.History[2].Content != assistantContent {
+		t.Fatal("unprofitable assistant replacement changed content")
+	}
+}
+
+func TestTiered_ProbeMatchesSelectedPhaseSavings(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		history     []llm.Message
+		compactor   *compact.Tiered
+		wantPhase   string
+		wantSavings bool
+	}{
+		{
+			name: "exact phase 1 threshold",
+			history: []llm.Message{{
+				Role: llm.RoleTool, ToolCallID: "image",
+				Parts: []llm.ContentPart{llm.ImagePartFromDataURI("data:image/png;base64,"+strings.Repeat("a", 256), "image/png")},
+			}},
+			wantPhase: "phase 1", wantSavings: true,
+		},
+		{
+			name:      "phase 2 assistant reduction",
+			history:   []llm.Message{{Role: llm.RoleAssistant, Content: strings.Repeat("a", 800)}},
+			compactor: &compact.Tiered{TargetBytes: 1000, Phase1Threshold: 0.10, Phase2Threshold: 0.20, Phase3Threshold: 0.90},
+			wantPhase: "phase 2", wantSavings: true,
+		},
+		{
+			name:      "user-only pressure",
+			history:   []llm.Message{{Role: llm.RoleUser, Content: strings.Repeat("u", 1000)}},
+			compactor: tinyBudgetTiered(),
+			wantPhase: "phase 3",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			compactor := tc.compactor
+			if compactor == nil {
+				thresholdBytes := retainedHistoryBytes(tc.history)
+				compactor = &compact.Tiered{TargetBytes: thresholdBytes, Phase1Threshold: 1, Phase2Threshold: 2, Phase3Threshold: 3}
+			}
+			probe := compactor.WouldReduceBytes(tc.history, 0)
+			result, err := compactor.Compact(t.Context(), tc.history, 0)
+			if err != nil {
+				t.Fatalf("Compact: %v", err)
+			}
+			if !strings.Contains(result.Warning, tc.wantPhase) {
+				t.Fatalf("warning = %q, want %s", result.Warning, tc.wantPhase)
+			}
+			if tc.wantSavings && probe <= 0 {
+				t.Fatalf("WouldReduceBytes = %d, want positive", probe)
+			}
+			if !tc.wantSavings && probe != 0 {
+				t.Fatalf("WouldReduceBytes = %d, want 0", probe)
+			}
+			if probe != result.BytesTrimmed {
+				t.Fatalf("WouldReduceBytes = %d, BytesTrimmed = %d", probe, result.BytesTrimmed)
+			}
+		})
+	}
+}
+
+func TestTiered_WouldReduceBytesDoesNotAllocate(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.RoleTool, Content: strings.Repeat("tool", 200), Parts: []llm.ContentPart{
+			llm.ImagePartFromDataURI("data:image/png;base64,"+strings.Repeat("a", 256), "image/png"),
+		}},
+		{Role: llm.RoleAssistant, Content: strings.Repeat("reasoning", 200)},
+	}
+	compactor := tinyBudgetTiered()
+	var savings int
+	allocs := testing.AllocsPerRun(100, func() {
+		savings = compactor.WouldReduceBytes(history, 0)
+	})
+	if savings <= 0 {
+		t.Fatalf("WouldReduceBytes = %d, want positive", savings)
+	}
+	if allocs != 0 {
+		t.Fatalf("WouldReduceBytes allocations = %v, want 0", allocs)
 	}
 }
 

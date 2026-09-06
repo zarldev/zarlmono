@@ -46,15 +46,16 @@ const (
 // lifecycle harness — [Launch.Create] wires it (registering closers with the
 // app), [Launch.Run] drives it.
 type Zarlcode struct {
-	root     string
-	ws       code.Workspace
-	settings *engine.Settings
-	sink     *teasink.Sink
-	model    *UI
-	live     *engine.LiveRunner
-	mcpReg   *dynamic.MCPRegistry
-	prov     llm.Provider
-	spec     engine.ProviderSpec
+	root             string
+	ws               code.Workspace
+	settings         *engine.Settings
+	sink             *teasink.Sink
+	model            *UI
+	live             *engine.LiveRunner
+	mcpReg           *dynamic.MCPRegistry
+	prov             llm.Provider
+	spec             engine.ProviderSpec
+	startupCancelled bool
 }
 
 // Launch implements zapp.Program[*Zarlcode]. Flag values are parsed in
@@ -121,6 +122,9 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	UseTheme(peekTheme(ctx, root))
 
 	settings, err := engine.OpenSettings(ctx, root, vaultPassphraseFunc(ctx, !p.Headless))
+	if errors.Is(err, context.Canceled) && !p.Headless {
+		return &Zarlcode{startupCancelled: true}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("settings: %w", err)
 	}
@@ -340,6 +344,9 @@ func configuredWebSearch(ctx context.Context, settings *engine.Settings) tools.T
 // returns its exit code (no TUI). Otherwise it starts the bubbletea v2 loop,
 // then persists the resumable session.
 func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) int {
+	if z.startupCancelled {
+		return zapp.ExitOK
+	}
 	if p.Headless {
 		var report *os.File
 		if p.ReportFile != "" {

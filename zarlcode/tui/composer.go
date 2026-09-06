@@ -143,13 +143,25 @@ func (c *composer) draw(scr uv.Screen, r uv.Rectangle, planMode bool) {
 // global shortcuts are handled first; focused surfaces get small dedicated
 // handlers so the root routing stays readable.
 func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
+	if msg.String() == "ctrl+c" {
+		confirming := false
+		if m.overlay.active() {
+			_, confirming = m.overlay.top().(*quitConfirmDialog)
+		}
+		if !confirming {
+			return m.handleQuit()
+		}
+	}
 	if m.overlay.active() {
+		if msg.String() == "ctrl+g" {
+			if _, helpOpen := m.overlay.top().(*helpDialog); !helpOpen {
+				cmd, _ := m.handleCommonShortcut(msg)
+				return cmd
+			}
+		}
 		return m.handleAction(m.overlay.top().handleKey(msg))
 	}
-	switch msg.String() {
-	case "ctrl+c":
-		return m.handleQuit()
-	case "ctrl+q":
+	if msg.String() == "ctrl+q" {
 		m.overlay.push(newConversationActionsDialog())
 		return nil
 	}
@@ -275,14 +287,18 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 }
 
 func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "tab", "right":
+		m.contextView.nextTab()
+		return nil
+	case "shift+tab", "left":
+		m.contextView.prevTab()
+		return nil
+	}
 	if cmd, ok := m.handleShellShortcut(msg); ok {
 		return cmd
 	}
 	switch msg.String() {
-	case "tab", "right":
-		m.contextView.nextTab()
-	case "shift+tab", "left":
-		m.contextView.prevTab()
 	case "up", "k":
 		m.contextView.scrollActiveBy(-1)
 		m.clampContextViewScroll()

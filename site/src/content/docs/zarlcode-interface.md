@@ -26,11 +26,12 @@ The default screen is four regions:
 The layout is responsive. At **≥160 columns** the cockpit sidebar
 shows; below that it collapses and the timeline goes full-width.
 
-When you launch `zarlcode` with no flags you land on the **intro
-screen**: a prompt box and a picker of saved sessions. Type a task and
-press `Enter` to start fresh, or pick a prior session to resume. (The
-overlay shortcuts below only activate once you're past the intro, in
-the main UI.)
+When you launch `zarlcode` with no flags, an unconfigured installation opens the
+**first-run screen**. Press `Enter` to accept local defaults or `Ctrl+S` to configure a
+provider. Once configured, launch opens the usual **intro screen**: type a task to start
+fresh or choose a saved session to resume. The overlay shortcuts below activate once you
+are past the intro and in the main UI. See [First run and onboarding](/zarlmono/zarlcode-onboarding/)
+for the setup path.
 
 Saved-session rows are ordered with pinned sessions first, then by recent activity. Focus the session list and press `/` to search, `p` to pin or unpin, `Ctrl+N` to rename, or `d` to permanently delete that local session—including its canonical transcript and saved draft—after confirmation. Rows also summarize message, plan, changed-file, model/agent, and pending-draft state.
 
@@ -129,17 +130,23 @@ plans (the latter persist under `.zarlcode/plans/`).
 
 ## Models, providers, and themes
 
-- **`Ctrl+K`** — the searchable **command palette** for help, settings, model and
-  theme pickers, session naming, plan and tool-history panes, the file viewer,
-  copying the latest assistant response, and Markdown session export.
+- **`Ctrl+S`** — open **Settings**, including the Providers panel for API keys, OAuth,
+  custom OpenAI-compatible endpoints, and other workspace configuration.
+- **`Ctrl+E`** — open the model picker directly to change the active provider/model pair.
+- **`Ctrl+K`** — the searchable **command palette**: a discovery and fallback surface for
+  help, settings, model and theme pickers, session naming, plan and tool-history panes,
+  the file viewer, copying the latest assistant response, and Markdown session export.
 - **`Ctrl+N`** names or renames the active session; `/name <label>` does the same.
-- **`Ctrl+Shift+C`** copies the latest assistant response. `/export [path]` writes
-  the canonical transcript as Markdown; without a path it uses `.zarlcode/exports/` in
-  the current workspace and never overwrites an existing export.
+- **`Ctrl+Shift+C`** copies the latest assistant response. `/export [path]` writes the
+  canonical transcript as Markdown; without a path it uses `.zarlcode/exports/` in the
+  current workspace and never overwrites an existing export.
 - **Settings → interface → notification sounds** controls terminal bells: `off`,
   `completion` (the default), or `all` to also ring as plan steps complete.
-- While a turn is active, zarlcode best-effort inhibits operating-system sleep on
-  Linux and macOS; the turn continues normally if inhibition is unavailable.
+- While a turn is active, zarlcode best-effort inhibits operating-system sleep on Linux
+  and macOS; the turn continues normally if inhibition is unavailable.
+
+For first-time provider setup and credential protection, see
+[Providers and credentials](/zarlmono/zarlcode-providers/).
 
 ![The model picker](/zarlmono/zarlcode-modelpicker.gif)
 
@@ -182,14 +189,8 @@ Slash commands work in the composer too: `/clear` resets the conversation,
 writes a Markdown transcript. Press `Ctrl+G` any time for the full,
 context-aware list.
 
-## Launch flags
+## Automation
 
-| Flag | Effect |
-|---|---|
-| *(none)* | interactive TUI starting on the intro screen |
-| `--continue` | resume the previous session in this workspace |
-| `--agent <name>` | start with a named agent profile (`agents/<name>.md`) |
-| `--env <path>` | load a `.env` file before reading config |
-| `--headless` | run one task to completion with no TUI, recording the result to `state.db` |
-| `--prompt-text <s>` / `--prompt-file <p>` | the task prompt for `--headless` |
-| `--max-iter <n>` | override the iteration cap for `--headless` (0 = config default) |
+Launch flags, credential subcommands, headless tasks, diagnostics, and upgrade are
+supported advanced surfaces. See [Automation and CLI](/zarlmono/zarlcode-automation/) for
+the complete reference; normal interactive use starts with `zarlcode` in the workspace.

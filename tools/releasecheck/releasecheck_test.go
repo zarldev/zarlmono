@@ -54,7 +54,8 @@ func TestBuildRejectsInvalidPlans(t *testing.T) {
 		{name: "unknown scope", version: "v1.2.3", scope: "all", want: "unknown release scope"},
 		{name: "empty custom", version: "v1.2.3", scope: "custom", want: "at least one"},
 		{name: "unknown module", version: "v1.2.3", scope: "custom", custom: "zarlcode,nope", want: "unsupported module"},
-		{name: "zkit with consumer", version: "v1.2.3", scope: "custom", custom: "zkit,zarlcode", want: "release zkit separately"},
+		{name: "zkit with consumer", version: "v1.2.3", scope: "custom", custom: "zkit,zarlcode", want: "release internal dependency zkit separately before consumer zarlcode"},
+		{name: "zarlcode with downstream", version: "v1.2.3", scope: "custom", custom: "zarlcode,swebench-eval", want: "release internal dependency zarlcode separately before consumer swebench-eval"},
 		{name: "missing heading", version: "v1.2.3", scope: "zkit", want: "found 0"},
 		{name: "undated heading", version: "v1.2.3", scope: "zkit", changelog: "## [zkit/v1.2.3]\n", want: "found 0"},
 		{name: "bad date", version: "v1.2.3", scope: "zkit", changelog: "## [zkit/v1.2.3] — 2026-02-30\n", want: "invalid date"},
@@ -62,6 +63,7 @@ func TestBuildRejectsInvalidPlans(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			root := fixture(t, test.changelog)
 			_, err := releasecheck.Build(root, test.version, test.scope, test.custom)
 			if err == nil || !strings.Contains(err.Error(), test.want) {

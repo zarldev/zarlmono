@@ -14,47 +14,40 @@ tasks:
   release-check:
     desc: Run the complete module-isolated local pre-release gate
     cmds:
-      - go test -count=1 ./tools/releasecheck/... ./tools/genformula/... ./tools/doccheck/... ./tools/repohealth/...
-      - task: dependency-pair
-      - |
-        for m in examples zkit zarlcode swebench-eval; do
-          echo "==> isolated dependency check ($m)"
-          GOWORK=off go mod verify -C "$m"
-        done
-        # Build/test the working tree through go.work. Consumer go.mod files pin
-        # the last published sibling APIs until the next dependency-ordered release.
-        for m in examples zkit zarlcode swebench-eval; do
-          echo "==> workspace build/vet/test ($m)"
-          go build -C "$m" ./...
-          go vet -C "$m" ./...
-          go test -C "$m" -count=1 ./...
-        done
+      - task: check
       - task: lint
-      - GOWORK=off go test -C zkit -race -count=1 ./...
-      - npm --prefix site ci
-      - npm --prefix site run build
-      - npm --prefix site audit --audit-level=high
-      - GOTOOLCHAIN=go1.27.0 GOWORK=off go test -C zkit -run '^$' ./...
+      - task: race
+      - task: site-check
+      - task: exact-go
+
   default:
     desc: Show available tasks
     cmds:
       - go tool task --list
-
 
   help:
     desc: Show available tasks
     cmds:
       - go tool task --list
 
-
   tui-smoke:
     desc: Run the bounded PTY-backed interactive TUI smoke (requires tmux)
     cmds:
       - go run ./tools/tuismoke/cmd/tuismoke {{.CLI_ARGS}}
+
   # --- repo-wide Go workflow (CI-covered modules) ---
 
+  module-verify:
+    desc: Verify each module's checksums without workspace replacements
+    cmds:
+      - |
+        for m in examples zkit zarlcode swebench-eval; do
+          echo "==> isolated go mod verify ($m)"
+          GOWORK=off go -C "$m" mod verify
+        done
+
   build:
-    desc: Build CI-covered Go modules
+    desc: Build CI-covered Go modules through go.work
     cmds:
       - |
         for m in examples zkit zarlcode swebench-eval; do
@@ -63,7 +56,7 @@ tasks:
         done
 
   vet:
-    desc: Vet CI-covered Go modules
+    desc: Vet CI-covered Go modules through go.work
     cmds:
       - |
         for m in examples zkit zarlcode swebench-eval; do
@@ -72,7 +65,7 @@ tasks:
         done
 
   test:
-    desc: Test CI-covered Go modules
+    desc: Test CI-covered Go modules through go.work
     cmds:
       - |
         for m in examples zkit zarlcode swebench-eval; do
@@ -81,24 +74,24 @@ tasks:
         done
 
   test-policy:
-    desc: Reject new same-package tests and Background contexts in tests
+    desc: Enforce external-package, internal-test, and test-context policies
     cmds:
       - go run ./tools/testpolicy/cmd/testpolicy "${TEST_POLICY_BASE:-HEAD}"
 
-  dependency-pair:
-    desc: Verify the validated Anthropic and JSON Schema dependency pair
-    cmds:
-      - go run ./tools/dependencycheck/cmd/dependencycheck
-
   doccheck:
-    desc: Verify compiled documentation examples match their README snippets
+    desc: Verify canonical documentation sources and internal links
     cmds:
       - go test -count=1 ./tools/doccheck/...
+
   repohealth:
     desc: Validate repository-local skills, agents, and instruction links
     cmds:
       - go test -count=1 ./tools/repohealth/...
 
+  tools-vet:
+    desc: Vet repository Go tools
+    cmds:
+      - go vet ./tools/...
 
   tools-test:
     desc: Test repository Go tools
@@ -106,30 +99,55 @@ tasks:
       - go test -count=1 ./tools/...
 
   check:
-    desc: Build, vet, and test CI-covered Go modules
+    desc: Verify manifests and build, vet, and test the repository
     cmds:
+      - task: module-verify
       - task: build
       - task: vet
       - task: test
       - task: test-policy
-      - task: dependency-pair
-      - task: doccheck
-      - task: repohealth
+      - task: tools-vet
       - task: tools-test
 
   lint:
-    desc: Run golangci-lint for CI-covered Go modules
+    desc: Run golangci-lint for the root and CI-covered modules
     cmds:
       - |
-        for m in examples zkit zarlcode swebench-eval; do
-          echo "==> golangci-lint ($m)"
-          go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "./$m/..."
+        for pattern in ./... ./examples/... ./zkit/... ./zarlcode/... ./swebench-eval/...; do
+          echo "==> golangci-lint ($pattern)"
+          go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "$pattern"
         done
 
   race:
     desc: Run zkit race tests
     cmds:
       - go test -C zkit -race -count=1 ./...
+
+  site-check:
+    desc: Install, build, and audit the documentation site
+    cmds:
+      - npm --prefix site ci
+      - npm --prefix site run build
+      - npm --prefix site audit --audit-level=high
+
+  docs:check:
+    desc: Verify documentation sources, quickstart, and production site
+    cmds:
+      - task: doccheck
+      - go test -C examples -count=1 ./quickstart
+      - task: site-check
+
+  exact-go:
+    desc: Compile zkit in isolation with the root go.mod toolchain
+    cmds:
+      - |
+        expected="go$(awk '$1 == "go" { print $2; exit }' go.mod)"
+        actual=$(GOTOOLCHAIN=local go env GOVERSION)
+        if [ "$actual" != "$expected" ]; then
+          echo "release checks require $expected (running $actual)" >&2
+          exit 1
+        fi
+        GOTOOLCHAIN="$expected" GOWORK=off go test -C zkit -run '^$' ./...
 
   # --- foundations / reusable building blocks ---
 

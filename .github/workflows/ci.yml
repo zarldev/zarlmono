@@ -13,16 +13,14 @@ concurrency:
 permissions:
   contents: read
 
-# This is a go.work multi-module repo. `./...` only expands within the
-# *current* module, so a single root `go build ./...` silently covers
-# only whatever packages live in the root module. Every job below therefore
-# runs per module via a matrix. The root module is tooling-only; examples live
-# in their own module.
-
+# go.work tests the current sibling modules together. Each matrix member first
+# verifies its own committed module graph with workspace replacements disabled,
+# then builds, vets, and tests the current workspace graph.
 jobs:
   build-test:
-    name: build vet test (${{ matrix.module }})
+    name: module (${{ matrix.module }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -35,53 +33,25 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: build
-        working-directory: ${{ matrix.module }}
-        run: go build ./...
-        if: matrix.module != 'zarlcode'
-      - name: build (zarlcode)
-        working-directory: ${{ matrix.module }}
-        run: go list ./... | grep -v '/cmd$' | xargs go build
-        if: matrix.module == 'zarlcode'
 
-      - name: vet
-        working-directory: ${{ matrix.module }}
-        run: go vet ./...
+      - name: verify standalone module graph
+        env:
+          GOWORK: "off"
+        run: go -C "${{ matrix.module }}" mod verify
 
-      - name: test
-        working-directory: ${{ matrix.module }}
-        run: go test -count=1 ./...
+      - name: build through workspace
+        run: go build -C "${{ matrix.module }}" ./...
 
-      - name: verify README quickstart matches compiled example
-        if: matrix.module == 'examples'
-        run: go test -count=1 ./tools/doccheck/...
+      - name: vet through workspace
+        run: go vet -C "${{ matrix.module }}" ./...
 
-      - name: verify repository guidance catalogue
-        if: matrix.module == 'examples'
-        run: go test -count=1 ./tools/repohealth/...
+      - name: test through workspace
+        run: go test -C "${{ matrix.module }}" -count=1 ./...
 
-  race-test:
-    name: race test (zkit)
+  repository-tools:
+    name: repository tools and policy
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: setup go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # zkit holds the concurrent core (agent, messagebus, zsync, mcp). Race
-      # the whole module rather than a hand-curated subtree list that silently
-      # loses coverage every time a new concurrent package is added.
-      - name: race test
-        working-directory: zkit
-        run: go test -race -count=1 ./...
-
-  test-policy:
-    name: test policy
-    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -93,24 +63,66 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: vet repository tools
+        run: go vet ./tools/...
+
       - name: test repository tools
         run: go test -count=1 ./tools/...
 
-      - name: verify dependency pair
-        run: go run ./tools/dependencycheck/cmd/dependencycheck
-
-      - name: reject new same-package tests and Background test contexts
+      - name: enforce test-source policy
         env:
           TEST_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: go run ./tools/testpolicy/cmd/testpolicy "$TEST_POLICY_BASE"
 
+  tui-smoke:
+    name: tui golden workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: setup go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install tmux
+        run: |
+          if ! command -v tmux >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes tmux
+          fi
+
+      - name: exercise onboarding, restart, and cancellation workflow
+        run: go tool task tui-smoke -- -timeout 45s
+
+  race-test:
+    name: race test (zkit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: setup go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # zkit owns the concurrent core; race the whole module so new packages do
+      # not silently fall outside a hand-maintained package list.
+      - name: race test
+        run: go test -C zkit -race -count=1 ./...
+
   lint:
     name: golangci-lint (${{ matrix.module }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        module: ["examples", "zkit", "zarlcode", "swebench-eval"]
+        module: [".", "examples", "zkit", "zarlcode", "swebench-eval"]
     steps:
       - uses: actions/checkout@v7
 

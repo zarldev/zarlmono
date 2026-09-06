@@ -69,9 +69,7 @@ func messageChars(m llm.Message) int {
 	for _, tc := range m.ToolCalls {
 		n += len(tc.Function.Name) + len(tc.Function.Arguments)
 	}
-	for _, p := range m.Parts {
-		n += len(p.Text)
-	}
+	n += llm.ContentPartsByteLen(m.Parts)
 	for _, item := range m.ContinuationItems {
 		n += item.ByteLen()
 	}

@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -99,6 +100,37 @@ func TestOpenSettingsIgnoresCredentialEnvironment(t *testing.T) {
 	t.Cleanup(func() { _ = unlocked.Close() })
 	if got, err := unlocked.Svc.GetKey(ctx, prefs.ScopeGlobal, "openai"); err != nil || got != "stored-secret" {
 		t.Fatalf("explicit unlock = %q, %v", got, err)
+	}
+}
+
+func TestOpenSettingsReturnsPromptCancellation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := t.Context()
+	root := t.TempDir()
+
+	settings, err := engine.OpenSettings(ctx, root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.SetupCredentialVault(ctx, "cancel-test-passphrase"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "cancel-test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := engine.OpenSettings(ctx, root, func(bool, bool) (string, error) {
+		return "", context.Canceled
+	})
+	if reopened != nil {
+		_ = reopened.Close()
+		t.Fatal("cancelled settings open returned a settings handle")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenSettings cancellation = %v, want context.Canceled", err)
 	}
 }
 

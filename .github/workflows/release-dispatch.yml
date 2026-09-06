@@ -1,7 +1,7 @@
 name: release-dispatch
 
-# Canonical operator-facing release orchestrator. zkit is always released before
-# consumers so go.work cannot hide an unpublished module dependency.
+# Canonical operator-facing release orchestrator. zkit is released alone and
+# before consumers so go.work cannot hide an unpublished module dependency.
 on:
   workflow_dispatch:
     inputs:
@@ -31,18 +31,22 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  # GITHUB_TOKEN tag pushes do not trigger workflows, so dispatch the publisher.
-  actions: write
+  contents: read
 
 jobs:
-  plan-and-release:
-    name: release plan / publish
+  plan:
+    name: validate release plan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      modules: ${{ steps.plan.outputs.modules }}
+      tags: ${{ steps.plan.outputs.tags }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
       - name: setup go
         uses: actions/setup-go@v7
         with:
@@ -116,66 +120,145 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: preflight build, vet, test, and lint
+  preflight:
+    name: complete release preflight
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: setup go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: run authoritative release gate
+        run: go tool task release-check
+
+      - name: verify selected modules outside the workspace
         env:
-          MODULES: ${{ steps.plan.outputs.modules }}
+          MODULES: ${{ needs.plan.outputs.modules }}
         run: |
           set -euo pipefail
           IFS=',' read -r -a modules <<< "$MODULES"
           for module in "${modules[@]}"; do
-            echo "::group::release checks ($module)"
-            GOWORK=off go mod verify -C "$module"
-            go build -C "$module" ./...
-            go vet -C "$module" ./...
-            go test -C "$module" -count=1 ./...
-            go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "./$module/..."
+            echo "::group::isolated release checks ($module)"
+            GOWORK=off go -C "$module" mod verify
+            GOWORK=off go build -C "$module" ./...
+            GOWORK=off go vet -C "$module" ./...
+            GOWORK=off go test -C "$module" -count=1 ./...
             echo "::endgroup::"
           done
 
-      - name: stop after dry-run
-        if: ${{ inputs.mode == 'dry-run' }}
-        run: echo "dry-run complete; no tags were created"
+      - name: install tmux
+        if: ${{ contains(needs.plan.outputs.modules, 'zarlcode') }}
+        run: |
+          if ! command -v tmux >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes tmux
+          fi
 
-      - name: create and push annotated tags
-        if: ${{ inputs.mode == 'publish' }}
+      - name: exercise releasable zarlcode terminal workflow
+        if: ${{ contains(needs.plan.outputs.modules, 'zarlcode') }}
+        run: go tool task tui-smoke -- -timeout 45s
+
+      - name: record dry-run completion
+        if: ${{ inputs.mode == 'dry-run' }}
+        run: echo "dry-run complete; no tags were created" >> "$GITHUB_STEP_SUMMARY"
+
+  publish-tags:
+    name: publish annotated tags
+    if: ${{ inputs.mode == 'publish' }}
+    needs: [plan, preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: revalidate main and atomically publish tags
         env:
-          TAGS: ${{ steps.plan.outputs.tags }}
-          VERSION: ${{ steps.plan.outputs.version }}
+          TAGS: ${{ needs.plan.outputs.tags }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          remote_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          if [ -z "$remote_main" ] || [ "$remote_main" != "$GITHUB_SHA" ]; then
+            echo "origin/main moved during preflight; refusing to tag $GITHUB_SHA" >&2
+            exit 1
+          fi
+
           IFS=',' read -r -a tags <<< "$TAGS"
           if [ "${#tags[@]}" -eq 0 ]; then
             echo "release plan produced no tags" >&2
             exit 1
           fi
           for tag in "${tags[@]}"; do
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              echo "tag appeared during preflight: $tag" >&2
+              exit 1
+            fi
+          done
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for tag in "${tags[@]}"; do
             module="${tag%%/*}"
             git tag -a "$tag" -m "$module $VERSION"
-            [ "$(git cat-file -t "$tag")" = tag ] || exit 1
+            [ "$(git cat-file -t "$tag")" = tag ]
           done
-          git push origin "${tags[@]}"
+          git push --atomic origin "${tags[@]}"
           printf '\n## Tags published\n' >> "$GITHUB_STEP_SUMMARY"
           printf -- '- `%s`\n' "${tags[@]}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: dispatch and verify zarlcode publisher
-        if: ${{ inputs.mode == 'publish' && contains(steps.plan.outputs.modules, 'zarlcode') }}
+  dispatch-publisher:
+    name: dispatch and verify zarlcode publisher
+    if: ${{ inputs.mode == 'publish' && contains(needs.plan.outputs.modules, 'zarlcode') }}
+    needs: [plan, publish-tags]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: dispatch publisher and wait for completion
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.plan.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           tag="zarlcode/${VERSION}"
-          dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          run_started=$(date -u -d "$dispatched_at - 5 seconds" +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run release.yml --ref main -f tag="$tag"
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+          source_sha=$(git rev-list -n1 "refs/tags/$tag")
+          run_started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run release.yml --ref "$tag" -f tag="$tag"
+
           for attempt in $(seq 1 30); do
             sleep 10
-            source_sha=$(git rev-list -n1 "refs/tags/$tag")
             run_id=$(gh api \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?per_page=30&event=workflow_dispatch" \
-              --jq ".workflow_runs[] | select(.created_at >= \"$run_started\" and .head_sha == \"$source_sha\" and .display_title == \"release\") | .id" \
+              --jq ".workflow_runs[] | select(.created_at >= \"$run_started\" and .head_sha == \"$source_sha\") | .id" \
               2>/dev/null | head -1 || true)
             if [ -n "$run_id" ]; then
               run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run_id}"

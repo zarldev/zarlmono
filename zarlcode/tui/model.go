@@ -94,6 +94,9 @@ type UI struct {
 	// cockpit and exits on enter/esc.
 	startupFailure *startupFailurePane
 	repointSeq     uint64
+	pendingTarget  *prefs.ModelSelection
+	oauthSeq       uint64
+	oauthOperation *oauthOperation
 	// startupCmd holds non-critical initialization that should begin only after
 	// Bubble Tea can render the first frame. The command is owned and cancelled
 	// by the program context.
@@ -268,10 +271,8 @@ func (m *UI) SetPricing(inPer1k, outPer1k float64) {
 	m.session.SetPricing(inPer1k, outPer1k)
 }
 
-// openModelQuickPick pushes the model list picker onto the overlay with a
-// model from any provider, the selection is persisted to settings and
-// maybeRepoint rebuilds the provider. Providers capture their wire model at
-// construction time, so model-only changes cannot use LiveRunner.SetModel.
+// openModelQuickPick pushes the cross-provider model picker. Its callback only
+// stages a selection; closing the picker starts the root-owned build-first switch.
 func (m *UI) openModelQuickPick() tea.Cmd {
 	current := m.session.ActiveProviderSpec()
 	var provNames []string
@@ -287,19 +288,10 @@ func (m *UI) openModelQuickPick() tea.Cmd {
 	cache := make(map[string][]string, len(m.session.ModelCache))
 	maps.Copy(cache, m.session.ModelCache)
 
+	m.pendingTarget = nil
 	picker := newModelQuickPick(provNames, cache, current.Name, m.session.Model, func(prov, model string) {
-		// Persist provider + model to settings so the change survives
-		// restart and maybeRepoint can read it back as the new spec.
-		if m.settings != nil && m.settings.Svc != nil {
-			ctx := m.appContext()
-			selection := prefs.ModelSelection{Provider: prov, Model: model}
-			if err := m.settings.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
-				m.session.SetErrorToast("model selection: " + err.Error())
-				return
-			}
-		}
-
-		m.session.SetToast("switching to " + prov + " / " + model + "…")
+		selection := prefs.ModelSelection{Provider: prov, Model: model}
+		m.pendingTarget = &selection
 	}, m.settings, m.appContext(), func(err error) {
 		m.session.SetErrorToast("reasoning effort: " + err.Error())
 	})
@@ -335,6 +327,7 @@ func (m *UI) handleQuit() tea.Cmd {
 		return nil
 	}
 	m.cancelLiveTurnForQuit()
+	m.cancelOAuthOperation(false)
 	return tea.Quit
 }
 

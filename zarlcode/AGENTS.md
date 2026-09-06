@@ -30,7 +30,7 @@ Every operation takes an explicit `scope`:
 
 ## Promote, not dual-write
 
-Saves from the settings pane land in workspace scope. To make a value the default in every workspace, focus the row and press **Ctrl+G** — the promote path **MOVES** the workspace row to the global row.
+Saves from the settings pane land in workspace scope. To make a value the default in every workspace, focus the row and press **p** — the promote path **MOVES** the workspace row to the global row.
 
 Move, not copy: after a promote, a later workspace edit signals "per-workspace override" rather than silently diverging from the global default. Re-promote to republish.
 
@@ -41,7 +41,7 @@ Move, not copy: after a promote, a later workspace edit signals "per-workspace o
 | `zarlcode keys set` CLI | global |
 | Intro wizard's first-time save | global |
 | Settings pane edit (any row) | workspace |
-| Settings pane edit + Ctrl+G | workspace → global (promote) |
+| Settings pane edit + p | workspace → global (promote) |
 | Model picker (provider/model swap) | workspace, atomically via `zarlcode/prefs.Service.SetModelSelection` |
 | OAuth completion handler | global, via `prefs.Service.SetKey(prefs.ScopeGlobal, …)` |
 

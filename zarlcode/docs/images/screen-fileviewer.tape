@@ -1,52 +1,50 @@
-# File viewer (Ctrl+F): Files / Skills / Agents / Hooks tabs with nav + preview.
-# Render from repo root:  vhs zarlcode/docs/images/screen-fileviewer.tape
-# Timing: bump Sleep values 1.5x–2x if your model/connection is slow.
+# Inspect the source and its behavior test after establishing the package context.
 Output zarlcode/docs/images/screen-fileviewer.gif
-
 Require bash
 Require go
-
+Require curl
 Set Shell bash
-Set FontSize 12
+Set FontSize 18
 Set Width 1440
-Set Height 1024
+Set Height 900
 Set Theme "Catppuccin Mocha"
+Set TypingSpeed 40ms
+Set Framerate 15
 
-Type "zarlcode"
+Hide
+Type "source zarlcode/docs/images/recording-setup.sh || exit 1"
 Enter
+Wait@2m
+Type "$REC_ROOT/zarlcode"
+Enter
+Wait+Screen /first-run setup/
+Enter
+Wait+Screen /build mode/
+Type "Explain this greeting package before we change it."
+Enter
+Wait+Screen /A small Go package/
+Show
 Sleep 3s
 
-# Ask zarlcode to clone a real project so it has files to browse.
-Type "clone https://github.com/gohugoio/hugo.git --depth=1 into demo-repo"
-Enter
-Sleep 8s
-Type "cd demo-repo"
-Enter
-Sleep 3s
-
-# Now ask the real demo prompt.
-Type "what files live under hugolib?"
-Enter
-Sleep 5s
-Escape
-Sleep 1s
-
-# Open the file viewer and walk the four tabs.
 Ctrl+F
-Sleep 2s
-Down 3
-Sleep 1s
-Enter
-Sleep 1s
-Tab
-Sleep 2s
-Tab
-Sleep 2s
-Tab
-Sleep 2s
-Escape
-Sleep 1s
+Wait+Screen /files/
+Wait+Screen /greet_test.go/
+Down 2
+Wait+Screen /func Message/
+Sleep 3s
+Down
+Wait+Screen /func TestMessage/
+Sleep 4s
+Screenshot zarlcode/docs/images/screen-fileviewer-poster.png
+Sleep 500ms
 
+Hide
+Escape
+Wait+Screen /build mode/
 Ctrl+C
-Sleep 1s
+Wait+Screen /quit ƶarl\/code\?/
 Enter
+Wait
+Type "recording_cleanup"
+Enter
+Wait

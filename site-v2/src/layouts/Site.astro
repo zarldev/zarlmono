@@ -1,0 +1,52 @@
+---
+import '../styles/site.css';
+import { path, github } from '../lib/links';
+interface Props {
+  title: string;
+  description: string;
+  section?: 'product' | 'toolkit';
+}
+const { title, description, section = 'product' } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#151816" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href={path('favicon.svg')} />
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="wordmark" href={path()} aria-label="zarlcode home"><span class="brand-icon" aria-hidden="true">z<span>_</span></span>zarlcode<span class="edition">/ v2</span></a>
+        <nav aria-label="Main navigation">
+          <a href={path()} aria-current={section === 'product' ? 'page' : undefined}>Product</a>
+          <a href={path('toolkit/')} aria-current={section === 'toolkit' ? 'page' : undefined}>zkit<span class="nav-note"> / Go toolkit</span></a>
+          <a href={path('docs/')}>Docs</a>
+          <a class="github-link" href={github}>GitHub <span aria-hidden="true">↗</span></a>
+        </nav>
+        <a class="button button-small header-cta" href={path('#install')}>Get zarlcode <span aria-hidden="true">↗</span></a>
+      </div>
+    </header>
+    <main id="main" tabindex="-1"><slot /></main>
+    <footer class="site-footer">
+      <div class="container footer-top">
+        <div><a class="wordmark" href={path()}><span class="brand-icon" aria-hidden="true">z<span>_</span></span>zarlcode</a><p>Terminal coding agent<br />and reusable Go packages.</p></div>
+        <div class="footer-links"><span class="eyebrow">Product</span><a href={path('zarlcode-onboarding/')}>Get started</a><a href={path('zarlcode-interface/')}>Interface guide</a><a href={path('zarlcode-safety/')}>Safety & access</a></div>
+        <div class="footer-links"><span class="eyebrow">Build</span><a href={path('toolkit/')}>zkit toolkit</a><a href={path('getting-started/')}>Go quickstart</a><a href={path('architecture/')}>Architecture</a></div>
+        <div class="footer-links"><span class="eyebrow">Source</span><a href={github}>GitHub ↗</a><a href={`${github}/releases`}>Releases ↗</a><a href={`${github}/blob/main/LICENSE`}>MIT license ↗</a></div>
+      </div>
+      <div class="container footer-bottom"><span>zarlcode uses the zkit agent runtime.</span><span>V2 design preview · isolated from the live site</span></div>
+    </footer>
+  </body>
+</html>

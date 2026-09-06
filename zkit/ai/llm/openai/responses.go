@@ -273,7 +273,7 @@ func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRe
 
 func messagesToResponsesInput(messages []llm.Message) []responsesInputItem {
 	out := make([]responsesInputItem, 0, len(messages))
-	for _, msg := range messages {
+	for _, msg := range llm.ExpandToolResultParts(messages) {
 		switch msg.Role {
 		case "tool":
 			// output is required for function_call_output items. Keep it

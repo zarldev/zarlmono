@@ -28,8 +28,8 @@ Starlight; `cd site && npm run build` must pass when touching it).
 - Run the repository checks before pushing:
 
   ```bash
-  go tool task check   # build, vet, tests, and repository policy checks
-  go tool task lint    # golangci-lint, root .golangci.yaml config
+  go tool task check   # isolated manifests, workspace build/vet/tests, repository policy
+  go tool task lint    # root tools and every child module, using .golangci.yaml
   go tool task race    # zkit race suite
   ```
 
@@ -66,22 +66,22 @@ Go style lives in [`AGENTS.md`](AGENTS.md); the load-bearing rules:
 ## Maintainer releases
 
 Releases run from the current `origin/main` tip through the GitHub Actions
-**release-dispatch** workflow. Before dispatching, run the complete local gate:
-
-```bash
-go tool task release-check
-go tool task tui-smoke       # when releasing zarlcode; needs tmux
-```
+**release-dispatch** workflow. Run `go tool task release-check` before dispatching.
+Use `dry-run` when you want to preview the validated plan without creating tags;
+`publish` independently repeats the complete authoritative gate before granting
+tag-write permission. Zarlcode releases also run the real `tmux` smoke. The publisher
+repeats the gate against the immutable tag so direct-tag and recovery paths cannot
+bypass validation.
 
 Use a credentialed terminal soak when provider, streaming, tool, or cancellation
 paths changed. Give every selected module exactly one dated
-`## [module/vX.Y.Z] — YYYY-MM-DD` heading in `CHANGELOG.md`, and always dispatch
-`dry-run` before `publish`. Release `zkit` alone and
-before its consumers; wait for the public Go proxy to resolve the new version, pin
-that version in consumer `go.mod` files, and verify with `GOWORK=off` before releasing
-consumers. The dispatch workflow repeats isolated verify/build/vet/test/lint checks
-for the selected modules; the broader race, exact-Go, repository-tool, and docs gate
-remains the local `release-check` task.
+`## [module/vX.Y.Z] — YYYY-MM-DD` heading in `CHANGELOG.md`. Internal dependencies
+must be released separately before their consumers: publish `zkit`, wait for the
+public Go proxy, update consumer `go.mod` pins, and verify with `GOWORK=off`; likewise
+publish and pin `zarlcode` before a `swebench-eval` release that depends on its new
+version. Release dispatch rejects a batch containing an internal dependency and its
+consumer, rechecks that `origin/main` did not move during preflight, and pushes valid
+multi-module tag sets atomically.
 
 If publication fails after a valid annotated `zarlcode/vX.Y.Z` tag exists, rerun
 `release.yml` with that exact tag. Do not move or delete a published tag to repair

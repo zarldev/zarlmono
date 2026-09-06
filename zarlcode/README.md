@@ -117,8 +117,17 @@ zarlcode                               # launch interactive TUI
 zarlcode -continue                     # resume last session in this workspace
 zarlcode --headless --prompt-file t.md # run one task without the TUI
 zarlcode keys list                     # view stored provider keys, masked
+zarlcode doctor                        # run offline, read-only readiness checks
 zarlcode upgrade                       # self-update from GitHub Releases
 ```
+
+### Diagnose local setup
+
+`zarlcode doctor` checks the running binary, home layout, state database file, and
+credential-vault presence. It is deliberately offline and read-only: it does not
+open or migrate the database, unlock credentials, contact providers, or check for
+updates. Missing first-run state is reported as guidance; invalid existing paths
+produce a non-zero exit status.
 
 ## Performance profiling
 
@@ -198,7 +207,7 @@ start. If auto-detection cannot find the right browser, open settings with
 
 Leave the row blank to use auto-detection. Settings edited in the pane are saved
 for the current workspace; workspace values override global values. To make the
-current value the global default, focus the row and press `Ctrl+G`. Use the
+current value the global default, focus the row and press `p`. Use the
 storage inspector to check workspace/global/effective values when a stale global
 path keeps reappearing.
 

@@ -312,6 +312,9 @@ type Message struct {
 	// multimodal, it falls back to flattening the Text parts to
 	// Content. Parts is typically only set on role="user" messages —
 	// assistant turns return text via Content.
+	// On role="tool", Parts supplements Content with attachments rather than
+	// replacing it. Providers without native multimodal tool results can use
+	// ExpandToolResultParts to deliver attachments through user content blocks.
 	Parts []ContentPart `json:"parts,omitempty"`
 
 	// ToolCalls is set on assistant messages that requested tool
@@ -379,7 +382,7 @@ func (m Message) Clone() Message {
 	clone.Content = strings.Clone(m.Content)
 	clone.ReasoningContent = strings.Clone(m.ReasoningContent)
 	clone.ToolCallID = strings.Clone(m.ToolCallID)
-	clone.Parts = cloneContentParts(m.Parts)
+	clone.Parts = CloneContentParts(m.Parts)
 	if m.ToolCalls != nil {
 		clone.ToolCalls = make([]ToolCall, len(m.ToolCalls))
 		for i, call := range m.ToolCalls {
@@ -408,35 +411,15 @@ func CloneMessages(messages []Message) []Message {
 	return clone
 }
 
-func cloneContentParts(parts []ContentPart) []ContentPart {
+// CloneContentParts returns an owned deep copy of parts and all
+// reference-backed media payloads.
+func CloneContentParts(parts []ContentPart) []ContentPart {
 	if parts == nil {
 		return nil
 	}
 	clone := make([]ContentPart, len(parts))
 	for i, part := range parts {
-		clone[i] = part
-		clone[i].Text = strings.Clone(part.Text)
-		if part.Image != nil {
-			image := *part.Image
-			image.URL = strings.Clone(image.URL)
-			image.DataURI = strings.Clone(image.DataURI)
-			image.MIMEType = strings.Clone(image.MIMEType)
-			image.Detail = strings.Clone(image.Detail)
-			clone[i].Image = &image
-		}
-		if part.Audio != nil {
-			audio := *part.Audio
-			audio.DataURI = strings.Clone(audio.DataURI)
-			audio.Format = strings.Clone(audio.Format)
-			clone[i].Audio = &audio
-		}
-		if part.Video != nil {
-			video := *part.Video
-			video.URL = strings.Clone(video.URL)
-			video.DataURI = strings.Clone(video.DataURI)
-			video.MIMEType = strings.Clone(video.MIMEType)
-			clone[i].Video = &video
-		}
+		clone[i] = part.Clone()
 	}
 	return clone
 }
@@ -472,6 +455,59 @@ type ContentPart struct {
 
 	// Video is set when Type == ContentTypeVideo.
 	Video *VideoData `json:"video,omitempty"`
+}
+
+// Clone returns an owned deep copy of the content part and its media payload.
+func (p ContentPart) Clone() ContentPart {
+	clone := p
+	clone.Text = strings.Clone(p.Text)
+	if p.Image != nil {
+		image := *p.Image
+		image.URL = strings.Clone(image.URL)
+		image.DataURI = strings.Clone(image.DataURI)
+		image.MIMEType = strings.Clone(image.MIMEType)
+		image.Detail = strings.Clone(image.Detail)
+		clone.Image = &image
+	}
+	if p.Audio != nil {
+		audio := *p.Audio
+		audio.DataURI = strings.Clone(audio.DataURI)
+		audio.Format = strings.Clone(audio.Format)
+		clone.Audio = &audio
+	}
+	if p.Video != nil {
+		video := *p.Video
+		video.URL = strings.Clone(video.URL)
+		video.DataURI = strings.Clone(video.DataURI)
+		video.MIMEType = strings.Clone(video.MIMEType)
+		clone.Video = &video
+	}
+	return clone
+}
+
+// ByteLen returns the number of bytes retained by the content part, including
+// its discriminator, text, media payload, and media metadata.
+func (p ContentPart) ByteLen() int {
+	n := len(p.Type) + len(p.Text)
+	if p.Image != nil {
+		n += len(p.Image.URL) + len(p.Image.DataURI) + len(p.Image.MIMEType) + len(p.Image.Detail)
+	}
+	if p.Audio != nil {
+		n += len(p.Audio.DataURI) + len(p.Audio.Format)
+	}
+	if p.Video != nil {
+		n += len(p.Video.URL) + len(p.Video.DataURI) + len(p.Video.MIMEType)
+	}
+	return n
+}
+
+// ContentPartsByteLen returns the cumulative retained byte size of parts.
+func ContentPartsByteLen(parts []ContentPart) int {
+	var n int
+	for _, part := range parts {
+		n += part.ByteLen()
+	}
+	return n
 }
 
 // ImageData is the image payload for an image content part. Either URL

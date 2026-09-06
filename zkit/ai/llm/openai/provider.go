@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -857,14 +858,21 @@ func convertMessagesToOpenAIWithReasoning(
 	mode llm.ReasoningHistory,
 	keepMaskFn func([]llm.Message) []bool,
 ) []openai.ChatCompletionMessageParamUnion {
-	var keep []bool
 	if mode == llm.ReasoningHistories.FIELD && keepMaskFn != nil {
-		keep = keepMaskFn(messages)
+		// Apply the hook to canonical history before inserting transport-only
+		// attachment messages, which must not count as new user turns.
+		keep := keepMaskFn(messages)
+		if keep != nil {
+			messages = slices.Clone(messages)
+			for i := range messages {
+				if messages[i].Role == roleAssistant && !keep[i] {
+					messages[i].ReasoningContent = ""
+				}
+			}
+		}
 	}
-
 	var result []openai.ChatCompletionMessageParamUnion
-
-	for i, msg := range messages {
+	for _, msg := range llm.ExpandToolResultParts(messages) {
 		switch msg.Role {
 		case "system":
 			result = append(result, openai.SystemMessage(msg.Content))
@@ -875,12 +883,8 @@ func convertMessagesToOpenAIWithReasoning(
 			}
 			result = append(result, openai.UserMessage(msg.Content))
 		case roleAssistant:
-			msgMode := mode
-			if mode == llm.ReasoningHistories.FIELD && keep != nil && !keep[i] {
-				msgMode = llm.ReasoningHistories.STRIP
-			}
 			if len(msg.ToolCalls) == 0 {
-				assistant := assistantMessageParam(msg, msgMode)
+				assistant := assistantMessageParam(msg, mode)
 				result = append(result, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant})
 				continue
 			}
@@ -898,7 +902,7 @@ func convertMessagesToOpenAIWithReasoning(
 					},
 				})
 			}
-			assistant := assistantMessageParam(msg, msgMode)
+			assistant := assistantMessageParam(msg, mode)
 			assistant.ToolCalls = toolCalls
 			result = append(result, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant})
 		case roleTool:

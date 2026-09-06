@@ -116,14 +116,21 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := hardenSQLitePath(path); err != nil {
 		return nil, err
 	}
-	// Pragmas: WAL for concurrent reads + foreign_keys for safety,
-	// busy_timeout to avoid SQLITE_BUSY in a short window between
-	// the agent loop and any human "/session pick" query.
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+	// Pragmas: WAL for concurrent reads + foreign_keys for safety. A longer busy
+	// timeout lets a second zarlcode process finish its brief write before this
+	// one gives up.
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)"
 	d, err := sql.Open("sqlite", dsn)
+
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", path, err)
 	}
+	// SQLite permits one writer. Keep this Store on one connection so concurrent
+	// writes from the application wait in database/sql instead of contending for
+	// SQLite's write lock.
+	d.SetMaxOpenConns(1)
+	d.SetMaxIdleConns(1)
+
 	if err := d.PingContext(ctx); err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)

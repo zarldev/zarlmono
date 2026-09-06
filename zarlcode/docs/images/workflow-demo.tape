@@ -1,82 +1,81 @@
-# Workflow demo: Plan → model switch → Build → working set → headless follow-up.
-# Render from repo root:  vhs zarlcode/docs/images/workflow-demo.tape
-# Timing: bump Sleep values 1.5x–2x if your model/connection is slow.
-# NOTE: this records in a temp copy of the small fixture at `workflow-demo-fixture/`.
+# Complete workflow: plan without edits, build and test, inspect, then resume.
+# Render from the repository root with isolated local state.
 Output zarlcode/docs/images/workflow-demo.gif
-
 Require bash
 Require go
-
+Require curl
 Set Shell bash
-Set FontSize 12
+Set FontSize 18
 Set Width 1440
-Set Height 1024
+Set Height 900
 Set Theme "Catppuccin Mocha"
+Set TypingSpeed 40ms
+Set Framerate 15
 
-# Prepare a tiny disposable repo off-screen so the recording starts with zarlcode,
-# not a wall of setup commands.
 Hide
-Type "rm -rf /tmp/zarlcode-workflow-demo && cp -R zarlcode/docs/images/workflow-demo-fixture /tmp/zarlcode-workflow-demo && cd /tmp/zarlcode-workflow-demo && git init -q && git add . && git -c user.name='zarlcode demo' -c user.email='demo@example.com' commit -qm init"
+Type "source zarlcode/docs/images/recording-setup.sh || exit 1"
 Enter
-Wait
+Wait@2m
+Type "$REC_ROOT/zarlcode"
+Enter
+Wait+Screen /first-run setup/
+Enter
+Wait+Screen /build mode/
 Show
 Sleep 1s
-Type "zarlcode"
+
+Shift+Tab
+Wait+Screen /plan mode/
+Type "Plan a small refactor of the greeting. Keep its behavior."
 Enter
-Sleep 1s
+Wait+Screen /No files changed/
+Sleep 4s
+Shift+Tab
+Wait+Screen /build mode/
+Type "Extract the greeting prefix and run the test."
 Enter
+Wait+Screen@30s /Ready to review/
 Sleep 3s
-
-# Plan first: ask for a read-only design before any mutation.
-Shift+Tab
-Wait+Screen /shift\+tab build/
-Sleep 1s
-Type "Plan a tiny change: make Message return a friendlier greeting, then tell me the exact files and tests you would touch. Do not edit yet."
-Enter
-Sleep 25s
-Wait+Screen /shift\+tab build/
-
-# Show model/provider switching as part of the same workflow.
-Ctrl+E
-Sleep 2s
-Tab
-Sleep 1s
-Tab
-Sleep 1s
-Down 3
-Sleep 1s
-Escape
-Sleep 1s
-
-# Make sure the model picker is closed and the composer is still in PLAN.
-Escape
-Sleep 1s
-Wait+Screen /shift\+tab build/
-
-# Build: toggle back to BUILD, then submit the implementation prompt.
-Shift+Tab
-Wait+Screen /shift\+tab plan mode/
-Sleep 1s
-Type "Build that change now and run go test ./..."
-Enter
-Sleep 20s
-
-# Inspect the working set and diff.
 Ctrl+W
+Wait+Screen /greet.go/
 Sleep 2s
 Enter
-Sleep 3s
+Wait+Screen /diff browser/
+Wait+Screen /const greeting/
+Sleep 4s
+Screenshot zarlcode/docs/images/workflow-demo-poster.png
+Sleep 500ms
+Enter
+Sleep 500ms
 Escape
-Sleep 1s
-Escape
+Wait+Screen /Ready to review/
 Sleep 1s
 
-# Quit the TUI, then show the same repository can be driven headlessly.
+# Reopen the saved session; startup and shell commands stay off camera.
+Hide
 Ctrl+C
-Sleep 1s
-Enter
-Sleep 2s
-Type "zarlcode --headless --max-iter 8 --prompt-text 'Run git diff --stat, git diff -- greet.go greet_test.go, and go test ./...; summarize only the repository diff and test result in one short paragraph. Do not edit files.'"
+Wait+Screen /quit ƶarl\/code\?/
 Enter
 Wait
+Type "$REC_ROOT/zarlcode"
+Enter
+Wait+Screen /sessions/
+Show
 Sleep 2s
+Tab
+Wait+Screen /resume/
+Sleep 2s
+Enter
+Wait+Screen /Ready to review/
+Sleep 4s
+Screenshot zarlcode/docs/images/workflow-demo-resume.png
+Sleep 500ms
+
+Hide
+Ctrl+C
+Wait+Screen /quit ƶarl\/code\?/
+Enter
+Wait
+Type "recording_cleanup"
+Enter
+Wait

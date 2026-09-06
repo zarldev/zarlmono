@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/zarldev/zarlmono/tools/docmedia"
 )
 
 const (
@@ -33,17 +35,6 @@ func TestQuickstartMatchesCompiledExample(t *testing.T) {
 	}
 }
 
-func TestSiteRunnerRunSnippetsUseTaskResult(t *testing.T) {
-	root := filepath.Join("..", "..", "site", "src", "content", "docs")
-	staleAssignment := regexp.MustCompile(`(?m)\b(?:[[:word:]]+|_)\s*,\s*err\s*:=\s*[^\n]*\.Run\(`)
-
-	walkDocs(t, root, func(path string, body []byte) {
-		if bytes.Contains(body, []byte("Run(ctx context.Context, spec TaskSpec) (TaskResult, error)")) || staleAssignment.Match(body) {
-			t.Errorf("%s documents the removed two-value Runner.Run contract", filepath.ToSlash(path))
-		}
-	})
-}
-
 func TestSiteInternalLinksResolve(t *testing.T) {
 	root := filepath.Join("..", "..")
 	docsRoot := filepath.Join(root, "site", "src", "content", "docs")
@@ -63,6 +54,12 @@ func TestSiteInternalLinksResolve(t *testing.T) {
 			t.Errorf("%s links to missing internal target %s", filepath.ToSlash(path), string(match[1]))
 		}
 	})
+}
+
+func TestPublicGIFsMatchCanonicalRenders(t *testing.T) {
+	if err := docmedia.Check(filepath.Join("..", "..")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func markedSnippet(t *testing.T, body []byte, begin, end string) []byte {

@@ -47,6 +47,8 @@ func Main() {
 		case "--askpass":
 			cli.RunAskpassClient(os.Args[2:])
 			return
+		case "doctor":
+			os.Exit(cli.RunDoctor(os.Args[2:], os.Stdout, os.Stderr))
 		case "init":
 			os.Exit(cli.RunInit(os.Stdout))
 		case "keys":

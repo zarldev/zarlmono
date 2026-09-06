@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,36 @@ func TestProviderSerializesResponsesInput(t *testing.T) {
 	parts := input[1].(map[string]any)["content"].([]any)
 	if parts[0].(map[string]any)["type"] != "input_text" || parts[1].(map[string]any)["type"] != "input_image" || parts[1].(map[string]any)["detail"] != "high" {
 		t.Fatalf("parts = %#v", parts)
+	}
+}
+
+func TestProviderSerializesResponsesToolResultAttachments(t *testing.T) {
+	t.Parallel()
+	var body map[string]any
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call_1", Function: llm.ToolCallFunction{Name: "computer_observe", Arguments: `{}`}}}},
+		{Role: llm.RoleTool, ToolCallID: "call_1", Content: "metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI("data:image/png;base64,cG5n", "image/png")}},
+	}
+	_, err := runResponses(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
+			t.Errorf("decode request: %v", decodeErr)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{}}}\n\n"))
+	}), messages)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	input := body["input"].([]any)
+	if len(input) != 3 || input[1].(map[string]any)["type"] != "function_call_output" {
+		t.Fatalf("input = %#v", input)
+	}
+	parts := input[2].(map[string]any)["content"].([]any)
+	if len(parts) != 2 || parts[0].(map[string]any)["type"] != "input_text" || parts[1].(map[string]any)["type"] != "input_image" {
+		t.Fatalf("attachment parts = %#v", parts)
+	}
+	if !strings.Contains(parts[0].(map[string]any)["text"].(string), "call_1") || parts[1].(map[string]any)["image_url"] != "data:image/png;base64,cG5n" {
+		t.Fatalf("attachment data = %#v", parts)
 	}
 }
 

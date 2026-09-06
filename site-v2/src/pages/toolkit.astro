@@ -1,0 +1,31 @@
+---
+import { Code } from 'astro:components';
+import Site from '../layouts/Site.astro';
+import Command from '../components/Command.astro';
+import { path, github } from '../lib/links';
+// An explicitly labelled excerpt from the maintained quickstart, not a second example to drift.
+import { getEntry } from 'astro:content';
+const quickstart = await getEntry('docs', 'getting-started');
+const wiring = quickstart?.body?.match(/\tr := runner\.New[\s\S]*?\tfmt\.Println\(res\.FinalContent\)/)?.[0];
+if (!wiring) throw new Error('Quickstart runner excerpt not found; update the V2 excerpt selector.');
+const code = wiring.split('\n').map((line) => line.replace(/^\t/, '')).join('\n');
+const packages = [
+  { name: 'runner', category: 'RUN LOOP', text: 'Streams model output, dispatches tool calls, and returns a typed terminal result.', href: 'runner/' },
+  { name: 'tools', category: 'TOOL API', text: 'Defines tool schemas, execution results, effects, registries, and MCP integration.', href: 'tools/' },
+  { name: 'providers', category: 'MODEL CLIENTS', text: 'Adapts hosted and local model APIs to the client interface used by the runner.', href: 'providers/' },
+  { name: 'guardrails', category: 'TOOL POLICY', text: 'Applies schema checks, shell policy, and verifier feedback around tool dispatch.', href: 'guardrails/' },
+  { name: 'compact', category: 'CONTEXT', text: 'Compacts model history according to token budgets while transcripts remain separately stored.', href: 'compaction/' },
+  { name: 'pursue', category: 'VERIFICATION', text: 'Runs bounded follow-up attempts against explicit goals and verifier feedback.', href: 'pursue/' },
+];
+---
+<Site title="zkit — Go packages for agent runtimes" description="Use zkit to compose an agent runner, typed tools, provider clients, guardrails, compaction, and session storage in Go." section="toolkit">
+  <section class="container toolkit-hero">
+    <p class="eyebrow"><span class="status-dot"></span> ZKIT / GO AGENT PACKAGES</p>
+    <div class="hero-grid"><h1>Build an agent runtime <span class="accent">in Go.</span></h1><div class="hero-copy"><p class="lead">zkit provides the runtime packages used by zarlcode.</p><p>Compose a runner with model clients and typed tools. Add guardrails, compaction, session storage, retrieval, or delegated tasks as required by the application.</p><div class="actions"><a class="button" href={path('getting-started/')}>Open the quickstart <span aria-hidden="true">↗</span></a><a class="text-link" href={path('architecture/')}>View the package map ↗</a></div></div></div>
+    <Command command="go get github.com/zarldev/zarlmono/zkit@latest" label="ADD TO YOUR GO MODULE" />
+  </section>
+  <section class="section code-section" aria-labelledby="composition-title"><div class="container code-grid"><div><p class="eyebrow">01 / RUNNER SETUP</p><h2 id="composition-title">Create a runner with a provider and tool registry.</h2><p>The runner accepts a model client, a registry of tools, and options such as an iteration limit. A task returns content, an error, and a terminal reason.</p><p class="muted">This excerpt is read from the maintained quickstart. The complete example includes imports, Anthropic setup, and a weather tool.</p><a class="text-link" href={path('getting-started/#a-minimal-agent')}>View the complete example <span aria-hidden="true">↗</span></a></div><div class="code-window"><div class="window-bar"><span>main.go</span><span class="eyebrow">QUICKSTART / EXCERPT</span></div><Code code={code} lang="go" theme="github-dark" /><div class="code-caption">Runner construction and terminal-result handling.</div></div></div></section>
+  <section class="section container" aria-labelledby="packages-title"><div class="section-heading"><div><p class="eyebrow">02 / PACKAGE REFERENCE</p><h2 id="packages-title">Core runtime packages</h2></div><p>Begin with the runner, tools, and a provider client. The other packages address policy, context limits, and completion verification.</p></div><div class="package-grid">{packages.map((pkg) => <a class="package-card" href={path(pkg.href)}><div class="package-top"><span class="eyebrow">{pkg.category}</span><span aria-hidden="true">↗</span></div><h3>{pkg.name}<span aria-hidden="true">/</span></h3><p>{pkg.text}</p></a>)}</div></section>
+  <section class="section proof-section"><div class="container"><div class="section-heading"><div><p class="eyebrow">03 / REPOSITORY APPLICATIONS</p><h2>Applications using zkit</h2></div><p>This repository uses zkit in the zarlcode TUI, the SWE-bench evaluation driver, and runnable examples.</p></div><div class="consumer-grid"><a href={path()}><span class="eyebrow">INTERACTIVE TUI</span><h3>zarlcode <span aria-hidden="true">↗</span></h3><p>A terminal coding agent with tool calls, diff inspection, and locally stored sessions.</p></a><a href={path('swebench-eval/')}><span class="eyebrow">EVALUATION</span><h3>swebench-eval <span aria-hidden="true">↗</span></h3><p>A SWE-bench evaluation driver built with the coding-agent packages.</p></a><a href={path('examples/')}><span class="eyebrow">EXAMPLES</span><h3>Runnable examples <span aria-hidden="true">↗</span></h3><p>Small harnesses for specific packages, including scripted runs that do not call a model.</p></a></div></div></section>
+  <section class="section container toolkit-final"><p class="eyebrow">GETTING STARTED</p><h2>Build and run the quickstart.</h2><div class="actions"><a class="button" href={path('getting-started/')}>Read the quickstart <span aria-hidden="true">↗</span></a><a class="text-link" href={`${github}/tree/main/zkit`}>Browse the zkit source ↗</a></div></section>
+</Site>

@@ -1,37 +1,44 @@
-# Cockpit / expanded dashboard (Ctrl+L): context gauge, sparklines, per-turn history.
-# Render from repo root:  vhs zarlcode/docs/images/screen-cockpit.tape
-# Timing: bump Sleep values 1.5x–2x if your model/connection is slow.
+# Deterministic cockpit/dashboard recording using the local fixture provider.
 Output zarlcode/docs/images/screen-cockpit.gif
-Output zarlcode/docs/images/screen-cockpit.mp4
-
 Require bash
 Require go
-
+Require curl
 Set Shell bash
-Set FontSize 12
+Set FontSize 18
 Set Width 1440
-Set Height 1024
+Set Height 900
 Set Theme "Catppuccin Mocha"
+Set TypingSpeed 40ms
+Set Framerate 15
 
-Type "zarlcode"
+Hide
+Type "source zarlcode/docs/images/recording-setup.sh || exit 1"
 Enter
-Sleep 3s
-
-# Run a turn so the cockpit has real token/cost/throughput data.
-Type "fetch https://pkg.go.dev and tell me what it is"
+Wait@2m
+Type "$REC_ROOT/zarlcode"
 Enter
-Sleep 12s
+Wait+Screen /first-run setup/
+Enter
+Wait+Screen /build mode/
+Type "Explain this greeting package before we change it."
+Enter
+Wait+Screen /A small Go package/
+Show
+Sleep 2s
 
-# Expand the sidebar cockpit into the full-screen dashboard.
 Ctrl+L
-Sleep 3s
-Down 4
-Sleep 2s
-PageDown
-Sleep 2s
-Escape
-Sleep 1s
+Wait+Screen /context/
+Sleep 4s
+Screenshot zarlcode/docs/images/screen-cockpit-poster.png
+Sleep 500ms
 
+Hide
+Ctrl+L
+Wait+Screen /build mode/
 Ctrl+C
-Sleep 1s
+Wait+Screen /quit ƶarl\/code\?/
 Enter
+Wait
+Type "recording_cleanup"
+Enter
+Wait

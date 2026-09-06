@@ -8,7 +8,7 @@ export default defineConfig({
 	base: '/zarlmono',
 	integrations: [
 		starlight({
-			title: 'zarlmono/zkit',
+			title: 'zarlmono',
 			description:
 				'A Go-native agent toolkit and local terminal coding agent: runner, tools, guardrails, compaction, durable SQLite sessions, and canonical transcripts.',
 			social: [
@@ -41,55 +41,55 @@ export default defineConfig({
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [
 				{
-					label: 'Start here',
+					label: 'Use zarlcode',
+					items: [
+						{ label: 'Overview', slug: 'zarlcode' },
+						{ label: 'First run and onboarding', slug: 'zarlcode-onboarding' },
+						{ label: 'Your first workflow', slug: 'zarlcode-workflow' },
+						{ label: 'Interface guide', slug: 'zarlcode-interface' },
+						{ label: 'Providers and credentials', slug: 'zarlcode-providers' },
+						{ label: 'Sessions and transcripts', slug: 'sessions-transcripts' },
+						{ label: 'Safety and workspace access', slug: 'zarlcode-safety' },
+						{ label: 'Automation and CLI', slug: 'zarlcode-automation' },
+					],
+				},
+				{
+					label: 'Build with zkit',
 					items: [
 						{ label: 'Getting started', slug: 'getting-started' },
 						{ label: 'Architecture', slug: 'architecture' },
 					],
 				},
 				{
-					label: 'The loop',
+					label: 'The agent loop',
 					items: [
 						{ label: 'Runner', slug: 'runner' },
 						{ label: 'Verified completion', slug: 'pursue' },
 						{ label: 'Shared infrastructure', slug: 'shared-infra' },
+						{ label: 'Sub-agent tasks', slug: 'spawn' },
 					],
 				},
 				{
-					label: 'Tools',
+					label: 'Tools and guardrails',
 					items: [
 						{ label: 'The tool system', slug: 'tools' },
 						{ label: 'Code tools', slug: 'code-tools' },
-					],
-				},
-				{
-					label: 'Keeping it honest',
-					items: [
 						{ label: 'Guardrails', slug: 'guardrails' },
 						{ label: 'Compaction', slug: 'compaction' },
+						{ label: 'Sandboxing', slug: 'sandboxing' },
 					],
 				},
 				{
-					label: 'Plumbing',
+					label: 'Providers and foundations',
 					items: [
 						{ label: 'LLM providers', slug: 'providers' },
-						{ label: 'Sub-agents', slug: 'spawn' },
-						{ label: 'Foundation packages', slug: 'foundation' },
-						{ label: 'Sandboxing', slug: 'sandboxing' },
 						{ label: 'Tool ecosystem', slug: 'tool-ecosystem' },
+						{ label: 'Foundation packages', slug: 'foundation' },
 					],
 				},
 				{ label: 'Examples', slug: 'examples' },
 				{ label: 'Feature coverage', slug: 'feature-coverage' },
-				{
-					label: 'Built with zkit',
-					items: [
-						{ label: 'zarlcode', slug: 'zarlcode' },
-						{ label: 'zarlcode interface', slug: 'zarlcode-interface' },
-						{ label: 'Sessions and transcripts', slug: 'sessions-transcripts' },
-						{ label: 'swebench-eval', slug: 'swebench-eval' },
-					],
-				},
+				{ label: 'swebench-eval', slug: 'swebench-eval' },
 			],
 		}),
 	],

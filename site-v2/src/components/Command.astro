@@ -1,0 +1,25 @@
+---
+interface Props { command: string; label?: string; }
+const { command, label = 'Terminal' } = Astro.props;
+---
+<div class="command-block">
+  <span class="command-label eyebrow">{label}</span>
+  <div class="command-line"><span class="prompt" aria-hidden="true">$</span><code>{command}</code><button type="button" class="copy-button" data-copy={command} aria-label={`Copy command: ${command}`} hidden>Copy <span aria-hidden="true">⧉</span></button></div>
+  <span class="copy-status sr-only" role="status"></span>
+</div>
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((button) => {
+    button.hidden = false;
+    button.addEventListener('click', async () => {
+      const status = button.closest('.command-block')!.querySelector<HTMLElement>('[role="status"]')!;
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy!);
+        status.textContent = 'Command copied.';
+        button.textContent = 'Copied ✓';
+      } catch {
+        status.textContent = 'Clipboard unavailable. Select the command and copy it manually.';
+        button.textContent = 'Select to copy';
+      }
+    });
+  });
+</script>

@@ -13,15 +13,19 @@ import (
 	"time"
 )
 
-const internalModulePrefix = "github.com/zarldev/zarlmono/"
+const (
+	internalModulePrefix = "github.com/zarldev/zarlmono/"
+	moduleZarlcode       = "zarlcode"
+	moduleZkit           = "zkit"
+)
 
 var canonicalVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?$`)
 
 var supportedModules = map[string]struct{}{
 	"examples":      {},
 	"swebench-eval": {},
-	"zarlcode":      {},
-	"zkit":          {},
+	moduleZarlcode:  {},
+	moduleZkit:      {},
 }
 
 // Plan is the validated release plan emitted to automation.
@@ -50,24 +54,26 @@ func Build(root, version, scope, custom string) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	if contains(modules, "zkit") && len(modules) > 1 {
-		return Plan{}, errors.New("release zkit separately, pin consumers to the published version, then release consumers")
+	pins, err := readPins(root, modules)
+	if err != nil {
+		return Plan{}, err
 	}
-
+	for _, pin := range pins {
+		if contains(modules, pin.Module) {
+			return Plan{}, fmt.Errorf("release internal dependency %s separately before consumer %s", pin.Module, pin.Consumer)
+		}
+	}
 	plan := Plan{
 		Version: version,
 		Scope:   scope,
 		Modules: modules,
 		Tags:    make([]string, 0, len(modules)),
+		Pins:    pins,
 	}
 	for _, module := range modules {
 		plan.Tags = append(plan.Tags, module+"/"+version)
 	}
 	if err := validateChangelog(filepath.Join(root, "CHANGELOG.md"), plan.Tags); err != nil {
-		return Plan{}, err
-	}
-	plan.Pins, err = readPins(root, modules)
-	if err != nil {
 		return Plan{}, err
 	}
 	return plan, nil
@@ -83,7 +89,7 @@ func validateVersion(version string) error {
 func resolveModules(scope, custom string) ([]string, error) {
 	var raw []string
 	switch scope {
-	case "zkit", "zarlcode", "swebench-eval", "examples":
+	case moduleZkit, moduleZarlcode, "swebench-eval", "examples":
 		raw = []string{scope}
 	case "custom":
 		for value := range strings.SplitSeq(custom, ",") {

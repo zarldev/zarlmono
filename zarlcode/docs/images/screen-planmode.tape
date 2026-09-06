@@ -1,37 +1,46 @@
-# Plan <-> Build mode (Shift+Tab): read-only plan-review surface and UI tint shift.
-# Render from repo root:  vhs zarlcode/docs/images/screen-planmode.tape
-# Timing: bump Sleep values 1.5x–2x if your model/connection is slow.
+# Deterministic Plan → Build handoff using a local fixture response.
 Output zarlcode/docs/images/screen-planmode.gif
-
 Require bash
 Require go
-
+Require curl
 Set Shell bash
-Set FontSize 12
+Set FontSize 18
 Set Width 1440
-Set Height 1024
+Set Height 900
 Set Theme "Catppuccin Mocha"
+Set TypingSpeed 40ms
+Set Framerate 15
 
-Type "zarlcode"
+Hide
+Type "source zarlcode/docs/images/recording-setup.sh || exit 1"
 Enter
-Sleep 3s
+Wait@2m
+Type "$REC_ROOT/zarlcode"
+Enter
+Wait+Screen /first-run setup/
+Enter
+Wait+Screen /build mode/
+Show
+Sleep 2s
 
-Type "hello"
+Shift+Tab
+Wait+Screen /plan mode/
+Sleep 2s
+Type "Plan a small refactor of the greeting. Keep its behavior."
 Enter
+Wait+Screen /No files changed/
 Sleep 4s
-Escape
-Sleep 1s
-
-# Toggle into plan mode, ask for a plan, watch it build, toggle back.
+Screenshot zarlcode/docs/images/screen-planmode-poster.png
+Sleep 500ms
 Shift+Tab
-Sleep 2s
-Type "refactor the auth package to thread context everywhere"
-Enter
-Sleep 15s
-Sleep 2s
-Shift+Tab
+Wait+Screen /build mode/
 Sleep 2s
 
+Hide
 Ctrl+C
-Sleep 1s
+Wait+Screen /quit ƶarl\/code\?/
 Enter
+Wait
+Type "recording_cleanup"
+Enter
+Wait

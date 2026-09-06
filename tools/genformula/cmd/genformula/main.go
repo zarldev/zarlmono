@@ -8,6 +8,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -31,11 +32,11 @@ func run() error {
 
 	switch {
 	case *version == "":
-		return fmt.Errorf("--version is required")
+		return errors.New("--version is required")
 	case *checksums == "":
-		return fmt.Errorf("--checksums is required")
+		return errors.New("--checksums is required")
 	case *output == "":
-		return fmt.Errorf("--output is required")
+		return errors.New("--output is required")
 	}
 
 	f, err := os.Open(*checksums)
@@ -55,11 +56,11 @@ func run() error {
 	}
 
 	if dir := filepath.Dir(*output); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create output dir: %w", err)
 		}
 	}
-	if err := os.WriteFile(*output, []byte(rendered), 0o644); err != nil {
+	if err := os.WriteFile(*output, []byte(rendered), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", *output, err)
 	}
 	return nil

@@ -12,19 +12,20 @@ head:
 <div class="zm-hero">
 
   <div class="zm-hero-copy">
-    <h1>zarlcode + zkit</h1>
-    <p class="zm-tagline">A terminal coding agent built on a Go-native agent toolkit: streaming runner, tools, guardrails, compaction, providers, MCP, and sandboxing.</p>
+    <h1>zarlcode, built with zkit</h1>
+    <p class="zm-tagline">A terminal coding agent for planning, building, inspecting, and resuming workspace changes — powered by a Go-native toolkit for runners, tools, guardrails, compaction, providers, MCP, and sandboxing.</p>
     <div class="zm-actions">
-      <a class="zm-primary" href="/zarlmono/zarlcode/">Try zarlcode</a>
-      <a href="/zarlmono/getting-started/">Use zkit</a>
-      <a href="https://github.com/zarldev/zarlmono">GitHub</a>
+      <a class="zm-primary" href="/zarlmono/zarlcode-onboarding/">Try zarlcode</a>
+      <a href="/zarlmono/zarlcode-workflow/">See the workflow</a>
+      <a href="/zarlmono/getting-started/">Build with zkit</a>
     </div>
   </div>
 
   <div class="zm-install">
-    <span class="zm-install-label">Install zarlcode</span>
-    <pre class="zm-prompt"><code>brew install zarldev/tap/zarlcode</code></pre>
-    <p>Or import the toolkit: <code>go get github.com/zarldev/zarlmono/zkit@latest</code></p>
+    <span class="zm-install-label">Install, then launch in your workspace</span>
+    <pre class="zm-prompt"><code>brew install zarldev/tap/zarlcode
+cd /path/to/your/workspace && zarlcode</code></pre>
+    <p>Use the TUI for first-run setup, or <a href="/zarlmono/getting-started/">build with zkit in Go</a>.</p>
   </div>
 
 </div>
@@ -46,23 +47,23 @@ The same packages power the TUI and the SWE-bench eval
 harness. That is the design constraint: interfaces stay small because more than
 one real consumer has to use them.
 
-<p class="zm-section-label">Start here</p>
+<p class="zm-section-label">Use zarlcode</p>
 
 <div class="zm-grid">
-  <a href="/zarlmono/zarlcode/">
-    <span class="zm-card-kicker">Use the agent</span>
-    <h3>zarlcode</h3>
-    <p>Install the terminal coding agent, configure a provider, and run your first workspace task.</p>
+  <a href="/zarlmono/zarlcode-onboarding/">
+    <span class="zm-card-kicker">Start here</span>
+    <h3>First run and onboarding</h3>
+    <p>Launch in a workspace, accept local defaults with Enter, or configure a provider with Ctrl+S.</p>
+  </a>
+  <a href="/zarlmono/zarlcode-workflow/">
+    <span class="zm-card-kicker">Daily workflow</span>
+    <h3>Plan → Build → inspect</h3>
+    <p>Use a read-only plan before editing, inspect diffs in the working set, and resume locally.</p>
   </a>
   <a href="/zarlmono/zarlcode-interface/">
     <span class="zm-card-kicker">TUI tour</span>
     <h3>Interface guide</h3>
-    <p>Timeline, cockpit, working set, file viewer, plan mode, model picker, and keybindings.</p>
-  </a>
-  <a href="/zarlmono/getting-started/">
-    <span class="zm-card-kicker">Build with Go</span>
-    <h3>Use zkit</h3>
-    <p>Wire a provider, a tool registry, and the runner in about thirty lines of Go.</p>
+    <p>Timeline, cockpit, file viewer, working set, model picker, settings, and keybindings.</p>
   </a>
 </div>
 
@@ -101,23 +102,29 @@ one real consumer has to use them.
   </a>
 </div>
 
-<p class="zm-section-label">Built with zkit</p>
+<p class="zm-section-label">Build with zkit</p>
 
 <div class="zm-grid">
-  <a href="/zarlmono/zarlcode/">
-    <span class="zm-card-kicker">TUI agent</span>
-    <h3>zarlcode</h3>
-    <p>The terminal coding agent: runner, guardrails, sandboxed shell, sub-agents, SQLite sessions with canonical transcripts.</p>
+  <a href="/zarlmono/getting-started/">
+    <span class="zm-card-kicker">Build with Go</span>
+    <h3>Getting started</h3>
+    <p>Wire a provider, a tool registry, and the runner in about thirty lines of Go.</p>
+  </a>
+  <a href="/zarlmono/architecture/">
+    <span class="zm-card-kicker">Package map</span>
+    <h3>Architecture</h3>
+    <p>See the boundaries that keep the runner, providers, tools, and foundations composable.</p>
   </a>
   <a href="/zarlmono/swebench-eval/">
     <span class="zm-card-kicker">Evaluation</span>
     <h3>swebench-eval</h3>
-    <p>A SWE-bench driver built from the same packages as the TUI.</p>
+    <p>A SWE-bench driver built from the same packages as the terminal application.</p>
   </a>
 </div>
 
 ## Where to go next
 
-- <a href="/zarlmono/zarlcode/">**Try zarlcode**</a> — install and configure the coding agent.
-- <a href="/zarlmono/getting-started/">**Use zkit**</a> — build a minimal agent loop in Go.
-- <a href="/zarlmono/architecture/">**Architecture**</a> — see how the packages layer.
+- <a href="/zarlmono/zarlcode-onboarding/"><strong>Try zarlcode</strong></a> — launch the TUI and follow the first-run setup.
+- <a href="/zarlmono/zarlcode-workflow/"><strong>Use the workflow</strong></a> — plan, build, inspect, and resume.
+- <a href="/zarlmono/getting-started/"><strong>Build with zkit</strong></a> — build a minimal agent loop in Go.
+- <a href="/zarlmono/architecture/"><strong>Architecture</strong></a> — see how the packages layer.

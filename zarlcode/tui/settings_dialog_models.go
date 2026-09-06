@@ -27,7 +27,7 @@ func (d *settingsDialog) activateEnum(dir int) action {
 			sel = r.def
 		}
 		return actionPush{d: newListPicker("provider", items, sel, func(choice string) {
-			d.commitModelSelection(d.s.DefaultModelSelection(choice))
+			d.stageTarget(d.s.DefaultModelSelection(choice))
 			d.modelsLoading[choice] = true
 			d.pendingFetch = choice
 		})}
@@ -122,12 +122,11 @@ func (d *settingsDialog) activateAgent() action {
 	})}
 }
 
-// onProviderCycled runs after the provider enum changes: persist the provider
-// and its model default as one transition, then request the new model list.
+// onProviderCycled stages the provider and its default model as one transition.
 func (d *settingsDialog) onProviderCycled() action {
 	provider := d.currentProvider()
-	d.commitModelSelection(d.s.DefaultModelSelection(provider))
-	return d.fetchForCurrentProvider()
+	selection := d.s.DefaultModelSelection(provider)
+	return actionSwitchTarget{selection: selection, done: d.targetDone(selection)}
 }
 
 // startEdit opens the inline editor on the current row, prefilled with its
@@ -271,9 +270,6 @@ func (d *settingsDialog) takePendingFetch() string {
 	return p
 }
 
-// fetchForCurrentProvider requests a model fetch for the active provider.
-func (d *settingsDialog) fetchForCurrentProvider() action { return d.fetchFor(d.currentProvider()) }
-
 // fetchFor requests a model fetch for provider unless it's already cached or
 // in flight. Returns the push-to-root intent.
 func (d *settingsDialog) fetchFor(p string) action {
@@ -339,7 +335,11 @@ func (d *settingsDialog) activateModel() action {
 		case compactActiveSentinel:
 			d.commit(key, "") // reuse the active model
 		default:
-			d.commit(key, choice)
+			if key == prefs.KeyModel {
+				d.stageTarget(prefs.ModelSelection{Provider: p, Model: choice})
+			} else {
+				d.commit(key, choice)
+			}
 		}
 	}, right)}
 }

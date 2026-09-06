@@ -27,7 +27,7 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 	var sys *genai.Content
 	var contents []*genai.Content
 	var sysParts []string
-	for _, m := range messages {
+	for _, m := range llm.ExpandToolResultParts(messages) {
 		switch m.Role {
 		case llm.RoleSystem:
 			if m.Content != "" {

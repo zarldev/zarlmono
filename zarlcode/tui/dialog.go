@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/askpass"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -70,6 +71,21 @@ func (actionOAuthLogin) isAction() {}
 type actionStartOAuthLogin struct{ provider string }
 
 func (actionStartOAuthLogin) isAction() {}
+
+// actionCancelOAuthLogin cancels the active callback listener without closing
+// the providers surface.
+type actionCancelOAuthLogin struct{}
+
+func (actionCancelOAuthLogin) isAction() {}
+
+// actionSwitchTarget requests a build-first provider/model transition. done is
+// invoked on the update loop after the transition commits or fails.
+type actionSwitchTarget struct {
+	selection prefs.ModelSelection
+	done      func(error)
+}
+
+func (actionSwitchTarget) isAction() {}
 
 // actionFetchModels requests an async model-list fetch for provider; the
 // root turns it into a tea.Cmd that probes the provider and returns a
@@ -215,21 +231,33 @@ func (m *UI) handleAction(a action) tea.Cmd {
 	}
 	switch a := a.(type) {
 	case actionClose:
+		if m.overlay.active() {
+			m.cancelOAuthForDialog(m.overlay.top())
+		}
 		m.overlay.pop()
 		if !m.overlay.active() {
-			// Overlay fully dismissed — if the settings changed the active
-			// provider, re-point the live runner so it takes effect now.
+			if m.pendingTarget != nil {
+				selection := *m.pendingTarget
+				m.pendingTarget = nil
+				return m.switchTarget(selection, nil)
+			}
+			// Overlay fully dismissed — if other settings changed the active
+			// provider definition, re-point the live runner so it takes effect now.
 			return m.maybeRepoint()
 		}
 		// A nested picker closed back onto the settings surface: drain any
 		// queued model fetch (e.g. after the compaction provider changed).
 		if d, ok := topSettingsDialog(m); ok {
+			if selection, done, ok := d.takePendingTarget(); ok {
+				return tea.Batch(m.switchTarget(selection, done), m.fetchModelsCmd(d.takePendingFetch()))
+			}
 			if p := d.takePendingFetch(); p != "" {
 				return m.fetchModelsCmd(p)
 			}
 		}
 	case actionQuit:
 		m.cancelLiveTurnForQuit()
+		m.cancelOAuthOperation(false)
 		return tea.Quit
 	case actionClearContext:
 		m.dismissConversationDialogs()
@@ -275,6 +303,10 @@ func (m *UI) handleAction(a action) tea.Cmd {
 		return m.handleAction(actionEnsureCredentialVault{next: actionStartOAuthLogin(a), cancel: cancel})
 	case actionStartOAuthLogin:
 		return m.startOAuthLogin(a.provider)
+	case actionCancelOAuthLogin:
+		m.cancelOAuthOperation(true)
+	case actionSwitchTarget:
+		return m.switchTarget(a.selection, a.done)
 	case actionFetchModels:
 		return m.fetchModelsCmd(a.provider)
 	case actionEditFile:
@@ -335,6 +367,11 @@ type helpDialog struct {
 }
 
 func (m *UI) newHelpDialog() *helpDialog {
+	if m.overlay.active() {
+		if _, ok := m.overlay.top().(*settingsDialog); ok {
+			return &helpDialog{sections: settingsHelpSections()}
+		}
+	}
 	switch {
 	case m.intro != nil:
 		return &helpDialog{sections: startupHelpSections()}
@@ -468,6 +505,28 @@ func dashboardHelpSections() []helpSection {
 			},
 		},
 		{title: "quick panes", rows: [][]keyHint{{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}}}},
+		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+c", "quit"}}}},
+	}
+}
+
+func settingsHelpSections() []helpSection {
+	return []helpSection{
+		{
+			title: "settings",
+			rows: [][]keyHint{
+				{{"↑↓ / j k", "move"}, {"tab", "navigation ⇄ detail"}, {"→ / enter", "open / choose"}},
+				{{"enter", "save edit"}, {"esc", "cancel edit / back"}, {"ctrl+s", "close settings"}},
+				{{"p", "move workspace value to global"}},
+			},
+		},
+		{
+			title: "providers and models",
+			rows: [][]keyHint{
+				{{"enter", "edit key / sign in"}, {"a", "activate default model"}, {"m", "fetch / choose model"}},
+				{{"n / e / x", "add / edit / delete custom provider"}},
+				{{"Codex OAuth esc", "cancel callback"}},
+			},
+		},
 		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+c", "quit"}}}},
 	}
 }

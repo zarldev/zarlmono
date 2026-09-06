@@ -22,33 +22,37 @@ import (
 // waiting for the browser redirect before giving up.
 const oauthLoginTimeout = 3 * time.Minute
 
-// oauthDoneMsg / oauthFailedMsg carry an OAuth flow's outcome back to the
-// Update loop, which routes them to the open providers dialog.
+// oauthDoneMsg / oauthFailedMsg carry one identified OAuth attempt's outcome
+// back to the Update loop.
 type oauthDoneMsg struct {
+	id       uint64
 	provider string
 	account  string
 }
 
 type oauthFailedMsg struct {
+	id       uint64
 	provider string
 	err      error
 }
 
-// startOAuthLogin builds the authorization flow, shows + opens its URL, and
-// returns a command that blocks on the loopback callback (exchange + store
-// handled by codex.AwaitCallback) and reports the result. Codex only
-// for now; claude-code login is offered via the CLI until its in-TUI flow
-// lands.
-func (m *UI) startOAuthLogin(provider string) tea.Cmd {
-	pd, _ := topProvidersDialog(m)
-	fail := func(err error) tea.Cmd {
-		return func() tea.Msg { return oauthFailedMsg{provider: provider, err: err} }
-	}
+type oauthOperation struct {
+	id       uint64
+	provider string
+	owner    *providersDialog
+	cancel   context.CancelFunc
+}
 
+// startOAuthLogin starts the selected provider's authentication flow. Codex
+// owns a cancellable loopback listener; Claude hands the terminal to its CLI,
+// where completion or interruption is owned by that subprocess.
+func (m *UI) startOAuthLogin(provider string) tea.Cmd {
+	pd, ok := topProvidersDialog(m)
+	if !ok {
+		return nil
+	}
 	if m.settings == nil || m.settings.Svc == nil {
-		if pd != nil {
-			pd.status = "credential service unavailable"
-		}
+		pd.status = "credential service unavailable"
 		return nil
 	}
 	svc := m.settings.Svc
@@ -57,70 +61,128 @@ func (m *UI) startOAuthLogin(provider string) tea.Cmd {
 	case backends.NameOpenAICodex:
 		flow, err := openaicodex.CreateAuthorizationFlow()
 		if err != nil {
-			return fail(err)
+			pd.onOAuthResult("", err)
+			return nil
 		}
-		if pd != nil {
-			pd.beginOAuth(flow.URL)
-		}
-		openBrowser(flow.URL) // best-effort; the URL is shown + copied for manual use
+		ctx, cancel := context.WithTimeout(parent, oauthLoginTimeout)
+		attemptID := m.beginOAuthOperation(provider, pd, cancel)
+		pd.beginOAuth(flow.URL)
+		browser := openBrowser(flow.URL) // best-effort; the URL is shown + copied for manual use
 		await := func() tea.Msg {
-			ctx, cancel := context.WithTimeout(parent, oauthLoginTimeout)
-			defer cancel()
 			account, err := codex.AwaitCallback(ctx, svc, flow)
 			if err != nil {
-				return oauthFailedMsg{provider: provider, err: err}
+				return oauthFailedMsg{id: attemptID, provider: provider, err: err}
 			}
-			return oauthDoneMsg{provider: provider, account: account}
+			return oauthDoneMsg{id: attemptID, provider: provider, account: account}
 		}
 		// Copy the (long) URL to the clipboard so the user can paste it even
 		// when the browser didn't open and the line wraps off-screen.
-		return tea.Batch(tea.SetClipboard(flow.URL), await)
+		return tea.Batch(tea.SetClipboard(flow.URL), browser, await)
 	case backends.NameClaudeCode:
-		// Claude Code signs in via `claude setup-token` (its own browser
-		// flow). Run it attached to the terminal — tea.ExecProcess suspends
-		// the alt-screen — and capture BOTH stdout and stderr because the CLI
-		// may print the token on either stream. No manual CLI step for the user.
-		if pd != nil {
-			pd.status = "running `claude setup-token` — complete the browser sign-in…"
-		}
+		attemptID := m.beginOAuthOperation(provider, pd, nil)
+		// tea.ExecProcess suspends Bubble Tea input while the CLI owns the
+		// terminal, so cancellation is performed in the Claude CLI itself.
+		pd.status = "running `claude setup-token` — complete or cancel in the terminal…"
 		buf := &bytes.Buffer{}
 		cmd := claude.SetupTokenCommand()
 		cmd.Stdin = os.Stdin
-		cmd.Stdout = io.MultiWriter(os.Stdout, buf) // user sees it; we capture it
+		cmd.Stdout = io.MultiWriter(os.Stdout, buf)
 		cmd.Stderr = io.MultiWriter(os.Stderr, buf)
 		return tea.ExecProcess(cmd, func(err error) tea.Msg {
 			if err != nil {
-				return oauthFailedMsg{provider: provider, err: err}
+				return oauthFailedMsg{id: attemptID, provider: provider, err: err}
 			}
 			if serr := claude.StoreToken(parent, svc, buf.String()); serr != nil {
-				return oauthFailedMsg{provider: provider, err: serr}
+				return oauthFailedMsg{id: attemptID, provider: provider, err: serr}
 			}
-			return oauthDoneMsg{provider: provider}
+			return oauthDoneMsg{id: attemptID, provider: provider}
 		})
 	default:
-		if pd != nil {
-			pd.status = provider + ": in-TUI sign-in not available"
-		}
+		pd.status = provider + ": in-TUI sign-in not available"
 		return nil
 	}
 }
 
-// handleOAuthMsg routes OAuth results to the open providers dialog. Returns
-// true when it consumed the message.
-func (m *UI) handleOAuthMsg(msg tea.Msg) bool {
-	switch msg := msg.(type) {
-	case oauthDoneMsg:
-		if pd, ok := topProvidersDialog(m); ok {
-			pd.onOAuthResult(msg.account, nil)
+func (m *UI) beginOAuthOperation(provider string, owner *providersDialog, cancel context.CancelFunc) uint64 {
+	m.cancelOAuthOperation(false)
+	m.oauthSeq++
+	m.oauthOperation = &oauthOperation{id: m.oauthSeq, provider: provider, owner: owner, cancel: cancel}
+	return m.oauthSeq
+}
+
+func (m *UI) cancelOAuthOperation(notify bool) {
+	op := m.oauthOperation
+	if op == nil {
+		return
+	}
+	m.oauthOperation = nil
+	if op.cancel != nil {
+		op.cancel()
+		if notify && op.owner != nil {
+			op.owner.onOAuthCancelled()
 		}
-		return true
-	case oauthFailedMsg:
-		if pd, ok := topProvidersDialog(m); ok {
-			pd.onOAuthResult("", msg.err)
+	}
+}
+
+func (m *UI) cancelOAuthForDialog(d dialog) {
+	op := m.oauthOperation
+	if op == nil || op.owner == nil {
+		return
+	}
+	switch d := d.(type) {
+	case *providersDialog:
+		if d == op.owner {
+			m.cancelOAuthOperation(false)
 		}
-		return true
+	case *settingsDialog:
+		if d.providers == op.owner {
+			m.cancelOAuthOperation(false)
+		}
+	}
+}
+
+func (m *UI) oauthOwnerOpen(owner *providersDialog) bool {
+	for _, d := range m.overlay.stack {
+		switch d := d.(type) {
+		case *providersDialog:
+			if d == owner {
+				return true
+			}
+		case *settingsDialog:
+			if d.providers == owner {
+				return true
+			}
+		}
 	}
 	return false
+}
+
+// handleOAuthMsg accepts only the current attempt's result. Late results from
+// cancelled, superseded, or dismissed flows are consumed without UI mutation.
+func (m *UI) handleOAuthMsg(msg tea.Msg) bool {
+	var id uint64
+	var provider, account string
+	var resultErr error
+	switch msg := msg.(type) {
+	case oauthDoneMsg:
+		id, provider, account = msg.id, msg.provider, msg.account
+	case oauthFailedMsg:
+		id, provider, resultErr = msg.id, msg.provider, msg.err
+	default:
+		return false
+	}
+	op := m.oauthOperation
+	if op == nil || op.id != id || op.provider != provider {
+		return true
+	}
+	m.oauthOperation = nil
+	if op.cancel != nil {
+		op.cancel()
+	}
+	if m.oauthOwnerOpen(op.owner) {
+		op.owner.onOAuthResult(account, resultErr)
+	}
+	return true
 }
 
 // topProvidersDialog finds the open providers panel: the one embedded in the
@@ -140,18 +202,22 @@ func topProvidersDialog(m *UI) (*providersDialog, bool) {
 	return nil, false
 }
 
-// openBrowser best-effort opens url in the user's default browser. Failures
-// are silent — the URL is also shown in the dialog for manual copy. It's a
-// var so tests can stub it out (running it would spawn a real browser).
-var openBrowser = func(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
+// openBrowser best-effort opens url in the user's default browser. The returned
+// command owns and waits for the subprocess; failures stay silent because the
+// dialog also shows the URL for manual copy. The variable lets tests suppress
+// the external side effect.
+var openBrowser = func(url string) tea.Cmd {
+	return func() tea.Msg {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", url)
+		case "windows":
+			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		default:
+			cmd = exec.Command("xdg-open", url)
+		}
+		_ = cmd.Run()
+		return nil
 	}
-	_ = cmd.Start()
 }

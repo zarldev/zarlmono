@@ -10,7 +10,7 @@ The runner depends on six small consumer-implemented interfaces;
 everything else is pushed onto the consumer side.
 
 1. **LLM client** — [`Client`] (single method returning lazy, synchronous `llm.CompletionStream`).
-2. **The loop** — `Runner.Run(ctx, TaskSpec) (TaskResult, error)`.
+2. **The loop** — `Runner.Run(ctx, TaskSpec) TaskResult`.
 3. **Dynamic tool list** — [`ToolSource`], re-snapshotted every iteration.
 4. **Live-reloadable system prompt** — [`PromptSource`], called when each Run assembles its initial history.
 5. **Event sink** — [`EventSink`] composite (8 focused sub-sinks), one method per event type.
@@ -34,9 +34,12 @@ r := runner.New(client,
     runner.WithMaxIterations(20),
 )
 
-result, err := r.Run(ctx, runner.TaskSpec{
+result := r.Run(ctx, runner.TaskSpec{
     Prompt: "summarise today's news",
 })
+if result.Err != nil {
+    // Handle the terminal error.
+}
 ```
 
 A Runner with no sink, no prompt source, and no compactor still runs
@@ -100,8 +103,7 @@ answers fresh.
 
 ## Sentinel errors
 
-Consumers `errors.Is` against `TaskResult.Err` (or the error returned
-from `Run`) instead of parsing strings:
+Consumers `errors.Is` against `TaskResult.Err` instead of parsing strings:
 
 - `ErrInvalidIterations` — `TaskSpec.MaxIterations` was negative.
 - `ErrCancelled` — the run was cancelled mid-loop (wraps `ctx.Err()`).

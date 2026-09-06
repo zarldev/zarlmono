@@ -390,9 +390,6 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	if !s.SavedAt.IsZero() {
 		notice += ", saved " + formatAgo(time.Since(s.SavedAt))
 	}
-	if useSavedTarget && s.Provider != "" && s.Model != "" {
-		notice += "; switching to saved target " + providerModelLabel(s.Provider, s.Model)
-	}
 	diagnostics := s.consumeRestoreDiagnostics()
 	if len(diagnostics) > 0 {
 		slog.WarnContext(m.appContext(), "resume session with incomplete saved details", "session", s.ID, "details", diagnostics)
@@ -406,25 +403,12 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 			m.session.SetToastTone(notice+"; active session preference was not saved: "+err.Error(), toastWarn)
 		}
 	}
-	if useSavedTarget && s.Provider != "" && s.Model != "" {
-		m.persistResumeTarget(s.Provider, s.Model)
-	}
 	cmd := m.toastExpiryCmd()
-	if useSavedTarget {
-		cmd = tea.Batch(cmd, m.maybeRepoint())
+	if useSavedTarget && s.Provider != "" && s.Model != "" {
+		selection := prefs.ModelSelection{Provider: s.Provider, Model: s.Model}
+		cmd = tea.Batch(cmd, m.switchTarget(selection, nil))
 	}
 	return cmd
-}
-
-func (m *UI) persistResumeTarget(provider, model string) {
-	if m.settings == nil || m.settings.Svc == nil {
-		return
-	}
-	ctx := m.appContext()
-	selection := prefs.ModelSelection{Provider: provider, Model: model}
-	if err := m.settings.Svc.SetModelSelection(ctx, prefs.ScopeWorkspace, selection); err != nil {
-		m.session.SetErrorToast("resumed target: " + err.Error())
-	}
 }
 
 type sessionSnapshot struct {

@@ -85,3 +85,17 @@ func TestAdaptiveKeepRecent_FirstAlwaysIncluded(t *testing.T) {
 		t.Errorf("kept = %d, want 1 (first always squeezes in)", got)
 	}
 }
+
+func TestAdaptiveKeepRecent_CountsMediaPayloads(t *testing.T) {
+	t.Parallel()
+	image := func(fill string) llm.ContentPart {
+		return llm.ImagePartFromDataURI("data:image/png;base64,"+strings.Repeat(fill, 400), "image/png")
+	}
+	history := []llm.Message{
+		{Role: llm.RoleTool, ToolCallID: "old", Parts: []llm.ContentPart{image("a")}},
+		{Role: llm.RoleTool, ToolCallID: "recent", Parts: []llm.ContentPart{image("b")}},
+	}
+	if got := compact.AdaptiveKeepRecent(history, 150, 0, 10); got != 1 {
+		t.Fatalf("kept = %d, want 1 when image payloads exceed the budget", got)
+	}
+}

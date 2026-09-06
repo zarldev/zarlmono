@@ -2,9 +2,8 @@ package runner
 
 import "errors"
 
-// Sentinel errors. Consumers can errors.Is them against TaskResult.Err
-// (or the error returned from Run) to react to specific terminal states
-// without parsing strings.
+// Sentinel errors. Consumers can use errors.Is with TaskResult.Err to react
+// to specific terminal states without parsing strings.
 var (
 	// ErrInvalidIterations is returned when TaskSpec.MaxIterations is
 	// negative.

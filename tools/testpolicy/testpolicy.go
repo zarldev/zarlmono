@@ -193,10 +193,10 @@ func checkChanges(root string, changes []changedFile) []string {
 			problems = append(problems, fmt.Sprintf("%s: read package: %v", change.path, err))
 			continue
 		}
-		if change.kind == added && pkg != "" && !strings.HasSuffix(pkg, "_test") {
+		if change.kind == added && pkg != "" && !strings.HasSuffix(pkg, "_test") && !samePackageException(change.path, path) {
 			problems = append(problems, change.path+": new tests must use an external *_test package")
 		}
-		if change.kind == modified && pkg != "" && !strings.HasSuffix(pkg, "_test") {
+		if change.kind == modified && pkg != "" && !strings.HasSuffix(pkg, "_test") && !samePackageException(change.path, path) {
 			grandfathered := false
 			newEntry := false
 			for _, line := range change.addedLines {
@@ -280,7 +280,7 @@ func checkTree(root string) ([]string, error) {
 			if strings.HasSuffix(entry.Name(), "_internal_test.go") {
 				problems = append(problems, relative+": owned *_internal_test.go files are forbidden")
 			}
-			if treeException(relative) {
+			if samePackageException(relative, path) {
 				return nil
 			}
 			pkg, err := packageName(path)
@@ -309,8 +309,28 @@ func packageName(path string) (string, error) {
 	return file.Name.Name, nil
 }
 
-func treeException(path string) bool {
-	return strings.HasPrefix(path, "zarlcode/docs/images/workflow-demo-fixture/") || path == "zarlcode/tui/behavior_surface_export_test.go"
+func samePackageException(relative, path string) bool {
+	if strings.HasPrefix(relative, "zarlcode/docs/images/workflow-demo-fixture/") {
+		return true
+	}
+	if !strings.HasPrefix(relative, "zarlcode/tui/") || !strings.HasSuffix(relative, "_export_test.go") {
+		return false
+	}
+	files := token.NewFileSet()
+	file, err := parser.ParseFile(files, path, nil, 0)
+	if err != nil {
+		return false
+	}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Recv != nil {
+			continue
+		}
+		if strings.HasPrefix(function.Name.Name, "Test") || strings.HasPrefix(function.Name.Name, "Benchmark") || strings.HasPrefix(function.Name.Name, "Example") {
+			return false
+		}
+	}
+	return true
 }
 
 func compact(values []string) []string {

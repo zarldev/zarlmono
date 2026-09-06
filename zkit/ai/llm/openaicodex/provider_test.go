@@ -240,6 +240,20 @@ func TestProvider_RequestWireRegressions(t *testing.T) {
 				t.Errorf("multimodal content = %v", content)
 			}
 		}},
+
+		{name: "tool result attachment", model: "gpt-5.1-codex", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "screen-1", Function: llm.ToolCallFunction{Name: "computer_observe", Arguments: `{}`}}}}, {Role: llm.RoleTool, ToolCallID: "screen-1", Content: "metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI("data:image/png;base64,cG5n", "image/png")}}}}, check: func(t *testing.T, body map[string]any) {
+			input := body["input"].([]any)
+			if len(input) != 3 || input[1].(map[string]any)["type"] != "function_call_output" {
+				t.Fatalf("tool attachment input = %v", input)
+			}
+			content := input[2].(map[string]any)["content"].([]any)
+			if len(content) != 2 || content[0].(map[string]any)["type"] != "input_text" || content[1].(map[string]any)["type"] != "input_image" {
+				t.Fatalf("tool attachment content = %v", content)
+			}
+			if !strings.Contains(content[0].(map[string]any)["text"].(string), "screen-1") || content[1].(map[string]any)["image_url"] != "data:image/png;base64,cG5n" {
+				t.Fatalf("tool attachment data = %v", content)
+			}
+		}},
 		{name: "spark omits summary", model: "gpt-5.3-codex-spark", req: llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Options: llm.ModelOptions{"reasoning_effort": "high", "reasoning_summary": "concise"}}, check: func(t *testing.T, body map[string]any) {
 			if _, ok := body["reasoning"]; ok {
 				t.Errorf("unsupported spark effort serialized: %v", body["reasoning"])

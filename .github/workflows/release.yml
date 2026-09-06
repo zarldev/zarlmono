@@ -17,18 +17,82 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 env:
   TAG: ${{ inputs.tag || github.ref_name }}
   GOWORK: "off"
 
 jobs:
+  validate:
+    name: validate tagged source
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: setup go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: validate tag, release metadata, and internal pins
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^zarlcode/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$ ]]; then
+            echo "invalid zarlcode release tag: $TAG" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/$TAG^{tag}" >/dev/null
+          test "$(git rev-list -n1 "$TAG")" = "$(git rev-parse HEAD)"
+          go run ./tools/releasecheck/cmd/releasecheck \
+            -version "${TAG#zarlcode/}" -scope zarlcode > "$RUNNER_TEMP/release-plan.json"
+          while IFS=$'\t' read -r path version; do
+            GOPROXY=https://proxy.golang.org go list -m "$path@$version" >/dev/null
+          done < <(jq -r '.pins[] | [.path, .version] | @tsv' "$RUNNER_TEMP/release-plan.json")
+
+      # A tag can be pushed or recovered independently of release-dispatch. Repeat
+      # the authoritative gate against the immutable tagged source before publishing.
+      - name: run authoritative release gate
+        env:
+          GOWORK: ""
+        run: go tool task release-check
+
+      - name: verify zarlcode outside the workspace
+        run: |
+          go -C zarlcode mod verify
+          go build -C zarlcode ./...
+          go vet -C zarlcode ./...
+          go test -C zarlcode -count=1 ./...
+
+      - name: install tmux
+        run: |
+          if ! command -v tmux >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes tmux
+          fi
+
+      - name: exercise tagged terminal workflow
+        env:
+          GOWORK: ""
+        run: go tool task tui-smoke -- -timeout 45s
+
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -42,25 +106,13 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
+
       - name: setup go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - name: validate tagged source
-        run: |
-          set -euo pipefail
-          if ! [[ "$TAG" =~ ^zarlcode/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$ ]]; then
-            echo "invalid zarlcode release tag: $TAG" >&2
-            exit 1
-          fi
-          git rev-parse --verify "refs/tags/$TAG^{tag}" >/dev/null
-          test "$(git rev-list -n1 "$TAG")" = "$(git rev-parse HEAD)"
-          go run ./tools/releasecheck/cmd/releasecheck \
-            -version "${TAG#zarlcode/}" -scope zarlcode >/tmp/release-plan.json
-          while IFS=$'\t' read -r path version; do
-            GOPROXY=https://proxy.golang.org go list -m "$path@$version" >/dev/null
-          done < <(jq -r '.pins[] | [.path, .version] | @tsv' /tmp/release-plan.json)
+
       - name: build and package
         env:
           GOOS: ${{ matrix.goos }}
@@ -78,6 +130,7 @@ jobs:
           tar -C "$package_dir" -czf "dist/$archive" zarlcode
           (cd dist && sha256sum "$archive" > "$archive.sha256")
           test "$(tar -tzf "dist/$archive")" = zarlcode
+
       - name: upload build artifact
         uses: actions/upload-artifact@v7
         with:
@@ -92,6 +145,11 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       HOMEBREW_APP_ID: ${{ secrets.HOMEBREW_APP_ID }}
       HOMEBREW_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}

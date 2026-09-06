@@ -27,6 +27,12 @@ const ToolResultTrimAt = 512
 // signal family as Summary / Executive bridge messages.
 const elisionTail = "\n…[compacted — assistant content trimmed; re-run the originating tool if you need the rest]"
 
+const (
+	toolAttachmentElision   = "[compacted — tool attachments elided; re-run the originating tool if you need them]"
+	toolContentElisionStart = "[compacted — tool result elided; original was ~"
+	toolContentElisionEnd   = " bytes. Re-run the tool or `read` the path if you need the content again.]"
+)
+
 // Structural is the default compactor. It never calls a model: it
 // walks the older portion of the conversation, replacing bulky
 // payload bodies (long assistant explanations, large tool result
@@ -41,9 +47,10 @@ const elisionTail = "\n…[compacted — assistant content trimmed; re-run the o
 //   - Assistant messages with tool_calls: tool_calls preserved
 //     verbatim, narrative Content truncated when long.
 //   - Assistant text-only messages: truncated when long.
-//   - Tool result messages: Content replaced with a one-line
-//     elision marker when the original was long; ToolCallID
-//     preserved so the call→result link stays valid.
+//   - Tool result messages: oversized Content is replaced with a one-line
+//     elision marker; attachments are removed from older messages with a
+//     visible marker. ToolCallID is preserved so the call→result link stays
+//     valid.
 //   - The most-recent `keepRecent` messages stay verbatim.
 //
 // The two trim thresholds are configurable: zero values fall back
@@ -119,14 +126,9 @@ func (s Structural) Compact(_ context.Context, history []llm.Message, keepRecent
 	return Result{History: out, Warning: warning, Engine: EngineStructural, BytesTrimmed: trimmedBytes}, nil
 }
 
-// WouldReduceBytes implements [Prober]. Returns the upper-bound bytes
-// Compact would save on history with the given keepRecent — zero
-// means "nothing trimmable, don't bother firing." Pure scan over the
-// older slice, no allocation, matches structuralTrim's per-role
-// thresholds exactly so the consumer's gate is consistent with the
-// actual work the engine does. Picks up the same AssistantTrimAt /
-// ToolTrimAt overrides Compact does so a caller bumping the
-// thresholds doesn't get an inconsistent "would reduce" answer.
+// WouldReduceBytes implements [Prober]. It cheaply estimates the bytes Compact
+// would save on history with the given keepRecent; zero means "nothing
+// trimmable, don't bother firing." The scan does not allocate.
 func (s Structural) WouldReduceBytes(history []llm.Message, keepRecent int) int {
 	if keepRecent < 0 {
 		keepRecent = 0
@@ -135,28 +137,62 @@ func (s Structural) WouldReduceBytes(history []llm.Message, keepRecent int) int 
 		return 0
 	}
 	older := history[:len(history)-keepRecent]
-	asstAt := s.assistantTrimAt()
-	toolAt := s.toolTrimAt()
-	savable := 0
+	var savable int
 	for _, msg := range older {
 		switch msg.Role {
 		case llm.RoleAssistant:
-			if len(msg.Content) > asstAt {
-				head := max(asstAt-len(elisionTail), 64)
-				savable += len(msg.Content) - (head + len(elisionTail))
+			if len(msg.Content) > s.assistantTrimAt() {
+				head := max(s.assistantTrimAt()-len(elisionTail), 64)
+				savable += max(len(msg.Content)-(head+len(elisionTail)), 0)
 			}
 		case llm.RoleTool:
-			if len(msg.Content) > toolAt {
-				// Placeholder is short and bounded; underestimate
-				// rather than overestimate so a true zero stays zero.
-				savable += len(msg.Content) - 256
-			}
+			savable += s.planToolTrim(msg).saved
 		}
 	}
-	if savable < 0 {
-		savable = 0
-	}
 	return savable
+}
+
+type toolTrimPlan struct {
+	content     bool
+	attachments bool
+	saved       int
+}
+
+func (s Structural) planToolTrim(msg llm.Message) toolTrimPlan {
+	partsBytes := llm.ContentPartsByteLen(msg.Parts)
+	before := len(msg.Content) + partsBytes
+	afterContent := len(msg.Content)
+	plan := toolTrimPlan{}
+	if len(msg.Content) > s.toolTrimAt() {
+		candidate := len(toolContentElisionStart) + decimalDigits(len(msg.Content)) + len(toolContentElisionEnd)
+		if candidate < afterContent {
+			afterContent = candidate
+			plan.content = true
+		}
+	}
+	afterParts := partsBytes
+	if len(msg.Parts) > 0 {
+		markerBytes := len(toolAttachmentElision)
+		if afterContent > 0 {
+			markerBytes++
+		}
+		if markerBytes < afterParts {
+			afterContent += markerBytes
+			afterParts = 0
+			plan.attachments = true
+		}
+	}
+	plan.saved = before - afterContent - afterParts
+	return plan
+}
+
+func decimalDigits(n int) int {
+	digits := 1
+	for n >= 10 {
+		n /= 10
+		digits++
+	}
+	return digits
 }
 
 // structuralTrim returns a copy of msg with bulky content elided
@@ -178,19 +214,25 @@ func (s Structural) structuralTrim(msg llm.Message) (llm.Message, int) {
 			return out, 0
 		}
 		head := max(threshold-len(elisionTail), 64)
-		out.Content = clipToRune(msg.Content, head) + elisionTail
-		return out, len(msg.Content) - len(out.Content)
-	case llm.RoleTool:
-		threshold := s.toolTrimAt()
-		if len(msg.Content) <= threshold {
+		content := clipToRune(msg.Content, head) + elisionTail
+		if len(content) >= len(msg.Content) {
 			return out, 0
 		}
-		placeholder := fmt.Sprintf(
-			"[compacted — tool result elided; original was ~%d bytes. "+
-				"Re-run the tool or `read` the path if you need the content again.]",
-			len(msg.Content))
-		out.Content = placeholder
-		return out, len(msg.Content) - len(placeholder)
+		out.Content = content
+		return out, len(msg.Content) - len(out.Content)
+	case llm.RoleTool:
+		plan := s.planToolTrim(msg)
+		if plan.content {
+			out.Content = fmt.Sprintf("%s%d%s", toolContentElisionStart, len(msg.Content), toolContentElisionEnd)
+		}
+		if plan.attachments {
+			if out.Content != "" {
+				out.Content += "\n"
+			}
+			out.Content += toolAttachmentElision
+			out.Parts = nil
+		}
+		return out, plan.saved
 	}
 	return out, 0
 }

@@ -9,6 +9,7 @@ on:
       - '*.md'
       - '**/*.md'
       - '**/*.mdx'
+      - 'Taskfile.yml'
       - '.github/workflows/docs.yml'
   push:
     branches: [main]
@@ -19,6 +20,7 @@ on:
       - '*.md'
       - '**/*.md'
       - '**/*.mdx'
+      - 'Taskfile.yml'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -31,24 +33,26 @@ concurrency:
 
 jobs:
   check:
+    name: verify and build documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./tools/doccheck
-      - run: go test -C examples ./quickstart
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - run: npm ci
-        working-directory: site
-      - run: npm run build
-        working-directory: site
+
+      - name: verify sources and build site
+        run: go tool task docs:check
+
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v4
         with:
@@ -58,6 +62,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pages: write

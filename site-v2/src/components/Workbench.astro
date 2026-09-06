@@ -1,0 +1,30 @@
+---
+import poster from '../assets/workbench.webp';
+import { path } from '../lib/links';
+---
+<figure class="workbench">
+  <div class="window-bar"><div class="window-title"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>zarlcode <span class="muted">— ~/greeting-demo</span></span></div><span class="window-badge"><span class="status-dot"></span>LOCAL SESSION</span></div>
+  <div class="recording-frame"><img id="workbench-recording" src={poster.src} width={poster.width} height={poster.height} alt="zarlcode reviewing the greeting-demo refactor: one changed file, unchanged behavior, and a passing test." fetchpriority="high" data-poster={poster.src} data-recording={path('zarlcode-hero2.gif')} /></div>
+  <figcaption><span><span class="caption-index">RECORDING /</span> Plan, edit, test, and inspect a diff.</span><button type="button" class="recording-toggle" aria-controls="workbench-recording" aria-pressed="false" hidden><span aria-hidden="true">▶</span> Play recording</button><noscript><a href={path('zarlcode-hero2.gif')}>Open recording ↗</a></noscript></figcaption>
+</figure>
+<script>
+  const button = document.querySelector<HTMLButtonElement>('.recording-toggle');
+  const image = document.querySelector<HTMLImageElement>('#workbench-recording');
+  if (button && image) {
+    button.hidden = false;
+    const stop = () => {
+      image.src = image.dataset.poster!;
+      button.setAttribute('aria-pressed', 'false');
+      button.textContent = '▶ Play recording';
+    };
+    button.addEventListener('click', () => {
+      if (button.getAttribute('aria-pressed') === 'true') { stop(); return; }
+      image.src = image.dataset.recording!;
+      button.setAttribute('aria-pressed', 'true');
+      button.textContent = '■ Stop recording';
+    });
+    // A hidden tab should not keep an explicitly started animation running.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
+    window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', stop);
+  }
+</script>

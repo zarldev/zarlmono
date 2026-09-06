@@ -1,46 +1,54 @@
-# Sub-agents in the timeline: parallel spawned runs, expanded in browse mode (Tab).
-# Render from repo root:  vhs zarlcode/docs/images/screen-subagents.tape
-# Timing: bump Sleep values 1.5x–2x if your model/connection is slow.
+# Deterministic delegated-agent activity with the local fixture provider.
 Output zarlcode/docs/images/screen-subagents.gif
-
 Require bash
 Require go
-
+Require curl
 Set Shell bash
-Set FontSize 12
+Set FontSize 18
 Set Width 1440
-Set Height 1024
+Set Height 900
 Set Theme "Catppuccin Mocha"
+Set TypingSpeed 40ms
+Set Framerate 15
 
-Type "zarlcode"
+Hide
+Type "source zarlcode/docs/images/recording-setup.sh || exit 1"
 Enter
-Sleep 3s
+Wait@2m
+Type "$REC_ROOT/zarlcode"
+Enter
+Wait+Screen /first-run setup/
+Enter
+Wait+Screen /build mode/
 
-# Ask zarlcode to clone a real project so sub-agents have packages to map.
-Type "clone https://github.com/gohugoio/hugo.git --depth=1 into demo-repo"
+# Enable the documented delegation tool surface before recording.
+Ctrl+S
+Down 4
+Right
 Enter
-Sleep 8s
-Type "cd demo-repo"
-Enter
-Sleep 3s
-
-# A prompt that fans out to read-only explorer sub-agents.
-Type "delegate to sub-agents to map hugolib, commands, and tpl in parallel, then summarize"
-Enter
-Sleep 28s
-
-# Enter browse mode and expand a collapsed sub-agent item.
-Tab
-Sleep 1s
-Up 1
-Sleep 1s
-Space
+Wait+Screen /enable sub-agents/
+Ctrl+S
+Wait+Screen /build mode/
+Show
 Sleep 2s
-Space
-Sleep 1s
-Escape
-Sleep 1s
 
-Ctrl+C
-Sleep 1s
+Type "Delegate a review of the greeting refactor."
 Enter
+Wait+Screen@30s /Review requested/
+Sleep 3s
+Ctrl+A
+Wait+Screen /delegated/
+Sleep 4s
+Screenshot zarlcode/docs/images/screen-subagents-poster.png
+Sleep 500ms
+
+Hide
+Ctrl+A
+Wait+Screen /build mode/
+Ctrl+C
+Wait+Screen /quit ƶarl\/code\?/
+Enter
+Wait
+Type "recording_cleanup"
+Enter
+Wait

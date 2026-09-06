@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/cache"
@@ -182,7 +183,7 @@ func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 					call.ToolName, hits-1)),
 			}, nil
 		}
-		clone := hit
+		clone := cloneToolResultAttachments(hit)
 		clone.ToolCallID = call.ID
 		return &clone, nil
 	}
@@ -192,7 +193,7 @@ func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 			m.forgetCurrentTask(ctx)
 			return result, err
 		}
-		_ = bucket.Set(ctx, key, *result)
+		_ = bucket.Set(ctx, key, cloneToolResultAttachments(*result))
 		// Successful miss counts as the first invocation; the next
 		// identical call is the first cache hit (hits=1, silent), the
 		// one after that is the loud rejection (hits=2).
@@ -202,6 +203,13 @@ func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		}
 	}
 	return result, err
+}
+
+// cloneToolResultAttachments preserves the existing shallow-copy contract for
+// arbitrary Data and metadata while isolating retained multimodal payloads.
+func cloneToolResultAttachments(result tools.ToolResult) tools.ToolResult {
+	result.Parts = llm.CloneContentParts(result.Parts)
+	return result
 }
 
 // bumpHit increments the per-task hit counter for key and returns

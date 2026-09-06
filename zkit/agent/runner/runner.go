@@ -33,9 +33,12 @@
 //	    runner.WithMaxIterations(20),
 //	    runner.WithToolConcurrency(4),
 //	)
-//	result, err := r.Run(ctx, runner.TaskSpec{
+//	result := r.Run(ctx, runner.TaskSpec{
 //	    Prompt: "summarise today's news",
 //	})
+//	if result.Err != nil {
+//	    // Handle the terminal error.
+//	}
 //
 // The loop body lives in run.go; this file is types and construction.
 package runner

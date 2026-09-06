@@ -39,6 +39,22 @@ func TestStore_OpenRunsMigrations(t *testing.T) {
 	}
 }
 
+func TestStore_OpenQueuesWrites(t *testing.T) {
+	t.Parallel()
+	s := openTempStore(t)
+
+	if got := s.DB().Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("max open connections = %d, want 1", got)
+	}
+	var busyTimeout int
+	if err := s.DB().QueryRowContext(t.Context(), "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("read busy timeout: %v", err)
+	}
+	if busyTimeout != 30_000 {
+		t.Fatalf("busy timeout = %d, want 30000", busyTimeout)
+	}
+}
+
 func TestSessionMigrationsBackfillAndRollback(t *testing.T) {
 	t.Parallel()
 

@@ -1,19 +1,31 @@
 # Repository tools
 
-Repository checks and terminal automation are Go programs with external-package
-regression tests. Run them from the repository root:
+Root tools enforce repository, documentation, release, and terminal-product
+contracts. Application behavior and dependency compatibility stay with their owning
+packages and module manifests.
 
-| Task | Go entry point | Purpose |
+| Tool | Focused command | Contract |
 | --- | --- | --- |
-| `go tool task dependency-pair` | `go run ./tools/dependencycheck/cmd/dependencycheck` | Verify the validated Anthropic/JSON Schema pair independently in each application module. |
-| `go tool task test-policy` | `go run ./tools/testpolicy/cmd/testpolicy HEAD` | Check changed tests and the owned tree. Task defaults to `HEAD`; set `TEST_POLICY_BASE` for another revision. |
-| `go tool task tui-smoke` | `go run ./tools/tuismoke/cmd/tuismoke` | Exercise real terminal onboarding, encrypted credential save, restart, unlock, resize, help, and shutdown. Requires `tmux`. |
-| `go tool task tools-test` | `go test -count=1 ./tools/...` | Run repository tool regression tests, including existing documentation and release tooling. |
+| `releasecheck` | `go run ./tools/releasecheck/cmd/releasecheck ...` | Validate release scope, versions, changelog entries, internal dependency ordering, and published consumer pins. |
+| `genformula` | `go run ./tools/genformula/cmd/genformula ...` | Render the Homebrew formula deterministically from release checksums. |
+| `doccheck` | `go tool task doccheck` | Keep canonical quickstart sources synchronized and resolve site-internal links. |
+| `repohealth` | `go tool task repohealth` | Validate repository-local skills, agents, instruction metadata, routing, and links. |
+| `testpolicy` | `go tool task test-policy` | Enforce external test packages, forbid `*_internal_test.go`, and check changed test-context usage. Set `TEST_POLICY_BASE` to compare with another revision. |
+| `tuismoke` | `go tool task tui-smoke` | Exercise real terminal onboarding, credential save, restart/unlock, resize/help, startup cancellation, quit, and shutdown. Requires `tmux`. |
 
-The terminal tool always creates disposable HOME/XDG state and an isolated tmux
-socket. It never accepts a real user profile. It uses fake credentials and does not
-make a model completion request. Cancellation tears down its server and temporary
-files. SQLite verification is performed directly in Go; no Python or Bash is needed.
+Use `go tool task tools-test` for all root-tool regression tests. The standard
+`go tool task check` additionally verifies every child module with `GOWORK=off`,
+then builds, vets, and tests the current workspace graph. `go tool task lint` covers
+the root tooling module and all child modules; `go tool task release-check` adds the
+zkit race suite, production site build/audit, and exact-toolchain isolated zkit
+compilation. Release workflows separately build, vet, and test selected release
+modules outside `go.work` before tags or artifacts are published.
+
+The terminal smoke always creates disposable HOME/XDG state and an isolated tmux
+socket. It never accepts a real user profile, uses fake credentials, and does not
+make a model completion request. Persistence is verified through restart and unlock
+behavior; storage schema and encryption-format details remain in owning package
+tests. Cancellation tears down the tmux server and temporary files.
 
 Use `go tool task tui-smoke -- -binary /absolute/path/to/zarlcode -timeout 45s`
 to select an existing build and a per-transition timeout. The default builds the

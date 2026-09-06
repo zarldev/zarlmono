@@ -254,7 +254,7 @@ func optionStringOr(opts llm.ModelOptions, key, fallback string) string {
 // where a caller routes a system message through the regular history.
 func messagesToInput(msgs []llm.Message) []inputItem {
 	out := make([]inputItem, 0, len(msgs))
-	for _, m := range msgs {
+	for _, m := range llm.ExpandToolResultParts(msgs) {
 		switch m.Role {
 		case llm.RoleSystem:
 			// Codex prefers instructions in the top-level field; if a

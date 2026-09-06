@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
@@ -76,9 +78,36 @@ func (m *UI) RepointProvider(prov llm.Provider, spec engine.ProviderSpec, window
 	return m.handleRepointMsg(providerRepointedMsg{prov: prov, spec: spec, window: window, err: err})
 }
 
+// SwitchTarget starts the production build-first provider/model transition.
+func (m *UI) SwitchTarget(selection prefs.ModelSelection) tea.Cmd {
+	return m.switchTarget(selection, nil)
+}
+
+// ToastText returns the current status notification.
+func (m *UI) ToastText() string { return m.session.Toast }
+
 // ResumeSavedSession loads one persisted session through the production resume path.
 func (m *UI) ResumeSavedSession(ctx context.Context, id string) error {
 	return m.resumeSession(ctx, id)
+}
+
+// ResumeSavedSessionTarget loads one persisted session and requests its saved
+// provider/model through the production build-first transition. The boolean
+// reports whether the saved session contained a complete target.
+func (m *UI) ResumeSavedSessionTarget(ctx context.Context, id string) (tea.Cmd, bool, error) {
+	if m.settings == nil || m.settings.Store == nil {
+		return nil, false, errors.New("session store unavailable")
+	}
+	saved, err := loadSavedSession(ctx, m.settings.Store, id, m.settings.WorkspaceRoot())
+	if err != nil {
+		return nil, false, err
+	}
+	m.completeResumeSession(saved, false)
+	if saved.Provider == "" || saved.Model == "" {
+		return nil, false, nil
+	}
+	selection := prefs.ModelSelection{Provider: saved.Provider, Model: saved.Model}
+	return m.switchTarget(selection, nil), true, nil
 }
 
 // ActiveProviderSpec returns the provider target currently shown by the session.
@@ -577,3 +606,13 @@ func (m *UI) SessionOwnedStateEmpty() bool {
 
 // ResumeLatestSavedSession resumes the workspace-selected session for behavior tests.
 func (m *UI) ResumeLatestSavedSession(ctx context.Context) error { return m.resumeLatestSession(ctx) }
+
+// NewStartupVaultUnlockModelForTest creates the pre-launch vault surface.
+func NewStartupVaultUnlockModelForTest(setup, retry bool) tea.Model {
+	m := newVaultUnlockModel(setup, retry)
+	m.exitOnCancel = true
+	return m
+}
+
+// NewStartupCancelledForTest creates a launch instance cancelled before application wiring.
+func NewStartupCancelledForTest() *Zarlcode { return &Zarlcode{startupCancelled: true} }

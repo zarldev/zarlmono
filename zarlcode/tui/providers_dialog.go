@@ -46,6 +46,7 @@ type providersDialog struct {
 
 	modelsProvider string // provider awaiting/ascribing an async model fetch
 	modelPicker    *listPicker
+	pendingTarget  *prefs.ModelSelection
 }
 
 func (d *providersDialog) summary() string {
@@ -54,10 +55,9 @@ func (d *providersDialog) summary() string {
 
 var providerAddLabels = [6]string{"name", "base url", "default model", "reasoning", "context window", "price /M (in/out)"}
 
-// inSubMode reports whether the panel is in a text-entry sub-mode (editing a
-// key or filling the add form) — the host settings pane uses this to know
-// when esc/left should cancel the sub-mode vs return focus to the nav.
-func (d *providersDialog) inSubMode() bool { return d.editing || d.adding }
+// inSubMode reports whether the panel owns Esc rather than returning focus to
+// settings navigation.
+func (d *providersDialog) inSubMode() bool { return d.editing || d.adding || d.oauthBusy }
 
 // isOAuthProvider reports whether a provider authenticates via OAuth (a
 // browser sign-in + token source) rather than a static API key.
@@ -93,6 +93,13 @@ func (d *providersDialog) onOAuthResult(account string, err error) {
 	d.refresh()
 }
 
+func (d *providersDialog) onOAuthCancelled() {
+	d.oauthBusy = false
+	d.oauthURL = ""
+	d.status = "sign-in cancelled"
+	d.statusAt = time.Now()
+}
+
 // footerHint is the key legend the host surface shows in its footer while the
 // providers pane is focused — sub-mode aware.
 func (d *providersDialog) footerHint() string {
@@ -105,6 +112,8 @@ func (d *providersDialog) footerHint() string {
 		return keyLegend(keyHint{"tab", "field"}, keyHint{"enter", "next/save"}, keyHint{"esc", "cancel"})
 	case d.oauthBusy:
 		return keyLegend(keyHint{label: "waiting for the browser callback…"}, keyHint{"esc", "cancel"})
+	case d.cur().Name == backends.NameClaudeCode.String():
+		return keyLegend(keyHint{"enter", "runs `claude setup-token`"}, keyHint{"a", "active"}, keyHint{"m", "models"}, keyHint{"esc", "back"})
 	default:
 		return keyLegend(keyHint{"↵", "key/sign-in"}, keyHint{"a", "active"}, keyHint{"m", "models"},
 			keyHint{"n", "new"}, keyHint{"e", "edit"}, keyHint{"x", "delete"}, keyHint{"esc", "back"})
@@ -165,6 +174,12 @@ func (d *providersDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (d *providersDialog) handleKeyInner(msg tea.KeyPressMsg) action {
+	if d.oauthBusy {
+		if msg.String() == "esc" {
+			return actionCancelOAuthLogin{}
+		}
+		return actionNone{}
+	}
 	if d.modelPicker != nil {
 		return d.handleModelPickerKey(msg)
 	}
@@ -200,7 +215,7 @@ func (d *providersDialog) handleKeyInner(msg tea.KeyPressMsg) action {
 		}
 	case "a":
 		if d.cursor < len(d.defs) {
-			d.setActive()
+			return d.setActive()
 		}
 	case "m":
 		if d.cursor < len(d.defs) {
@@ -435,19 +450,14 @@ func (d *providersDialog) commitKey(val string) action {
 	}}
 }
 
-func (d *providersDialog) setActive() {
-	if d.s == nil || d.s.Svc == nil {
-		return
+func (d *providersDialog) setActive() action {
+	if d.s == nil {
+		return actionNone{}
 	}
 	name := d.cur().Name
 	selection := d.s.DefaultModelSelection(name)
-	if err := d.s.Svc.SetModelSelection(d.ctx, prefs.ScopeWorkspace, selection); err != nil {
-		d.status = "set active: " + err.Error()
-		return
-	}
-	d.s.Registry.SetActiveName(name)
-	d.status = name + " is the active provider (next run)"
-	d.refresh()
+	d.status = "switching to " + providerModelLabel(selection.Provider, selection.Model) + "…"
+	return actionSwitchTarget{selection: selection, done: d.targetDone(selection)}
 }
 
 func (d *providersDialog) fetchModels() action {
@@ -469,6 +479,11 @@ func (d *providersDialog) handleModelPickerKey(msg tea.KeyPressMsg) action {
 	if _, ok := a.(actionClose); ok {
 		d.modelPicker = nil
 		d.modelsProvider = ""
+		if d.pendingTarget != nil {
+			selection := *d.pendingTarget
+			d.pendingTarget = nil
+			return actionSwitchTarget{selection: selection, done: d.targetDone(selection)}
+		}
 		if d.status == "" {
 			d.status = "model selection cancelled"
 		}
@@ -477,21 +492,25 @@ func (d *providersDialog) handleModelPickerKey(msg tea.KeyPressMsg) action {
 }
 
 func (d *providersDialog) selectProviderModel(provider, model string) {
-	if d.s == nil || d.s.Svc == nil || d.s.Registry == nil {
+	if d.s == nil {
 		d.status = "settings service unavailable"
 		return
 	}
 	selection := prefs.ModelSelection{Provider: provider, Model: model}
-	if err := d.s.Svc.SetModelSelection(d.ctx, prefs.ScopeWorkspace, selection); err != nil {
-		d.status = "set model selection: " + err.Error()
-		return
+	d.pendingTarget = &selection
+	d.status = "switching to " + providerModelLabel(provider, model) + "…"
+}
+
+func (d *providersDialog) targetDone(selection prefs.ModelSelection) func(error) {
+	return func(err error) {
+		if err != nil {
+			d.status = "provider switch: " + err.Error()
+		} else {
+			d.status = providerModelLabel(selection.Provider, selection.Model) + " active (workspace)"
+		}
+		d.statusAt = time.Now()
+		d.refresh()
 	}
-	if d.active != provider {
-		d.s.Registry.SetActiveName(provider)
-		d.active = provider
-	}
-	d.status = provider + ": selected " + model + " (next run)"
-	d.refresh()
 }
 
 func (d *providersDialog) onModelsLoaded(provider string, models []string, err error) bool {
@@ -709,7 +728,11 @@ func (d *providersDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	}
 	footer := d.footerHint()
 	if l.Footer.Dx() < 60 && d.modelPicker == nil && !d.editing && !d.adding && !d.oauthBusy {
-		footer = keyLegend(keyHint{"↑↓", "move"}, keyHint{"enter", "use"}, keyHint{"esc", "back"})
+		if d.cur().Name == backends.NameClaudeCode.String() {
+			footer = keyLegend(keyHint{"enter", "runs `claude setup-token`"}, keyHint{"esc", "back"})
+		} else {
+			footer = keyLegend(keyHint{"↑↓", "move"}, keyHint{"enter", "use"}, keyHint{"esc", "back"})
+		}
 	}
 	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
 }

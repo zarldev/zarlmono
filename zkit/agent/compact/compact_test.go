@@ -57,6 +57,126 @@ func TestStructural_TrimsLargeToolResults(t *testing.T) {
 	}
 }
 
+func TestStructural_ElidesOldToolAttachmentsAndKeepsRecent(t *testing.T) {
+	t.Parallel()
+	oldDataURI := "data:image/png;base64," + strings.Repeat("a", 2048)
+	recentDataURI := "data:image/png;base64," + strings.Repeat("b", 2048)
+	history := []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "old"}}},
+		{Role: llm.RoleTool, ToolCallID: "old", Content: "old metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI(oldDataURI, "image/png")}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "recent"}}},
+		{Role: llm.RoleTool, ToolCallID: "recent", Content: "recent metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI(recentDataURI, "image/png")}},
+	}
+	c := compact.NewStructural()
+	probe := c.WouldReduceBytes(history, 2)
+	if probe <= 0 {
+		t.Fatalf("WouldReduceBytes = %d, want attachment savings", probe)
+	}
+	res, err := c.Compact(t.Context(), history, 2)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if res.BytesTrimmed != probe {
+		t.Fatalf("BytesTrimmed = %d, want probe savings %d", res.BytesTrimmed, probe)
+	}
+	if len(res.History[1].Parts) != 0 {
+		t.Fatal("old tool attachment survived compaction")
+	}
+	if !strings.Contains(res.History[1].Content, "tool attachments elided") {
+		t.Fatalf("old tool content lacks attachment marker: %q", res.History[1].Content)
+	}
+	if strings.Contains(res.History[1].Content, oldDataURI) {
+		t.Fatal("attachment marker contains the elided data URI")
+	}
+	if got := res.History[3].Parts[0].Image.DataURI; got != recentDataURI {
+		t.Fatalf("recent attachment = %q, want preserved data URI", got)
+	}
+	if got := history[1].Parts[0].Image.DataURI; got != oldDataURI {
+		t.Fatal("compaction mutated input history")
+	}
+
+	again, err := c.Compact(t.Context(), res.History, 2)
+	if err != nil {
+		t.Fatalf("Compact again: %v", err)
+	}
+	if count := strings.Count(again.History[1].Content, "tool attachments elided"); count != 1 {
+		t.Fatalf("attachment elision marker count = %d, want 1", count)
+	}
+}
+
+func TestStructural_AttachmentElisionIsMonotonic(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		parts      []llm.ContentPart
+		wantElided bool
+	}{
+		{name: "tiny attachment retained", parts: []llm.ContentPart{llm.TextPart("x")}},
+		{
+			name: "mixed attachments elided together",
+			parts: []llm.ContentPart{
+				llm.TextPart("x"),
+				llm.ImagePartFromDataURI("data:image/png;base64,"+strings.Repeat("a", 256), "image/png"),
+			},
+			wantElided: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			history := []llm.Message{{
+				Role: llm.RoleTool, ToolCallID: "call-1", Content: "metadata", Parts: tc.parts,
+			}}
+			before := retainedHistoryBytes(history)
+			compactor := compact.NewStructural()
+			probe := compactor.WouldReduceBytes(history, 0)
+			result, err := compactor.Compact(t.Context(), history, 0)
+			if err != nil {
+				t.Fatalf("Compact: %v", err)
+			}
+			after := retainedHistoryBytes(result.History)
+			if after > before {
+				t.Fatalf("compaction grew history from %d to %d bytes", before, after)
+			}
+			if result.BytesTrimmed != before-after {
+				t.Fatalf("BytesTrimmed = %d, want %d", result.BytesTrimmed, before-after)
+			}
+			if probe != result.BytesTrimmed {
+				t.Fatalf("WouldReduceBytes = %d, want actual savings %d", probe, result.BytesTrimmed)
+			}
+			if tc.wantElided {
+				if len(result.History[0].Parts) != 0 {
+					t.Fatal("mixed attachment slice was only partially retained")
+				}
+				return
+			}
+			if len(result.History[0].Parts) != len(tc.parts) || result.History[0].Parts[0].Text != "x" {
+				t.Fatalf("tiny attachment changed: %+v", result.History[0].Parts)
+			}
+		})
+	}
+}
+
+func TestStructural_WouldReduceBytesDoesNotAllocate(t *testing.T) {
+	history := []llm.Message{{
+		Role:    llm.RoleTool,
+		Content: strings.Repeat("metadata", 100),
+		Parts: []llm.ContentPart{
+			llm.ImagePartFromDataURI("data:image/png;base64,"+strings.Repeat("a", 256), "image/png"),
+		},
+	}}
+	compactor := compact.NewStructural()
+	var savings int
+	allocs := testing.AllocsPerRun(100, func() {
+		savings = compactor.WouldReduceBytes(history, 0)
+	})
+	if savings <= 0 {
+		t.Fatalf("WouldReduceBytes = %d, want positive", savings)
+	}
+	if allocs != 0 {
+		t.Fatalf("WouldReduceBytes allocations = %v, want 0", allocs)
+	}
+}
+
 func TestStructural_NeverTrimsUserMessages(t *testing.T) {
 	t.Parallel()
 	c := compact.NewStructural()
@@ -541,4 +661,19 @@ func TestStructural_OverriddenThresholds(t *testing.T) {
 	if res.BytesTrimmed == 0 {
 		t.Errorf("tight threshold should have trimmed something; result: %+v", res)
 	}
+}
+
+func retainedHistoryBytes(messages []llm.Message) int {
+	var total int
+	for _, message := range messages {
+		total += len(message.Content) + len(message.ReasoningContent)
+		total += llm.ContentPartsByteLen(message.Parts)
+		for _, call := range message.ToolCalls {
+			total += len(call.Function.Name) + len(call.Function.Arguments)
+		}
+		for _, item := range message.ContinuationItems {
+			total += item.ByteLen()
+		}
+	}
+	return total
 }

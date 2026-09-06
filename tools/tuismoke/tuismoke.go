@@ -3,28 +3,23 @@
 package tuismoke
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
-
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 const passphrase = "smoke-passphrase"
 
 // Run builds the app (or uses binary when provided), exercises its real terminal
-// setup/save/restart/unlock flow, and cleans up on success, failure, or cancellation.
-// root is the repository root. timeout bounds each UI transition, not the build.
+// setup/save/restart/unlock/cancel flow, and cleans up on success, failure, or
+// cancellation. root is the repository root. timeout bounds each UI transition,
+// not the build.
 func Run(ctx context.Context, root, binary string, timeout time.Duration, output io.Writer) (err error) {
 	if timeout <= 0 {
 		return errors.New("tui smoke: timeout must be positive")
@@ -73,7 +68,7 @@ func Run(ctx context.Context, root, binary string, timeout time.Duration, output
 	if err := h.walkthrough(ctx); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(output, "tui smoke: onboarding, in-TUI encrypted credential setup/unlock, resize, help, quit, and shutdown passed")
+	_, err = fmt.Fprintln(output, "tui smoke: onboarding, in-TUI encrypted credential setup/unlock, startup cancellation, resize, help, quit, and shutdown passed")
 	return err
 }
 
@@ -163,6 +158,10 @@ func (h *harness) quit(ctx context.Context) error {
 	if err := h.keys(ctx, "Enter"); err != nil {
 		return err
 	}
+	return h.waitForShutdown(ctx)
+}
+
+func (h *harness) waitForShutdown(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -197,26 +196,4 @@ func (h *harness) close(ctx context.Context) error {
 		err = nil // No server was started, or it exited with its last session.
 	}
 	return errors.Join(err, os.RemoveAll(h.dir))
-}
-
-// VerifyCredentialStorage checks current encrypted storage without creating or
-// migrating the database. It never includes credential bytes in diagnostics.
-func VerifyCredentialStorage(ctx context.Context, path string) error {
-	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
-	store, err := sql.Open("sqlite3", u.String())
-	if err != nil {
-		return fmt.Errorf("open smoke database: %w", err)
-	}
-	defer store.Close()
-	var ciphertext []byte
-	var storage string
-	var version int
-	err = store.QueryRowContext(ctx, "SELECT ciphertext, storage, key_version FROM api_keys WHERE workspace = '' AND provider = 'openai'").Scan(&ciphertext, &storage, &version)
-	if err != nil {
-		return fmt.Errorf("read saved credential: %w", err)
-	}
-	if storage != "vault" || version != 2 || len(ciphertext) == 0 || bytes.Equal(ciphertext, []byte("smoke-secret")) {
-		return errors.New("credential was not saved with the current encrypted format")
-	}
-	return nil
 }

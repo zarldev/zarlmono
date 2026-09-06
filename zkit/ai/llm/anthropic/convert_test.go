@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -67,6 +68,30 @@ func TestProviderCoalescesToolResultsAndDefaultsEmptyArguments(t *testing.T) {
 	results := messageContent(t, messages[1])
 	if len(results) != 2 || results[0]["type"] != "tool_result" || results[1]["type"] != "tool_result" {
 		t.Errorf("coalesced results = %#v", results)
+	}
+}
+
+func TestProviderSerializesToolResultAttachments(t *testing.T) {
+	t.Parallel()
+	body := anthropicRequestBody(t, llm.CompletionRequest{Messages: []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "screen-1", Function: llm.ToolCallFunction{Name: "computer_observe", Arguments: `{}`}}}},
+		{Role: llm.RoleTool, ToolCallID: "screen-1", Content: `{"surface":{"kind":"browser"}}`, Parts: []llm.ContentPart{llm.ImagePartFromDataURI("data:image/png;base64,cG5n", "image/png")}},
+	}})
+
+	messages := body["messages"].([]any)
+	if len(messages) != 2 {
+		t.Fatalf("messages = %d, want assistant plus user", len(messages))
+	}
+	content := messageContent(t, messages[1])
+	if len(content) != 3 || content[0]["type"] != "tool_result" || content[1]["type"] != "text" || content[2]["type"] != "image" {
+		t.Fatalf("tool result attachment content = %#v", content)
+	}
+	if !strings.Contains(content[1]["text"].(string), "screen-1") {
+		t.Fatalf("attachment attribution = %#v", content[1])
+	}
+	source := content[2]["source"].(map[string]any)
+	if source["type"] != "base64" || source["media_type"] != "image/png" || source["data"] != "cG5n" {
+		t.Fatalf("image source = %#v", source)
 	}
 }
 

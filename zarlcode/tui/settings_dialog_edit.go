@@ -47,7 +47,8 @@ func (d *settingsDialog) handleEdit(msg tea.KeyPressMsg) action {
 			d.editing = false
 			return d.commitCred(d.curRow().cred, val)
 		}
-		if row := d.curRow(); row.numeric && val != "" {
+		row := d.curRow()
+		if row.numeric && val != "" {
 			n, err := strconv.Atoi(val)
 			switch {
 			case err != nil || n < 0:
@@ -58,8 +59,12 @@ func (d *settingsDialog) handleEdit(msg tea.KeyPressMsg) action {
 				return actionNone{}
 			}
 		}
-		d.commit(d.curRow().key, val)
 		d.editing = false
+		if row.key == prefs.KeyModel {
+			selection := prefs.ModelSelection{Provider: d.currentProvider(), Model: val}
+			return actionSwitchTarget{selection: selection, done: d.targetDone(selection)}
+		}
+		d.commit(row.key, val)
 	case "backspace":
 		d.editor.backspace()
 	case "left":
@@ -154,16 +159,29 @@ func (d *settingsDialog) commitCred(provider, val string) action {
 	}}
 }
 
-func (d *settingsDialog) commitModelSelection(selection prefs.ModelSelection) {
-	if d.s == nil || d.s.Svc == nil {
-		return
+func (d *settingsDialog) stageTarget(selection prefs.ModelSelection) {
+	d.pendingTarget = &selection
+	d.setStatus("switching to " + providerModelLabel(selection.Provider, selection.Model) + "…")
+}
+
+func (d *settingsDialog) targetDone(selection prefs.ModelSelection) func(error) {
+	return func(err error) {
+		if err != nil {
+			d.setStatus("provider switch: " + err.Error())
+			return
+		}
+		d.setStatus(providerModelLabel(selection.Provider, selection.Model) + " active (workspace)")
+		d.refresh(d.ctx)
 	}
-	if err := d.s.Svc.SetModelSelection(d.ctx, prefs.ScopeWorkspace, selection); err != nil {
-		d.setStatus("error: " + err.Error())
-		return
+}
+
+func (d *settingsDialog) takePendingTarget() (prefs.ModelSelection, func(error), bool) {
+	if d.pendingTarget == nil {
+		return prefs.ModelSelection{}, nil, false
 	}
-	d.setStatus(prefs.KeyProvider + " → " + selection.Provider + " (workspace)")
-	d.refresh(d.ctx)
+	selection := *d.pendingTarget
+	d.pendingTarget = nil
+	return selection, d.targetDone(selection), true
 }
 
 func (d *settingsDialog) promote() {

@@ -43,7 +43,8 @@ type settingsDialog struct {
 	// pendingFetch is a provider whose model list to fetch once a nested
 	// picker closes — set when the compaction provider changes (a picker
 	// closure can't return a fetch intent itself). Drained in handleAction.
-	pendingFetch string
+	pendingFetch  string
+	pendingTarget *prefs.ModelSelection
 
 	// providers is the inline panel rendered as the detail of the
 	// Providers category.
@@ -365,8 +366,8 @@ func (d *settingsDialog) refresh(ctx context.Context) {
 }
 
 // handleProviders routes keys to the inline providers panel; esc/left/tab
-// return focus to the category nav unless the panel is mid-edit (where they
-// cancel its sub-mode).
+// return focus to the category nav unless the panel owns a sub-mode such as
+// editing, adding a provider, or waiting on a cancellable OAuth callback.
 func (d *settingsDialog) handleProviders(msg tea.KeyPressMsg) action {
 	if !d.providers.inSubMode() {
 		switch msg.String() {

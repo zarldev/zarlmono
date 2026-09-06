@@ -50,6 +50,7 @@ zarlcode                               # interactive TUI
 zarlcode -continue                     # resume the last session
 zarlcode --headless --prompt-file t.md # one-shot for scripts/CI
 zarlcode keys list                     # show provider keys (masked)
+zarlcode doctor                        # check local readiness without changing state
 zarlcode upgrade                       # self-update from GitHub Releases
 ```
 

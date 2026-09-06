@@ -18,6 +18,7 @@ func TestRunAcceptsExternalTestsAndTreeExceptions(t *testing.T) {
 	writeFile(t, root, "zarlcode/docs/images/workflow-demo-fixture/demo_test.go", "package demo\n")
 	writeFile(t, root, "zarlcode/tui/behavior_surface_export_test.go", "package tui\n")
 	commitAll(t, root)
+	writeFile(t, root, "zarlcode/tui/oauth_export_test.go", "package tui\n\nfunc ExportForTest() {}\n")
 	var stderr bytes.Buffer
 
 	err := testpolicy.Run(t.Context(), root, "HEAD", &stderr)
@@ -76,6 +77,7 @@ func TestRunIncludesUntrackedTestsAndFullTreePolicy(t *testing.T) {
 	commitAll(t, root)
 	writeFile(t, root, "tools/sample/new_test.go", "package sample\n\nfunc TestNew() {}\n")
 	writeFile(t, root, "examples/sample/bad_internal_test.go", "package sample_test\n")
+	writeFile(t, root, "zarlcode/tui/bad_export_test.go", "package tui\n\nfunc TestBad() {}\n")
 	var stderr bytes.Buffer
 
 	err := testpolicy.Run(t.Context(), root, "HEAD", &stderr)
@@ -87,6 +89,8 @@ func TestRunIncludesUntrackedTestsAndFullTreePolicy(t *testing.T) {
 		"tools/sample/new_test.go: new tests must use an external *_test package",
 		"tools/sample/new_test.go: owned tests must use an external *_test package",
 		"examples/sample/bad_internal_test.go: owned *_internal_test.go files are forbidden",
+		"zarlcode/tui/bad_export_test.go: new tests must use an external *_test package",
+		"zarlcode/tui/bad_export_test.go: owned tests must use an external *_test package",
 	} {
 		if !strings.Contains(stderr.String(), diagnostic) {
 			t.Errorf("stderr %q does not contain %q", stderr.String(), diagnostic)

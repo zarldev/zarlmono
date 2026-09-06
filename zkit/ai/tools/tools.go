@@ -392,7 +392,11 @@ type ToolResult struct {
 	ToolCallID ToolCallID `json:"tool_call_id,omitempty"`
 	Success    bool       `json:"success"`
 	Data       any        `json:"data,omitempty"`
-	Error      string     `json:"error,omitempty"`
+	// Parts supplements Data with model-visible multimodal attachments. Producers
+	// must bound attachment sizes and omit their bytes from Data's text projection.
+	// Consumers retaining Parts must clone its reference-backed payloads.
+	Parts []llm.ContentPart `json:"parts,omitempty"`
+	Error string            `json:"error,omitempty"`
 	// Err is the typed failure carrying Op / Reason / Wrapped, populated
 	// by the failure helpers (failure in zkit/ai/tools/code,
 	// failedFromError in zkit/agent/runner). Guardrails should switch on

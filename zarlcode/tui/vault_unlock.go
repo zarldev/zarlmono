@@ -32,8 +32,9 @@ type vaultUnlockModel struct {
 	confirm []rune
 	err     string
 
-	done bool
-	out  string
+	done         bool
+	out          string
+	exitOnCancel bool
 }
 
 func newVaultUnlockModel(setup, retry bool) *vaultUnlockModel {
@@ -211,7 +212,11 @@ func (m *vaultUnlockModel) footer() string {
 	if m.setup {
 		parts = append(parts, key("tab")+mut(" switch field"))
 	}
-	parts = append(parts, key("esc")+mut(" skip vault"), key("ctrl+c")+mut(" skip vault"))
+	cancelLabel := " cancel"
+	if m.exitOnCancel {
+		cancelLabel = " exit"
+	}
+	parts = append(parts, key("esc")+mut(cancelLabel), key("ctrl+c")+mut(cancelLabel))
 	return strings.Join(parts, mut("    "))
 }
 
@@ -263,6 +268,7 @@ func runVaultUnlockSplash(ctx context.Context, setup, retry bool) (string, error
 
 func runVaultUnlockSplashWithProgram(ctx context.Context, setup, retry bool, opts []tea.ProgramOption) (string, error) {
 	model := newVaultUnlockModel(setup, retry)
+	model.exitOnCancel = true
 	programOpts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler()}
 	programOpts = append(programOpts, opts...)
 	final, err := tea.NewProgram(model, programOpts...).Run()
@@ -271,7 +277,7 @@ func runVaultUnlockSplashWithProgram(ctx context.Context, setup, retry bool, opt
 	}
 	m, ok := final.(*vaultUnlockModel)
 	if !ok || !m.done {
-		return "", errVaultUnlockCancelled
+		return "", context.Canceled
 	}
 	return m.out, nil
 }

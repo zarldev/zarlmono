@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -71,6 +72,41 @@ func TestMemoSource_CachesPureToolWithinTask(t *testing.T) {
 	}
 	if r2.ToolCallID != "2" {
 		t.Errorf("cached result kept old call ID %q; want %q (clone should re-stamp)", r2.ToolCallID, "2")
+	}
+}
+
+func TestMemoSource_OwnsCachedToolAttachments(t *testing.T) {
+	t.Parallel()
+	const originalDataURI = "data:image/png;base64,b3JpZ2luYWw="
+	producer := &tools.ToolResult{
+		Success: true,
+		Parts:   []llm.ContentPart{llm.ImagePartFromDataURI(originalDataURI, "image/png")},
+	}
+	inner := &countingSource{result: producer}
+	memo := runner.NewMemoSource(inner, runner.PureTools("observe"))
+	call := tools.ToolCall{ID: "1", ToolName: "observe"}
+
+	first, err := memo.Execute(t.Context(), call)
+	if err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	producer.Parts[0].Image.DataURI = "producer-mutated"
+	first.Parts[0].Image.DataURI = "first-result-mutated"
+
+	call.ID = "2"
+	hit, err := memo.Execute(t.Context(), call)
+	if err != nil {
+		t.Fatalf("cached Execute: %v", err)
+	}
+	if got := hit.Parts[0].Image.DataURI; got != originalDataURI {
+		t.Fatalf("cached image = %q, want %q", got, originalDataURI)
+	}
+	if hit.Parts[0].Image == producer.Parts[0].Image {
+		t.Fatal("cache hit retained producer image pointer")
+	}
+	hit.Parts[0].Image.DataURI = "hit-mutated"
+	if got := producer.Parts[0].Image.DataURI; got != "first-result-mutated" {
+		t.Fatalf("mutating cache hit changed producer result to %q", got)
 	}
 }
 
