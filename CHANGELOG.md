@@ -22,6 +22,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Prevented no-op publish runs, duplicate or ambiguous publisher dispatches, workspace-contaminated release binaries, and archives with an invalid `dist/zarlcode` layout.
 
+## [zkit/v0.19.0] — 2026-09-06
+
+### Added
+
+- Added passphrase-derived credential protection with database-wide policy controls, transactional migration of stored provider and MCP credentials, and fail-closed handling for locked or unsupported credential formats.
+- Added provider-native continuation and reasoning state across runner and compaction boundaries, plus the OpenAI Codex `gpt-6-astra` preset with its 1,050,000-token context window and reasoning-effort variants.
+- Added durable transcript format and workspace ownership metadata, explicit MCP authentication intent, bounded dynamic MCP connections, and embedded compaction, handover, and delegation prompt contracts.
+
+### Changed
+
+- Provider construction now resolves credentials only from explicit `BuildConfig` values or a caller-supplied settings service; environment-variable credential fallback is no longer available.
+- Runner event delivery now preserves exact model, tool-execution, task, and session identity while enforcing cancellation-aware shutdown and session boundaries.
+- Require Go 1.27.0.
+
+### Fixed
+
+- Allowed `agent_await` without `task_id` to return the sole unread terminal sub-agent result while retaining explicit selection when tasks are ambiguous.
+- Hardened atomic filesystem and cache writes, HTTP retries and protocol limits, in-memory message delivery, MCP shutdown, and transcript conflict recovery.
+
+### Migration notes
+
+- Consumers must supply provider credentials through `BuildConfig.APIKey` or a settings service. Back up application state before applying schema migrations `00027` and `00028`; legacy `master.key` vaults and version-1 encrypted credential rows require explicit credential re-entry.
+
 ## [zkit/v0.18.0] — 2026-09-02
 
 ### Added
