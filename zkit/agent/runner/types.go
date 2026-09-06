@@ -63,6 +63,10 @@ type TaskSpec struct {
 	// because both children publish their ConversationStarted in
 	// arbitrary order; this field gives the binding directly.
 	ParentToolCallID string
+	// ParentExecutionID is the runner-internal identity of the exact tool
+	// invocation that launched this task. It remains separate from the provider
+	// ToolCallID, which may be reused.
+	ParentExecutionID string
 
 	// AgentName is set by agent_spawn when a named sub-agent profile was
 	// resolved for this task. Empty means the default/parent runner.

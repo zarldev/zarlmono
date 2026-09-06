@@ -95,16 +95,17 @@ type LlmProvider struct {
 }
 
 type McpServer struct {
-	Name      string
-	Transport string
-	Command   string
-	Args      string
-	Env       string
-	BaseUrl   string
-	AuthToken string
-	Enabled   int64
-	CreatedAt int64
-	UpdatedAt int64
+	Name         string
+	Transport    string
+	Command      string
+	Args         string
+	Env          string
+	BaseUrl      string
+	AuthToken    string
+	Enabled      int64
+	CreatedAt    int64
+	UpdatedAt    int64
+	AuthRequired int64
 }
 
 type Session struct {

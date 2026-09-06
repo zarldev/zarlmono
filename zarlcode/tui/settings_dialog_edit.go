@@ -43,9 +43,9 @@ func (d *settingsDialog) handleEdit(msg tea.KeyPressMsg) action {
 	case "enter":
 		val := d.editor.submit()
 		if d.curRow().kind == rowKey {
-			d.commitCred(d.curRow().cred, strings.TrimSpace(val))
+			val = strings.TrimSpace(val)
 			d.editing = false
-			return actionNone{}
+			return d.commitCred(d.curRow().cred, val)
 		}
 		if row := d.curRow(); row.numeric && val != "" {
 			n, err := strconv.Atoi(val)
@@ -126,26 +126,32 @@ func (d *settingsDialog) commit(key, val string) {
 // when empty), records a status badge, and refreshes the view. Credentials are
 // account-level, so — like the providers panel and `zarlcode keys set` — they
 // never pin to a single workspace. It's the rowKey counterpart to commit.
-func (d *settingsDialog) commitCred(provider, val string) {
+func (d *settingsDialog) commitCred(provider, val string) action {
 	if d.s == nil || d.s.Svc == nil {
-		return
+		return actionNone{}
 	}
 	ctx := d.ctx
-	switch val {
-	case "":
+	if val == "" {
 		if err := d.s.Svc.DeleteKey(ctx, prefs.ScopeGlobal, provider); err != nil {
 			d.setStatus("clear key: " + err.Error())
 		} else {
 			d.setStatus(provider + " key cleared")
 		}
-	default:
-		if err := d.s.Svc.SetKey(ctx, prefs.ScopeGlobal, provider, val); err != nil {
-			d.setStatus("save key: " + err.Error())
-		} else {
-			d.setStatus(provider + " key saved (global)")
-		}
+		d.refresh(ctx)
+		return actionNone{}
 	}
-	d.refresh(ctx)
+	return actionSaveCredential{request: credentialSaveRequest{
+		provider: provider,
+		value:    val,
+		done: func(err error) {
+			if err != nil {
+				d.setStatus("save key: " + err.Error())
+			} else {
+				d.setStatus(provider + " key saved (global)")
+			}
+			d.refresh(ctx)
+		},
+	}}
 }
 
 func (d *settingsDialog) commitModelSelection(selection prefs.ModelSelection) {

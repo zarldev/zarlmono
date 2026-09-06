@@ -11,6 +11,7 @@ API key.
 
 | Example | What it demonstrates |
 |---|---|
+| [`quickstart`](https://github.com/zarldev/zarlmono/tree/main/examples/quickstart) | Canonical compiled source for the minimal Anthropic runner and typed weather tool used in the root README and getting-started guide. It needs a key and network only when run. |
 | [`healthcheck`](https://github.com/zarldev/zarlmono/tree/main/examples/healthcheck) | A world-verifying goal: the agent probes a fake server farm until every endpoint reports healthy. Schema + fan-out guardrails police the calls. |
 | [`releasegate`](https://github.com/zarldev/zarlmono/tree/main/examples/releasegate) | Pre/post guardrails around a release process: the agent may only publish after every required check is green, and the goal confirms the publish actually happened. |
 | [`hnupvote`](https://github.com/zarldev/zarlmono/tree/main/examples/hnupvote) | Live browser automation under pursue: a real Chrome session where the oracle is verified world state and a login wall forces the re-drive path. |
@@ -49,8 +50,9 @@ overrides endpoints.
 
 ## Reading order
 
-Start with `shared_infra` for the non-LLM infrastructure pieces, then `healthcheck` — it's the smallest complete loop with a
-real goal. Then `releasegate` for guardrails as policy, and
+Start with `quickstart` for the smallest compiled composition or `shared_infra` for
+the non-LLM infrastructure pieces, then `healthcheck` — it's the smallest complete
+loop with a real goal. Then `releasegate` for guardrails as policy, and
 `stuck_recovery` for what graduated advisories look like in
 practice. `hnupvote` is the one to read when you want to see pursue
 driving something genuinely flaky (a browser) to a verified outcome.

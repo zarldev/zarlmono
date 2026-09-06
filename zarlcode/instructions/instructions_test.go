@@ -46,6 +46,7 @@ func TestDiscoverIgnoresNoisyDirectories(t *testing.T) {
 	ignored := []string{
 		".git",
 		filepath.Join(".zarlcode", "sessions"),
+		filepath.Join(".zarlcode", "pr-worktrees"),
 		"node_modules",
 		"vendor",
 		"dist",
@@ -68,6 +69,14 @@ func TestDiscoverIgnoresNoisyDirectories(t *testing.T) {
 	want := []string{"AGENTS.md"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("ignored directory mismatch (-want +got):\n%s", diff)
+	}
+
+	nested, nestedErrs := instructions.ListNested(root)
+	if len(nestedErrs) > 0 {
+		t.Fatalf("list nested errors: %v", nestedErrs)
+	}
+	if len(nested) != 0 {
+		t.Fatalf("ListNested returned ignored instructions: %#v", nested)
 	}
 }
 

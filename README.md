@@ -55,20 +55,33 @@ zarlcode upgrade                       # self-update from GitHub Releases
 
 ### Credential storage
 
-Provider keys are stored in `~/.zarlcode/state.db`. Fresh installations default
-to plaintext credential rows so non-interactive use does not depend on a prompt.
-Use `zarlcode keys protect on` to set a passphrase and atomically encrypt existing
-and future credentials at rest; `zarlcode keys protect status` shows the current
-database-wide mode. The passphrase is entered explicitly and has no environment-
-variable fallback, so keep it in your password manager—there is no recovery path.
+Provider keys are stored in `~/.zarlcode/state.db` and encrypted with a
+passphrase by default. A fresh local-only startup does not create an unused vault;
+the first credential-writing command creates it. Later interactive startup prompts
+to unlock when stored credential rows exist; there is no environment-variable passphrase
+fallback. Keep the passphrase in your password manager—there is no recovery path.
+`zarlcode keys protect status` shows the database-wide mode.
 
-`zarlcode keys protect off` requires the current passphrase when encrypted rows
-exist and atomically writes those credentials back as plaintext. Existing legacy
-`master.key` installations migrate after an interactive unlock; headless startup
-leaves them locked and defers migration rather than blocking ordinary settings.
-Back up `state.db` together with `master.kdf` while protection is enabled. Rolling
-back to a version that does not understand the current storage metadata is not
-supported.
+Vault initialization is durable: if a subsequent credential/database save fails,
+`master.kdf` remains and the next save asks to unlock it with the same passphrase.
+The failed save does not commit the credential or silently fall back to plaintext.
+MCP endpoint and token changes are saved together; cancelling an authenticated setup
+requires token re-entry rather than silently changing it to an unauthenticated server.
+
+Headless and other non-interactive startup never prompt. Ordinary settings and local
+providers remain usable, while operations requiring locked stored credentials fail
+closed. Existing unmarked plaintext credentials are unavailable until an interactive
+unlock migrates them atomically. `zarlcode keys protect off` is an explicit opt-out:
+it requires the current passphrase when encrypted rows exist and writes those
+credentials back as plaintext.
+
+Random-key `master.key` credentials are no longer supported or automatically
+converted. Re-enter those credentials to store them with passphrase encryption;
+existing rows and key files are not deleted automatically. Back up `state.db` together
+with `master.kdf` while protection is enabled. SQLite WAL/free pages and backups may
+retain historical plaintext from older installations, so migration is not forensic
+erasure. Rolling back to a version that does not understand the current storage
+metadata is not supported.
 
 Supported providers: **Anthropic**, **OpenAI**, **DeepSeek**, **Gemini**, **Vertex AI**, **llama.cpp**, **Ollama**, plus OAuth-backed **Claude Code** and **OpenAI Codex** surfaces.
 
@@ -98,6 +111,7 @@ go get github.com/zarldev/zarlmono/zkit@latest
 
 A minimal agent is just a provider, a tool registry, and the runner:
 
+<!-- quickstart:begin -->
 ```go
 package main
 
@@ -145,13 +159,17 @@ func main() {
 		runner.WithMaxIterations(8),
 	)
 
-	res, err := r.Run(context.Background(), runner.TaskSpec{Prompt: "What is the weather in Oslo?"})
-	if err != nil {
-		log.Fatal(err)
+	res := r.Run(context.Background(), runner.TaskSpec{Prompt: "What is the weather in Oslo?"})
+	if res.Err != nil {
+		log.Fatal(res.Err)
+	}
+	if res.Reason != runner.TerminalCompleted {
+		log.Fatalf("agent stopped: %s", res.Reason)
 	}
 	fmt.Println(res.FinalContent)
 }
 ```
+<!-- quickstart:end -->
 
 Swap `anthropic` for `openai`, `gemini`, `deepseek`, `ollama`, or `llamacpp` — the runner stays the same. To run without a key or network:
 

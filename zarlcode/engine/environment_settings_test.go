@@ -13,42 +13,54 @@ import (
 func TestOpenSettingsIgnoresCredentialEnvironment(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("ZARLCODE_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("ZARLCODE_PASSPHRASE", "explicit-passphrase")
+	t.Setenv("ZARLCODE_PASSPHRASE", "ambient-passphrase")
 	root := t.TempDir()
 	ctx := t.Context()
-	settings, err := engine.OpenSettings(ctx, root, func(bool, bool) (string, error) {
-		t.Error("ambient credentials caused a fresh installation to prompt")
-		return "unexpected", nil
+	prompted := 0
+	settings, err := engine.OpenSettings(ctx, root, func(setup, retry bool) (string, error) {
+		prompted++
+		if !setup || retry {
+			t.Fatalf("fresh prompt flags = setup:%v retry:%v", setup, retry)
+		}
+		return "explicit-passphrase", nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = settings.Close() })
+	if prompted != 0 {
+		t.Fatalf("fresh local-only startup prompted %d time(s)", prompted)
+	}
 	mode, err := settings.Svc.CredentialProtection(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.Svc.HasVault() || mode != prefs.CredentialProtectionOff {
-		t.Fatal("environment enabled credential protection")
+	if settings.Svc.HasVault() || mode != prefs.CredentialProtectionPassphrase {
+		t.Fatal("fresh installation should default to protected storage without opening a vault")
 	}
-	if err := settings.Svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "stored-secret"); err != nil {
-		t.Fatal(err)
-	}
-	stored, err := settings.Store.GetAPIKey(ctx, "", "openai")
-	if err != nil || stored.Storage != db.APIKeyStoragePlaintext {
-		t.Fatalf("fresh credential storage = %v, %v", stored.Storage, err)
+	if err := settings.Svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "stored-secret"); !errors.Is(err, prefs.ErrCredentialsLocked) {
+		t.Fatalf("SetKey without first-secret setup = %v; want locked", err)
 	}
 	dir, err := db.DefaultDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := vault.Open(dir, func(bool, bool) (string, error) { return "explicit-passphrase", nil })
+	v, err := vault.Open(dir, func(setup, retry bool) (string, error) {
+		if !setup || retry {
+			t.Fatalf("first-secret prompt flags = setup:%v retry:%v", setup, retry)
+		}
+		return "explicit-passphrase", nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	settings.Svc.SetVault(v)
-	if _, err := settings.Svc.EnableCredentialProtection(ctx); err != nil {
+	if err := settings.Svc.SetKey(ctx, prefs.ScopeGlobal, "openai", "stored-secret"); err != nil {
 		t.Fatal(err)
+	}
+	stored, err := settings.Store.GetAPIKey(ctx, "", "openai")
+	if err != nil || stored.Storage != db.APIKeyStorageVault || string(stored.Ciphertext) == "stored-secret" {
+		t.Fatalf("first credential storage = %#v, %v", stored, err)
 	}
 	if err := settings.Close(); err != nil {
 		t.Fatal(err)

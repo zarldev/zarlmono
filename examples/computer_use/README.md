@@ -30,26 +30,6 @@ Do not commit API keys. If a key is pasted into a terminal transcript or chat, r
 From the repository root:
 
 ```sh
-./examples/computer_use/run.sh
-```
-
-The helper script defaults to:
-
-- `CHROME_BIN=/usr/bin/chromium-browser`
-- `LLM_PROVIDER=openai`
-- `LLM_MODEL=gpt-4o-mini`
-- visible browser mode (`-headless=false`)
-- `PAUSE=30s` so the browser remains visible after completion
-
-Override values as needed:
-
-```sh
-CHROME_BIN=/snap/bin/chromium PAUSE=2m ./examples/computer_use/run.sh
-```
-
-Or run the Go program directly:
-
-```sh
 go run -C examples ./computer_use \
   -chrome /usr/bin/chromium-browser \
   -provider openai \
@@ -57,6 +37,9 @@ go run -C examples ./computer_use \
   -headless=false \
   -pause 30s
 ```
+
+Override `-chrome` or `-pause` as needed. `CHROME_BIN`, `LLM_PROVIDER`, and
+`LLM_MODEL` provide defaults when their corresponding flags are omitted.
 
 ## Logging
 

@@ -100,8 +100,8 @@ func WithAwaitMaxTimeout(timeout time.Duration) options.Option[AwaitTool] {
 
 // Definition advertises agent_await.
 func (*AwaitTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: ToolNameAgentAwait, Description: "Wait for an asynchronous sub-agent task and return its final summary. Omit task_id only when exactly one task is currently running; otherwise use list_agent_tasks to recover it.", Parameters: tools.SchemaFor[struct {
-		TaskID         string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted only when exactly one task is running."`
+	return tools.ToolSpec{Name: ToolNameAgentAwait, Description: "Wait for an asynchronous sub-agent task and return its final summary. Omit task_id when exactly one task is running, or when no task is running and exactly one terminal result is unread; otherwise use list_agent_tasks to recover it.", Parameters: tools.SchemaFor[struct {
+		TaskID         string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted when exactly one task is running, or when no task is running and exactly one terminal result is unread."`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty" doc:"Maximum seconds to wait before returning the latest RUNNING status. Must be non-negative. Zero uses the host-configured default; the host may enforce an upper bound."`
 	}]()}
 }

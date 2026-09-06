@@ -298,7 +298,12 @@ func shouldSkipDir(root, path, name string) bool {
 		return false
 	}
 	rel = filepath.ToSlash(rel)
-	return rel == ".zarlcode/sessions" || strings.Contains(rel, "/.zarlcode/sessions/")
+	for _, subtree := range []string{".zarlcode/sessions", ".zarlcode/pr-worktrees"} {
+		if rel == subtree || strings.Contains(rel, "/"+subtree+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func sortInstructionPaths(root string, paths []string) {

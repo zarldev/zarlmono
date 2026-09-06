@@ -312,6 +312,72 @@ func (l *LiveRunner) buildHeadlessTurn(ctx context.Context, extraOpts ...options
 	return r, resources, err
 }
 
+type turnPolicy struct {
+	target          RunTarget
+	settings        *Settings
+	thinking        bool
+	compactEngine   string
+	compactProvider llm.Provider
+	compactModel    string
+	maxIterations   int
+	reserve         int
+	temperature     float32
+	streamIdle      time.Duration
+	modelOptions    llm.ModelOptions
+	autoCompact     bool
+	spawnConcurrent int
+	spawnRuntime    time.Duration
+}
+
+func (l *LiveRunner) resolveTurnPolicy(ctx context.Context) turnPolicy {
+	// Snapshot every re-pointable target field atomically. PLAN deliberately stays
+	// live through l.isPlan so a mode change gates the next dispatch in this turn.
+	l.mu.Lock()
+	target := l.target
+	settings := l.settings
+	thinking := l.thinkingEnabledForLocked(target)
+	l.mu.Unlock()
+
+	policy := turnPolicy{
+		target:          target,
+		settings:        settings,
+		thinking:        thinking,
+		compactEngine:   agentcompact.EngineTiered,
+		compactProvider: target.Provider,
+		compactModel:    target.Model,
+		maxIterations:   target.MaxIter,
+		reserve:         target.Reserve,
+		autoCompact:     true,
+	}
+	if policy.maxIterations <= 0 {
+		policy.maxIterations = 20
+	}
+	if policy.reserve <= 0 {
+		policy.reserve = liveReserveTokens
+	}
+	if settings == nil {
+		return policy
+	}
+
+	policy.compactEngine = settings.CompactEngine(ctx)
+	policy.compactProvider, policy.compactModel = settings.CompactorProvider(ctx, target.Provider, target.Model)
+	policy.temperature = settings.Temperature(ctx)
+	policy.streamIdle = settings.ResponseTimeout(ctx)
+	policy.autoCompact = settings.AutoCompact(ctx)
+	policy.spawnConcurrent = settings.SpawnMaxConcurrent(ctx)
+	policy.spawnRuntime = settings.SpawnMaxRuntime(ctx)
+	if value := settings.TextVerbosity(ctx, target.Spec); value != "" {
+		policy.modelOptions = llm.ModelOptions{"text_verbosity": value}
+	}
+	if value := settings.CodexEffort(ctx, target.Spec); value != "" {
+		if policy.modelOptions == nil {
+			policy.modelOptions = llm.ModelOptions{}
+		}
+		policy.modelOptions["reasoning_effort"] = value
+	}
+	return policy
+}
+
 type turnResources struct {
 	group       *spawn.Group
 	coordinator *tools.WorkspaceCoordinator
@@ -323,83 +389,36 @@ func (r *turnResources) Close(ctx context.Context) error {
 }
 
 func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, *turnResources, error) {
-	// Snapshot the (re-pointable) run target for this turn. The PLAN flag
-	// is still read live by prompt/source closures so a mid-turn toggle
-	// gates the next dispatch.
-	l.mu.Lock()
-	tgt := l.target
-	settings := l.settings
-	thinking := l.thinkingEnabledForLocked(tgt)
-	l.mu.Unlock()
-	prov, model, window, webSearch := tgt.Provider, tgt.Model, tgt.Window, tgt.WebSearch
-	reserve, maxIter, spawnMaxIter, spawnDepth := tgt.Reserve, tgt.MaxIter, tgt.SpawnMaxIter, tgt.SpawnDepth
+	policy := l.resolveTurnPolicy(ctx)
 	if l.catalog != nil {
 		l.catalog.Reload(l.ws.Root())
 	}
 	l.reloadInstructions()
 
-	// Resolve the compaction engine (and its optional LLM target) live, so
-	// a settings change takes effect on the next turn without a restart.
-	engine, compactProv, compactModel := agentcompact.EngineTiered, prov, model
-	if settings != nil {
-		ctx := ctx
-		engine = settings.CompactEngine(ctx)
-		compactProv, compactModel = settings.CompactorProvider(ctx, prov, model)
-	}
-
-	// Settings overrides, else the compiled-in defaults.
-	if maxIter <= 0 {
-		maxIter = 20
-	}
-	if reserve <= 0 {
-		reserve = liveReserveTokens
-	}
-
-	// Per-turn settings tuning: tool-result truncation caps (mutate the shared
-	// truncator — turns are serialized) and sampling temperature. Read live so a
-	// settings change applies next turn without a restart.
-	var temperature float32
-	var streamIdle time.Duration
-	var modelOptions llm.ModelOptions
-	autoCompact := true
-	if settings != nil {
-		sctx := ctx
-		l.truncator.MaxBytes = settings.ToolResultMaxBytes(sctx)
-		l.truncator.MaxLines = settings.ToolResultMaxLines(sctx)
-		temperature = settings.Temperature(sctx)
-		streamIdle = settings.ResponseTimeout(sctx)
-		autoCompact = settings.AutoCompact(sctx)
-		if v := settings.TextVerbosity(sctx, tgt.Spec); v != "" {
-			modelOptions = llm.ModelOptions{"text_verbosity": v}
-		}
-		if v := settings.CodexEffort(sctx, tgt.Spec); v != "" {
-			if modelOptions == nil {
-				modelOptions = llm.ModelOptions{}
-			}
-			modelOptions["reasoning_effort"] = v
-		}
+	// Runner resource assembly starts after its per-turn policy is resolved.
+	// The shared truncator is concurrency-safe, and top-level turns are serialized.
+	if policy.settings != nil {
+		l.truncator.MaxBytes = policy.settings.ToolResultMaxBytes(ctx)
+		l.truncator.MaxLines = policy.settings.ToolResultMaxLines(ctx)
 	}
 
 	opts := coderunner.StandardOptions(coderunner.Tuning{
-		Model:         model,
-		MaxIterations: maxIter,
-		ContextWindow: window,
-		StreamIdle:    streamIdle,
+		Model:         policy.target.Model,
+		MaxIterations: policy.maxIterations,
+		ContextWindow: policy.target.Window,
+		StreamIdle:    policy.streamIdle,
 	})
 	var visible tools.Source
 	opts = append(opts,
 		runner.WithSteerer(l.queue),
 		runner.WithPrompt(l.promptFunc(func() tools.Source { return visible })),
 		runner.WithResultTruncator(l.truncator),
-		runner.WithTemperature(temperature),
-		runner.WithModelOptions(modelOptions),
+		runner.WithTemperature(policy.temperature),
+		runner.WithModelOptions(policy.modelOptions),
 	)
-	// Arm the auto-compactor only in auto mode. In manual mode the user
-	// compacts on demand (CompactNow builds its own compactor, so it still
-	// works) and the cockpit warns as pressure crosses the trigger.
-	if autoCompact {
+	if policy.autoCompact {
 		opts = append(opts, runner.WithCompactor(coderunner.StandardCompactor(
-			buildLiveCompactor(engine, window, compactProv, compactModel, l, l.ws.Root()), window, reserve)))
+			buildLiveCompactor(policy.compactEngine, policy.target.Window, policy.compactProvider, policy.compactModel, l, l.ws.Root()), policy.target.Window, policy.reserve)))
 	}
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
@@ -408,31 +427,22 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 		opts = append(opts, runner.WithToolOutputSink(l.toolOutputSink))
 	}
 
-	// Wrap the guarded source with the PLAN-mode filter, reading the flag
-	// live so toggling mid-run gates the next dispatch.
-	src, reg, err := sourceFn(ctx, webSearch)
+	src, reg, err := sourceFn(ctx, policy.target.WebSearch)
 	if err != nil {
 		return nil, false, nil, err
 	}
 	src = newOperationalSource(src, l.operational)
 	evidence := NewCompletionEvidence()
-	spawnConcurrent := 0
-	spawnRuntime := time.Duration(0)
-	if l.settings != nil {
-		spawnConcurrent = l.settings.SpawnMaxConcurrent(ctx)
-		spawnRuntime = l.settings.SpawnMaxRuntime(ctx)
-	}
-	group := spawn.NewGroup(spawn.WithMaxConcurrent(spawnConcurrent), spawn.WithMaxRuntime(spawnRuntime))
+	group := spawn.NewGroup(spawn.WithMaxConcurrent(policy.spawnConcurrent), spawn.WithMaxRuntime(policy.spawnRuntime))
 	coordinator := tools.NewWorkspaceCoordinator()
 	src = coderunner.CoordinateWorkspace(src, coordinator)
 	visible = NewModeFilteredSource(WithCompletionEvidence(src, evidence), l.isPlan)
 	opts = append(opts, extraOpts...)
 	opts = append(opts, runner.WithTurnQuality(NewAgentAwareTurnQuality(newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence), group)))
 	opts = append(opts, runner.WithTools(visible))
-	r := runner.New(runner.ClientFromProvider(prov), opts...)
-	// Late-register spawn onto the base registry now that the parent
-	// runner exists (the registry enumerates lazily, so it's visible to
-	// this turn). spawnDepth 0 leaves spawning disabled.
-	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth, spawnMaxIter)
-	return r, thinking, &turnResources{group: group, coordinator: coordinator}, nil
+	r := runner.New(runner.ClientFromProvider(policy.target.Provider), opts...)
+	// Late-register spawn onto the base registry now that the parent runner exists
+	// (the registry enumerates lazily, so it is visible to this turn's schema).
+	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter)
+	return r, policy.thinking, &turnResources{group: group, coordinator: coordinator}, nil
 }

@@ -75,4 +75,8 @@ var (
 	// per task to prevent looping on a model that can't produce
 	// valid JSON at all.
 	ErrUpstreamToolCallJSON = errors.New("runner: upstream rejected tool call args as malformed JSON")
+
+	// ErrAmbiguousToolCalls means one provider response reused a tool-call ID
+	// without distinct output positions, so exact invocations cannot be bound.
+	ErrAmbiguousToolCalls = errors.New("runner: ambiguous tool calls")
 )

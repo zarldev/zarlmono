@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Install zkit and run your first agent loop in about thirty lines of Go.
+description: Install zkit and run a compiled minimal agent loop.
 ---
 
 zkit is the reusable Go agent toolkit underneath zarlcode. It ships as
@@ -19,95 +19,85 @@ Go 1.27 or later. Everything below imports from `zkit/...`.
 
 ## A minimal agent
 
-One provider, one tool, one loop. This one points at a local
-[llama.cpp server](https://github.com/ggml-org/llama.cpp) because
-that's free; swap the provider for OpenAI/Anthropic/etc. and nothing
-else changes.
+One provider, one typed tool, one loop. This example is compiled from
+[`examples/quickstart`](https://github.com/zarldev/zarlmono/tree/main/examples/quickstart),
+and the docs check keeps this block byte-for-byte aligned with that source.
+It uses Anthropic, so running it requires `ANTHROPIC_API_KEY` and network access;
+compiling it does not.
 
+<!-- quickstart:begin -->
 ```go
 package main
 
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
-	"github.com/zarldev/zarlmono/zkit/ai/llm/llamacpp"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-func main() {
-	provider, err := llamacpp.NewProvider() // local llama-server by default
+type weatherArgs struct {
+	City string `json:"city" doc:"City to report the weather for"`
+}
+
+type weather struct{}
+
+func (weather) Definition() tools.ToolSpec {
+	return tools.ToolSpec{
+		Name:        "weather",
+		Description: "Report the weather for a city.",
+		Parameters:  tools.SchemaFor[weatherArgs](),
+	}
+}
+
+func (weather) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	args, err := tools.DecodeArgs[weatherArgs](call.Arguments)
 	if err != nil {
-		panic(err)
+		return tools.Failure(call.ID, err), nil
+	}
+	return tools.Success(call.ID, args.City+": sunny, 21C"), nil
+}
+
+func main() {
+	prov, err := anthropic.NewProvider(os.Getenv("ANTHROPIC_API_KEY"))
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	reg := tools.NewRegistry()
-	reg.Register(&clock{})
-
-	r := runner.New(runner.ClientFromProvider(provider),
-		runner.WithTools(reg),
-		runner.WithPromptText("You are a terse assistant. Use tools when they help."),
-		runner.WithMaxIterations(10),
+	r := runner.New(runner.ClientFromProvider(prov),
+		runner.WithTools(tools.NewRegistry(weather{})),
+		runner.WithMaxIterations(8),
 	)
 
-	res, err := r.Run(context.Background(), runner.TaskSpec{
-		Prompt: "What time is it right now?",
-	})
-	if err != nil {
-		panic(err)
+	res := r.Run(context.Background(), runner.TaskSpec{Prompt: "What is the weather in Oslo?"})
+	if res.Err != nil {
+		log.Fatal(res.Err)
+	}
+	if res.Reason != runner.TerminalCompleted {
+		log.Fatalf("agent stopped: %s", res.Reason)
 	}
 	fmt.Println(res.FinalContent)
 }
 ```
+<!-- quickstart:end -->
 
-And the tool — the `Tool` interface is two methods:
+The runner streams the model output, dispatches `weather` when the model calls
+it, appends the result to history, and loops until a terminal condition.
 
-```go
-import "time"
+Most examples also provide deterministic scripted modes, so you can exercise agent
+wiring without an API key, network, or flaky provider call:
 
-type clock struct{}
-
-func (c *clock) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
-		Name:        "current_time",
-		Description: "Returns the current local time.",
-	}
-}
-
-func (c *clock) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	return tools.Success(call.ID, time.Now().Format(time.RFC1123)), nil
-}
+```sh
+go run -C examples ./shared_infra
+go run -C examples ./releasegate -scripted
 ```
 
-That's the whole thing. The runner streams the model's output,
-dispatches `current_time` when the model calls it, appends the result
-to history, and loops until the model stops calling tools.
+See the [examples](/zarlmono/examples/) for each example's external dependencies.
 
-## Running without an LLM
-
-Every moving part accepts a fake. `runnertest.NewClient` replays a
-scripted sequence of turns, so you can test agent wiring
-deterministically — no API key, no network, no flakes:
-
-```go
-import (
-	"github.com/zarldev/zarlmono/zkit/agent/runner/runnertest"
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
-)
-
-client := runnertest.NewClient([][]llm.CompletionChunk{
-	// turn 1: the model calls the tool
-	{runnertest.ChunkToolCall("c1", "current_time", `{}`)},
-	// turn 2: the model answers; normal iterator return ends the turn
-	{runnertest.ChunkText("It is teatime.")},
-})
-
-r := runner.New(client, runner.WithTools(reg))
-```
-
-The [examples](/zarlmono/examples/) lean on this heavily — most of
-them run end-to-end with `-scripted` and no LLM at all.
 
 ## Where to next
 

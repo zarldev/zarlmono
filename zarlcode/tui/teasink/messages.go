@@ -36,67 +36,77 @@ type ThinkingMsg struct {
 
 // ToolStartedMsg fires when the runner dispatches a tool call.
 type ToolStartedMsg struct {
-	TaskID       string
-	Depth        int
-	ToolID       string
-	ToolName     string
-	Parameters   map[string]any
-	ParentToolID string
-	Sequence     int
+	TaskID            string
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Parameters        map[string]any
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // WorkspaceWaitStartedMsg fires when a tool call enters the workspace wait queue.
 type WorkspaceWaitStartedMsg struct {
-	TaskID       string
-	Depth        int
-	ToolID       string
-	ToolName     string
-	Access       tools.WorkspaceAccess
-	Paths        []string
-	BlockerCount int
-	ParentToolID string
-	Sequence     int
+	TaskID            string
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Access            tools.WorkspaceAccess
+	Paths             []string
+	BlockerCount      int
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // WorkspaceWaitEndedMsg fires when a queued tool call acquires access or is cancelled.
 type WorkspaceWaitEndedMsg struct {
-	TaskID       string
-	Depth        int
-	ToolID       string
-	ToolName     string
-	Outcome      tools.WorkspaceWaitOutcome
-	Duration     time.Duration
-	ParentToolID string
-	Sequence     int
+	TaskID            string
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Outcome           tools.WorkspaceWaitOutcome
+	Duration          time.Duration
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // ToolCompletedMsg fires when a tool call returns successfully.
 type ToolCompletedMsg struct {
-	TaskID          string
-	Depth           int
-	ToolID          string
-	ToolName        string
-	Result          any
-	FormattedResult string
-	Effects         []tools.Effect
-	Duration        time.Duration
-	ParentToolID    string
-	Sequence        int
+	TaskID            string
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Result            any
+	FormattedResult   string
+	Effects           []tools.Effect
+	Duration          time.Duration
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // ToolFailedMsg fires when a tool call errors or reports failure.
 type ToolFailedMsg struct {
-	TaskID       string
-	Depth        int
-	ToolID       string
-	ToolName     string
-	Error        string
-	Kind         tools.Kind // typed failure classification (validation / transient / …)
-	Abandoned    bool       // timed out with its goroutine possibly still in flight
-	Effects      []tools.Effect
-	Duration     time.Duration
-	ParentToolID string
-	Sequence     int
+	TaskID            string
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	Error             string
+	Kind              tools.Kind // typed failure classification (validation / transient / …)
+	Abandoned         bool       // timed out with its goroutine possibly still in flight
+	Effects           []tools.Effect
+	Duration          time.Duration
+	ParentToolID      string
+	ParentExecutionID string
+	Sequence          int
 }
 
 // ConversationStartedMsg marks the start of a Run. Prompt carries
@@ -110,13 +120,14 @@ type ToolFailedMsg struct {
 // in parallel and ToolID-based correlation is the only unambiguous
 // link from child events to a parent slot.
 type ConversationStartedMsg struct {
-	TaskID           string
-	Depth            int
-	Prompt           string
-	ParentToolCallID string
-	AgentName        string
-	Provider         string
-	Model            string
+	TaskID            string
+	Depth             int
+	Prompt            string
+	ParentToolCallID  string
+	ParentExecutionID string
+	AgentName         string
+	Provider          string
+	Model             string
 }
 
 // ConversationEndedMsg marks a Run reaching its single terminal state.
@@ -137,11 +148,12 @@ type ConversationEndedMsg struct {
 	// RateLimit carries structured rate-limit timing when the terminal
 	// error was a rate limit; nil otherwise. The consumer renders from
 	// these fields rather than re-parsing Error.
-	RateLimit        *llm.RateLimitError
-	Duration         time.Duration
-	Iterations       int
-	TotalUsage       *llm.Usage
-	ParentToolCallID string
+	RateLimit         *llm.RateLimitError
+	Duration          time.Duration
+	Iterations        int
+	TotalUsage        *llm.Usage
+	ParentToolCallID  string
+	ParentExecutionID string
 }
 
 // IterationCompletedMsg fires at the end of each iteration within a

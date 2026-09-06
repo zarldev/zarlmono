@@ -13,7 +13,7 @@ import (
 )
 
 func TestKeysCommandSetListDeleteUsesGlobalScopeAndRedactsSecrets(t *testing.T) {
-	svc := prefs.NewService(openTestStore(t), nil, t.TempDir())
+	svc := prefs.NewService(openTestStore(t), openTestVault(t), t.TempDir())
 	cmd := cli.KeysCommand{Service: svc}
 	secret := "sk-super-secret"
 
@@ -50,9 +50,33 @@ func TestKeysCommandProtectStatus(t *testing.T) {
 	cmd := cli.KeysCommand{Service: prefs.NewService(openTestStore(t), nil, "")}
 	for _, args := range [][]string{{"protect"}, {"protect", "status"}} {
 		code, stdout, stderr := executeKeys(t, cmd, args...)
-		if code != 0 || stdout != "credential protection: off\n" || stderr != "" {
+		if code != 0 || stdout != "credential protection: passphrase\n" || stderr != "" {
 			t.Fatalf("%v: exit=%d stdout=%q stderr=%q", args, code, stdout, stderr)
 		}
+	}
+}
+
+func TestKeysCommandProtectOnInitializesVault(t *testing.T) {
+	dir := t.TempDir()
+	svc := prefs.NewService(openTestStore(t), nil, "")
+	cmd := cli.KeysCommand{
+		Service:  svc,
+		VaultDir: dir,
+		Passphrase: func(bool, bool) (string, error) {
+			return "test-passphrase", nil
+		},
+	}
+
+	code, stdout, stderr := executeKeys(t, cmd, "protect", "on")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "credential protection enabled") {
+		t.Fatalf("protect on: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !svc.HasVault() {
+		t.Fatal("protect on did not install the initialized vault")
+	}
+	mode, err := svc.CredentialProtection(t.Context())
+	if err != nil || mode != prefs.CredentialProtectionPassphrase {
+		t.Fatalf("CredentialProtection = %q, %v; want passphrase, nil", mode, err)
 	}
 }
 

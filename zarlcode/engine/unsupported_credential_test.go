@@ -15,7 +15,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
-func TestOpenSettingsDefersLockedLegacyProtectionMigration(t *testing.T) {
+func TestOpenSettingsPreservesUnsupportedCredentials(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir, err := db.DefaultDir()
@@ -44,30 +44,29 @@ func TestOpenSettingsDefersLockedLegacyProtectionMigration(t *testing.T) {
 		t.Fatalf("non-interactive startup created KDF material: %v", err)
 	}
 
-	// A later interactive startup can establish a passphrase, decrypt with the
-	// legacy key, apply the requested plaintext mode, and retire master.key.
+	// Startup never decrypts or rewrites unsupported credential versions.
 	unlocked, err := engine.OpenSettings(t.Context(), t.TempDir(), func(bool, bool) (string, error) {
 		return "new-passphrase", nil
 	})
 	if err != nil {
 		t.Fatalf("interactive migration: %v", err)
 	}
-	if got, err := unlocked.Svc.GetKey(t.Context(), prefs.ScopeGlobal, "openai"); err != nil || got != "legacy-secret" {
-		t.Fatalf("migrated key = %q, %v", got, err)
+	if _, err := unlocked.Svc.GetKey(t.Context(), prefs.ScopeGlobal, "openai"); !errors.Is(err, prefs.ErrUnsupportedCredentialFormat) {
+		t.Fatalf("unsupported key = %v", err)
 	}
 	mode, err := unlocked.Svc.CredentialProtection(t.Context())
-	if err != nil || mode != prefs.CredentialProtectionOff {
+	if err != nil || mode != prefs.CredentialProtectionPassphrase {
 		t.Fatalf("migrated mode = %q, %v", mode, err)
 	}
 	row, err = unlocked.Store.GetAPIKeyExact(t.Context(), "", "openai")
-	if err != nil || row.Storage != db.APIKeyStoragePlaintext || string(row.Ciphertext) != "legacy-secret" {
+	if err != nil || row.Storage != db.APIKeyStorageVault || row.KeyVersion != 1 {
 		t.Fatalf("migrated row = %#v, %v", row, err)
 	}
 	if err := unlocked.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "master.key")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("legacy master key remains: %v", err)
+	if key, err := os.ReadFile(filepath.Join(dir, "master.key")); err != nil || !bytes.Equal(key, bytes.Repeat([]byte{0x5a}, 32)) {
+		t.Fatalf("unsupported key material changed: %v", err)
 	}
 }
 
@@ -102,10 +101,6 @@ func seedLegacyCredential(t *testing.T, dir, provider, plaintext string) {
 		KeyVersion: 1,
 		Storage:    db.APIKeyStorageVault,
 	}); err != nil {
-		_ = store.Close()
-		t.Fatal(err)
-	}
-	if err := store.SetSetting(t.Context(), "", "vault_prompt", prefs.CredentialProtectionOff); err != nil {
 		_ = store.Close()
 		t.Fatal(err)
 	}

@@ -4,5 +4,4 @@ package prefs
 // Values are persisted compatibility identifiers and must remain stable.
 const (
 	credentialProtectionSetting = "credential_protection"
-	legacyVaultPromptSetting    = "vault_prompt"
 )

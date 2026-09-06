@@ -241,8 +241,8 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					desc: "headless oracle: shell command (sh -c) whose zero exit means verified done; failures re-drive the agent."},
 				{label: "verify attempts", section: "Verification", key: prefs.KeyVerifyAttempts, kind: rowText, numeric: true, def: "1",
 					desc: "headless verified re-drive attempt cap. 1 = single-shot; the loop arms at 2+ with a command set."},
-				{label: "credential protection", section: "Credentials", key: prefs.KeyCredentialProtection, kind: rowEnum, def: prefs.CredentialProtectionOff, opts: []string{prefs.CredentialProtectionOff, prefs.CredentialProtectionPassphrase},
-					desc: "off stores credentials plaintext in state.db. passphrase encrypts them and prompts on startup. toggling migrates stored keys."},
+				{label: "credential protection", section: "Credentials", key: prefs.KeyCredentialProtection, kind: rowEnum, def: prefs.CredentialProtectionPassphrase, opts: []string{prefs.CredentialProtectionPassphrase, prefs.CredentialProtectionOff},
+					desc: "passphrase encryption is the default for credentials in state.db. off is an explicit plaintext opt-out. toggling migrates stored keys."},
 			}},
 			{name: "tools", rows: []settingsRow{
 				{label: "web tools", section: "Surface", key: prefs.KeyEnableWeb, kind: rowEnum, def: "on", opts: []string{"on", "off"},

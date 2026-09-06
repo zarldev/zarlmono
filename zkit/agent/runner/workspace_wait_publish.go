@@ -15,7 +15,7 @@ func (p workspaceWaitPublisher) OnWorkspaceWaitStarted(event tools.WorkspaceWait
 	p.r.sink.OnWorkspaceWaitStarted(WorkspaceWaitStarted{
 		TaskID: p.spec.ID, Depth: p.spec.Depth, ToolID: toolID, ToolName: toolName,
 		Access: event.Access, Paths: append([]string(nil), event.Paths...), BlockerCount: len(event.Blockers),
-		ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
+		ExecutionID: p.call.ExecutionID, ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
 	})
 }
 
@@ -24,7 +24,7 @@ func (p workspaceWaitPublisher) OnWorkspaceWaitEnded(event tools.WorkspaceWaitEn
 	p.r.sink.OnWorkspaceWaitEnded(WorkspaceWaitEnded{
 		TaskID: p.spec.ID, Depth: p.spec.Depth, ToolID: toolID, ToolName: toolName,
 		Outcome: event.Outcome, Duration: event.Waited,
-		ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
+		ExecutionID: p.call.ExecutionID, ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
 	})
 }
 

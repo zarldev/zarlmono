@@ -33,7 +33,7 @@ type timeline struct {
 	// events route into the matching subAgentItem instead of the flat
 	// items slice, so each spawned agent gets its own collapsible block.
 	subAgents        map[string]*subAgentItem // child TaskID -> active item
-	subAgentsBySpawn map[string]*subAgentItem // agent_spawn ToolID -> reserved/correlated item
+	subAgentsBySpawn map[string]*subAgentItem // agent_spawn execution identity -> reserved item
 	agents           *groupItem
 
 	// curTools/curEdits are the open per-iteration groups (nil = none);
@@ -315,10 +315,14 @@ func (tl *timeline) addNoticeForTurn(taskID, text string) {
 // reserveSubAgent creates the visible transcript row as soon as agent_spawn
 // starts. The child TaskID does not exist yet, so ConversationStarted later
 // binds the reserved row through ParentToolCallID.
-func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, prompt string) *subAgentItem {
-	tl.applyTranscript(transcript.SubagentReserved{SpawnToolID: spawnToolID, AgentName: agentName, Prompt: prompt})
-	if spawnToolID != "" {
-		if sa := tl.subAgentsBySpawn[spawnToolID]; sa != nil {
+func (tl *timeline) reserveSubAgent(spawnExecutionID, spawnToolID string, depth int, agentName, prompt string) *subAgentItem {
+	tl.applyTranscript(transcript.SubagentReserved{SpawnExecutionID: spawnExecutionID, SpawnToolID: spawnToolID, AgentName: agentName, Prompt: prompt})
+	return tl.addPendingSubAgent(toolEventKey(spawnExecutionID, spawnToolID), spawnToolID, depth, agentName, prompt)
+}
+
+func (tl *timeline) addPendingSubAgent(spawnKey, spawnToolID string, depth int, agentName, prompt string) *subAgentItem {
+	if spawnKey != "" {
+		if sa := tl.subAgentsBySpawn[spawnKey]; sa != nil {
 			return sa
 		}
 	}
@@ -331,8 +335,8 @@ func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, pr
 	sa.depth = 0
 	sa.notify = tl.agents.bump
 	tl.agents.add(sa)
-	if spawnToolID != "" {
-		tl.subAgentsBySpawn[spawnToolID] = sa
+	if spawnKey != "" {
+		tl.subAgentsBySpawn[spawnKey] = sa
 	}
 	return sa
 }
@@ -340,18 +344,20 @@ func (tl *timeline) reserveSubAgent(spawnToolID string, depth int, agentName, pr
 // startSubAgentWithParent binds the child run to the row reserved by its exact
 // agent_spawn call. Falling back to a new row keeps replayed/legacy event
 // streams that lack ParentToolCallID visible.
-func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, provider, model, prompt, spawnToolID string) *subAgentItem {
-	tl.applyTranscript(transcript.SubagentStarted{TurnID: taskID, SpawnToolID: spawnToolID, AgentName: agentName, Provider: provider, Model: model, Prompt: prompt})
+func (tl *timeline) startSubAgentWithParent(taskID string, depth int, agentName, provider, model, prompt, spawnExecutionID, spawnToolID string) *subAgentItem {
+	tl.applyTranscript(transcript.SubagentStarted{TurnID: taskID, SpawnExecutionID: spawnExecutionID, SpawnToolID: spawnToolID, AgentName: agentName, Provider: provider, Model: model, Prompt: prompt})
 	if sa := tl.subAgents[taskID]; sa != nil {
 		return sa
 	}
 	var sa *subAgentItem
-	if spawnToolID != "" {
-		sa = tl.subAgentsBySpawn[spawnToolID]
+	spawnKey := toolEventKey(spawnExecutionID, spawnToolID)
+	if spawnKey != "" {
+		sa = tl.subAgentsBySpawn[spawnKey]
 	}
 	if sa == nil {
-		sa = tl.reserveSubAgent(spawnToolID, depth-1, agentName, prompt)
+		sa = tl.addPendingSubAgent(spawnKey, spawnToolID, depth-1, agentName, prompt)
 	}
+	delete(tl.subAgentsBySpawn, spawnKey)
 	sa.bind(taskID, depth, agentName, provider, model, prompt)
 	tl.subAgents[taskID] = sa
 	return sa
@@ -385,10 +391,12 @@ func (tl *timeline) subAgent(taskID string) *subAgentItem {
 
 // failSubAgentSpawn leaves a terminal box in the transcript when validation or
 // admission fails before a child ConversationStarted event can be published.
-func (tl *timeline) failSubAgentSpawn(spawnToolID, detail string) {
-	tl.applyTranscript(transcript.SubagentSpawnFailed{SpawnToolID: spawnToolID, Detail: detail})
-	if sa := tl.subAgentsBySpawn[spawnToolID]; sa != nil {
+func (tl *timeline) failSubAgentSpawn(spawnExecutionID, spawnToolID, detail string) {
+	tl.applyTranscript(transcript.SubagentSpawnFailed{SpawnExecutionID: spawnExecutionID, SpawnToolID: spawnToolID, Detail: detail})
+	spawnKey := toolEventKey(spawnExecutionID, spawnToolID)
+	if sa := tl.subAgentsBySpawn[spawnKey]; sa != nil {
 		sa.failLaunch(detail)
+		delete(tl.subAgentsBySpawn, spawnKey)
 	}
 }
 
@@ -508,23 +516,32 @@ func (tl *timeline) endTurn(taskID string) {
 	delete(tl.turns, taskID)
 }
 
-func (tl *timeline) startToolWithParent(taskID string, depth int, toolID, name, arg, parentToolID string, sequence int) {
-	tl.applyTranscript(transcript.ToolStarted{TurnID: taskID, ToolID: toolID, ParentToolID: parentToolID, Name: name, Argument: arg, Sequence: sequence})
-	if parentToolID != "" {
+func toolEventKey(executionID, toolID string) string {
+	if executionID != "" {
+		return executionID
+	}
+	return toolID
+}
+
+func (tl *timeline) startToolWithParent(taskID string, depth int, executionID, toolID, name, arg, parentExecutionID, parentToolID string, sequence int) {
+	key := toolEventKey(executionID, toolID)
+	parentKey := toolEventKey(parentExecutionID, parentToolID)
+	tl.applyTranscript(transcript.ToolStarted{TurnID: taskID, ExecutionID: executionID, ToolID: toolID, ParentExecutionID: parentExecutionID, ParentToolID: parentToolID, Name: name, Argument: arg, Sequence: sequence})
+	if parentToolID != "" || parentExecutionID != "" {
 		child := &toolItem{depth: depth + 1, name: name, arg: arg, state: toolRunning, sequence: sequence}
-		if ref, ok := tl.toolIdx[parentToolID]; ok && ref.tool != nil {
-			tl.attachChildTool(ref, toolID, child, sequence)
+		if ref, ok := tl.toolIdx[parentKey]; ok && ref.tool != nil {
+			tl.attachChildTool(ref, key, child, sequence)
 			return
 		}
 		if tl.pendingChildren == nil {
 			tl.pendingChildren = make(map[string][]pendingToolChild)
 		}
-		tl.pendingChildren[parentToolID] = append(tl.pendingChildren[parentToolID], pendingToolChild{toolID: toolID, sequence: sequence, tool: child})
-		tl.toolIdx[toolID] = toolRef{tool: child}
+		tl.pendingChildren[parentKey] = append(tl.pendingChildren[parentKey], pendingToolChild{toolID: key, sequence: sequence, tool: child})
+		tl.toolIdx[key] = toolRef{tool: child}
 		return
 	}
 	if sa := tl.subAgents[taskID]; sa != nil {
-		sa.startTool(toolID, name, arg)
+		sa.startTool(key, name, arg)
 		return
 	}
 	if ot := tl.turns[taskID]; ot != nil && ot.resp.content == "" {
@@ -536,12 +553,10 @@ func (tl *timeline) startToolWithParent(taskID string, depth int, toolID, name, 
 		tl.markTurnActivity(ot)
 	}
 	g := tl.ensureToolGroup(depth)
-	// Collapsed by default — the transcript stays a scannable list of one-line
-	// tool rows; the per-row [+] expands a result on demand. group handles indent.
 	t := &toolItem{name: name, arg: arg, state: toolRunning, notify: g.bump}
 	g.add(t)
-	tl.toolIdx[toolID] = toolRef{group: g, tool: t}
-	tl.attachPendingChildren(toolID, toolRef{group: g, tool: t})
+	tl.toolIdx[key] = toolRef{group: g, tool: t}
+	tl.attachPendingChildren(key, toolRef{group: g, tool: t})
 }
 
 func (tl *timeline) attachChildTool(parentRef toolRef, toolID string, child *toolItem, sequence int) {
@@ -589,9 +604,10 @@ func insertChildBySequence(parent, child *toolItem, sequence int) {
 	parent.children[idx] = child
 }
 
-func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duration, failed bool, failKind tools.Kind, effects ...string) {
-	tl.applyTranscript(transcript.ToolFinished{ToolID: toolID, Effect: firstEffectSummary(effects), FailureKind: failKind.String(), DurationMS: dur.Milliseconds(), Failed: failed})
-	ref, ok := tl.toolIdx[toolID]
+func (tl *timeline) finishTool(executionID, toolID, result string, data any, dur time.Duration, failed bool, failKind tools.Kind, effects ...string) {
+	key := toolEventKey(executionID, toolID)
+	tl.applyTranscript(transcript.ToolFinished{ExecutionID: executionID, ToolID: toolID, Effect: firstEffectSummary(effects), FailureKind: failKind.String(), DurationMS: dur.Milliseconds(), Failed: failed})
+	ref, ok := tl.toolIdx[key]
 	if ok {
 		ref.tool.state = toolOK
 		if failed {
@@ -609,7 +625,7 @@ func (tl *timeline) finishTool(toolID, result string, data any, dur time.Duratio
 	// Check sub-agent tool indices — tools spawned by sub-agents are
 	// registered in the sub-agent's own index.
 	for _, sa := range tl.subAgents {
-		if ref, ok := sa.toolIdx[toolID]; ok {
+		if ref, ok := sa.toolIdx[key]; ok {
 			ref.tool.state = toolOK
 			if failed {
 				ref.tool.state = toolFailed

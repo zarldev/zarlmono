@@ -120,3 +120,22 @@ dist
 
 # zarlcode's own workspace state when run inside this repo
 .zarlcode/
+
+# Repository skills and agent profiles are versioned; other workspace state stays ignored.
+!/.zarlcode/
+/.zarlcode/*
+!/.zarlcode/skills/
+/.zarlcode/skills/*
+!/.zarlcode/skills/*/
+/.zarlcode/skills/*/*
+!/.zarlcode/skills/*/SKILL.md
+!/.zarlcode/skills/go-style/references/
+/.zarlcode/skills/go-style/references/*
+!/.zarlcode/skills/go-style/references/design.md
+!/.zarlcode/skills/go-style/references/construction.md
+!/.zarlcode/skills/go-data/references/
+/.zarlcode/skills/go-data/references/*
+!/.zarlcode/skills/go-data/references/sqlc.md
+!/.zarlcode/agents/
+/.zarlcode/agents/*
+!/.zarlcode/agents/*.md

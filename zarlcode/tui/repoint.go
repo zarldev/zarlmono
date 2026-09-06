@@ -61,6 +61,7 @@ func (m *UI) maybeRepoint() tea.Cmd {
 	m.session.ApplyProviderCostBasis(m.session.ActiveProviderSpec())
 	seq := atomic.AddUint64(&m.repointSeq, 1)
 	fb, prev := m.session.ProviderContext()
+	providerMissing := m.live.RunTarget().Provider == nil
 	settings := m.settings
 	parent := m.appContext()
 	appliedReasoning := m.appliedReasoning
@@ -70,11 +71,12 @@ func (m *UI) maybeRepoint() tea.Cmd {
 		defer cancel()
 		spec := settings.ActiveProvider(ctx, fb)
 		reasoning, defWindow := activeProviderPolicy(settings, spec.Name)
-		// Rebuild when the spec changed OR a build-affecting definition field
-		// did (reasoning policy, declared context window). Those aren't part of
-		// ProviderSpec, so a spec-equality check alone would miss an edit and
-		// leave a stale provider/window.
-		if spec == prev && reasoning == appliedReasoning && defWindow == appliedWindow {
+		// Rebuild when the provider is missing, the spec changed, or a
+		// build-affecting definition field did (reasoning policy, declared
+		// context window). Those aren't part of ProviderSpec, so a
+		// spec-equality check alone would miss an edit and leave a stale
+		// provider/window.
+		if !providerMissing && spec == prev && reasoning == appliedReasoning && defWindow == appliedWindow {
 			return nil
 		}
 		prov, err := engine.BuildProvider(ctx, settings.Registry, settings.Svc, spec)
@@ -131,6 +133,14 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 	if rp.window > 0 {
 		m.session.SetContextWindow(rp.window)
 		m.SetPressureConfig(rp.window, m.session.Run.pressureReserve)
+	}
+	if m.intro != nil && m.intro.setupRequired {
+		m.intro.setupRequired = false
+		m.intro.setupError = ""
+		m.intro.setupBlocked = false
+		m.intro.err = ""
+		m.intro.provider = rp.spec.Name
+		m.intro.model = rp.spec.Model
 	}
 	m.session.SetSuccessToast("switched to " + rp.spec.Name + " · " + rp.spec.Model)
 	return true

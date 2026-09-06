@@ -49,7 +49,18 @@ zarlcode keys oauth claude-code
 zarlcode keys oauth openai-codex
 ```
 
-Run `zarlcode keys --help` for credential commands. Keys written by the CLI are encrypted and stored globally; workspace settings can still select different providers or models per repo.
+On an interactive first run with no explicit provider, zarlcode opens the setup
+screen: press `Enter` to accept the local defaults or `Ctrl+S` to select a
+provider/model. Credentials remain encrypted, and headless runs never enter the wizard.
+
+Run `zarlcode keys --help` for credential commands. Credentials are encrypted with
+a passphrase and stored globally by default; workspace settings can still select
+different providers or models per repo. Fresh local-only startup does not create an
+unused vault; the first credential write creates it. Later interactive startup prompts
+to unlock stored credentials. Headless startup never prompts, while local/no-key
+providers and ordinary settings remain usable.
+There is no passphrase recovery or environment-variable fallback. Use
+`zarlcode keys protect off` only as an explicit plaintext-storage opt-out.
 
 ### Local or OpenAI-compatible provider
 

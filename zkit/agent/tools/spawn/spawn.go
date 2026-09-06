@@ -500,11 +500,12 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 
 	mode := t.effectiveMode(args, profileMode, explicitMode)
 	childSpec := runner.TaskSpec{
-		ID:               taskscope.ID(uuid.NewString()),
-		Prompt:           childPromptWithMode(args.Prompt, mode),
-		MaxIterations:    t.spawnMaxIterations(mode, args.MaxIterations),
-		Depth:            depth + 1,
-		ParentToolCallID: call.ID.String(),
+		ID:                taskscope.ID(uuid.NewString()),
+		Prompt:            childPromptWithMode(args.Prompt, mode),
+		MaxIterations:     t.spawnMaxIterations(mode, args.MaxIterations),
+		Depth:             depth + 1,
+		ParentToolCallID:  call.ID.String(),
+		ParentExecutionID: call.ExecutionID,
 	}
 	if agentLoaded {
 		childSpec.AgentName = args.Agent

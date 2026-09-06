@@ -435,25 +435,39 @@ func resolveTaskID(group *Group, args tools.ToolParameters, preferRunning bool) 
 		return "", tools.Fatal("agent task", errors.New("task group is not configured"))
 	}
 	tasks := group.List()
-	if len(tasks) == 1 && (!preferRunning || tasks[0].State == AgentTaskStates.RUNNING) {
+	if len(tasks) == 0 {
+		return "", tools.Validation("agent task", "task_id is required; no agent tasks exist")
+	}
+	if !preferRunning && len(tasks) == 1 {
 		return tasks[0].ID, nil
 	}
 	if preferRunning {
 		var running TaskID
+		var unreadTerminal TaskID
+		unreadTerminalCount := 0
 		for _, task := range tasks {
 			if task.State == AgentTaskStates.RUNNING {
 				if running != "" {
 					return "", tools.Validation("agent task", "task_id is required because multiple tasks are running; call list_agent_tasks to recover it")
 				}
 				running = task.ID
+				continue
+			}
+			if !task.Observed {
+				unreadTerminal = task.ID
+				unreadTerminalCount++
 			}
 		}
 		if running != "" {
 			return running, nil
 		}
-	}
-	if len(tasks) == 0 {
-		return "", tools.Validation("agent task", "task_id is required; no agent tasks exist")
+		if unreadTerminalCount == 1 {
+			return unreadTerminal, nil
+		}
+		if unreadTerminalCount > 1 {
+			return "", tools.Validation("agent task", "task_id is required because multiple terminal results are unread; call list_agent_tasks to recover it")
+		}
+		return "", tools.Validation("agent task", "task_id is required because no task is running and no terminal result is unread")
 	}
 	return "", tools.Validation("agent task", "task_id is required because multiple tasks exist; call list_agent_tasks to recover it")
 }
@@ -547,5 +561,5 @@ func prepare(ctx context.Context, call tools.ToolCall, t *Tool) (invocation, *to
 			return args.Agent
 		}
 		return ""
-	}()}, agent: args.Agent, agentLoaded: agentLoaded, notices: []string{plannerNote, fallbackNotice}, mode: mode}, nil
+	}(), ParentExecutionID: call.ExecutionID}, agent: args.Agent, agentLoaded: agentLoaded, notices: []string{plannerNote, fallbackNotice}, mode: mode}, nil
 }

@@ -6,7 +6,7 @@ description: One method is the whole agent loop — and the eight things that ma
 `zkit/agent/runner` implements a single method:
 
 ```go
-func (r *Runner) Run(ctx context.Context, spec TaskSpec) (TaskResult, error)
+func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult
 ```
 
 and that method is the entire think → call tools → observe → repeat
@@ -38,7 +38,10 @@ r := runner.New(client,
 	runner.WithCompactor(compact.NewTiered(32_000)),
 	runner.WithSink(mySink),                     // typed event stream
 )
-res, err := r.Run(ctx, runner.TaskSpec{Prompt: "fix the failing test"})
+res := r.Run(ctx, runner.TaskSpec{Prompt: "fix the failing test"})
+if res.Err != nil {
+	return res.Err
+}
 ```
 
 `client` is a `runner.Client` — a one-method narrowing of
@@ -52,7 +55,8 @@ shrinks history — useful for headless background tasks and tests.
 
 ## Results
 
-`Run` returns a `TaskResult` whose `Reason` says why the loop ended:
+`Run` returns one `TaskResult`. Operational failures are reported in `Err`, and
+`Reason` says why the loop ended; there is no separate error return:
 
 | Reason | Meaning |
 |---|---|

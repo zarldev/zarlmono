@@ -70,7 +70,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			if agentName == "" {
 				agentName = "agent"
 			}
-			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, agentName, e.Provider, e.Model, e.Prompt, e.ParentToolCallID)
+			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, agentName, e.Provider, e.Model, e.Prompt, e.ParentExecutionID, e.ParentToolCallID)
 		}
 
 	case teasink.ContentMsg:
@@ -83,36 +83,36 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 
 	case teasink.ToolStartedMsg:
 		m.session.applyToolStarted(e)
-		m.timeline.startToolWithParent(e.TaskID, e.Depth, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters), e.ParentToolID, e.Sequence)
+		m.timeline.startToolWithParent(e.TaskID, e.Depth, e.ExecutionID, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters), e.ParentExecutionID, e.ParentToolID, e.Sequence)
 		if e.ToolName == "agent_spawn" {
 			agent, _ := e.Parameters["agent"].(string)
 			if agent == "" {
 				agent = "agent"
 			}
 			prompt, _ := e.Parameters["prompt"].(string)
-			m.timeline.reserveSubAgent(e.ToolID, e.Depth, agent, prompt)
+			m.timeline.reserveSubAgent(e.ExecutionID, e.ToolID, e.Depth, agent, prompt)
 		}
 		m.notePRRelevantTool(e.ToolName, e.Parameters)
 	case teasink.WorkspaceWaitStartedMsg:
 		m.session.applyWorkspaceWaitStarted(e)
-		m.timeline.waitTool(e.ToolID, e.Access, e.Paths)
+		m.timeline.waitTool(toolEventKey(e.ExecutionID, e.ToolID), e.Access, e.Paths)
 
 	case teasink.WorkspaceWaitEndedMsg:
 		m.session.applyWorkspaceWaitEnded(e)
-		m.timeline.resumeTool(e.ToolID, e.Duration)
+		m.timeline.resumeTool(toolEventKey(e.ExecutionID, e.ToolID), e.Duration)
 
 	case teasink.ToolCompletedMsg:
 		effect := m.session.applyToolCompleted(e)
-		m.timeline.finishTool(e.ToolID, e.FormattedResult, e.Result, e.Duration, false, tools.Kinds.UNKNOWN, effectSummaries(e.Effects)...)
+		m.timeline.finishTool(e.ExecutionID, e.ToolID, e.FormattedResult, e.Result, e.Duration, false, tools.Kinds.UNKNOWN, effectSummaries(e.Effects)...)
 		if effect.LoadedSkillName != "" {
 			m.timeline.addLoadedSkill(e.TaskID, effect.LoadedSkillName)
 		}
 
 	case teasink.ToolFailedMsg:
 		m.session.applyToolFailed(e)
-		m.timeline.finishTool(e.ToolID, e.Error, nil, e.Duration, true, e.Kind, effectSummaries(e.Effects)...)
+		m.timeline.finishTool(e.ExecutionID, e.ToolID, e.Error, nil, e.Duration, true, e.Kind, effectSummaries(e.Effects)...)
 		if e.ToolName == "agent_spawn" {
-			m.timeline.failSubAgentSpawn(e.ToolID, e.Error)
+			m.timeline.failSubAgentSpawn(e.ExecutionID, e.ToolID, e.Error)
 		}
 
 	case teasink.DiffMsg:

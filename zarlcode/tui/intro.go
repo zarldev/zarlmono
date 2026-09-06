@@ -12,6 +12,8 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
+
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -31,19 +33,22 @@ const (
 )
 
 type introPane struct {
-	wsRoot      string
-	sessions    []sessionSummary
-	cursor      int
-	focus       introFocus
-	searching   bool
-	searchQuery []rune
-	matches     []int
-	renaming    bool
-	prompt      []rune
-	pos         int
-	err         string
-	provider    string
-	model       string
+	wsRoot        string
+	sessions      []sessionSummary
+	cursor        int
+	focus         introFocus
+	searching     bool
+	searchQuery   []rune
+	matches       []int
+	renaming      bool
+	prompt        []rune
+	pos           int
+	err           string
+	provider      string
+	model         string
+	setupRequired bool
+	setupBlocked  bool
+	setupError    string
 }
 
 func newIntroPane(wsRoot string, sessions []sessionSummary, provider, model string) *introPane {
@@ -59,6 +64,13 @@ func newIntroPane(wsRoot string, sessions []sessionSummary, provider, model stri
 }
 
 func (p *introPane) handleKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
+	if p.setupRequired && p.setupBlocked {
+		if msg.String() == "enter" {
+			p.err = "configure a usable provider before starting"
+		}
+		return nil
+	}
+
 	switch msg.String() {
 	case "tab", "shift+tab":
 		if len(p.sessions) > 0 {
@@ -109,6 +121,20 @@ func (p *introPane) handlePromptKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch msg.String() {
 	case "enter":
+		if p.setupRequired {
+			if m.settings == nil || m.settings.Svc == nil {
+				p.err = "settings are unavailable"
+				return nil
+			}
+			selection := prefs.ModelSelection{Provider: p.provider, Model: p.model}
+			if err := m.settings.Svc.SetModelSelection(m.appContext(), prefs.ScopeGlobal, selection); err != nil {
+				p.err = "save local defaults: " + err.Error()
+				return nil
+			}
+			p.setupRequired = false
+			p.setupError = ""
+			return m.dismissIntroFresh("")
+		}
 		return m.dismissIntroFresh(strings.TrimSpace(string(p.prompt)))
 	case "esc":
 		p.err = ""
@@ -322,6 +348,25 @@ func (p *introPane) draw(scr uv.Screen, area uv.Rectangle, planMode bool) {
 
 	// --- info block: lines share a common left edge, block centered ---
 	var infoBlock []string
+	if p.setupRequired {
+		if p.setupBlocked {
+			infoBlock = append(infoBlock,
+				palette.Primary.On("setup required"),
+				palette.Muted.On("Choose a provider and model, then add credentials if that provider needs them."),
+				palette.Muted.On("Press ctrl+s to configure. Zarlcode will not make a model request during setup."),
+			)
+		} else {
+			infoBlock = append(infoBlock,
+				palette.Primary.On("first-run setup"),
+				palette.Muted.On("Zarlcode is ready to use the local provider with default settings."),
+				palette.Muted.On("Press enter to accept defaults, or ctrl+s to configure. No model request will be made during setup."),
+			)
+		}
+		if p.setupError != "" {
+			infoBlock = append(infoBlock, palette.Subtle.On(p.setupError))
+		}
+		infoBlock = append(infoBlock, "")
+	}
 	if p.err != "" {
 		infoBlock = append(infoBlock, palette.Error.On("session: "+p.err), "")
 	}
@@ -596,6 +641,12 @@ func (p *introPane) footer() string {
 			return key("enter") + mut(" save name") + mut("    ") + key("esc") + mut(" cancel")
 		}
 		return key("↑↓") + mut(" pick") + mut("    ") + key("enter") + mut(" resume") + mut("    ") + key("p") + mut(" pin") + mut("    ") + key("/") + mut(" search") + mut("    ") + key("ctrl+n") + mut(" rename") + mut("    ") + key("tab") + mut(" prompt")
+	}
+	if p.setupRequired {
+		if p.setupBlocked {
+			return key("ctrl+s") + mut(" configure") + mut("    ") + key("ctrl+c") + mut(" quit")
+		}
+		return key("enter") + mut(" accept defaults") + mut("    ") + key("ctrl+s") + mut(" configure") + mut("    ") + key("ctrl+c") + mut(" quit")
 	}
 	return key("enter") + mut(" start") + mut("    ") + key("tab") + mut(" sessions") + mut("    ") + key("ctrl+g") + mut(" keys")
 }

@@ -14,7 +14,7 @@ tasks:
   release-check:
     desc: Run the complete module-isolated local pre-release gate
     cmds:
-      - go test -count=1 ./tools/releasecheck/... ./tools/genformula/...
+      - go test -count=1 ./tools/releasecheck/... ./tools/genformula/... ./tools/doccheck/... ./tools/repohealth/...
       - task: dependency-pair
       - |
         for m in examples zkit zarlcode swebench-eval; do
@@ -50,7 +50,7 @@ tasks:
   tui-smoke:
     desc: Run the bounded PTY-backed interactive TUI smoke (requires tmux)
     cmds:
-      - bash scripts/tui-smoke.sh
+      - go run ./tools/tuismoke/cmd/tuismoke {{.CLI_ARGS}}
   # --- repo-wide Go workflow (CI-covered modules) ---
 
   build:
@@ -83,12 +83,27 @@ tasks:
   test-policy:
     desc: Reject new same-package tests and Background contexts in tests
     cmds:
-      - bash scripts/check-new-test-policy.sh "${TEST_POLICY_BASE:-HEAD}"
+      - go run ./tools/testpolicy/cmd/testpolicy "${TEST_POLICY_BASE:-HEAD}"
 
   dependency-pair:
     desc: Verify the validated Anthropic and JSON Schema dependency pair
     cmds:
-      - bash scripts/check-anthropic-jsonschema-pair.sh
+      - go run ./tools/dependencycheck/cmd/dependencycheck
+
+  doccheck:
+    desc: Verify compiled documentation examples match their README snippets
+    cmds:
+      - go test -count=1 ./tools/doccheck/...
+  repohealth:
+    desc: Validate repository-local skills, agents, and instruction links
+    cmds:
+      - go test -count=1 ./tools/repohealth/...
+
+
+  tools-test:
+    desc: Test repository Go tools
+    cmds:
+      - go test -count=1 ./tools/...
 
   check:
     desc: Build, vet, and test CI-covered Go modules
@@ -98,6 +113,9 @@ tasks:
       - task: test
       - task: test-policy
       - task: dependency-pair
+      - task: doccheck
+      - task: repohealth
+      - task: tools-test
 
   lint:
     desc: Run golangci-lint for CI-covered Go modules

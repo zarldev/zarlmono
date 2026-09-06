@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -204,6 +205,173 @@ func TestRunnerPreservesToolCallOrderUnderParallelDispatch(t *testing.T) {
 				want[i],
 			)
 		}
+	}
+}
+
+type reusedIDProvider struct{ iter atomic.Int32 }
+
+func (p *reusedIDProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		if p.iter.Add(1) == 1 {
+			yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{
+				{ID: "reused", Type: "function", OutputIndex: llm.OutputPosition(0), Function: llm.ToolCallFunction{Name: "identity", Arguments: `{"label":"A"}`}},
+				{ID: "reused", Type: "function", OutputIndex: llm.OutputPosition(1), Function: llm.ToolCallFunction{Name: "identity", Arguments: `{"label":"B"}`}},
+			}}, nil)
+			return
+		}
+		yield(llm.CompletionChunk{Content: "done"}, nil)
+	}
+}
+
+type executionStart struct {
+	label       string
+	executionID string
+}
+
+type identityTool struct {
+	started  chan<- executionStart
+	releaseA <-chan struct{}
+	releaseB <-chan struct{}
+}
+
+func (identityTool) Definition() tools.ToolSpec {
+	return tools.ToolSpec{Name: "identity", Description: "records execution identity", Parameters: llm.Schema{Type: "object"}}
+}
+
+func (tool identityTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	label, _ := call.Arguments["label"].(string)
+	tool.started <- executionStart{label: label, executionID: call.ExecutionID}
+	if label == "A" {
+		<-tool.releaseA
+	} else {
+		<-tool.releaseB
+	}
+	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: label}, nil
+}
+
+type identitySink struct {
+	runner.NopSink
+	started   chan runner.ToolStarted
+	completed chan runner.ToolCompleted
+}
+
+func (sink *identitySink) OnToolStarted(event runner.ToolStarted)     { sink.started <- event }
+func (sink *identitySink) OnToolCompleted(event runner.ToolCompleted) { sink.completed <- event }
+
+func TestRunnerUsesExactExecutionIdentityForReusedProviderToolCallID(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan executionStart, 2)
+		releaseA := make(chan struct{})
+		releaseB := make(chan struct{})
+		tool := identityTool{started: started, releaseA: releaseA, releaseB: releaseB}
+		reg := tools.NewRegistry()
+		reg.Register(tool)
+		sink := &identitySink{started: make(chan runner.ToolStarted, 2), completed: make(chan runner.ToolCompleted, 2)}
+		r := runner.New(
+			&reusedIDProvider{},
+			runner.WithTools(reg),
+			runner.WithSink(sink),
+			runner.WithToolConcurrency(2),
+			runner.WithMaxIterations(3),
+		)
+
+		ctx := t.Context()
+		done := make(chan runner.TaskResult, 1)
+		go func() {
+			done <- r.Run(ctx, runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
+		}()
+		synctest.Wait()
+		if len(started) != 2 || len(sink.started) != 2 {
+			close(releaseA)
+			close(releaseB)
+			synctest.Wait()
+			t.Fatalf("start observations: tool=%d events=%d, want 2 each", len(started), len(sink.started))
+		}
+
+		executions := make(map[string]string, 2)
+		for range 2 {
+			start := <-started
+			executions[start.label] = start.executionID
+		}
+		if executions["A"] == "" || executions["B"] == "" || executions["A"] == executions["B"] {
+			t.Errorf("tool execution IDs = %#v, want distinct non-empty identities", executions)
+		}
+
+		startEvents := make(map[string]string, 2)
+		for range 2 {
+			event := <-sink.started
+			label, _ := event.Parameters["label"].(string)
+			startEvents[label] = event.ExecutionID
+		}
+
+		close(releaseB)
+		synctest.Wait()
+		if len(sink.completed) != 1 {
+			close(releaseA)
+			synctest.Wait()
+			t.Fatalf("completions after releasing B = %d, want 1", len(sink.completed))
+		}
+		completedB := <-sink.completed
+		close(releaseA)
+		synctest.Wait()
+		if len(sink.completed) != 1 || len(done) != 1 {
+			t.Fatalf("final observations: completions=%d runs=%d, want 1 each", len(sink.completed), len(done))
+		}
+		completedA := <-sink.completed
+		result := <-done
+		if result.Err != nil {
+			t.Fatalf("Run: %v", result.Err)
+		}
+
+		if completedB.Result != "B" || completedA.Result != "A" {
+			t.Fatalf("completion order = (%v, %v), want B before A", completedB.Result, completedA.Result)
+		}
+		for label, completed := range map[string]runner.ToolCompleted{"A": completedA, "B": completedB} {
+			if startEvents[label] != executions[label] || completed.ExecutionID != executions[label] {
+				t.Errorf("%s execution IDs: tool=%q start=%q completion=%q", label, executions[label], startEvents[label], completed.ExecutionID)
+			}
+			if completed.ToolID != "reused" {
+				t.Errorf("%s completion ToolID = %q, want reused", label, completed.ToolID)
+			}
+		}
+	})
+}
+
+type ambiguityCountingTool struct{ calls atomic.Int32 }
+
+func (*ambiguityCountingTool) Definition() tools.ToolSpec {
+	return tools.ToolSpec{Name: "count", Description: "counts executions", Parameters: llm.Schema{Type: "object"}}
+}
+
+func (tool *ambiguityCountingTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	tool.calls.Add(1)
+	return &tools.ToolResult{ToolCallID: call.ID, Success: true}, nil
+}
+
+type ambiguousIDProvider struct{}
+
+func (ambiguousIDProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
+	return func(yield func(llm.CompletionChunk, error) bool) {
+		yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{
+			{ID: "duplicate", Type: "function", Function: llm.ToolCallFunction{Name: "count", Arguments: "{}"}},
+			{ID: "duplicate", Type: "function", Function: llm.ToolCallFunction{Name: "count", Arguments: "{}"}},
+		}}, nil)
+	}
+}
+
+func TestRunnerRejectsAmbiguousDuplicateToolCallIDBeforeExecution(t *testing.T) {
+	client := ambiguousIDProvider{}
+	tool := &ambiguityCountingTool{}
+	reg := tools.NewRegistry()
+	reg.Register(tool)
+	r := runner.New(client, runner.WithTools(reg))
+
+	result := r.Run(t.Context(), runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: "go"})
+	if !errors.Is(result.Err, runner.ErrAmbiguousToolCalls) {
+		t.Fatalf("Run error = %v, want ErrAmbiguousToolCalls", result.Err)
+	}
+	if got := tool.calls.Load(); got != 0 {
+		t.Fatalf("tool executed %d times, want 0", got)
 	}
 }
 

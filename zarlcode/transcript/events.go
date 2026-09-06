@@ -89,16 +89,19 @@ type SkillLoaded struct {
 
 // ToolStarted records a tool invocation.
 type ToolStarted struct {
-	TurnID       string
-	ToolID       string
-	ParentToolID string
-	Name         string
-	Argument     string
-	Sequence     int
+	TurnID            string
+	ExecutionID       string
+	ToolID            string
+	ParentToolID      string
+	ParentExecutionID string
+	Name              string
+	Argument          string
+	Sequence          int
 }
 
 // ToolFinished records a tool terminal outcome.
 type ToolFinished struct {
+	ExecutionID string
 	ToolID      string
 	Effect      string
 	FailureKind string
@@ -121,19 +124,21 @@ type PlanUpdated struct {
 
 // SubagentReserved records a requested child before its task ID exists.
 type SubagentReserved struct {
-	SpawnToolID string
-	AgentName   string
-	Prompt      string
+	SpawnExecutionID string
+	SpawnToolID      string
+	AgentName        string
+	Prompt           string
 }
 
 // SubagentStarted binds and starts a child task.
 type SubagentStarted struct {
-	TurnID      string
-	SpawnToolID string
-	AgentName   string
-	Provider    string
-	Model       string
-	Prompt      string
+	TurnID           string
+	SpawnExecutionID string
+	SpawnToolID      string
+	AgentName        string
+	Provider         string
+	Model            string
+	Prompt           string
 }
 
 // SubagentFinished marks a child task terminal.
@@ -144,8 +149,9 @@ type SubagentFinished struct {
 
 // SubagentSpawnFailed marks a spawn failure before the child starts.
 type SubagentSpawnFailed struct {
-	SpawnToolID string
-	Detail      string
+	SpawnExecutionID string
+	SpawnToolID      string
+	Detail           string
 }
 
 // Apply reduces one semantic event into canonical state. Unknown event types are
@@ -183,29 +189,29 @@ func (r *Reducer) Apply(event any) (Change, error) {
 		r.builder.AddSkill(event.TurnID, r.builder.SubagentEntryID(event.TurnID), event.Name)
 	case ToolStarted:
 		parentID := r.builder.SubagentEntryID(event.TurnID)
-		if event.ParentToolID != "" {
-			parentID = r.builder.ToolEntryID(event.ParentToolID)
+		if event.ParentToolID != "" || event.ParentExecutionID != "" {
+			parentID = r.builder.ToolExecutionEntryID(event.ParentExecutionID, event.ParentToolID)
 		}
-		change.PrimaryEntryID = r.builder.StartTool(
-			event.TurnID, parentID, event.ToolID, event.ParentToolID,
+		change.PrimaryEntryID = r.builder.StartToolExecution(
+			event.TurnID, parentID, event.ExecutionID, event.ToolID, event.ParentExecutionID, event.ParentToolID,
 			event.Name, event.Argument, event.Sequence,
 		)
 	case ToolFinished:
-		r.builder.FinishTool(event.ToolID, event.Effect, event.FailureKind, event.DurationMS, event.Failed)
+		r.builder.FinishToolExecution(event.ExecutionID, event.ToolID, event.Effect, event.FailureKind, event.DurationMS, event.Failed)
 	case DiffAdded:
 		r.builder.AddDiff(event.TurnID, r.builder.SubagentEntryID(event.TurnID), event.Path, event.Diff)
 	case PlanUpdated:
 		r.builder.SetPlan(event.TurnID, event.Plan)
 	case SubagentReserved:
-		change.PrimaryEntryID = r.builder.ReserveSubagent(event.SpawnToolID, event.AgentName, event.Prompt)
+		change.PrimaryEntryID = r.builder.ReserveSubagentExecution(event.SpawnExecutionID, event.SpawnToolID, event.AgentName, event.Prompt)
 	case SubagentStarted:
-		change.PrimaryEntryID = r.builder.StartSubagent(
-			event.TurnID, event.SpawnToolID, event.AgentName, event.Provider, event.Model, event.Prompt,
+		change.PrimaryEntryID = r.builder.StartSubagentExecution(
+			event.TurnID, event.SpawnExecutionID, event.SpawnToolID, event.AgentName, event.Provider, event.Model, event.Prompt,
 		)
 	case SubagentFinished:
 		r.builder.FinishSubagent(event.TurnID, event.Status)
 	case SubagentSpawnFailed:
-		r.builder.FailSubagent(event.SpawnToolID, event.Detail)
+		r.builder.FailSubagentExecution(event.SpawnExecutionID, event.SpawnToolID, event.Detail)
 	default:
 		return change, fmt.Errorf("%w: %T", ErrUnsupportedEvent, event)
 	}

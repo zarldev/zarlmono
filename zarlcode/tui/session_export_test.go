@@ -74,7 +74,7 @@ func TestResumeUsesDurableTranscriptInsteadOfCompactedContextHistory(t *testing.
 	}
 }
 
-func TestResumeNormalizesLegacySuccessfulToolFailureKind(t *testing.T) {
+func TestResumeRejectsUnsupportedToolShapeWithoutRewritingSession(t *testing.T) {
 	t.Parallel()
 
 	workspaceRoot := t.TempDir()
@@ -102,12 +102,63 @@ func TestResumeNormalizesLegacySuccessfulToolFailureKind(t *testing.T) {
 	ui := tui.New()
 	ui.SetLiveRunner(engine.NewLiveRunner(nil, workspace, "test-model"))
 	ui.SetSettings(engine.NewSettings(store, nil, nil, workspaceRoot))
-	if err := ui.ResumeSavedSession(t.Context(), sessionID); err != nil {
-		t.Fatalf("resume legacy successful tool: %v", err)
+	if err := ui.ResumeSavedSession(t.Context(), sessionID); err == nil {
+		t.Fatal("resume accepted unsupported successful-tool payload")
 	}
-	entries := ui.CanonicalThread().Entries()
-	if len(entries) != 2 || entries[1].Payload.FailureKind != "" {
-		t.Fatalf("restored entries = %#v", entries)
+	stored, err := store.GetSessionTranscript(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Revision != 2 || len(stored.Entries) != 2 || !strings.Contains(string(stored.Entries[1].PayloadJSON), `"failure_kind":"unknown"`) {
+		t.Fatalf("rejected session was changed: %#v", stored)
+	}
+}
+
+func TestAutosavePreservesRejectedDraftBytes(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	workspace, err := code.NewWorkspace(workspaceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const sessionID = "future-draft"
+	rejected := []byte(" {\n  \"version\": 99, \"text\": \"keep exactly\"\n} ")
+	if err := store.SaveSession(t.Context(), db.SessionRecord{
+		ID: sessionID, Workspace: workspaceRoot,
+		ContextJSON: []byte(`[{"role":"user","content":"saved context"}]`),
+		PendingJSON: rejected,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateActiveTranscript(t.Context(), db.TranscriptUpdate{
+		SessionID: sessionID, Workspace: workspaceRoot, Revision: 1,
+		Entries: []db.TranscriptEntry{{Sequence: 1, EntryID: "e1", Kind: "user_message", PayloadJSON: []byte(`{"text":"saved prompt"}`), Revision: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ui := tui.New()
+	ui.SetLiveRunner(engine.NewLiveRunner(nil, workspace, "test-model"))
+	ui.SetSettings(engine.NewSettings(store, nil, nil, workspaceRoot))
+	if err := ui.ResumeSavedSession(t.Context(), sessionID); err != nil {
+		t.Fatal(err)
+	}
+	ui.AddTranscriptMessages([]llm.Message{{Role: llm.RoleAssistant, Content: "new answer"}})
+	if err := ui.SaveSession(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := store.GetSession(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored.PendingJSON) != string(rejected) {
+		t.Fatalf("rejected draft bytes changed:\n got: %q\nwant: %q", stored.PendingJSON, rejected)
 	}
 }
 
