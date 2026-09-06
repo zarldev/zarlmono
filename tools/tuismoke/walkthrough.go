@@ -21,7 +21,7 @@ func (h *harness) walkthrough(ctx context.Context) error {
 		keys []string
 	}{
 		{"build mode", []string{keyEnter}},
-		{"settings · model", []string{"C-s"}},
+		{"[settings]", []string{"C-s"}},
 		{"key/sign-in", []string{"Down", keyEnter}},
 		{"vault unlock", []string{keyEnter, "smoke-secret", keyEnter}},
 		{"confirm", []string{passphrase, keyEnter}},
