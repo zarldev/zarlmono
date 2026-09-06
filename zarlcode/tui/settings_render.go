@@ -36,11 +36,13 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	header := overlayTopBar("settings", nil, 0, d.cats[d.cat].name, l.Context.Dx())
 	drawOverlayContext(scr, l, header, palette.Border)
 
-	// Nav rail.
-	catStart, catEnd := windowAroundCursor(d.cat, len(d.cats), bodyH)
+	// Nav rail. Match the other full-screen utilities with a labelled strip
+	// above the selectable entries.
+	nav := drawNavStrip(scr, l.Nav, palette.Muted.On(" categories · preferences"))
+	catStart, catEnd := windowAroundCursor(d.cat, len(d.cats), nav.Dy())
 	for i, c := range d.cats[catStart:catEnd] {
 		catIndex := catStart + i
-		if i >= bodyH {
+		if i >= nav.Dy() {
 			break
 		}
 		selected := catIndex == d.cat
@@ -50,7 +52,7 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		} else if selected {
 			label = palette.Assistant.On(c.name)
 		}
-		drawListRow(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+i, l.Nav.Dx(), 1), label, selected, !d.focusRows)
+		drawListRow(scr, uv.Rect(nav.Min.X, nav.Min.Y+i, nav.Dx(), 1), label, selected, !d.focusRows)
 	}
 
 	// Detail: Providers and Appearance render their own inline panels; every
