@@ -13,6 +13,7 @@ const (
 	commandModels                            // models
 	commandNameSession                       // name-session
 	commandPlan                              // plan
+	commandAgentActivity                     // agent-activity
 	commandToolHistory                       // tool-history
 	commandFiles                             // files
 	commandCopyLastResponse                  // copy-last-response

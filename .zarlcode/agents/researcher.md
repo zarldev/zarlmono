@@ -1,6 +1,8 @@
 ---
 name: researcher
 description: Read-only repository or external investigation for architecture, ownership, current APIs, dependency behavior, and evidence-backed implementation options.
+provider: openai-codex
+model: gpt-5.6-terra
 mode: explore
 ---
 

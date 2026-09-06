@@ -58,7 +58,7 @@ go build -C zkit ./...
 go vet -C zkit ./...
 go test -C zkit -count=1 ./...
 go test -C zkit -race -count=1 ./...
-(cd zkit && golangci-lint run)
+go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "./zkit/..."
 ```
 
 `zkit` is included in the repo CI matrix as its own module.
@@ -81,7 +81,7 @@ Uses `zkit` for the core coding-agent substrate:
 
 ### `swebench-eval`
 
-Uses or should use `zkit` for repeatable agent evaluation infrastructure:
+Uses `zkit` for repeatable agent evaluation infrastructure:
 
 - runner/harness pieces;
 - guarded code tools;

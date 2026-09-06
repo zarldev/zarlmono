@@ -353,8 +353,6 @@ go test -C zarlcode -race ./...    # With race detector
 go run ./zarlcode/cmd              # Run from source
 ```
 
-## Documentation
-
 ## Architecture and extension points
 
 See [`docs/architecture.md`](docs/architecture.md) for the rules governing runtime composition, reversible tool registration, capability seams, inspection parity, and model-visible session state. New capabilities should extend the shared `LiveRunner` source and policy pipeline rather than fork the agent loop or hide behavior in the TUI.

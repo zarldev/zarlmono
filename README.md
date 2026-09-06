@@ -26,7 +26,7 @@
 | **zarlcode** | [`zarlcode/`](zarlcode/) | Terminal coding-agent TUI/CLI — plan, build, switch models, resume sessions, inspect diffs, verify. |
 | **zkit** | [`zkit/`](zkit/) | The Go agent substrate: streaming runner, tool registry, LLM providers, guardrails, compaction, MCP, sandboxing, vault. |
 | **swebench-eval** | [`swebench-eval/`](swebench-eval/) | SWE-bench evaluation driver on the same coding-agent assembly. |
-| **examples** | [`examples/`](examples/) | Deterministic harnesses that isolate individual patterns, runnable with no LLM. |
+| **examples** | [`examples/`](examples/) | Deterministic and provider-backed harnesses that isolate individual patterns; many offer no-LLM scripted modes. |
 
 ---
 
@@ -56,32 +56,13 @@ zarlcode upgrade                       # self-update from GitHub Releases
 ### Credential storage
 
 Provider keys are stored in `~/.zarlcode/state.db` and encrypted with a
-passphrase by default. A fresh local-only startup does not create an unused vault;
-the first credential-writing command creates it. Later interactive startup prompts
-to unlock when stored credential rows exist; there is no environment-variable passphrase
-fallback. Keep the passphrase in your password manager—there is no recovery path.
-`zarlcode keys protect status` shows the database-wide mode.
-
-Vault initialization is durable: if a subsequent credential/database save fails,
-`master.kdf` remains and the next save asks to unlock it with the same passphrase.
-The failed save does not commit the credential or silently fall back to plaintext.
-MCP endpoint and token changes are saved together; cancelling an authenticated setup
-requires token re-entry rather than silently changing it to an unauthenticated server.
-
-Headless and other non-interactive startup never prompt. Ordinary settings and local
-providers remain usable, while operations requiring locked stored credentials fail
-closed. Existing unmarked plaintext credentials are unavailable until an interactive
-unlock migrates them atomically. `zarlcode keys protect off` is an explicit opt-out:
-it requires the current passphrase when encrypted rows exist and writes those
-credentials back as plaintext.
-
-Random-key `master.key` credentials are no longer supported or automatically
-converted. Re-enter those credentials to store them with passphrase encryption;
-existing rows and key files are not deleted automatically. Back up `state.db` together
-with `master.kdf` while protection is enabled. SQLite WAL/free pages and backups may
-retain historical plaintext from older installations, so migration is not forensic
-erasure. Rolling back to a version that does not understand the current storage
-metadata is not supported.
+passphrase by default. Interactive startup prompts to unlock stored credentials;
+headless and other non-interactive runs never prompt and fail closed when a locked
+credential is required. There is no passphrase recovery or environment-variable
+fallback. `zarlcode keys protect off` is an explicit plaintext-storage opt-out.
+Back up `state.db` together with `master.kdf` while protection is enabled. See the
+[credential storage guide](https://zarldev.github.io/zarlmono/zarlcode/#credential-storage)
+for migration, backup, and failure-handling details.
 
 Supported providers: **Anthropic**, **OpenAI**, **DeepSeek**, **Gemini**, **Vertex AI**, **llama.cpp**, **Ollama**, plus OAuth-backed **Claude Code** and **OpenAI Codex** surfaces.
 
@@ -206,10 +187,8 @@ Add guardrails, compaction, sandboxing, retrieval, and verified completion as op
 zarlcode/       --- Coding-agent TUI & CLI
 zkit/           --- Reusable agent libraries
 swebench-eval/  --- SWE-bench evaluation driver
-examples/       --- Deterministic harnesses & patterns
+examples/       --- Deterministic and provider-backed harnesses
 site/           --- Astro/Starlight docs site
-docker/         --- Container setup for eval runs
-dist/           --- Release artifacts
 ```
 
 ---
@@ -217,7 +196,7 @@ dist/           --- Release artifacts
 ## Build & test
 
 ```bash
-go tool task check          # build -> vet -> test (examples, zkit, zarlcode, swebench-eval)
+go tool task check          # build, vet, tests, and repository policy checks
 go tool task lint           # golangci-lint across CI-covered modules
 go tool task race           # zkit race-detector suite
 ```
@@ -245,6 +224,7 @@ zarlcode and zkit code tools can execute processes, mutate files, fetch web page
 - [zkit README](zkit/README.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CHANGELOG.md](CHANGELOG.md)
+- [Security policy](SECURITY.md)
 
 ---
 

@@ -33,6 +33,7 @@ type commandIDsContainer struct {
 	COMMANDMODELS           CommandID
 	COMMANDNAMESESSION      CommandID
 	COMMANDPLAN             CommandID
+	COMMANDAGENTACTIVITY    CommandID
 	COMMANDTOOLHISTORY      CommandID
 	COMMANDFILES            CommandID
 	COMMANDCOPYLASTRESPONSE CommandID
@@ -60,6 +61,9 @@ var CommandIDs = commandIDsContainer{
 	},
 	COMMANDPLAN: CommandID{
 		commandID: commandPlan,
+	},
+	COMMANDAGENTACTIVITY: CommandID{
+		commandID: commandAgentActivity,
 	},
 	COMMANDTOOLHISTORY: CommandID{
 		commandID: commandToolHistory,
@@ -90,6 +94,7 @@ func (c commandIDsContainer) allSlice() []CommandID {
 		CommandIDs.COMMANDMODELS,
 		CommandIDs.COMMANDNAMESESSION,
 		CommandIDs.COMMANDPLAN,
+		CommandIDs.COMMANDAGENTACTIVITY,
 		CommandIDs.COMMANDTOOLHISTORY,
 		CommandIDs.COMMANDFILES,
 		CommandIDs.COMMANDCOPYLASTRESPONSE,
@@ -194,6 +199,7 @@ var commandIDsNameMap = map[string]CommandID{
 	"models":             CommandIDs.COMMANDMODELS,
 	"name-session":       CommandIDs.COMMANDNAMESESSION,
 	"plan":               CommandIDs.COMMANDPLAN,
+	"agent-activity":     CommandIDs.COMMANDAGENTACTIVITY,
 	"tool-history":       CommandIDs.COMMANDTOOLHISTORY,
 	"files":              CommandIDs.COMMANDFILES,
 	"copy-last-response": CommandIDs.COMMANDCOPYLASTRESPONSE,
@@ -245,6 +251,7 @@ var validCommandIDs = map[CommandID]bool{
 	CommandIDs.COMMANDMODELS:           true,
 	CommandIDs.COMMANDNAMESESSION:      true,
 	CommandIDs.COMMANDPLAN:             true,
+	CommandIDs.COMMANDAGENTACTIVITY:    true,
 	CommandIDs.COMMANDTOOLHISTORY:      true,
 	CommandIDs.COMMANDFILES:            true,
 	CommandIDs.COMMANDCOPYLASTRESPONSE: true,
@@ -349,7 +356,7 @@ func (c *CommandID) UnmarshalYAML(by []byte) error {
 }
 
 // commandidNames is a constant string slice containing all enum values cononical absolute names
-const commandidNames = "helpsettingsthememodelsname-sessionplantool-historyfilescopy-last-responseexport-session"
+const commandidNames = "helpsettingsthememodelsname-sessionplanagent-activitytool-historyfilescopy-last-responseexport-session"
 
 // commandidNamesMap is a map of enum values to their canonical absolute
 // name positions within the commandidNames string slice
@@ -360,10 +367,11 @@ var commandidNamesMap = map[CommandID]string{
 	CommandIDs.COMMANDMODELS:           commandidNames[17:23],
 	CommandIDs.COMMANDNAMESESSION:      commandidNames[23:35],
 	CommandIDs.COMMANDPLAN:             commandidNames[35:39],
-	CommandIDs.COMMANDTOOLHISTORY:      commandidNames[39:51],
-	CommandIDs.COMMANDFILES:            commandidNames[51:56],
-	CommandIDs.COMMANDCOPYLASTRESPONSE: commandidNames[56:74],
-	CommandIDs.COMMANDEXPORTSESSION:    commandidNames[74:88],
+	CommandIDs.COMMANDAGENTACTIVITY:    commandidNames[39:53],
+	CommandIDs.COMMANDTOOLHISTORY:      commandidNames[53:65],
+	CommandIDs.COMMANDFILES:            commandidNames[65:70],
+	CommandIDs.COMMANDCOPYLASTRESPONSE: commandidNames[70:88],
+	CommandIDs.COMMANDEXPORTSESSION:    commandidNames[88:102],
 }
 
 // String implements the Stringer interface.
@@ -382,15 +390,16 @@ func _() {
 	// An "invalid array index" compiler error signifies that the constant values have changed.
 	// Re-run the goenums command to generate them again.
 	// Does not identify newly added constant values unless order changes
-	var x [10]struct{}
+	var x [11]struct{}
 	_ = x[commandHelp]
 	_ = x[commandSettings-1]
 	_ = x[commandTheme-2]
 	_ = x[commandModels-3]
 	_ = x[commandNameSession-4]
 	_ = x[commandPlan-5]
-	_ = x[commandToolHistory-6]
-	_ = x[commandFiles-7]
-	_ = x[commandCopyLastResponse-8]
-	_ = x[commandExportSession-9]
+	_ = x[commandAgentActivity-6]
+	_ = x[commandToolHistory-7]
+	_ = x[commandFiles-8]
+	_ = x[commandCopyLastResponse-9]
+	_ = x[commandExportSession-10]
 }

@@ -36,7 +36,7 @@ have more than one consumer.
 
 ```bash
 go tool task sweeval
-nix/bin/sweeval -version
+~/.local/bin/sweeval -version
 ```
 
 Release builds report the module tag. Source installs made with `go install ...@version`

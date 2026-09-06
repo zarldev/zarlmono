@@ -27,6 +27,10 @@ var commandPaletteEntries = []commandPaletteEntry{
 		m.overlay.push(newPlanDialog(&m.session.Plan, m.session.WorkspaceDir))
 		return nil
 	}},
+	{id: CommandIDs.COMMANDAGENTACTIVITY, label: "Open agent activity", description: "Inspect delegated agents and their activity", aliases: []string{"agent", "agents", "sub-agent", "delegation"}, shortcut: "ctrl+a", run: func(m *UI) tea.Cmd {
+		m.overlay.push(newAgentActivityScreen(m.timeline))
+		return nil
+	}},
 	{id: CommandIDs.COMMANDTOOLHISTORY, label: "Open tool history", description: "Inspect prior tool calls", aliases: []string{"tools"}, shortcut: "ctrl+h", available: func(m *UI) bool { return m.settings != nil }, run: func(m *UI) tea.Cmd {
 		m.overlay.push(newToolHistory(m.appContext(), m.settings.Store, m.session.ID))
 		return nil
