@@ -145,7 +145,7 @@ jobs:
           tar -xzf "zarlcode_${version}_linux_amd64.tar.gz" -C "$tmpdir"
           test "$("$tmpdir/zarlcode" -version)" = "$version"
       - name: attest release artifacts
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             artifacts/*.tar.gz
