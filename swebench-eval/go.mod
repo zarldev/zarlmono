@@ -11,7 +11,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/pressly/goose/v3 v3.28.0
-	github.com/zarldev/zarlmono/zarlcode v0.18.0
+	github.com/zarldev/zarlmono/zarlcode v0.19.0
 	github.com/zarldev/zarlmono/zkit v0.19.0
 	modernc.org/sqlite v1.58.0
 )

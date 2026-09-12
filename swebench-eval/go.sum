@@ -124,8 +124,8 @@ github.com/twpayne/go-geom v1.6.1 h1:iLE+Opv0Ihm/ABIcvQFGIiFBXd76oBIar9drAwHFhR4
 github.com/twpayne/go-geom v1.6.1/go.mod h1:Kr+Nly6BswFsKM5sd31YaoWS5PeDDH2NftJTK7Gd028=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
-github.com/zarldev/zarlmono/zarlcode v0.18.0 h1:GWa9ehS10l3eq7n17hioCa4t/X2XOrmT0T00KhnQbDw=
-github.com/zarldev/zarlmono/zarlcode v0.18.0/go.mod h1:xHfM/IeAGPXigkXa29scK8+Jb2P+xO6QZMgLpezofGM=
+github.com/zarldev/zarlmono/zarlcode v0.19.0 h1:EIq32IxpYPDntkSbvdSeOgIl1tLjvnt40Zapczc/ZtI=
+github.com/zarldev/zarlmono/zarlcode v0.19.0/go.mod h1:OF6Z38UeSDR16pubnak6iw8A6bni7PFBiWwf02WKvZU=
 github.com/zarldev/zarlmono/zkit v0.19.0 h1:RvVAEJ6HlQcUlI4ZWI+QrNnEIScrHqxVfv8L6QWa3d4=
 github.com/zarldev/zarlmono/zkit v0.19.0/go.mod h1:8DjGbGKA9k1WyRnZ+f4yS7ZCl7seIhAkYsguJ1tJyBE=
 github.com/zeebo/xxh3 v1.1.0 h1:s7DLGDK45Dyfg7++yxI0khrfwq9661w9EN78eP/UZVs=
