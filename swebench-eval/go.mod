@@ -11,9 +11,9 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/pressly/goose/v3 v3.28.0
-	github.com/zarldev/zarlmono/zarlcode v0.18.0
+	github.com/zarldev/zarlmono/zarlcode v0.19.0
 	github.com/zarldev/zarlmono/zkit v0.19.0
-	modernc.org/sqlite v1.58.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
@@ -81,7 +81,7 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.78 // indirect
-	modernc.org/libc v1.75.6 // indirect
+	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	mvdan.cc/sh/v3 v3.14.0 // indirect
