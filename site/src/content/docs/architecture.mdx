@@ -109,7 +109,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
-provider, _ := anthropic.NewProvider(apiKey)
+provider := anthropic.NewProvider(apiKey)
 
 // the standard coding toolset: read, write, edit, bash, grep, ls, plan
 ws, _ := code.NewWorkspace(root)

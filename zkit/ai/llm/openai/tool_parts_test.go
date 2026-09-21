@@ -22,10 +22,8 @@ func TestProviderSerializesChatToolResultAttachments(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
-	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := openai.NewProvider("test-key", openai.WithBaseURL(server.URL))
+
 	messages := []llm.Message{
 		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call_1", Function: llm.ToolCallFunction{Name: "computer_observe", Arguments: `{}`}}}},
 		{Role: llm.RoleTool, ToolCallID: "call_1", Content: "metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI("data:image/png;base64,cG5n", "image/png")}},

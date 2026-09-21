@@ -6,16 +6,20 @@ export default defineConfig({
   site: 'https://zarldev.github.io',
   base: '/zarlmono',
   trailingSlash: 'always',
-  // Share the real product recordings; V1 remains their source of truth.
+  // Share the CLI recordings; V1 remains their source of truth.
   publicDir: '../site/public',
   integrations: [
     starlight({
       title: 'zarlcode / docs',
-      description: 'Use zarlcode. Build your own agent with zkit.',
+      description: 'An open-source coding harness and Go agent toolkit: usage, architecture, and reference.',
       customCss: ['./src/styles/docs.css'],
+      components: {
+        Head: './src/components/DocsHead.astro',
+        ThemeSelect: './src/components/DocsThemeSelect.astro',
+      },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/zarldev/zarlmono' }],
       sidebar: [
-        { label: '← Product home', link: '/zarlmono/' },
+        { label: '← Project overview', link: '/zarlmono/' },
         {
           label: 'Use zarlcode',
           items: [
@@ -32,7 +36,7 @@ export default defineConfig({
         {
           label: 'Build with zkit',
           items: [
-            { label: 'Meet the toolkit', link: '/zarlmono/toolkit/' },
+            { label: 'Toolkit & runtime design', link: '/zarlmono/toolkit/' },
             { label: 'Quickstart', slug: 'getting-started' },
             { label: 'Architecture', slug: 'architecture' },
             { label: 'Examples', slug: 'examples' },
@@ -43,6 +47,7 @@ export default defineConfig({
           collapsed: true,
           items: [
             { label: 'Runner', slug: 'runner' },
+            { label: 'Turn lifecycle', slug: 'turn-lifecycle' },
             { label: 'Verified completion', slug: 'pursue' },
             { label: 'Shared infrastructure', slug: 'shared-infra' },
             { label: 'Sub-agent tasks', slug: 'spawn' },

@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
-func TestTranscriptConflictRebasesAgainstDurableRevision(t *testing.T) {
+func TestTranscriptConflictDoesNotAdoptMatchingForeignPrefix(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "sessions.db"))
 	if err != nil {
@@ -48,7 +49,10 @@ func TestTranscriptConflictRebasesAgainstDurableRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stored.Entries) != len(records) || stored.Revision != ui.CanonicalThread().Revision() {
-		t.Fatalf("rebased transcript = revision %d, entries %d", stored.Revision, len(stored.Entries))
+	if len(stored.Entries) != 1 || stored.Revision != first.Revision {
+		t.Fatalf("foreign prefix changed: revision %d, entries %d", stored.Revision, len(stored.Entries))
+	}
+	if err := ui.SaveSession(t.Context()); !errors.Is(err, db.ErrCheckpointConflict) {
+		t.Fatalf("matching prefix authorized foreign adoption: %v", err)
 	}
 }

@@ -79,13 +79,10 @@ func TestProvider_Streaming_TextResponse(t *testing.T) {
 	})
 	defer cb.Close()
 
-	p, err := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
 
 	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{
@@ -170,10 +167,8 @@ func TestProvider_ResponseFormatWireShape(t *testing.T) {
 				_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
 			})
 			defer cb.Close()
-			p, err := openaicodex.NewProvider(openaicodex.StaticTokenSource{T: freshToken(t, "acct")}, openaicodex.WithBaseURL(cb.srv.URL), openaicodex.WithNoRetry())
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			p := openaicodex.NewProvider(openaicodex.StaticTokenSource{T: freshToken(t, "acct")}, openaicodex.WithBaseURL(cb.srv.URL), openaicodex.WithNoRetry())
+
 			for _, streamErr := range p.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "test"}}, ResponseFormat: tt.format, Options: tt.options}) {
 				if streamErr != nil {
 					t.Fatalf("Complete: %v", streamErr)
@@ -282,10 +277,8 @@ func TestProvider_RequestWireRegressions(t *testing.T) {
 				_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
 			})
 			defer cb.Close()
-			p, err := openaicodex.NewProvider(openaicodex.StaticTokenSource{T: freshToken(t, "acct")}, openaicodex.WithBaseURL(cb.srv.URL), openaicodex.WithNoRetry(), openaicodex.WithModel(tt.model))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			p := openaicodex.NewProvider(openaicodex.StaticTokenSource{T: freshToken(t, "acct")}, openaicodex.WithBaseURL(cb.srv.URL), openaicodex.WithNoRetry(), openaicodex.WithModel(tt.model))
+
 			for _, streamErr := range p.Complete(t.Context(), tt.req) {
 				if streamErr != nil {
 					t.Fatalf("Complete: %v", streamErr)
@@ -303,15 +296,13 @@ func TestProvider_AstraMaxPresetMapsBaseModelAndEffort(t *testing.T) {
 	})
 	defer cb.Close()
 
-	provider, err := openaicodex.NewProvider(
+	provider := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 		openaicodex.WithNoRetry(),
 		openaicodex.WithModel("gpt-6-astra-max"),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+
 	for _, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
 	}) {
@@ -346,14 +337,11 @@ func TestProvider_ReplaysEncryptedReasoningInNativeOrder(t *testing.T) {
 		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"usage":{}}}`+"\n\n")
 	})
 	defer cb.Close()
-	provider, err := openaicodex.NewProvider(
+	provider := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 		openaicodex.WithNoRetry(),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
 
 	reasoningData := []byte(`{"type":"reasoning","id":"rs_reason","encrypted_content":"opaque-ciphertext","summary":[{"type":"summary_text","text":"preserve me"}],"status":"completed","vendor":{"nested":7}}`)
 	req := llm.CompletionRequest{Messages: []llm.Message{
@@ -430,15 +418,13 @@ func TestProviderOptionsAssignEmptyValues(t *testing.T) {
 	})
 	defer cb.Close()
 
-	p, err := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 		openaicodex.WithModel(""),
 		openaicodex.WithDefaultReasoningEffort(""),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+
 	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},
 	})
@@ -469,7 +455,7 @@ func TestProvider_ToolCallStream(t *testing.T) {
 	})
 	defer cb.Close()
 
-	p, _ := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 	)
@@ -520,7 +506,7 @@ func TestProvider_HTTPErrorSurfacesAsChunkError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, _ := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithNoRetry(),
@@ -562,7 +548,7 @@ func TestProvider_UsageLimitBodyParsedIntoRateLimitError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, _ := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithNoRetry(),
@@ -613,7 +599,7 @@ func TestProvider_RetriesOn429ThenSucceeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, _ := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(srv.URL),
 		// Tight policy so the test stays fast; Retry-After: 0 keeps
@@ -648,14 +634,12 @@ func TestProvider_NoRetryOptionUsesActiveClient(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, err := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithNoRetry(),
 		openaicodex.WithBaseURL(srv.URL),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+
 	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "x"}},
 	})
@@ -686,7 +670,7 @@ func TestProvider_RetriesHonorRetryAfter(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, _ := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(srv.URL),
 		// Set exponential base far below the Retry-After hint so any
@@ -718,7 +702,7 @@ func TestProvider_DoesNotRetryOn4xxOtherThan429(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, _ := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithRetryPolicy(4, 10*time.Millisecond, 50*time.Millisecond),
@@ -869,13 +853,10 @@ func TestProvider_NonStreamingCallerStillRequestsSSE(t *testing.T) {
 	})
 	defer cb.Close()
 
-	p, err := openaicodex.NewProvider(
+	p := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: freshToken(t, "acct_test")},
 		openaicodex.WithBaseURL(cb.srv.URL),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
 
 	seq := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},

@@ -26,7 +26,7 @@ func (s *Store) GetSettingExact(ctx context.Context, workspace, key string) (str
 }
 
 func (s *Store) getSettingRow(ctx context.Context, workspace, key string) (string, error) {
-	v, err := s.q.GetSetting(ctx, gen.GetSettingParams{Workspace: workspace, Key: key})
+	v, err := s.read.GetSetting(ctx, gen.GetSettingParams{Workspace: workspace, Key: key})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
@@ -66,7 +66,7 @@ func (s *Store) DeleteSetting(ctx context.Context, workspace, key string) error 
 // Useful at startup when the shell wants its whole preference set in
 // one shot instead of per-key Get calls.
 func (s *Store) EffectiveSettings(ctx context.Context, workspace string) (map[string]string, error) {
-	globals, err := s.q.ListSettingsByWorkspace(ctx, "")
+	globals, err := s.read.ListSettingsByWorkspace(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("list global settings: %w", err)
 	}
@@ -75,7 +75,7 @@ func (s *Store) EffectiveSettings(ctx context.Context, workspace string) (map[st
 		out[r.Key] = r.Value
 	}
 	if workspace != "" {
-		local, err := s.q.ListSettingsByWorkspace(ctx, workspace)
+		local, err := s.read.ListSettingsByWorkspace(ctx, workspace)
 		if err != nil {
 			return nil, fmt.Errorf("list workspace settings: %w", err)
 		}

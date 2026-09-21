@@ -107,6 +107,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	if err != nil {
 		return nil, fmt.Errorf("workspace %q: %w", root, err)
 	}
+	_ = app.AddCloser("workspace", ws)
 	root = ws.Root()
 	if _, err := home.Materialise(); err != nil {
 		return nil, fmt.Errorf("seed zarlcode home: %w", err)
@@ -147,9 +148,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	// Kernel sandbox for shell commands: Landlock filesystem allow-list
 	// rooted at the workspace (zkit/agent/sandbox). One instance shared
 	// by foreground bash and the process manager so both run under the
-	// same policy. On kernels without Landlock the shell runs unconfined
-	// with a warning — the guardrail chain still applies either way.
-	var sb code.Sandboxer
+	// same policy. Requested confinement must be established before model work.
 	sbPolicy := sandbox.DefaultPolicy(ws.Root())
 	var askpassSrv *AskpassServer
 	var toolEnv map[string]string
@@ -176,12 +175,10 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		} else {
 			slog.InfoContext(ctx, "sandbox: shell confinement disabled in settings")
 		}
-	} else if normal, err := sandbox.New(sbPolicy); err != nil {
-		slog.WarnContext(ctx, "sandbox: shell confinement unavailable, running unconfined", "err", err)
-	} else if verify, err := sandbox.New(sandbox.VerifyPolicy(sbPolicy, ws.Root())); err != nil {
-		slog.WarnContext(ctx, "sandbox: verify confinement unavailable, running unconfined", "err", err)
-	} else {
-		sb = sandbox.NewWorkModeSandbox(normal, verify)
+	}
+	sb, err := engine.ShellSandbox(sandboxEnabled, ws.Root(), sbPolicy, sandbox.New)
+	if err != nil {
+		return nil, err
 	}
 
 	// Background-process manager for bash(background=true) + the
@@ -272,8 +269,13 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	// registry; the connect/disconnect/list tools are bound to mcpReg so a
 	// connection made one turn survives into the next. Server notifications are
 	// queued into the same live-turn steerer as user-entered mid-run input.
+	mcpPolicy, err := configuredMCPPolicy(ctx, settings)
+	if err != nil {
+		return nil, err
+	}
 	mcpHost := tools.NewRegistry()
 	mcpReg := dynamic.NewMCPRegistry(mcpHost, agentmcp.NotifierFor(live.QueueInjector()))
+	mcpReg.SetConnectPolicy(mcpPolicy)
 	// Advisory startup discovery may update the target later, but it must not
 	// gate prompt submission. LiveRunner target transitions are atomic, so a
 	// turn already in flight keeps its snapshot and the update applies next turn.
@@ -295,6 +297,11 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	live.SetVerifyLoop(settings.VerifyLoop(ctx)) // headless verified re-drive (verify_tests / verify_attempts)
 	m.SetPressureConfig(ctxWindow, lim.ReserveTokens)
 	m.SetLiveRunner(live) // also sets the run handler; enables mid-session re-point
+	m.SetLiveEventSink(sink)
+	// A fast Run flush can time out while a command still owns the DB/sink.
+	// Join it before closing live, sink, or settings. If this cleanup deadline
+	// also expires, zapp skips dependent closers rather than racing their users.
+	_ = app.AddContextCloser("session persistence", zapp.ContextCloseFunc(m.FlushSessionPersistence))
 	m.askpass = askpassSrv
 
 	// Resume applies to both interactive and headless runs; only the intro is
@@ -368,7 +375,7 @@ func (p Launch) Run(ctx context.Context, _ *zapp.App[*Zarlcode], z *Zarlcode) in
 			return engine.RunHeadlessProcess(ctx, z.live, p.Prompt, p.MaxIter, report)
 		})
 	}
-	prog := tea.NewProgram(z.model, tea.WithContext(ctx))
+	prog := tea.NewProgram(z.model, tea.WithContext(ctx), tea.WithOutput(z.model.terminalOutput(os.Stdout)))
 	if z.sink != nil {
 		z.sink.SetSend(prog.Send)
 	}
@@ -398,9 +405,6 @@ func grantSandboxExecPath(policy sandbox.Policy, path string) sandbox.Policy {
 	}
 	grant := func(path string) {
 		policy.ReadFiles = append(policy.ReadFiles, path)
-		for dir := filepath.Dir(path); dir != "." && dir != string(filepath.Separator) && dir != ""; dir = filepath.Dir(dir) {
-			policy.ReadDirs = append(policy.ReadDirs, dir)
-		}
 	}
 	grant(path)
 	if strings.HasSuffix(strings.ToLower(path), ".exe") {

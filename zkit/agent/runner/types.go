@@ -113,6 +113,8 @@ type TaskResult struct {
 	Reason     TerminalReason
 	Iterations int
 	Duration   time.Duration
+	// Timing accounts for measured phases across all attempts in this Run.
+	Timing TaskTiming
 	// Cause refines cancelled and timeout outcomes without requiring callers to
 	// inspect wrapped errors. It is empty for ordinary completion and faults.
 	Cause TerminalCause
@@ -142,14 +144,10 @@ type TaskResult struct {
 	// LLM call (e.g. early-error paths).
 	LastUsage *llm.Usage
 
-	// TotalUsage is the sum of every iteration's reported usage —
-	// the run's full token spend, not just the final iteration's
-	// snapshot. Multi-iteration runs (any task with tool calls)
-	// accumulate one Usage per LLM completion; LastUsage carries
-	// only the last, which under-reports total cost. Callers
-	// tracking session-wide spend (or sub-agent spend, via
-	// spawn-agent's child Run) should prefer TotalUsage over
-	// LastUsage. Nil when the run never completed an LLM call.
+	// TotalUsage sums the last reported usage snapshot of every invoked provider
+	// attempt, including failed, cancelled and retried attempts, but not descendants.
+	// Nil means no attempt reported usage; reported zero remains non-nil.
+	// Attempts that omit usage make this a partial total (see Timing.AttemptsWithUsage).
 	TotalUsage *llm.Usage
 	// ToolSurface is the exact model-visible tool set from the final request.
 	ToolSurface ToolSurface

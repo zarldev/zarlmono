@@ -92,6 +92,8 @@ type PersistenceConfig struct {
 	DBPath string
 	RunID  string
 	Notes  string
+	// ExportRun selects an existing run for JSON output without task execution.
+	ExportRun string
 }
 
 // Parse registers the eval command's flags on fs and parses args.
@@ -112,7 +114,7 @@ func Parse(fs *flag.FlagSet, args []string) (Config, error) {
 	fs.StringVar(&cfg.Zarlcode.StateDB, "state-db", "", "path to zarlcode state.db — vault + custom-provider rows (empty = $HOME/.zarlcode/state.db)")
 	fs.DurationVar(&cfg.Execution.TaskTimeout, "task-timeout", 5*time.Minute, "wall-clock budget per (task, driver)")
 	fs.IntVar(&cfg.Zarlcode.MaxIter, "max-iter", 0, "cap the agent loop's iterations (0 = loop default)")
-	fs.IntVar(&cfg.Zarlcode.ToolConcurrency, "tool-concurrency", 0, "cap concurrent tool dispatch per iteration (0 = sequential)")
+	fs.IntVar(&cfg.Zarlcode.ToolConcurrency, "tool-concurrency", 0, "tool scheduling (0 = up to 4 parallel workspace reads, 1 = sequential, >1 = parallelize all calls)")
 	fs.IntVar(&cfg.Zarlcode.ContextWindow, "context-window", 0, "compactor context-window size in tokens (0 = 32768)")
 	fs.DurationVar(&cfg.Zarlcode.StreamIdle, "zarlcode-stream-idle", 0, "zarlcode stream-idle watchdog: gap between chunks before the stall detector fires (0 = coderunner default 90s); raise for slow-prefill local models")
 	fs.DurationVar(&cfg.Zarlcode.IterationTimeout, "zarlcode-iteration-timeout", 0, "zarlcode per-iteration wall-clock backstop (0 = coderunner default 5m); raise for slow-prefill local models")
@@ -135,6 +137,7 @@ func Parse(fs *flag.FlagSet, args []string) (Config, error) {
 	fs.StringVar(&cfg.Persistence.DBPath, "db", "", "path to swebench-eval sqlite (empty = $HOME/.zarlcode/swebench-eval.db)")
 	fs.StringVar(&cfg.Persistence.RunID, "run-id", "", "explicit run id (empty = a generated uuid)")
 	fs.StringVar(&cfg.Persistence.Notes, "run-notes", "", "free-form notes to attach to the run row — eg. 'after decompose advisory refactor'")
+	fs.StringVar(&cfg.Persistence.ExportRun, "export-run", "", "export an existing run as JSON to stdout without executing tasks (use --db to select the database)")
 	fs.BoolVar(&cfg.Version, "version", false, "print the build version and exit")
 
 	if err := fs.Parse(args); err != nil {

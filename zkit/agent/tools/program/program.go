@@ -238,7 +238,7 @@ func (t programTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		return failure(call.ID, parseErr, metadata.SetExecutionTime(time.Since(started))), nil
 	}
 	runner := newRunner(ctx, t.source, call.ID, started)
-	output, stats, runErr := runner.run(args.Script)
+	output, references, stats, runErr := runner.run(args.Script)
 	metadata["nested_events"] = true
 	metadata["tool_calls"] = stats.ToolCalls
 	metadata["parallel_batches"] = stats.ParallelBatches
@@ -249,11 +249,12 @@ func (t programTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 		return failure(call.ID, runErr, metadata), nil
 	}
 	return &tools.ToolResult{
-		ToolCallID: call.ID,
-		Success:    true,
-		Data:       Result{Output: output, Stats: stats},
-		Metadata:   metadata,
-		ExecutedAt: time.Now(),
+		ToolCallID:          call.ID,
+		Success:             true,
+		Data:                Result{Output: output, Stats: stats},
+		Metadata:            metadata,
+		ExecutedAt:          time.Now(),
+		AdmissionReferences: append([]tools.AdmissionReference(nil), references...),
 	}, nil
 }
 

@@ -17,8 +17,9 @@ type mainToastMsg struct{}
 // statusPane is the contextual bottom state row. It stays quiet when there is
 // nothing requiring attention; complete shortcut discovery belongs in help.
 type statusPane struct {
-	session *Session
-	input   func() string
+	session    *Session
+	input      func() string
+	settlement func() string
 }
 
 func newStatusPane(session *Session, input func() string) *statusPane {
@@ -33,7 +34,8 @@ func (s *statusPane) Draw(scr uv.Screen, area uv.Rectangle) {
 	hint := s.statusHint()
 	toast := s.statusToast()
 	slashActive := s.input != nil && slashStatusHint(s.input()) != ""
-	if slashActive && s.session.ToastTone != toastError && s.session.ToastTone != toastWarn {
+	settling := s.settlement != nil && s.settlement() != ""
+	if slashActive && !settling && s.session.ToastTone != toastError && s.session.ToastTone != toastWarn {
 		toast = ""
 	}
 
@@ -80,6 +82,11 @@ func (s *statusPane) statusHint() string {
 }
 
 func (s *statusPane) statusToast() string {
+	if s.settlement != nil {
+		if status := s.settlement(); status != "" {
+			return renderFooterToast(status, toastError)
+		}
+	}
 	if s.session.Toast == "" || time.Since(s.session.ToastAt) > mainToastTTL {
 		return ""
 	}

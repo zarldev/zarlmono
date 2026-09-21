@@ -119,9 +119,26 @@ tasks:
         done
 
   race:
-    desc: Run zkit race tests
+    desc: Run shared-library and application race tests
+    cmds:
+      - task: race:zkit
+      - task: race:zarlcode
+      - task: race:swebench-eval
+
+  race:zkit:
+    desc: Race-test the complete shared-library module
     cmds:
       - go test -C zkit -race -count=1 ./...
+
+  race:zarlcode:
+    desc: Race-test engine lifecycle, TUI settlement, and event delivery
+    cmds:
+      - go test -C zarlcode -race -count=1 ./engine/... ./tui/...
+
+  race:swebench-eval:
+    desc: Race-test evaluation execution, scoring, and persistence
+    cmds:
+      - go test -C swebench-eval -race -count=1 ./...
 
   site-check:
     desc: Install, build, and audit the documentation site

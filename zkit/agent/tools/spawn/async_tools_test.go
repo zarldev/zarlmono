@@ -24,7 +24,7 @@ func TestAsyncToolReturnsReceiptBeforeChildCompletes(t *testing.T) {
 	child := runner.New(client, runner.WithSink(runner.NopSink{}))
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	tool := spawn.NewAsync(spawn.New(child), group)
+	tool := spawn.NewAsync(child, group)
 
 	res, err := tool.Execute(t.Context(), tools.ToolCall{ID: "spawn-call", Arguments: tools.ToolParameters{"prompt": "investigate"}})
 	if err != nil || res == nil || !res.Success {
@@ -62,7 +62,7 @@ func TestAsyncChildrenPublishWorkspaceWaitAndSerializeOverlappingTools(t *testin
 	)
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	start := spawn.NewAsync(spawn.New(child), group)
+	start := spawn.NewAsync(child, group)
 
 	first := startSpawnWriteTask(t, start, "first", "zkit/a.go")
 	firstEntry := receiveSpawnWriteEntry(t, source.entered)
@@ -96,7 +96,7 @@ func TestAsyncChildrenPublishWorkspaceWaitAndSerializeOverlappingTools(t *testin
 func TestListAgentTasksDoesNotConsumeOrExposeTerminalSummary(t *testing.T) {
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	start := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "secret summary"}, runner.WithSink(runner.NopSink{}))), group)
+	start := spawn.NewAsync(runner.New(&immediateClient{content: "secret summary"}, runner.WithSink(runner.NopSink{})), group)
 	id := startImmediateTask(t, start, "spawn")
 	if _, err := group.Wait(t.Context(), id); err != nil {
 		t.Fatalf("wait terminal: %v", err)
@@ -167,7 +167,7 @@ func TestAsyncToolEnforcesConcurrentChildCap(t *testing.T) {
 		close(client.release)
 		_ = group.Close(t.Context())
 	})
-	tool := spawn.NewAsync(spawn.New(child), group)
+	tool := spawn.NewAsync(child, group)
 
 	first, err := tool.Execute(t.Context(), tools.ToolCall{ID: "first", Arguments: tools.ToolParameters{"prompt": "wait"}})
 	if err != nil || !first.Success {
@@ -186,7 +186,7 @@ func TestAsyncToolEnforcesConcurrentChildCap(t *testing.T) {
 func TestAsyncToolRejectsNegativeMaxIterationsBeforeAdmission(t *testing.T) {
 	t.Parallel()
 	group := spawn.NewGroup()
-	tool := spawn.NewAsync(spawn.New(nil), group)
+	tool := spawn.NewAsync(nil, group)
 	result, err := tool.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "work", "max_iterations": -1}})
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestAsyncToolContainsChildPanicAndReleasesCapacity(t *testing.T) {
 	child := runner.New(panicClient{}, runner.WithSink(runner.NopSink{}))
 	group := spawn.NewGroup(spawn.WithMaxConcurrent(1))
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	tool := spawn.NewAsync(spawn.New(child), group)
+	tool := spawn.NewAsync(child, group)
 
 	first, err := tool.Execute(t.Context(), tools.ToolCall{ID: "first", Arguments: tools.ToolParameters{"prompt": "panic"}})
 	if err != nil || first == nil || !first.Success {
@@ -230,7 +230,7 @@ func TestAsyncToolContainsChildPanicAndReleasesCapacity(t *testing.T) {
 func TestGroupEvictsOldestObservedTerminalTasks(t *testing.T) {
 	group := spawn.NewGroup(spawn.WithMaxObserved(2))
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	tool := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))), group)
+	tool := spawn.NewAsync(runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{})), group)
 
 	ids := make([]spawn.TaskID, 0, 3)
 	for i := range 3 {
@@ -257,7 +257,7 @@ func TestGroupEvictsOldestObservedTerminalTasks(t *testing.T) {
 func TestGroupNeverEvictsUnobservedTerminalTasks(t *testing.T) {
 	group := spawn.NewGroup(spawn.WithMaxObserved(1))
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	tool := spawn.NewAsync(spawn.New(runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))), group)
+	tool := spawn.NewAsync(runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{})), group)
 
 	unobserved := startImmediateTask(t, tool, "unobserved")
 	firstObserved := startImmediateTask(t, tool, "observed-1")
@@ -296,7 +296,7 @@ func TestGroupCloseCancelsAndJoinsChild(t *testing.T) {
 	client := &cancelClient{started: make(chan struct{})}
 	child := runner.New(client, runner.WithSink(runner.NopSink{}))
 	group := spawn.NewGroup()
-	tool := spawn.NewAsync(spawn.New(child), group)
+	tool := spawn.NewAsync(child, group)
 	res, err := tool.Execute(t.Context(), tools.ToolCall{ID: "spawn-call", Arguments: tools.ToolParameters{"prompt": "wait"}})
 	if err != nil || res == nil || !res.Success {
 		t.Fatalf("agent_spawn = (%#v, %v), want receipt", res, err)
@@ -319,7 +319,7 @@ func TestAgentAwaitClassifiesCancelledTaskAsTransient(t *testing.T) {
 	client := &cancelClient{started: make(chan struct{})}
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	start := spawn.NewAsync(spawn.New(runner.New(client, runner.WithSink(runner.NopSink{}))), group)
+	start := spawn.NewAsync(runner.New(client, runner.WithSink(runner.NopSink{})), group)
 	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "wait"}})
 	if err != nil || !spawned.Success {
 		t.Fatalf("spawn = (%#v, %v)", spawned, err)
@@ -342,7 +342,7 @@ func TestAgentAwaitClassifiesCancelledTaskAsTransient(t *testing.T) {
 func TestAgentAwaitClassifiesChildErrorAsFatal(t *testing.T) {
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	start := spawn.NewAsync(spawn.New(runner.New(errorClient{}, runner.WithSink(runner.NopSink{}))), group)
+	start := spawn.NewAsync(runner.New(errorClient{}, runner.WithSink(runner.NopSink{})), group)
 	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "fail"}})
 	if err != nil || !spawned.Success {
 		t.Fatalf("spawn = (%#v, %v)", spawned, err)
@@ -362,7 +362,7 @@ func TestAgentAwaitClassifiesIterationExhaustionAsBudget(t *testing.T) {
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
 	provider := &scriptedProvider{turns: [][]llm.CompletionChunk{{toolCallChunk("probe", "missing")}}}
 	child := runner.New(runner.ClientFromProvider(provider), runner.WithSink(runner.NopSink{}), runner.WithMaxIterations(1))
-	start := spawn.NewAsync(spawn.New(child), group)
+	start := spawn.NewAsync(child, group)
 	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "keep working"}})
 	if err != nil || !spawned.Success {
 		t.Fatalf("spawn = (%#v, %v)", spawned, err)
@@ -381,7 +381,7 @@ func TestGroupMaxRuntimeCancelsChildAndReportsBudget(t *testing.T) {
 	client := &cancelClient{started: make(chan struct{})}
 	group := spawn.NewGroup(spawn.WithMaxRuntime(20 * time.Millisecond))
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	start := spawn.NewAsync(spawn.New(runner.New(client, runner.WithSink(runner.NopSink{}))), group)
+	start := spawn.NewAsync(runner.New(client, runner.WithSink(runner.NopSink{})), group)
 	spawned, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "wait"}})
 	if err != nil || !spawned.Success {
 		t.Fatalf("spawn = (%#v, %v)", spawned, err)
@@ -403,7 +403,7 @@ func TestGroupMaxRuntimeCancelsChildAndReportsBudget(t *testing.T) {
 
 func TestAgentToolNamesFollowResourceVerbGrammar(t *testing.T) {
 	group := spawn.NewGroup()
-	toolsToCheck := []tools.Tool{spawn.NewAsync(spawn.New(nil), group), spawn.NewAwait(group), spawn.NewStatus(group), spawn.NewStop(group), spawn.NewList(group)}
+	toolsToCheck := []tools.Tool{spawn.NewAsync(nil, group), spawn.NewAwait(group), spawn.NewStatus(group), spawn.NewStop(group), spawn.NewList(group)}
 	want := []tools.ToolName{spawn.ToolNameAgentSpawn, spawn.ToolNameAgentAwait, spawn.ToolNameAgentStatus, spawn.ToolNameAgentStop, spawn.ToolNameListAgentTasks}
 	for i, tool := range toolsToCheck {
 		if got := tool.Definition().Name; got != want[i] {
@@ -420,7 +420,7 @@ func TestAgentAwaitCanRecoverSingleTaskIDAndTimesOutWithoutStoppingTask(t *testi
 		close(client.release)
 		_ = group.Close(t.Context())
 	})
-	start := spawn.NewAsync(spawn.New(child), group)
+	start := spawn.NewAsync(child, group)
 	res, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn-call", Arguments: tools.ToolParameters{"prompt": "wait"}})
 	if err != nil || res == nil || !res.Success {
 		t.Fatalf("agent_spawn = (%#v, %v), want receipt", res, err)
@@ -460,7 +460,7 @@ func TestAgentAwaitRejectsInvalidRequestedTimeout(t *testing.T) {
 func TestAgentAwaitInfersSoleRunningTaskAmongCompletedTasks(t *testing.T) {
 	group := spawn.NewGroup()
 	completedRunner := runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))
-	completed, err := spawn.NewAsync(spawn.New(completedRunner), group).Execute(t.Context(), tools.ToolCall{ID: "completed", Arguments: tools.ToolParameters{"prompt": "finish"}})
+	completed, err := spawn.NewAsync(completedRunner, group).Execute(t.Context(), tools.ToolCall{ID: "completed", Arguments: tools.ToolParameters{"prompt": "finish"}})
 	if err != nil || !completed.Success {
 		t.Fatalf("completed spawn = (%#v, %v)", completed, err)
 	}
@@ -471,7 +471,7 @@ func TestAgentAwaitInfersSoleRunningTaskAmongCompletedTasks(t *testing.T) {
 
 	blocking := &blockingClient{started: make(chan struct{}), release: make(chan struct{})}
 	runningRunner := runner.New(blocking, runner.WithSink(runner.NopSink{}))
-	running, err := spawn.NewAsync(spawn.New(runningRunner), group).Execute(t.Context(), tools.ToolCall{ID: "running", Arguments: tools.ToolParameters{"prompt": "wait"}})
+	running, err := spawn.NewAsync(runningRunner, group).Execute(t.Context(), tools.ToolCall{ID: "running", Arguments: tools.ToolParameters{"prompt": "wait"}})
 	if err != nil || !running.Success {
 		t.Fatalf("running spawn = (%#v, %v)", running, err)
 	}
@@ -496,7 +496,7 @@ func TestAgentAwaitInfersSoleUnreadTerminalTask(t *testing.T) {
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
 	child := runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))
-	spawned, err := spawn.NewAsync(spawn.New(child), group).Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "finish"}})
+	spawned, err := spawn.NewAsync(child, group).Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "finish"}})
 	if err != nil || !spawned.Success {
 		t.Fatalf("spawn = (%#v, %v)", spawned, err)
 	}
@@ -523,7 +523,7 @@ func TestAgentAwaitDoesNotTreatParentDeadlineAsPollingTimeout(t *testing.T) {
 	client := &blockingClient{started: make(chan struct{}), release: make(chan struct{})}
 	child := runner.New(client, runner.WithSink(runner.NopSink{}))
 	group := spawn.NewGroup()
-	start := spawn.NewAsync(spawn.New(child), group)
+	start := spawn.NewAsync(child, group)
 	res, err := start.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "wait"}})
 	if err != nil || !res.Success {
 		t.Fatalf("spawn = (%#v, %v)", res, err)
@@ -549,7 +549,7 @@ func TestAgentAwaitDoesNotTreatParentDeadlineAsPollingTimeout(t *testing.T) {
 func TestAgentAwaitRequiresRunningTaskWhenIDIsOmitted(t *testing.T) {
 	group := spawn.NewGroup()
 	child := runner.New(&immediateClient{content: "done"}, runner.WithSink(runner.NopSink{}))
-	spawned, err := spawn.NewAsync(spawn.New(child), group).Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "finish"}})
+	spawned, err := spawn.NewAsync(child, group).Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "finish"}})
 	if err != nil || !spawned.Success {
 		t.Fatalf("spawn = (%#v, %v)", spawned, err)
 	}
@@ -662,8 +662,8 @@ type workspaceWaitSink struct {
 	started chan<- struct{}
 }
 
-func (s *workspaceWaitSink) OnWorkspaceWaitStarted(event runner.WorkspaceWaitStarted) {
-	s.Sink.OnWorkspaceWaitStarted(event)
+func (s *workspaceWaitSink) OnWorkspaceWaitStarted(ctx context.Context, event runner.WorkspaceWaitStarted) {
+	s.Sink.OnWorkspaceWaitStarted(ctx, event)
 	s.started <- struct{}{}
 }
 

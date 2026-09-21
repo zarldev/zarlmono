@@ -38,21 +38,9 @@ type Provider struct {
 	baseURL string // optional override; empty → SDK default
 }
 
-// NewProvider creates a new Anthropic SDK provider with variadic options.
-//
-// Options are applied to the Provider struct (model, baseURL, etc.)
-// BEFORE the SDK client is constructed, so a baseURL override
-// supplied via WithBaseURL takes effect on every request. Earlier
-// shape applied options after client construction, then tried to
-// rebuild the client inside WithBaseURL — but the option saw
-// client==nil and was a no-op. The whole baseURL-redirect path
-// (used by conformance tests + by any consumer wanting to point at
-// a private proxy) silently fell through to the public endpoint.
-func NewProvider(apiKey string, opts ...options.Option[Provider]) (*Provider, error) {
-	if apiKey == "" {
-		return nil, llm.ErrInvalidAPIKey
-	}
-
+// NewProvider assembles an Anthropic provider using an already-resolved API key.
+// Options are applied before constructing the SDK client; construction performs no I/O.
+func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 	provider := &Provider{
 		model:  defaultModel,
 		apiKey: apiKey,
@@ -73,7 +61,7 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) (*Provider, er
 	client := anthropic.NewClient(clientOpts...)
 	provider.client = &client
 
-	return provider, nil
+	return provider
 }
 
 // Name returns the provider name.
@@ -486,25 +474,28 @@ type nativeThinkingBlock struct {
 
 func anthropicContinuationItem(index int, block anthropic.ContentBlockUnion) (llm.ContinuationItem, bool) {
 	var native nativeThinkingBlock
+	var raw string
 	switch content := block.AsAny().(type) {
 	case anthropic.TextBlock:
 		native = nativeThinkingBlock{Type: continuationText, Text: content.Text}
-		if raw := content.RawJSON(); raw != "" {
-			var exact nativeThinkingBlock
-			if json.Unmarshal([]byte(raw), &exact) == nil {
-				native = exact
-			}
-		}
+		raw = content.RawJSON()
 	case anthropic.ThinkingBlock:
 		native = nativeThinkingBlock{Type: continuationThinking, Thinking: content.Thinking, Signature: content.Signature}
+		raw = content.RawJSON()
 	case anthropic.RedactedThinkingBlock:
 		native = nativeThinkingBlock{Type: continuationRedacted, Data: content.Data}
+		raw = content.RawJSON()
 	default:
 		return llm.ContinuationItem{}, false
 	}
 	data, err := json.Marshal(native)
 	if err != nil {
 		return llm.ContinuationItem{}, false
+	}
+	// Preserve unknown and omitted fields for consumers that validate exact
+	// replay. Reconstructing this block here would hide lossy SDK conversion.
+	if raw != "" {
+		data = []byte(raw)
 	}
 	return llm.ContinuationItem{
 		OutputIndex: llm.OutputPosition(index),
@@ -790,11 +781,7 @@ func WithBaseURL(baseURL string) options.Option[Provider] {
 
 // WithModel sets the default model for the provider.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }
 
 // WithAnthropicModel sets the model using the SDK's typed model constants.

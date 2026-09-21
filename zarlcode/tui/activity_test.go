@@ -21,7 +21,7 @@ func TestRunActivityUsesBrailleGlyphs(t *testing.T) {
 
 	model, _ = model.Update(teasink.ConversationStartedMsg{TaskID: "turn", Prompt: "work"})
 	running := ansi.Strip(model.View().Content)
-	if !strings.Contains(running, "running") || !containsBraille(running) {
+	if !strings.Contains(running, "working") || !containsBraille(running) {
 		t.Fatalf("running UI missing braille activity indicator:\n%s", running)
 	}
 }

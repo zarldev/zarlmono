@@ -21,10 +21,8 @@ func newFixtureProvider(t *testing.T, output string) (*claudecode.Provider, stri
 		t.Fatalf("write fake CLI: %v", err)
 	}
 	t.Setenv("CLAUDE_TEST_PROMPT", promptPath)
-	p, err := claudecode.NewProvider(claudecode.StaticTokenSource{T: claudecode.Token{Access: "test-token"}}, claudecode.WithBinaryPath(scriptPath))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	p := claudecode.NewProvider(claudecode.StaticTokenSource{T: claudecode.Token{Access: "test-token"}}, claudecode.WithBinaryPath(scriptPath))
+
 	return p, promptPath
 }
 

@@ -32,7 +32,7 @@ const (
 var (
 	// ErrViolations reports that policy diagnostics were written.
 	ErrViolations = errors.New("test policy violations")
-	// ErrUnknownBase reports that the requested comparison ref is not a commit.
+	// ErrUnknownBase reports that the requested comparison ref is not a commit or tree.
 	ErrUnknownBase = errors.New("unknown test-policy base")
 )
 
@@ -49,8 +49,9 @@ type changedFile struct {
 	addedLines map[int]string
 }
 
-// Run checks the full repository tree and additions relative to base.
-// An empty base selects DefaultBase.
+// Run checks the full repository tree and additions relative to a commit or tree
+// base. An empty Git tree audits every test as an addition, including on an
+// initial push. An empty base string selects DefaultBase.
 func Run(ctx context.Context, root, base string, stderr io.Writer) error {
 	if base == "" {
 		base = DefaultBase
@@ -59,7 +60,7 @@ func Run(ctx context.Context, root, base string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve repository root: %w", err)
 	}
-	if _, err := git(ctx, absRoot, "rev-parse", "--verify", base+"^{commit}"); err != nil {
+	if _, err := git(ctx, absRoot, "rev-parse", "--verify", base+"^{tree}"); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

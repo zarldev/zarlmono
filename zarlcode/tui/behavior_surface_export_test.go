@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -118,6 +121,10 @@ func (m *UI) AddTranscriptMessages(messages []llm.Message) {
 	for i, message := range messages {
 		switch message.Role {
 		case llm.RoleUser:
+			if message.Observation.Version != 0 {
+				m.timeline.addNotice(message.Content)
+				continue
+			}
 			m.timeline.addUser(message.Content)
 		case llm.RoleAssistant:
 			taskID := fmt.Sprintf("test-transcript-%d", i)
@@ -339,6 +346,8 @@ type Content struct {
 	Text               string
 	ToolName           string
 	Hint               string
+	Data               any
+	Parts              []llm.ContentPart
 	Syntax             string
 	Rail               string
 	BodyPrefix         string
@@ -360,6 +369,7 @@ func RenderContent(width int, c Content) []string {
 	}
 	return renderContentBlock(width, contentBlock{
 		kind: kind, text: c.Text, toolName: c.ToolName, hint: c.Hint, syntax: c.Syntax,
+		data: prepareToolResultPresentation(c.Data, c.Parts, false),
 		rail: c.Rail, bodyPrefix: c.BodyPrefix, firstPrefix: c.FirstPrefix,
 		continuationPrefix: c.ContinuationPrefix, cacheKey: c.CacheKey,
 		maxLines: c.MaxLines, lineNumbers: c.LineNumbers, stripANSI: c.StripANSI,
@@ -503,13 +513,16 @@ func (m *UI) StartTranscriptPersistWithoutDelivering() tea.Cmd {
 
 // StartBlockingTranscriptPersist starts a transcript write through a test gate.
 func (m *UI) StartBlockingTranscriptPersist(started chan<- struct{}, release <-chan struct{}, result error) tea.Cmd {
-	op := sessionPersistOp{kind: sessionPersistTranscript, generation: m.transcriptGeneration, done: make(chan sessionPersistedMsg, 1)}
+	op := sessionPersistOp{kind: sessionPersistTranscript, generation: m.transcriptGeneration, done: make(chan sessionPersistedMsg, 1), claimed: new(atomic.Bool)}
 	m.sessionPersistCurrent = &op
 	m.sessionPersistRunning = true
 	return func() tea.Msg {
+		if !op.claimed.CompareAndSwap(false, true) {
+			return nil
+		}
 		close(started)
 		<-release
-		msg := sessionPersistedMsg{kind: op.kind, generation: op.generation, err: result}
+		msg := sessionPersistedMsg{kind: op.kind, generation: op.generation, err: result, operation: op.done}
 		op.done <- msg
 		close(op.done)
 		return msg
@@ -616,3 +629,12 @@ func NewStartupVaultUnlockModelForTest(setup, retry bool) tea.Model {
 
 // NewStartupCancelledForTest creates a launch instance cancelled before application wiring.
 func NewStartupCancelledForTest() *Zarlcode { return &Zarlcode{startupCancelled: true} }
+
+// TerminalGraphicsOutput wires the production native-image transport to a caller-owned file.
+func (m *UI) TerminalGraphicsOutput(file *os.File) io.Writer { return m.terminalOutput(file) }
+
+// CaptureTerminalGraphicsOutput forces native transport only for terminal-byte capture tests.
+func (m *UI) CaptureTerminalGraphicsOutput(file *os.File) io.Writer {
+	m.graphics = &terminalGraphics{}
+	return terminalGraphicsOutput{File: file, graphics: m.graphics}
+}

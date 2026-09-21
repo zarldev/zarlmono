@@ -46,10 +46,12 @@ type WorkspaceWaitEnded struct {
 
 // WorkspaceWaitObserver observes blocked workspace requests. Implementations
 // must be safe for concurrent calls and must not assume callbacks are made
-// while the coordinator lock is held.
+// while the coordinator lock is held. Callbacks receive the waiting operation's
+// context, including its values and cancellation; cancellation still emits an
+// ended event. The context is borrowed for the callback.
 type WorkspaceWaitObserver interface {
-	OnWorkspaceWaitStarted(WorkspaceWaitStarted)
-	OnWorkspaceWaitEnded(WorkspaceWaitEnded)
+	OnWorkspaceWaitStarted(context.Context, WorkspaceWaitStarted)
+	OnWorkspaceWaitEnded(context.Context, WorkspaceWaitEnded)
 }
 
 type workspaceWaitObserverKey struct{}

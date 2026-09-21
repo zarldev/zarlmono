@@ -2,11 +2,15 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
@@ -21,8 +25,7 @@ func WithToolOutputSession(ctx context.Context, sessionID string) context.Contex
 // tool-output store. SessionID resolves the current session identity at record
 // time, so the sink stays valid across -continue and new sessions; an empty
 // identity means no durable session exists yet and the record is skipped.
-// Capture is best-effort — a failed write is dropped rather than failing the
-// turn.
+// Capture errors are returned to the runner instead of silently losing history.
 type ToolOutputSink struct {
 	Store     *db.Store
 	SessionID func() string
@@ -34,9 +37,9 @@ type ToolOutputSink struct {
 var _ runner.ToolOutputSink = (*ToolOutputSink)(nil)
 
 // Record implements runner.ToolOutputSink.
-func (s *ToolOutputSink) Record(ctx context.Context, out runner.ToolOutput) {
+func (s *ToolOutputSink) Record(ctx context.Context, out runner.ToolOutput) error {
 	if s == nil || s.Store == nil {
-		return
+		return nil
 	}
 	sessionID, _ := ctx.Value(toolOutputSessionKey{}).(string)
 	if sessionID == "" && s.SessionID != nil {
@@ -53,23 +56,36 @@ func (s *ToolOutputSink) Record(ctx context.Context, out runner.ToolOutput) {
 		}
 	}
 	if sessionID == "" {
-		return
+		return nil
 	}
-	_ = s.Store.SaveToolOutput(ctx, sessionID, db.ToolOutputRecord{
-		ToolCallID: out.ToolCallID,
-		ToolName:   out.ToolName,
-		ArgsJSON:   out.Args,
-		Output:     out.Output,
-	})
+	return s.recordForSession(ctx, sessionID, out)
 }
 
-func (s *ToolOutputSink) recordForSession(ctx context.Context, sessionID string, out runner.ToolOutput) {
+func (s *ToolOutputSink) recordForSession(ctx context.Context, sessionID string, out runner.ToolOutput) error {
 	if sessionID == "" {
-		return
+		return nil
 	}
-	_ = s.Store.SaveToolOutput(ctx, sessionID, db.ToolOutputRecord{
-		ToolCallID: out.ToolCallID, ToolName: out.ToolName,
-		ArgsJSON: out.Args, Output: out.Output,
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	parts, err := json.Marshal(out.Parts)
+	if err != nil {
+		return fmt.Errorf("encode tool history parts: %w", err)
+	}
+	parameters, err := json.Marshal(out.Parameters)
+	if err != nil {
+		return fmt.Errorf("encode tool history parameters: %w", err)
+	}
+	effects, err := json.Marshal(out.Effects)
+	if err != nil {
+		return fmt.Errorf("encode tool history effects: %w", err)
+	}
+	return s.Store.CaptureToolOutput(ctx, sessionID, db.ToolOutputHistory{
+		ToolOutputRecord: db.ToolOutputRecord{ToolCallID: out.ToolCallID, ToolName: out.ToolName, ArgsJSON: out.Args, Output: out.Output},
+		ExecutionID:      out.ExecutionID, ParentToolCallID: out.ParentToolCallID,
+		ParentExecutionID: out.ParentExecutionID, TaskID: out.TaskID,
+		Attempt: out.Attempt, Sequence: out.Sequence, Dispatched: out.Dispatched,
+		ParametersJSON: string(parameters), PartsJSON: string(parts), EffectsJSON: string(effects),
+		Success: out.Success, Error: out.Error, Kind: out.Kind,
 	})
 }
 
@@ -80,8 +96,10 @@ func (s *ToolOutputSink) RecordProcess(ctx context.Context, id, command string, 
 		return
 	}
 	output := strings.Join(append(stdout, stderr...), "\n")
-	if exitCode != 0 {
-		output += fmt.Sprintf("\n[exit %d]", exitCode)
+	success := exitCode == 0
+	terminalError := ""
+	if !success {
+		terminalError = fmt.Sprintf("process exited with code %d", exitCode)
 	}
 	sessionID := ""
 	if s != nil {
@@ -90,7 +108,12 @@ func (s *ToolOutputSink) RecordProcess(ctx context.Context, id, command string, 
 		delete(s.processSessionID, id)
 		s.mu.Unlock()
 	}
-	s.recordForSession(ctx, sessionID, runner.ToolOutput{
+	if err := s.recordForSession(ctx, sessionID, runner.ToolOutput{
 		ToolCallID: id, ToolName: "bash", Args: command, Output: output,
-	})
+		Success: success, Error: terminalError, Kind: tools.Kinds.UNKNOWN,
+	}); err != nil {
+		// Process-exit callbacks have no caller error channel. Report the storage
+		// failure without copying raw command/output into ordinary diagnostics.
+		slog.ErrorContext(ctx, "persist process history", "err", err)
+	}
 }

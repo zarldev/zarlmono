@@ -41,10 +41,8 @@ func TestRunHeadlessVerifiedLoop_Live(t *testing.T) {
 		}
 	}
 
-	prov, err := llamacpp.NewProvider(llamacpp.WithBaseURL(base))
-	if err != nil {
-		t.Fatalf("provider: %v", err)
-	}
+	prov := llamacpp.NewProvider(llamacpp.WithBaseURL(base))
+
 	ws, err := code.NewWorkspace(root)
 	if err != nil {
 		t.Fatalf("workspace: %v", err)

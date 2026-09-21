@@ -36,16 +36,14 @@ type Provider struct {
 
 var _ llm.Provider = (*Provider)(nil)
 
-// NewProvider creates a llama.cpp-targeted provider. Empty baseURL defaults
-// to DefaultBaseURL. The API key may be empty — llama.cpp's HTTP server
-// does not require authentication by default — but the underlying openai SDK
-// still expects a non-empty value, so we supply a placeholder.
+// NewProvider assembles a llama.cpp provider at DefaultBaseURL unless overridden.
+// Local servers need no credential; a fixed placeholder is passed to the transport.
 //
 // The transport-level timeouts come from the openai package's default
 // client (zhttp.DefaultTransport). No whole-request timeout is set: local
 // generations can run for many minutes, and http.Client.Timeout would cut
 // off the SSE body mid-stream. Lifetime is governed by ctx instead.
-func NewProvider(opts ...options.Option[Provider]) (llm.Provider, error) {
+func NewProvider(opts ...options.Option[Provider]) *Provider {
 	p := &Provider{
 		baseURL: DefaultBaseURL,
 	}
@@ -65,12 +63,8 @@ func NewProvider(opts ...options.Option[Provider]) (llm.Provider, error) {
 		innerOpts = append(innerOpts, openai.WithModel(p.model))
 	}
 
-	inner, err := openai.NewProvider("llamacpp-no-auth", innerOpts...)
-	if err != nil {
-		return nil, err
-	}
-	p.inner = llm.Named(inner, "llamacpp")
-	return p, nil
+	p.inner = llm.Named(openai.NewProvider("llamacpp-no-auth", innerOpts...), "llamacpp")
+	return p
 }
 
 // Name returns the provider name.
@@ -81,23 +75,14 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 	return p.inner.Complete(ctx, req)
 }
 
-// WithBaseURL sets the llama.cpp server base URL. Empty string leaves the
-// default in place.
+// WithBaseURL sets the llama.cpp server base URL.
 func WithBaseURL(baseURL string) options.Option[Provider] {
-	return func(p *Provider) {
-		if baseURL != "" {
-			p.baseURL = baseURL
-		}
-	}
+	return func(p *Provider) { p.baseURL = baseURL }
 }
 
 // WithModel sets the default model for the provider.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }
 
 // WithTimeout sets an explicit HTTP client timeout. Zero leaves the openai

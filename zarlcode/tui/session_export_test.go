@@ -400,8 +400,12 @@ func TestMarkdownSessionExportRejectsExistingExplicitPath(t *testing.T) {
 
 	model, _ = model.Update(exportCmd())
 	out := ansi.Strip(model.View().Content)
-	if !strings.Contains(out, "export: create export") || !strings.Contains(out, target) {
+	if !strings.Contains(out, "export: create export") {
 		t.Fatalf("existing explicit path did not produce a collision error:\n%s", out)
+	}
+	// The status row can clip long temporary paths; check the full toast separately.
+	if toast := ui.ToastText(); !strings.Contains(toast, target) {
+		t.Fatalf("collision error missing target %q: %s", target, toast)
 	}
 	body, err := os.ReadFile(target)
 	if err != nil {

@@ -1,30 +1,35 @@
 package runner
 
 import (
+	"context"
+
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
 type workspaceWaitPublisher struct {
-	r    *Runner
-	spec TaskSpec
-	call tools.ToolCall
+	r      *Runner
+	spec   TaskSpec
+	call   tools.ToolCall
+	nested *nestedToolPublisher
 }
 
-func (p workspaceWaitPublisher) OnWorkspaceWaitStarted(event tools.WorkspaceWaitStarted) {
+func (p workspaceWaitPublisher) OnWorkspaceWaitStarted(ctx context.Context, event tools.WorkspaceWaitStarted) {
 	toolID, toolName := p.toolIdentity(event.Call)
-	p.r.sink.OnWorkspaceWaitStarted(WorkspaceWaitStarted{
+	executionID, parentExecutionID := p.executionIdentity(event.Call)
+	p.r.sink.OnWorkspaceWaitStarted(ctx, WorkspaceWaitStarted{
 		TaskID: p.spec.ID, Depth: p.spec.Depth, ToolID: toolID, ToolName: toolName,
 		Access: event.Access, Paths: append([]string(nil), event.Paths...), BlockerCount: len(event.Blockers),
-		ExecutionID: p.call.ExecutionID, ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
+		ExecutionID: executionID, ParentExecutionID: parentExecutionID, ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
 	})
 }
 
-func (p workspaceWaitPublisher) OnWorkspaceWaitEnded(event tools.WorkspaceWaitEnded) {
+func (p workspaceWaitPublisher) OnWorkspaceWaitEnded(ctx context.Context, event tools.WorkspaceWaitEnded) {
 	toolID, toolName := p.toolIdentity(event.Call)
-	p.r.sink.OnWorkspaceWaitEnded(WorkspaceWaitEnded{
+	executionID, parentExecutionID := p.executionIdentity(event.Call)
+	p.r.sink.OnWorkspaceWaitEnded(ctx, WorkspaceWaitEnded{
 		TaskID: p.spec.ID, Depth: p.spec.Depth, ToolID: toolID, ToolName: toolName,
 		Outcome: event.Outcome, Duration: event.Waited,
-		ExecutionID: p.call.ExecutionID, ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
+		ExecutionID: executionID, ParentExecutionID: parentExecutionID, ParentToolID: event.Call.ParentToolID.String(), Sequence: event.Call.Sequence,
 	})
 }
 
@@ -33,4 +38,11 @@ func (p workspaceWaitPublisher) toolIdentity(call tools.WorkspaceWaitCall) (stri
 		return call.ToolID.String(), call.ToolName.String()
 	}
 	return p.call.ID.String(), p.call.ToolName.String()
+}
+
+func (p workspaceWaitPublisher) executionIdentity(call tools.WorkspaceWaitCall) (string, string) {
+	if call.ParentToolID != "" {
+		return p.nested.executionForWait(call), p.call.ExecutionID
+	}
+	return p.call.ExecutionID, ""
 }

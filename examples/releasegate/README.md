@@ -80,7 +80,7 @@ status=succeeded attempts=1 provider=scripted model="" version=v1.2.3 published=
 | Concept | File | What to look for |
 |---|---|---|
 | World state | `release.go` | Small mutex-protected state object shared by tools, guardrails, and oracle. |
-| JSON tools | `tools.go` | Tool schemas with `required`, `enum`, and `additionalProperties:false`; typed argument decode via `tools.DecodeArgs`. |
+| JSON tools | `tools.go` | `tools.New` handlers with typed arguments and results; `tools.SchemaFor` supplies `required`, `enum`, and `additionalProperties:false`. |
 | Pre-call guardrail | `guardrails.go` | `releaseReadyGuardrail.Before` blocks `release_publish` until the gate is complete. |
 | Post-call guardrail | `guardrails.go` | `notesQualityGuardrail.Inspect` rewrites weak notes into actionable tool feedback. |
 | Runner wiring | `harness.go` | Registry → `GuardedSource` → `runner.New` with prompt, sink, progress updater. |

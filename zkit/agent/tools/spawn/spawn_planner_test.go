@@ -223,10 +223,8 @@ func TestLLMSpawnPlanner_RejectsEmptyAgentList(t *testing.T) {
 
 func newTestPlanner(t *testing.T, baseURL string) *spawn.LLMSpawnPlanner {
 	t.Helper()
-	p, err := openai.NewProvider("test-key", openai.WithBaseURL(baseURL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	p := openai.NewProvider("test-key", openai.WithBaseURL(baseURL))
+
 	return spawn.NewLLMSpawnPlanner(p)
 }
 

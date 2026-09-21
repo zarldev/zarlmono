@@ -12,6 +12,9 @@ Owns composition of providers, tools, guardrails, instructions, skills, agents, 
 
 ## Lifecycle
 
+See the [turn lifecycle guide](../docs/turn-lifecycle.md) for the runtime, UI,
+and persistence boundaries and their contract tests.
+
 - `LiveRunner` owns a turn and the runtime resources it constructs. Borrowed dependencies must be documented and closed by their composition root after the runner drains.
 - Shutdown is one-way and idempotent: reject new turns, cancel active work, wait for it, then close owned MCP/browser/fetch/spill resources exactly once.
 - A caller deadline bounds that caller's wait; it must not abandon the underlying drain or create a second cleanup owner.

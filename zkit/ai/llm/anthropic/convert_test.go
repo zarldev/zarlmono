@@ -137,10 +137,8 @@ func anthropicRequestBody(t *testing.T, req llm.CompletionRequest) map[string]an
 	}))
 	t.Cleanup(server.Close)
 
-	provider, err := anthropicprovider.NewProvider("test-key", anthropicprovider.WithBaseURL(server.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := anthropicprovider.NewProvider("test-key", anthropicprovider.WithBaseURL(server.URL))
+
 	for _, completeErr := range provider.Complete(t.Context(), req) {
 		if completeErr != nil {
 			t.Fatalf("Complete: %v", completeErr)

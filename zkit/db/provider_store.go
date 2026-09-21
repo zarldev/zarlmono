@@ -33,7 +33,7 @@ func parseReasoningHistory(s string) llm.ReasoningHistory {
 // ListProviders returns all custom provider rows. Conforms to
 // backends.Store.
 func (s *Store) ListProviders(ctx context.Context) ([]backends.StoredProvider, error) {
-	rows, err := s.q.ListProviders(ctx)
+	rows, err := s.read.ListProviders(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list providers: %w", err)
 	}
@@ -63,7 +63,7 @@ func (s *Store) ListProviders(ctx context.Context) ([]backends.StoredProvider, e
 
 // GetProvider returns a single provider by name, or ErrNotFound when absent.
 func (s *Store) GetProvider(ctx context.Context, name string) (gen.LlmProvider, error) {
-	p, err := s.q.GetProvider(ctx, name)
+	p, err := s.read.GetProvider(ctx, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return gen.LlmProvider{}, ErrNotFound

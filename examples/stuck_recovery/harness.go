@@ -26,9 +26,9 @@ Always verify your findings by reading the relevant files.`
 func RunStuckRecovery(ctx context.Context, client runner.Client, fs *FileSystem, attempts *SearchAttempts, maxAttempts int) pursue.Outcome {
 	// Build tools
 	reg := tools.NewRegistry()
-	_ = reg.Register(&grepTool{fs: fs, attempts: attempts})
-	_ = reg.Register(&listFilesTool{fs: fs})
-	_ = reg.Register(&readFileTool{fs: fs})
+	_ = reg.Register(newGrepTool(fs, attempts))
+	_ = reg.Register(newListFilesTool(fs))
+	_ = reg.Register(newReadFileTool(fs))
 
 	// Build guardrails
 	rails := BuildGuardrails(fs, client)

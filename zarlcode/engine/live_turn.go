@@ -8,6 +8,7 @@ import (
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // ManualCompactionResult reports the effect of a user-triggered conversation
@@ -24,6 +25,10 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 	if l == nil {
 		return ManualCompactionResult{}, errors.New("compact now: live runner is nil")
 	}
+	if !l.admission.enter() {
+		return ManualCompactionResult{}, l.admission.rejection()
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	tgt := l.target
 	settings := l.settings
@@ -46,26 +51,43 @@ func (l *LiveRunner) RunTurn(ctx context.Context, prompt string) error {
 }
 
 func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, attachments []llm.ContentPart) error {
-	return l.context.transition(runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() (func(runner.TaskSpec) runner.TaskResult, error) {
-		runCtx, finish, err := l.beginTurn(ctx)
+	if !l.admission.enter() {
+		return l.admission.rejection()
+	}
+	defer l.admission.leave()
+	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {})
+}
+
+// onPrepared converts an exclusive reservation only after the turn's target and
+// dependencies have been built. finish covers context commit as well as child
+// drain; ConversationEnded alone is not this boundary.
+func (l *LiveRunner) runTurnAdmitted(ctx context.Context, spec runner.TaskSpec, onPrepared func(), historyOptions ...options.Option[runner.Runner]) error {
+	var finish func()
+	return l.context.transition(ctx, spec, func() (func(runner.TaskSpec) runner.TaskResult, error) {
+		runCtx, end, err := l.beginTurn(ctx)
 		if err != nil {
 			return nil, err
 		}
-		r, thinking, resources, err := l.buildTurnWithSource(runCtx, l.source, runner.WithContextBreakdown())
+		finish = end
+		turn, err := l.buildTurnWithSource(runCtx, l.source, append(historyOptions, runner.WithContextBreakdown())...)
 		if err != nil {
-			finish()
 			return nil, err
 		}
+		onPrepared()
 		return func(spec runner.TaskSpec) runner.TaskResult {
-			defer finish()
-			spec.Thinking = thinking
-			result := r.Run(runCtx, spec)
-			if closeErr := resources.Close(runCtx); closeErr != nil && result.Err == nil {
-				result.Reason = runner.TerminalError
-				result.Err = closeErr
+			defer turn.close(runCtx)
+			spec.Thinking = turn.thinking
+			scope, err := turn.group.Bind(runCtx, spec.ID)
+			if err != nil {
+				return runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
 			}
-			return result
+			defer func() { _ = scope.Close(context.WithoutCancel(runCtx)) }()
+			return turn.runner.Run(runCtx, spec)
 		}, nil
+	}, func() {
+		if finish != nil {
+			finish()
+		}
 	})
 }
 

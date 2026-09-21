@@ -9,10 +9,8 @@ import (
 func TestNewProviderUsesDefaultBaseURL(t *testing.T) {
 	t.Parallel()
 
-	provider, err := ollama.NewProvider()
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
+	provider := ollama.NewProvider()
+
 	if provider == nil {
 		t.Fatal("nil provider")
 	}
@@ -21,12 +19,10 @@ func TestNewProviderUsesDefaultBaseURL(t *testing.T) {
 func TestNewProviderHonoursExplicitBaseURL(t *testing.T) {
 	t.Parallel()
 
-	provider, err := ollama.NewProvider(
+	provider := ollama.NewProvider(
 		ollama.WithBaseURL("http://elsewhere:9999/v1"),
 	)
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
+
 	if provider == nil {
 		t.Fatal("nil provider")
 	}

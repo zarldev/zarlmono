@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -82,8 +81,9 @@ type sseCompleted struct {
 }
 
 type sseResponse struct {
-	Status string    `json:"status"`
-	Usage  *sseUsage `json:"usage"`
+	Status string          `json:"status"`
+	Usage  *sseUsage       `json:"usage"`
+	Output []sseOutputItem `json:"output"`
 }
 
 type sseUsage struct {
@@ -199,9 +199,9 @@ type sseState struct {
 	// function_call_arguments.delta events arrive identified by
 	// item_id only; we use it to look up the call we started in the
 	// output_item.added event.
-	toolCallByIdx  map[int]*pendingToolCall
-	toolCallByID   map[string]*pendingToolCall
-	reasoningItems map[int]llm.ContinuationItem
+	toolCallByIdx map[int]*pendingToolCall
+	toolCallByID  map[string]*pendingToolCall
+	emittedItems  map[int]bool
 	// reasoningEmitted records whether any reasoning delta has been
 	// yielded on the Thinking channel. The summary streams as discrete
 	// parts (a *.summary_part.added event precedes each), so we use this
@@ -221,9 +221,9 @@ type pendingToolCall struct {
 
 func newSSEState() *sseState {
 	return &sseState{
-		toolCallByIdx:  map[int]*pendingToolCall{},
-		toolCallByID:   map[string]*pendingToolCall{},
-		reasoningItems: map[int]llm.ContinuationItem{},
+		toolCallByIdx: map[int]*pendingToolCall{},
+		toolCallByID:  map[string]*pendingToolCall{},
+		emittedItems:  map[int]bool{},
 	}
 }
 
@@ -340,19 +340,11 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 			s.err = fmt.Errorf("sse output_item.done: %w", err)
 			return true
 		}
-		validReasoning := ev.Item.Type == sseTypeReasoning && ev.Item.ID != "" && ev.Item.EncryptedContent != ""
-		validText := ev.Item.Type == sseTypeMessage && ev.Item.Role == llm.RoleAssistant && hasCodexOutputText(ev.Item.Content)
-		if !validReasoning && !validText {
-			return false
-		}
-		data := append([]byte(nil), ev.Item.Raw...)
-		s.reasoningItems[ev.OutputIdx] = llm.ContinuationItem{
-			OutputIndex: llm.OutputPosition(ev.OutputIdx),
-			Provider:    codexContinuationProvider,
-			Format:      codexReasoningFormat,
-			Kind:        ev.Item.Type,
-			ID:          ev.Item.ID,
-			Data:        data,
+		if item, ok := s.completedItem(ev.OutputIdx, ev.Item); ok {
+			if !yield(llm.CompletionChunk{CompletedItems: []llm.ContinuationItem{item}}, nil) {
+				s.stopped = true
+				return true
+			}
 		}
 	case "response.function_call_arguments.delta":
 		var ev sseFunctionArgsDelta
@@ -430,7 +422,12 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		if ev.Type == "response.incomplete" || ev.Response.Status == "incomplete" {
 			finish = llm.FinishReasons.LENGTH
 		}
-		chunk := llm.CompletionChunk{FinishReason: finish, CompletedItems: s.completedReasoningItems()}
+		chunk := llm.CompletionChunk{FinishReason: finish}
+		for index, output := range ev.Response.Output {
+			if item, ok := s.completedItem(index, output); ok {
+				chunk.CompletedItems = append(chunk.CompletedItems, item)
+			}
+		}
 		if ev.Response.Usage != nil {
 			chunk.Usage = llm.Usage{
 				PromptTokens:     ev.Response.Usage.InputTokens,
@@ -502,20 +499,21 @@ func (s *sseState) pendingCall(idx int, itemID string) *pendingToolCall {
 	return nil
 }
 
-func (s *sseState) completedReasoningItems() []llm.ContinuationItem {
-	if len(s.reasoningItems) == 0 {
-		return nil
+func (s *sseState) completedItem(index int, output sseOutputItem) (llm.ContinuationItem, bool) {
+	validReasoning := output.Type == sseTypeReasoning && output.ID != "" && output.EncryptedContent != ""
+	validText := output.Type == sseTypeMessage && output.Role == llm.RoleAssistant && hasCodexOutputText(output.Content)
+	if s.emittedItems[index] || (!validReasoning && !validText) {
+		return llm.ContinuationItem{}, false
 	}
-	indices := make([]int, 0, len(s.reasoningItems))
-	for index := range s.reasoningItems {
-		indices = append(indices, index)
-	}
-	sort.Ints(indices)
-	items := make([]llm.ContinuationItem, 0, len(indices))
-	for _, index := range indices {
-		items = append(items, s.reasoningItems[index])
-	}
-	return items
+	s.emittedItems[index] = true
+	return llm.ContinuationItem{
+		OutputIndex: llm.OutputPosition(index),
+		Provider:    codexContinuationProvider,
+		Format:      codexReasoningFormat,
+		Kind:        output.Type,
+		ID:          output.ID,
+		Data:        append([]byte(nil), output.Raw...),
+	}, true
 }
 
 func hasCodexOutputText(parts []contentPart) bool {

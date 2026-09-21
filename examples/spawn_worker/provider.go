@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"os"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
@@ -22,10 +21,7 @@ func buildRealClient() (runner.Client, error) {
 		model = "gpt-4o-mini"
 	}
 
-	provider, err := openai.NewProvider(apiKey, openai.WithModel(model))
-	if err != nil {
-		return nil, fmt.Errorf("creating provider: %w", err)
-	}
+	provider := openai.NewProvider(apiKey, openai.WithModel(model))
 
 	return runner.ClientFromProvider(provider), nil
 }

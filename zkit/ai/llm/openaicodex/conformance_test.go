@@ -15,13 +15,11 @@ import (
 // response.output_text.delta events), so the wire stubs differ from OpenAI chat.
 func TestProvider_Conformance(t *testing.T) {
 	factory := func(t *testing.T, baseURL string) llm.Provider {
-		p, err := openaicodex.NewProvider(
+		p := openaicodex.NewProvider(
 			openaicodex.StaticTokenSource{T: freshToken(t, "acct_conformance")},
 			openaicodex.WithBaseURL(baseURL),
 		)
-		if err != nil {
-			t.Fatalf("NewProvider: %v", err)
-		}
+
 		return p
 	}
 

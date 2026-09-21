@@ -49,6 +49,8 @@ func run(ctx context.Context) error {
 	builder := dynamic.NewBuildTool(registrar, workspace)
 	author := dynamic.NewNewToolTool(builder, workspace)
 
+	// These calls deliberately use raw ToolParameters: this example drives the
+	// generic dispatcher for tools authored and loaded at runtime.
 	result, err := author.Execute(ctx, tools.ToolCall{
 		ID:       "author",
 		ToolName: dynamic.ToolNameNewTool,
@@ -97,7 +99,7 @@ func run(ctx context.Context) error {
 
 	// Dynamic registration must not shadow a tool owned by another provider.
 	const reserved tools.ToolName = "reserved_name"
-	if err := reloadedRegistry.Register(staticTool{name: reserved}); err != nil {
+	if err := reloadedRegistry.Register(newReservedTool(reserved)); err != nil {
 		return fmt.Errorf("register fixture built-in: %w", err)
 	}
 	entry, ok := reloadedCatalog.Get(toolName)
@@ -154,20 +156,14 @@ func invoke(ctx context.Context, registry *tools.Registry, text string) (string,
 	return value, nil
 }
 
-type staticTool struct {
-	name tools.ToolName
-}
-
-func (t staticTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
-		Name:        t.name,
+func newReservedTool(name tools.ToolName) tools.Tool {
+	return tools.New(tools.ToolSpec{
+		Name:        name,
 		Description: "A built-in fixture used to demonstrate collision rejection.",
 		Parameters:  tools.SchemaFor[struct{}](),
-	}
-}
-
-func (staticTool) Execute(context.Context, tools.ToolCall) (*tools.ToolResult, error) {
-	return nil, errors.New("fixture tool is not invoked")
+	}, func(_ context.Context, _ struct{}) (string, error) {
+		return "", tools.Fatal(name.String(), errors.New("fixture tool is not invoked"))
+	})
 }
 
 func scaffoldModule(workspace, repoRoot string) error {

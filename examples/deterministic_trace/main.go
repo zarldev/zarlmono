@@ -24,12 +24,43 @@ import (
 const taskID taskscope.ID = "trace-example"
 
 type event struct {
-	Sequence int            `json:"sequence"`
-	Source   string         `json:"source"`
-	Kind     string         `json:"kind"`
-	TaskID   taskscope.ID   `json:"task_id,omitempty"`
-	Name     string         `json:"name,omitempty"`
-	Fields   map[string]any `json:"fields,omitempty"`
+	Sequence int          `json:"sequence"`
+	Source   string       `json:"source"`
+	Kind     string       `json:"kind"`
+	TaskID   taskscope.ID `json:"task_id,omitempty"`
+	Name     string       `json:"name,omitempty"`
+	// Fields holds the typed payload selected by Kind; events without data omit it.
+	Fields any `json:"fields,omitempty"`
+}
+
+type conversationStartedFields struct {
+	Prompt string `json:"prompt"`
+}
+
+type toolStartedFields struct {
+	ToolID string `json:"tool_id"`
+}
+
+type toolCompletedFields struct {
+	Result string `json:"result"`
+	ToolID string `json:"tool_id"`
+}
+
+type iterationFields struct {
+	Iteration int `json:"iteration"`
+}
+
+type contentFields struct {
+	Delta string `json:"delta"`
+}
+
+type conversationEndedFields struct {
+	Iterations int                   `json:"iterations"`
+	Reason     runner.TerminalReason `json:"reason"`
+}
+
+type failureFields struct {
+	Error string `json:"error"`
 }
 
 type jsonlExporter struct {
@@ -72,28 +103,28 @@ func (s *telemetrySink) Err() error {
 	return s.err
 }
 
-func (s *telemetrySink) OnConversationStarted(e runner.ConversationStarted) {
-	s.emit(event{Source: "runner", Kind: "conversation_started", TaskID: e.TaskID, Fields: map[string]any{"prompt": e.Prompt}})
+func (s *telemetrySink) OnConversationStarted(ctx context.Context, e runner.ConversationStarted) {
+	s.emit(event{Source: "runner", Kind: "conversation_started", TaskID: e.TaskID, Fields: conversationStartedFields{Prompt: e.Prompt}})
 }
 
-func (s *telemetrySink) OnToolStarted(e runner.ToolStarted) {
-	s.emit(event{Source: "runner", Kind: "tool_started", TaskID: e.TaskID, Name: e.ToolName, Fields: map[string]any{"tool_id": e.ToolID}})
+func (s *telemetrySink) OnToolStarted(ctx context.Context, e runner.ToolStarted) {
+	s.emit(event{Source: "runner", Kind: "tool_started", TaskID: e.TaskID, Name: e.ToolName, Fields: toolStartedFields{ToolID: e.ToolID}})
 }
 
-func (s *telemetrySink) OnToolCompleted(e runner.ToolCompleted) {
-	s.emit(event{Source: "runner", Kind: "tool_completed", TaskID: e.TaskID, Name: e.ToolName, Fields: map[string]any{"result": e.FormattedResult, "tool_id": e.ToolID}})
+func (s *telemetrySink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
+	s.emit(event{Source: "runner", Kind: "tool_completed", TaskID: e.TaskID, Name: e.ToolName, Fields: toolCompletedFields{Result: e.FormattedResult, ToolID: e.ToolID}})
 }
 
-func (s *telemetrySink) OnIterationCompleted(e runner.IterationCompleted) {
-	s.emit(event{Source: "runner", Kind: "iteration_completed", TaskID: e.TaskID, Fields: map[string]any{"iteration": e.Iter}})
+func (s *telemetrySink) OnIterationCompleted(ctx context.Context, e runner.IterationCompleted) {
+	s.emit(event{Source: "runner", Kind: "iteration_completed", TaskID: e.TaskID, Fields: iterationFields{Iteration: e.Iter}})
 }
 
-func (s *telemetrySink) OnContent(e runner.Content) {
-	s.emit(event{Source: "runner", Kind: "content", TaskID: e.TaskID, Fields: map[string]any{"delta": e.Delta}})
+func (s *telemetrySink) OnContent(ctx context.Context, e runner.Content) {
+	s.emit(event{Source: "runner", Kind: "content", TaskID: e.TaskID, Fields: contentFields{Delta: e.Delta}})
 }
 
-func (s *telemetrySink) OnConversationEnded(e runner.ConversationEnded) {
-	s.emit(event{Source: "runner", Kind: "conversation_ended", TaskID: e.TaskID, Fields: map[string]any{"iterations": e.Iterations, "reason": e.Reason}})
+func (s *telemetrySink) OnConversationEnded(ctx context.Context, e runner.ConversationEnded) {
+	s.emit(event{Source: "runner", Kind: "conversation_ended", TaskID: e.TaskID, Fields: conversationEndedFields{Iterations: e.Iterations, Reason: e.Reason}})
 }
 
 func (s *telemetrySink) OnWorkflowStarted(workflow.Started) {
@@ -109,7 +140,7 @@ func (s *telemetrySink) OnWorkflowNodeCompleted(e workflow.NodeCompleted) {
 }
 
 func (s *telemetrySink) OnWorkflowNodeFailed(e workflow.NodeFailed) {
-	s.emit(event{Source: "workflow", Kind: "workflow_node_failed", Name: e.Node.String(), Fields: map[string]any{"error": e.Error.Error()}})
+	s.emit(event{Source: "workflow", Kind: "workflow_node_failed", Name: e.Node.String(), Fields: failureFields{Error: e.Error.Error()}})
 }
 
 func (s *telemetrySink) OnWorkflowCompleted(workflow.Completed) {
@@ -117,7 +148,7 @@ func (s *telemetrySink) OnWorkflowCompleted(workflow.Completed) {
 }
 
 func (s *telemetrySink) OnWorkflowFailed(e workflow.Failed) {
-	s.emit(event{Source: "workflow", Kind: "workflow_failed", Fields: map[string]any{"error": e.Error.Error()}})
+	s.emit(event{Source: "workflow", Kind: "workflow_failed", Fields: failureFields{Error: e.Error.Error()}})
 }
 
 func main() {
@@ -167,12 +198,23 @@ func run(ctx context.Context, path string, stdout io.Writer) error {
 	return nil
 }
 
+type lookupArgs struct {
+	Key string `json:"key" doc:"Key to look up in the fixture"`
+}
+
 func runAgent(ctx context.Context, sink runner.EventSink) error {
 	client := runnertest.NewClient([][]llm.CompletionChunk{
 		{runnertest.ChunkToolCall("lookup-1", "lookup", `{"key":"answer"}`)},
 		{runnertest.ChunkText("The deterministic answer is 42.")},
 	})
-	registry := tools.NewRegistry(runnertest.Tool{Name: "lookup", Description: "Return a canned value.", Result: "42"})
+	lookup := tools.New(tools.ToolSpec{
+		Name:        "lookup",
+		Description: "Return a canned value.",
+		Parameters:  tools.SchemaFor[lookupArgs](),
+	}, func(_ context.Context, _ lookupArgs) (string, error) {
+		return "42", nil
+	})
+	registry := tools.NewRegistry(lookup)
 	r := runner.New(client, runner.WithTools(registry), runner.WithSink(sink), runner.WithMaxIterations(3))
 	result := r.Run(ctx, runner.TaskSpec{ID: taskID, Prompt: "Find the deterministic answer."})
 	if result.Err != nil {

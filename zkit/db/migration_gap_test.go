@@ -2,12 +2,13 @@ package db_test
 
 import (
 	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
+
+	"github.com/zarldev/zarlmono/zkit/db/migrations"
 )
 
 func TestMigrationGapFrom22ToLatestAndBack(t *testing.T) {
@@ -19,7 +20,7 @@ func TestMigrationGapFrom22ToLatestAndBack(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	provider, err := goose.NewProvider(goose.DialectSQLite3, d, os.DirFS("migrations"))
+	provider, err := migrations.NewProvider(d)
 	if err != nil {
 		t.Fatalf("new migration provider: %v", err)
 	}
@@ -36,18 +37,25 @@ func TestMigrationGapFrom22ToLatestAndBack(t *testing.T) {
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("migrate across gap to latest: %v", err)
 	}
-	assertMigrationVersion(t, provider, 28)
+	assertMigrationVersion(t, provider, 34)
+	assertToolHistoryColumns(t, d)
+	assertTableExists(t, d, "tool_output_history", true)
+	assertTableExists(t, d, "session_checkpoints", true)
+	assertTableExists(t, d, "session_branches", true)
 	assertTableExists(t, d, "session_transcripts", true)
 	assertTableExists(t, d, "session_transcript_entries", true)
 	assertSessionColumnExists(t, d, "context_json", true)
 	assertSessionColumnExists(t, d, "history_json", false)
 
-	for i := range 4 {
+	// Versions 23 and 24 were never shipped: 34 through 25.
+	for i := range 10 {
 		if _, err := provider.Down(ctx); err != nil {
 			t.Fatalf("down migration %d: %v", i+1, err)
 		}
 	}
 	assertMigrationVersion(t, provider, 22)
+	assertTableExists(t, d, "session_checkpoints", false)
+	assertTableExists(t, d, "session_branches", false)
 	assertTableExists(t, d, "session_transcripts", false)
 	assertTableExists(t, d, "session_transcript_entries", false)
 	assertSessionColumnExists(t, d, "context_json", false)

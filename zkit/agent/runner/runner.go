@@ -75,20 +75,24 @@ type Runner struct {
 	modelName    string
 
 	// optional plumbing
-	sink           EventSink
-	convLock       *ConversationLock
-	prompt         PromptSource
-	steerer        Steerer
-	truncator      Truncator
-	toolOutputSink ToolOutputSink
-	compactor      compact.Compactor
-	turnQuality    TurnQuality
-	finalizeWarn   FinalizeWarn
-	completionGate CompletionGate
+	sink            EventSink
+	convLock        *ConversationLock
+	prompt          PromptSource
+	iterationPrompt bool
+	steerer         Steerer
+	inputs          InputSource
+	truncator       Truncator
+	toolOutputSink  ToolOutputSink
+	historySink     HistorySink
+	compactor       compact.Compactor
+	turnQuality     TurnQuality
+	finalizeWarn    FinalizeWarn
+	completionGate  CompletionGate
 
 	// loop configuration
-	maxIterations   int // default for spec.MaxIterations == 0
-	toolConcurrency int // max concurrent registry-tool calls per batch; <=1 = sequential
+	maxIterations     int  // default for spec.MaxIterations == 0
+	toolConcurrency   int  // max concurrent registry-tool calls per batch; <=1 = sequential
+	parallelReadsOnly bool // default scheduling preserves barriers around non-read tools
 	// maxTokens caps each completion request's output tokens (max_tokens on
 	// the wire). 0 = unset (provider/server default). A hard, deterministic
 	// ceiling on a single generation — independent of model flags and of
@@ -163,6 +167,9 @@ type Runner struct {
 // in the loop. Supply the live tool list with WithTools.
 //
 // A Runner defaults to [NopSink]; install explicit observation with [WithSink].
+// Consecutive tools declaring read-only workspace access run up to four at a
+// time. Other calls run singly, after earlier calls finish and before later
+// calls start. [WithToolConcurrency] explicitly overrides this scheduling.
 func New(
 	client Client,
 	opts ...options.Option[Runner],
@@ -182,6 +189,8 @@ func New(
 			tool:       defaultToolTimeout,
 		},
 		emptyStreamBackoff: defaultEmptyStreamBackoff,
+		toolConcurrency:    4,
+		parallelReadsOnly:  true,
 	}
 	for _, opt := range opts {
 		opt(r)

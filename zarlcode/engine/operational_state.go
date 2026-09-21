@@ -40,6 +40,23 @@ func newOperationalState() *operationalState {
 	return &operationalState{}
 }
 
+// resetForRewind clears future operational assertions without replacing mutexes
+// or the state pointer observed by compaction readers. Runtime admission excludes
+// writers; individual locks continue to protect concurrent inspection.
+func (s *operationalState) resetForRewind() {
+	s.filesMu.Lock()
+	s.files = nil
+	s.filesMu.Unlock()
+	s.tools.Clear()
+	s.statusMu.Lock()
+	s.verification = nil
+	s.failures = nil
+	s.sequence = 0
+	s.lastMutation = 0
+	s.lastVerification = 0
+	s.statusMu.Unlock()
+}
+
 func (s *operationalState) record(call tools.ToolCall, result *tools.ToolResult, dispatchErr error) {
 	if s == nil {
 		return

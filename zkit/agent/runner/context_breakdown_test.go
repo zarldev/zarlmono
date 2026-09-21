@@ -15,7 +15,7 @@ type contextSink struct {
 	iterations []runner.IterationCompleted
 }
 
-func (s *contextSink) OnIterationCompleted(event runner.IterationCompleted) {
+func (s *contextSink) OnIterationCompleted(ctx context.Context, event runner.IterationCompleted) {
 	s.iterations = append(s.iterations, event)
 }
 

@@ -54,11 +54,11 @@ type typedTool[Args any, Result any] struct {
 	options typedOptions[Result]
 }
 
-// NewTyped adapts typed tool business logic to the existing Tool interface.
+// New adapts typed tool business logic to the existing Tool interface.
 // The adapter is intentionally a boundary: it decodes the raw ToolParameters
 // map once, runs typed code, and returns a typed result payload. Existing
 // registries, runners, guardrails, and providers continue to see a normal Tool.
-func NewTyped[Args any, Result any](spec ToolSpec, handler TypedHandler[Args, Result], opts ...TypedOption[Result]) Tool {
+func New[Args any, Result any](spec ToolSpec, handler TypedHandler[Args, Result], opts ...TypedOption[Result]) Tool {
 	options := typedOptions[Result]{}
 	for _, opt := range opts {
 		opt(&options)
@@ -66,7 +66,7 @@ func NewTyped[Args any, Result any](spec ToolSpec, handler TypedHandler[Args, Re
 	return typedTool[Args, Result]{spec: spec, handler: handler, options: options}
 }
 
-// Definition returns the LLM-facing tool specification supplied to NewTyped.
+// Definition returns the LLM-facing tool specification supplied to New.
 func (t typedTool[Args, Result]) Definition() ToolSpec { return t.spec }
 
 // Execute decodes call arguments into Args, invokes the typed handler, and

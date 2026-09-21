@@ -11,9 +11,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/pressly/goose/v3"
-
 	"github.com/zarldev/zarlmono/zkit/db"
+	"github.com/zarldev/zarlmono/zkit/db/migrations"
 )
 
 // openTempStore returns a Store backed by a fresh sqlite file in
@@ -64,7 +63,7 @@ func TestSessionMigrationsBackfillAndRollback(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	provider, err := goose.NewProvider(goose.DialectSQLite3, d, os.DirFS("migrations"))
+	provider, err := migrations.NewProvider(d)
 	if err != nil {
 		t.Fatalf("new migration provider: %v", err)
 	}
@@ -100,7 +99,7 @@ func TestCanonicalTranscriptMigrationPreservesExistingSessions(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	provider, err := goose.NewProvider(goose.DialectSQLite3, d, os.DirFS("migrations"))
+	provider, err := migrations.NewProvider(d)
 	if err != nil {
 		t.Fatalf("new migration provider: %v", err)
 	}
@@ -178,7 +177,7 @@ func TestSessionLabelProvenanceMigrationBackfillsAndRollsBack(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	provider, err := goose.NewProvider(goose.DialectSQLite3, d, os.DirFS("migrations"))
+	provider, err := migrations.NewProvider(d)
 	if err != nil {
 		t.Fatalf("new migration provider: %v", err)
 	}

@@ -15,12 +15,27 @@ import (
 // next iteration boundary via runner.Steerer. MCP notifications use the same
 // append side so long-running server events reach the model as user-side data.
 type queueState struct {
-	mu       sync.Mutex
-	messages []QueuedMessage
-	nextID   int
+	mu        sync.Mutex
+	messages  []QueuedMessage
+	nextID    int
+	admission *runtimeAdmission
+	changed   chan struct{}
 }
 
-func newQueueState() *queueState { return &queueState{} }
+func newQueueState(admission *runtimeAdmission) *queueState {
+	return &queueState{admission: admission, changed: make(chan struct{})}
+}
+
+// Ready exposes queue changes only to the root. Read before Drain to avoid a
+// lost wake; child runners borrowing this queue must not wake on root input.
+func (q *queueState) Ready(ctx context.Context) <-chan struct{} {
+	if taskscope.DepthFrom(ctx) != 0 {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.changed
+}
 
 // QueuedMessage is a user message in the injection queue with a stable id
 // so the steer tray can reference and edit individual entries.
@@ -36,6 +51,10 @@ func (q *queueState) Append(text string) (int, int) {
 	if q == nil {
 		return 0, 0
 	}
+	if !q.admission.enter() {
+		return 0, 0
+	}
+	defer q.admission.leave()
 	text = strings.TrimSpace(text)
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -45,6 +64,8 @@ func (q *queueState) Append(text string) (int, int) {
 	q.nextID++
 	id := q.nextID
 	q.messages = append(q.messages, QueuedMessage{ID: id, Message: llm.Message{Role: llm.RoleUser, Content: text}})
+	close(q.changed)
+	q.changed = make(chan struct{})
 	return len(q.messages), id
 }
 
@@ -63,6 +84,10 @@ func (q *queueState) Drain(ctx context.Context) iter.Seq[llm.Message] {
 	if taskscope.DepthFrom(ctx) > 0 {
 		return func(func(llm.Message) bool) {}
 	}
+	if !q.admission.enter() {
+		return func(func(llm.Message) bool) {}
+	}
+	defer q.admission.leave()
 	q.mu.Lock()
 	out := q.messages
 	q.messages = nil
@@ -81,6 +106,10 @@ func (q *queueState) Pop() (llm.Message, bool) {
 	if q == nil {
 		return llm.Message{}, false
 	}
+	if !q.admission.enter() {
+		return llm.Message{}, false
+	}
+	defer q.admission.leave()
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.messages) == 0 {
@@ -135,6 +164,10 @@ func (q *queueState) Update(id int, text string) bool {
 	if q == nil {
 		return false
 	}
+	if !q.admission.enter() {
+		return false
+	}
+	defer q.admission.leave()
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return false
@@ -155,6 +188,10 @@ func (q *queueState) Remove(id int) bool {
 	if q == nil {
 		return false
 	}
+	if !q.admission.enter() {
+		return false
+	}
+	defer q.admission.leave()
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for i, msg := range q.messages {
@@ -171,6 +208,10 @@ func (q *queueState) Clear() int {
 	if q == nil {
 		return 0
 	}
+	if !q.admission.enter() {
+		return 0
+	}
+	defer q.admission.leave()
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	n := len(q.messages)

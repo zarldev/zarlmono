@@ -15,8 +15,10 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zkit/agent/computer"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 )
 
 // contentKind identifies the semantic content being rendered. Timeline items
@@ -409,6 +411,9 @@ func renderToolResultContent(width int, b contentBlock) []string {
 	if lines := renderTypedToolResult(width, b); lines != nil {
 		return lines
 	}
+	if lines := renderWebToolText(renderAvailableContentWidth(width, b), b.toolName, b.text); lines != nil {
+		return lines
+	}
 	switch toolResultRenderKind(b.toolName) {
 	case contentMarkdown:
 		return renderMarkdownContent(width, b)
@@ -508,6 +513,14 @@ func renderCompactList(_ int, b contentBlock) []string {
 func renderTypedToolResult(width int, b contentBlock) []string {
 	cw := renderAvailableContentWidth(width, b)
 	switch r := b.data.(type) {
+	case toolResultPresentation:
+		b.data = r.data
+		lines := renderToolImagePreviews(cw, r.images)
+		return append(lines, renderToolResultContent(width, b)...)
+	case search.Result:
+		return renderWebSearchResult(cw, r)
+	case computer.Observation:
+		return renderComputerObservation(cw, r)
 	case code.GrepResult:
 		return renderGrepResultLines(cw, r)
 	case code.LsResult:

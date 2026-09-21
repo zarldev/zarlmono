@@ -77,7 +77,10 @@ DELETE FROM sessions WHERE id = ?;
 -- Empty == default context/pending. Used to clean up a draft-only session
 -- whose composer content was cleared before any canonical turn was persisted.
 DELETE FROM sessions
-WHERE id = ? AND context_json = '[]' AND pending_json = '[]';
+WHERE id = ? AND context_json = '[]' AND pending_json = '[]'
+  AND NOT EXISTS (SELECT 1 FROM session_transcripts WHERE session_id = sessions.id)
+  AND NOT EXISTS (SELECT 1 FROM session_checkpoints WHERE session_id = sessions.id)
+  AND NOT EXISTS (SELECT 1 FROM session_branches WHERE session_id = sessions.id);
 
 -- name: UpsertSessionTranscriptMetadata :exec
 -- A transcript-only save may create the parent row, but on conflict it updates

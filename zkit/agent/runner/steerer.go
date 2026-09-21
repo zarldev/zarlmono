@@ -38,6 +38,27 @@ type Steerer interface {
 	Drain(ctx context.Context) iter.Seq[llm.Message]
 }
 
+// ReadySteerer optionally wakes a live run parked on owned work. Ready must
+// return a non-consuming change token under the queue's lock; the runner reads
+// it before Drain. A queue shared with child runs must return nil for children.
+type ReadySteerer interface {
+	Steerer
+	Ready(context.Context) <-chan struct{}
+}
+
+func (t *taskRun) drainSteered(ctx context.Context) {
+	if t.r.steerer == nil {
+		return
+	}
+	before := len(t.messages)
+	for message := range t.r.steerer.Drain(ctx) {
+		t.messages = append(t.messages, message)
+	}
+	if len(t.messages) > before {
+		t.r.publishSteerInjected(ctx, t.spec, t.messages[before:])
+	}
+}
+
 // WithSteerer installs a Steerer the runner consults at every iteration
 // boundary. Without this option the runner runs unsteered (current
 // behaviour).

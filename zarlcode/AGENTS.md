@@ -7,12 +7,16 @@ How zarlcode persists user preferences. The README documents *what's* here; this
 ```bash
 go test -C zarlcode -count=1 ./tui
 go test -C zarlcode -count=1 ./...
+go tool task race:zarlcode # engine, TUI settlement, and event delivery race tests
 go tool task zarlcode   # build + install ~/.local/bin/zarlcode with version ldflags
 go run ./zarlcode/cmd
 go run ./zarlcode/cmd -continue
 ```
 
-The CI build excludes the CLI package in its package matrix (`go list ./... | grep -v '/cmd$' | xargs go build`); use `go tool task zarlcode` when asked to rebuild/install the application.
+CI builds every package, including the CLI, with `go build -C zarlcode ./...`.
+Use `go tool task zarlcode` when asked to rebuild/install the application with
+version metadata.
+
 ## One service, two tables, three scope words
 
 Every persisted preference flows through the application facade in `zarlcode/prefs`. It owns zarlcode's stable key catalogue and model-selection transition while embedding the generic scoped service from `zkit/prefs`. The service fronts two underlying tables:

@@ -33,10 +33,8 @@ func TestProviderClassifiesHTTPError(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			p, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			p := openai.NewProvider("test-key", openai.WithBaseURL(server.URL))
+
 			var got error
 			for _, err := range p.Complete(t.Context(), llm.CompletionRequest{Stream: true}) {
 				if err != nil {

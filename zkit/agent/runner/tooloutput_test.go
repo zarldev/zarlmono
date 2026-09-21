@@ -15,8 +15,9 @@ type recordingToolOutputSink struct {
 	records []runner.ToolOutput
 }
 
-func (s *recordingToolOutputSink) Record(_ context.Context, out runner.ToolOutput) {
+func (s *recordingToolOutputSink) Record(_ context.Context, out runner.ToolOutput) error {
 	s.records = append(s.records, out)
+	return nil
 }
 
 func TestToolOutputSinkReceivesFullOutput(t *testing.T) {

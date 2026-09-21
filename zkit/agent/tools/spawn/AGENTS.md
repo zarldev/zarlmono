@@ -7,7 +7,7 @@ Notes for editors. See [`zkit/agent/runner/AGENTS.md`](../../runner/AGENTS.md) f
 A registry-compatible asynchronous agent-task family:
 
 - `agent_spawn` validates and starts a focused child `runner.Run`, then returns a receipt immediately;
-- `agent_await` is the explicit blocking join and result-delivery boundary;
+- `agent_await` is an explicit blocking join/result-read boundary, not a requirement for receiving results on an automatically admitting parent;
 - `agent_status` reads one snapshot without waiting;
 - `agent_stop` cancels and joins one child;
 - `list_agent_tasks` returns the stable turn-owned task list.
@@ -20,7 +20,9 @@ The runner remains synchronous and tool-agnostic. Async delegation policy, recur
 
 ## Tool protocol invariant
 
-Every `agent_spawn` call returns exactly one immediate tool result paired to its original call ID. The eventual child summary is delivered by a later `agent_await`, `agent_status`, or `agent_stop` call. Never emit a delayed second result for the spawn call.
+Every `agent_spawn` call returns exactly one immediate tool result paired to its original call ID. A parent composed with `runner.WithInputSource(group)` can receive one automatic typed host observation per child after successful history admission. Explicit `agent_await`, `agent_status`, and `agent_stop` reads remain legal, including rereads. Hosts without that receiving capability retain explicit-only delivery. Never emit a delayed second result for the spawn call or fabricate a human message/tool execution. The provider wire role does not erase neutral host provenance in canonical history.
+
+`Ready` is a non-consuming, parent-scoped readiness snapshot; `Admit` acknowledges references only after the receiving runner has incorporated the corresponding content into history. Wrapper references travel out of band and survive only output-preserving paths, including recoverable failure envelopes. Observation by a tool is not automatic admission. Buffered history admission is not a durable-delivery promise. Pending automatic results remain retained, and cross-parent explicit inspection cannot consume the owner's automatic result.
 
 ## Depth tracking
 
@@ -28,9 +30,9 @@ The runner plants task depth in context; `agent_spawn` reads it at execution tim
 
 ## Group lifecycle
 
-`NewGroup` starts no goroutine. `Start` records a RUNNING task before launching its owned goroutine. A task transitions exactly once to COMPLETED, FAILED, or CANCELLED. `Close` rejects starts, cancels live children, and waits for all of them within the caller's context.
+`NewGroup` starts no goroutine. `Bind` registers a parent run before dispatch. `Start` records a RUNNING task before launching its owned goroutine; children retain dispatch values but survive dispatch-call cancellation, remaining bound to parent cancellation/deadlines. `ParentScope.Close` seals admission, stops and joins its cancellation callback, and cancels/joins descendants before borrowed dependencies can be released. `Finish` atomically seals a genuinely completed parent. A task transitions exactly once to COMPLETED, FAILED, or CANCELLED. Group `Close` seals all scopes, cancels live children, and joins owned work within the caller's cleanup context. Unbound library callers retain the legacy group-owned lifetime.
 
-Public snapshots contain compact immutable result values, never the runner's mutable history slices, channels, contexts, or cancel functions. Terminal status/await/stop delivery marks the summary observed; listing does not.
+Public snapshots contain compact immutable result values, never the runner's mutable history slices, channels, contexts, or cancel functions. Group maps store task and parent-state values, mutated under the group lock; waiter/lifecycle snapshots are values as well. Terminal status/await/stop delivery marks the summary observed; listing does not. Omitted-ID lookup is limited to direct children for a bound caller; explicit IDs and listing still support intentional tree inspection.
 
 ## Failures are recoverable
 
@@ -46,6 +48,6 @@ Explore and verify modes are enforced through `WithModeToolPolicy`; implement re
 
 - Do not store depth or other per-call state on `Tool`.
 - Do not start an untracked `go target.Run(...)`; every child belongs to `Group`.
-- Do not detach a child from group shutdown or delete a terminal result before it can be observed.
-- Do not inject a child summary as a fake user steering message; explicit agent tools own delivery.
+- Do not detach a bound child from its parent or group shutdown, or prune a terminal result while automatic admission or a waiter still needs it.
+- Do not present child output as human steering/current authority or inject synthetic tool results. Automatic host observations require an opted-in receiving route; explicit tools remain the fallback. Engine rollout is experimental and disabled by default until receiving endpoints are qualified.
 - Do not register legacy aliases alongside the resource-first names; one public grammar is the invariant.

@@ -107,10 +107,8 @@ func completeWithFakeOpenAI(t *testing.T, stream bool, response string) []llm.Co
 	}))
 	defer srv.Close()
 
-	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
+
 	seq := provider.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "read foo"}},
 		Stream:   stream,

@@ -41,6 +41,10 @@ Each transcript has a monotonically increasing revision and checksum. Entry upda
 
 Composer drafts are separate session state. Draft text is saved with its own debounce, restored on resume, and cleared after an accepted submission.
 
+For implementation details, see [Turn lifecycle and settlement](/zarlmono/turn-lifecycle/).
+It traces runtime completion, event application, and durable commits separately,
+including save failures, queued input, rewind, and shutdown.
+
 ## Resume and interruption recovery
 
 `zarlcode -continue` selects the latest session for the current workspace. The intro screen can resume any listed session.

@@ -255,7 +255,7 @@ func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRe
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := defaultHTTPClient().Do(httpReq)
+	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		yield(llm.CompletionChunk{}, fmt.Errorf("responses post: %w", normalizeContextError(ctx, err)))
 		return
@@ -400,14 +400,14 @@ func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool)
 	// orderedIndexes tracks the first-seen order of output indexes so tool
 	// calls are emitted deterministically at completion time.
 	var orderedIndexes []int
-	completedItems := map[int]responseOutputItem{}
+	emittedItems := map[int]bool{}
 	flush := func() bool {
 		payload := data.String()
 		data.Reset()
 		if payload == "" || payload == "[DONE]" {
 			return false
 		}
-		return dispatchResponseEvent(payload, calls, byID, &orderedIndexes, completedItems, yield)
+		return dispatchResponseEvent(payload, calls, byID, &orderedIndexes, emittedItems, yield)
 	}
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -436,7 +436,7 @@ func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool)
 	return nil
 }
 
-func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCall, byID map[string]*pendingResponseToolCall, orderedIndexes *[]int, completedItems map[int]responseOutputItem, yield func(llm.CompletionChunk, error) bool) bool {
+func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCall, byID map[string]*pendingResponseToolCall, orderedIndexes *[]int, emittedItems map[int]bool, yield func(llm.CompletionChunk, error) bool) bool {
 	var env responseEventEnvelope
 	if err := json.Unmarshal([]byte(payload), &env); err != nil {
 		yield(llm.CompletionChunk{}, fmt.Errorf("responses event: %w", err))
@@ -487,8 +487,11 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			// Track first-seen order for deterministic output.
 			*orderedIndexes = append(*orderedIndexes, ev.OutputIndex)
 		}
-		if env.Type == responseEventOutputItemDone && (ev.Item.Type == responsesTypeReasoning || ev.Item.Type == responsesTypeMessage) {
-			completedItems[ev.OutputIndex] = ev.Item
+		if env.Type == responseEventOutputItemDone && !emittedItems[ev.OutputIndex] {
+			if item, ok := openAIContinuationItem(ev.OutputIndex, ev.Item); ok {
+				emittedItems[ev.OutputIndex] = true
+				return !yield(llm.CompletionChunk{CompletedItems: []llm.ContinuationItem{item}}, nil)
+			}
 		}
 	case responseEventFunctionCallArgsDelta:
 		var ev responseArgsDelta
@@ -523,9 +526,14 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			yield(llm.CompletionChunk{}, err)
 			return true
 		}
-		for index, item := range ev.Response.Output {
-			if item.Type == responsesTypeReasoning || item.Type == responsesTypeMessage {
-				completedItems[index] = item
+		var nativeItems []llm.ContinuationItem
+		for index, output := range ev.Response.Output {
+			if emittedItems[index] {
+				continue
+			}
+			if item, ok := openAIContinuationItem(index, output); ok {
+				emittedItems[index] = true
+				nativeItems = append(nativeItems, item)
 			}
 		}
 		// Emit tool calls in output-index order rather than nondeterministic
@@ -539,17 +547,6 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 				continue
 			}
 			toolCalls = append(toolCalls, llm.ToolCall{ID: call.id, Type: typeFunction, OutputIndex: llm.OutputPosition(idx), Function: llm.ToolCallFunction{Name: call.name, Arguments: call.arguments.String()}})
-		}
-		itemIndexes := make([]int, 0, len(completedItems))
-		for index := range completedItems {
-			itemIndexes = append(itemIndexes, index)
-		}
-		sort.Ints(itemIndexes)
-		nativeItems := make([]llm.ContinuationItem, 0, len(itemIndexes))
-		for _, index := range itemIndexes {
-			if item, ok := openAIContinuationItem(index, completedItems[index]); ok {
-				nativeItems = append(nativeItems, item)
-			}
 		}
 		chunk := llm.CompletionChunk{
 			FinishReason:   llm.FinishReasons.STOP,

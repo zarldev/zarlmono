@@ -61,16 +61,26 @@ var _ LiveSink = nopLiveSink{}
 // is advisory; headless/eval is strict). A context cache threads model messages across
 // turns, and a pressure-gated compactor keeps long chats inside the window.
 type LiveRunner struct {
-	ws      code.Workspace
-	sink    LiveSink
-	context ContextCache
-	queue   *queueState
+	ws        code.Workspace
+	sink      LiveSink
+	context   ContextCache
+	queue     *queueState
+	admission runtimeAdmission
+	// publication excludes readers while a reserved restore publishes context,
+	// target, plan and operational state. Lock order: context.mu (when needed),
+	// publication, then component locks. Never hold it while waiting for a turn.
+	publication sync.Mutex
 
 	// mu guards the hot-swappable run target. A turn snapshots target under the
 	// lock at start, so an update takes effect on the next turn.
-	mu            sync.Mutex
-	target        RunTarget
-	promptProfile PromptProfile
+	mu             sync.Mutex
+	target         RunTarget
+	promptProfile  PromptProfile
+	readOnly       bool
+	modeGeneration uint64
+	// historyBuffers retain only uncommitted replay batches until the session FIFO
+	// retries them. Access is under mu; each buffer serializes its own writes.
+	historyBuffers map[string]*sessionHistoryBuffer
 
 	// turnCancel cancels the context driving the current turn's runner.Run.
 	// Set under mu before entering the run loop, cleared under mu on exit.
@@ -231,7 +241,6 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 			Window:   LiveContextWindow,
 		},
 		promptProfile: PromptProfiles.LEAN,
-		queue:         newQueueState(),
 		planStore:     newLivePlanStore(),
 		catalog:       newRuntimeCatalog(ws.Root()),
 		truncator:     &runner.SpillingTruncator{Prefix: "zarlcode-"},
@@ -239,6 +248,7 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 		fetchTool:     fetch.New(),
 		sink:          nopLiveSink{},
 	}
+	l.queue = newQueueState(&l.admission)
 	l.computer = &liveComputer{owner: l}
 	for _, opt := range opts {
 		opt(l)
@@ -250,6 +260,10 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 // AttachMCP attaches the registry whose notifier already targets this runner's
 // queue. It is a composition-time lifecycle transition required by that cycle.
 func (l *LiveRunner) AttachMCP(reg *dynamic.MCPRegistry, host *tools.Registry) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	l.mcp, l.mcpHost = reg, host
 	l.mu.Unlock()
@@ -261,6 +275,8 @@ func (l *LiveRunner) Plan() []agentcompact.PlanStep {
 	if l == nil || l.planStore == nil {
 		return nil
 	}
+	l.publication.Lock()
+	defer l.publication.Unlock()
 	plan := l.planStore.GetPlan()
 	out := make([]agentcompact.PlanStep, 0, len(plan.Steps))
 	for _, s := range plan.Steps {
@@ -276,6 +292,8 @@ func (l *LiveRunner) WorkingFiles() []agentcompact.FileTouch {
 	if l == nil || l.operational == nil {
 		return nil
 	}
+	l.publication.Lock()
+	defer l.publication.Unlock()
 	return l.operational.workingFiles()
 }
 
@@ -285,6 +303,8 @@ func (l *LiveRunner) TopTools() []agentcompact.ToolUsage {
 	if l == nil || l.operational == nil {
 		return nil
 	}
+	l.publication.Lock()
+	defer l.publication.Unlock()
 	return l.operational.topTools()
 }
 
@@ -294,6 +314,8 @@ func (l *LiveRunner) Verification() *agentcompact.VerificationState {
 	if l == nil || l.operational == nil {
 		return nil
 	}
+	l.publication.Lock()
+	defer l.publication.Unlock()
 	return l.operational.verificationState()
 }
 
@@ -303,6 +325,10 @@ func (l *LiveRunner) RecordOperationalResult(call tools.ToolCall, result *tools.
 	if l == nil || l.operational == nil {
 		return
 	}
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.operational.record(call, result, dispatchErr)
 }
 
@@ -311,6 +337,8 @@ func (l *LiveRunner) UnresolvedFailures() []agentcompact.FailureState {
 	if l == nil || l.operational == nil {
 		return nil
 	}
+	l.publication.Lock()
+	defer l.publication.Unlock()
 	return l.operational.unresolvedFailures()
 }
 
@@ -381,7 +409,11 @@ func (l *LiveRunner) ContextSnapshot() []llm.Message {
 	if l == nil {
 		return nil
 	}
-	return l.context.Snapshot()
+	l.context.mu.Lock()
+	defer l.context.mu.Unlock()
+	l.publication.Lock()
+	defer l.publication.Unlock()
+	return cloneMessages(l.context.context)
 }
 
 // RestoreContext replaces the compactable LLM context cache.
@@ -389,6 +421,10 @@ func (l *LiveRunner) RestoreContext(contextCache []llm.Message) {
 	if l == nil {
 		return
 	}
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.context.restore(contextCache)
 }
 
@@ -397,6 +433,10 @@ func (l *LiveRunner) ClearContext() {
 	if l == nil {
 		return
 	}
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.context.restore(nil)
 }
 
@@ -404,8 +444,13 @@ func (l *LiveRunner) ClearContext() {
 // the runner to read-only tools and swaps in a planning prompt. Read live by
 // the source filter, so flipping mid-run takes effect on the next tool call.
 func (l *LiveRunner) SetPlanMode(on bool) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
-	l.target.Plan = on
+	l.target.Plan = on || l.readOnly
+	l.modeGeneration++
 	l.mu.Unlock()
 }
 
@@ -414,13 +459,17 @@ func (l *LiveRunner) SetPlanMode(on bool) {
 func (l *LiveRunner) isPlan() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.target.Plan
+	return l.target.Plan || l.readOnly
 }
 
 // SetContextWindow overrides the compactor's context window (tokens) — set
 // it to the provider's real window so compaction fires at the true budget,
 // not the conservative default. Ignored for non-positive values.
 func (l *LiveRunner) SetContextWindow(tokens int) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	if tokens > 0 {
 		l.mu.Lock()
 		l.target.Window = tokens
@@ -432,6 +481,10 @@ func (l *LiveRunner) SetContextWindow(tokens int) {
 // from the resolved backend + key. nil leaves web_search unregistered.
 // Snapshotted per turn like the run target.
 func (l *LiveRunner) SetWebSearch(tool tools.Tool) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	l.target.WebSearch = tool
 	l.mu.Unlock()
@@ -443,6 +496,10 @@ func (l *LiveRunner) SetWebSearch(tool tools.Tool) {
 // spawnDepth 0 disables spawning, >0 caps recursion at that depth.
 // Snapshotted per turn like the rest of the run target.
 func (l *LiveRunner) SetLimits(reserve, maxIter, spawnMaxIter, spawnDepth int) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	l.target.Reserve = reserve
 	l.target.MaxIter = maxIter
@@ -456,6 +513,10 @@ func (l *LiveRunner) SetLimits(reserve, maxIter, spawnMaxIter, spawnDepth int) {
 // A nil/empty slice disables it. Copied so the caller can't mutate it under
 // the lock; snapshotted again per run.
 func (l *LiveRunner) SetEarlyStopCommand(cmd []string) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	l.earlyStopCommand = append([]string(nil), cmd...)
 	l.mu.Unlock()
@@ -466,6 +527,10 @@ func (l *LiveRunner) SetEarlyStopCommand(cmd []string) {
 // workspace root), attempts caps the agent attempts. Empty cmd or
 // attempts <= 1 disables the loop. Snapshotted per run like the run target.
 func (l *LiveRunner) SetVerifyLoop(cmd string, attempts int) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	l.verifyCommand = strings.TrimSpace(cmd)
 	l.verifyAttempts = attempts
@@ -476,6 +541,10 @@ func (l *LiveRunner) SetVerifyLoop(cmd string, attempts int) {
 // selected backend + its model. Used by the settings overlay so a provider
 // change takes effect without a restart; the next turn picks it up.
 func (l *LiveRunner) SetProvider(prov llm.Provider, model string) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	if prov == nil {
 		return
 	}
@@ -490,6 +559,10 @@ func (l *LiveRunner) SetProvider(prov llm.Provider, model string) {
 // spec, so named agents that only override `model` can rebuild the active
 // backend with that model.
 func (l *LiveRunner) SetProviderSpec(prov llm.Provider, spec ProviderSpec) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	if prov == nil {
 		return
 	}
@@ -502,6 +575,10 @@ func (l *LiveRunner) SetProviderSpec(prov llm.Provider, spec ProviderSpec) {
 
 // ApplyTarget atomically updates provider identity and context-window policy.
 func (l *LiveRunner) ApplyTarget(update TargetUpdate) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	if update.Provider == nil {
 		return
 	}
@@ -518,6 +595,10 @@ func (l *LiveRunner) ApplyTarget(update TargetUpdate) {
 // SetModel updates only the model name on the current provider.
 // The change takes effect on the next turn without a rebuild.
 func (l *LiveRunner) SetModel(name string) {
+	if !l.admission.enter() {
+		return
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.target.Model = name
@@ -528,6 +609,10 @@ func (l *LiveRunner) SetModel(name string) {
 // Safe to call from any goroutine; a nil or already-fired cancel is a no-op.
 // Returns true when a turn was in flight and the cancel was delivered.
 func (l *LiveRunner) CancelTurn() bool {
+	if !l.admission.enter() {
+		return false
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	cancel := l.turnCancel
 	l.mu.Unlock()

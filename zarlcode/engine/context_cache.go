@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 
 	"github.com/google/uuid"
+
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
 
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
@@ -21,12 +22,15 @@ import (
 // become the next turn's context, so the agent sees its own prior tool
 // calls and answers.
 //
-// Run serializes turns under a mutex: a second submit blocks until the
+// Run serializes turns under a gate: a second submit blocks until the
 // first turn finishes, then runs with that turn's context — sequential,
 // continuous chat without concurrent runs corrupting the context.
 type ContextCache struct {
-	mu      sync.Mutex
+	mu      contextGate
 	context []llm.Message
+	// exact retains strict checkpoint semantics through later dispatches. Legacy
+	// Restore deliberately resets it and continues to repair old session data.
+	exact bool
 }
 
 // run executes one turn via exec (the runner.Run call), threading the
@@ -44,12 +48,22 @@ type ContextCache struct {
 // TUI surfaces as an error toast + log + idle-clear (see
 // Session.applyConversationEnded). So there is nothing to return here — we
 // keep only the partial context.
-func (c *ContextCache) transition(spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error)) error {
-	c.mu.Lock()
+func (c *ContextCache) transition(ctx context.Context, spec runner.TaskSpec, setup func() (func(runner.TaskSpec) runner.TaskResult, error), finish func()) error {
+	if err := c.mu.acquire(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
+	// Finalize the lifecycle after committing context, before admitting the
+	// next serialized turn. Also runs on setup failure and panic unwind.
+	defer finish()
 
-	spec.ID = taskscope.ID(uuid.NewString())
-	repaired, _ := agentcompact.RepairToolPairing(c.context)
+	if spec.ID == "" {
+		spec.ID = taskscope.ID(uuid.NewString())
+	}
+	repaired := c.context
+	if !c.exact {
+		repaired, _ = agentcompact.RepairToolPairing(c.context)
+	}
 	spec.Context = cloneMessages(repaired)
 	exec, err := setup()
 	if err != nil {
@@ -68,7 +82,7 @@ func (c *ContextCache) run(prompt string, exec func(runner.TaskSpec) runner.Task
 }
 
 func (c *ContextCache) runSpec(spec runner.TaskSpec, exec func(runner.TaskSpec) runner.TaskResult) {
-	_ = c.transition(spec, func() (func(runner.TaskSpec) runner.TaskResult, error) { return exec, nil })
+	_ = c.transition(context.Background(), spec, func() (func(runner.TaskSpec) runner.TaskResult, error) { return exec, nil }, func() {})
 }
 
 func (c *ContextCache) snapshot() []llm.Message {
@@ -96,16 +110,22 @@ func (c *ContextCache) restore(context []llm.Message) {
 			"stripped_or_dropped", changed, "before", len(context), "after", len(repaired))
 	}
 	c.context = repaired
+	c.exact = false
 }
 
 func (c *ContextCache) compactNow(ctx context.Context, compactor agentcompact.Compactor, sink runner.EventSink) (ManualCompactionResult, error) {
-	c.mu.Lock()
+	if err := c.mu.acquire(ctx); err != nil {
+		return ManualCompactionResult{}, err
+	}
 	defer c.mu.Unlock()
 	before := len(c.context)
 	if before == 0 {
 		return ManualCompactionResult{MessagesBefore: 0, MessagesAfter: 0, Engine: agentcompact.EngineTiered}, nil
 	}
-	repaired, changed := agentcompact.RepairToolPairing(c.context)
+	repaired, changed := c.context, 0
+	if !c.exact {
+		repaired, changed = agentcompact.RepairToolPairing(c.context)
+	}
 	if changed > 0 {
 		slog.WarnContext(ctx, "manual compact: repaired unbalanced tool-call pairing before compaction",
 			"stripped_or_dropped", changed, "before", len(c.context), "after", len(repaired))
@@ -123,7 +143,7 @@ func (c *ContextCache) compactNow(ctx context.Context, compactor agentcompact.Co
 	after := len(c.context)
 	out := ManualCompactionResult{MessagesBefore: before, MessagesAfter: after, BytesTrimmed: res.BytesTrimmed, Engine: res.Engine}
 	if sink != nil && (before != after || res.BytesTrimmed > 0) {
-		sink.OnCompactionApplied(runner.CompactionApplied{
+		sink.OnCompactionApplied(ctx, runner.CompactionApplied{
 			TaskID:         "manual-compact",
 			MessagesBefore: before,
 			MessagesAfter:  after,
@@ -149,3 +169,19 @@ func (c *ContextCache) Compact(ctx context.Context, compactor agentcompact.Compa
 
 // Snapshot returns a concurrency-safe copy of the context cache.
 func (c *ContextCache) Snapshot() []llm.Message { return c.snapshot() }
+
+// RestoreCheckpoint replaces the context with an already validated immutable
+// checkpoint and disables legacy pairing repair on subsequent dispatches and
+// manual compaction. Failure leaves the cache unchanged. This cache-level method
+// does not establish LiveRunner admission or activate a session.
+func (c *ContextCache) RestoreCheckpoint(checkpoint rewind.Checkpoint) error {
+	snapshot, err := checkpoint.Snapshot()
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.context = snapshot.Context
+	c.exact = true
+	return nil
+}

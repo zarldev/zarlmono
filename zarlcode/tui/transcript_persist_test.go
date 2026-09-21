@@ -227,7 +227,9 @@ func TestMidTurnTranscriptPersistPreservesCompletedContext(t *testing.T) {
 	ui := tui.New()
 	ui.SetLiveRunner(engine.NewLiveRunner(nil, workspace, "test-model"))
 	ui.SetSettings(engine.NewSettings(store, nil, nil, workspaceRoot))
-	ui.SetSessionIdentity(sessionID, "Existing", false, time.Now())
+	if err := ui.ResumeLatestSavedSession(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	ui.AddPartialTranscript("turn", "next prompt", "next partial answer")
 	cmd := ui.ForceTranscriptPersist()
 	if cmd == nil {
@@ -292,7 +294,9 @@ func TestDeleteBarrierDropsQueuedSessionWrites(t *testing.T) {
 	}
 	ui := tui.New()
 	ui.SetSettings(engine.NewSettings(store, nil, nil, workspaceRoot))
-	ui.SetSessionIdentity("delete", "Delete", false, time.Now())
+	if err := ui.ResumeLatestSavedSession(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	ui.AddPartialTranscript("turn", "do not recreate", "partial")
 	ui.QueueLatestTranscriptPersist()
 	ui.QueueDeletePersist("delete")

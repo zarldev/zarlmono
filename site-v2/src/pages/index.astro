@@ -4,37 +4,75 @@ import Command from '../components/Command.astro';
 import Workbench from '../components/Workbench.astro';
 import { path, github } from '../lib/links';
 const steps = [
-  { number: '01', title: 'Investigate in Plan mode', mode: 'PLAN', text: 'Read and search the codebase with workspace mutations disabled. The result is a reviewable plan.', key: 'Shift + Tab', detail: 'Switch between Plan and Build' },
-  { number: '02', title: 'Edit and run commands', mode: 'BUILD', text: 'Allow file edits and shell commands. Tool calls and command results appear in the timeline.', key: 'Ctrl + W', detail: 'Open the working set' },
-  { number: '03', title: 'Review the changes', mode: 'INSPECT', text: 'Inspect changed files, diffs, test output, and tracked processes before ending the session.', key: 'Ctrl + F', detail: 'Explore workspace files' },
+  { number: '01', title: 'Investigate in Plan mode', mode: 'PLAN', text: 'Read and search the codebase without edits or shell execution. Work out the approach before allowing changes.', key: 'Shift + Tab', detail: 'Switch between Plan and Build' },
+  { number: '02', title: 'Make and verify a change', mode: 'BUILD', text: 'Enable file edits and commands. Follow tool calls and test output as the agent works in your workspace.', key: 'Ctrl + W', detail: 'Open the working set' },
+  { number: '03', title: 'Review the result', mode: 'INSPECT', text: 'Inspect changed files, diffs, command output, and tracked processes. A model saying “done” is not a substitute for review.', key: 'Ctrl + F', detail: 'Explore workspace files' },
 ];
 ---
-<Site title="zarlcode — Terminal coding agent with plan and build modes" description="Use zarlcode to inspect a codebase, edit files, run commands, and review diffs from a terminal interface.">
+<Site title="zarlcode / zkit — Open-source coding harness and Go agent toolkit" description="An open-source terminal coding agent and the Go packages underneath it. Use the CLI, understand the harness, or build an agent of your own.">
   <section class="hero container" aria-labelledby="hero-title">
-    <div class="hero-topline"><p class="eyebrow"><span class="status-dot"></span> ZARLCODE / TERMINAL CODING AGENT</p><span class="eyebrow hero-aside">OPEN SOURCE / GO</span></div>
+    <div class="hero-topline"><p class="eyebrow">ZARLMONO / ZARLCODE + ZKIT</p><span class="eyebrow hero-aside">OPEN SOURCE / MIT / GO</span></div>
     <div class="hero-grid">
-      <h1 id="hero-title">Plan, run, and review coding tasks <span class="accent">in the terminal.</span></h1>
-      <div class="hero-copy"><p class="lead">A model conversation, workspace tools, and a diff viewer in one terminal interface.</p><p>Use read-only Plan mode to investigate a task. Switch to Build to edit files and run commands. Tool calls, results, and changes remain available for review in the session.</p><div class="actions"><a class="button" href="#install">Install zarlcode <span aria-hidden="true">↗</span></a><a class="text-link" href="#workflow">View the workflow <span aria-hidden="true">↓</span></a></div><div class="hero-footnote"><span>SQLite sessions</span><span>Hosted and local providers</span><span>MIT licensed</span></div></div>
-    </div>
-    <Workbench />
-  </section>
-  <div class="provider-strip"><div class="container provider-inner"><span class="eyebrow">SUPPORTED PROVIDERS AND ENDPOINTS</span><div class="provider-list"><span>Anthropic</span><span>OpenAI</span><span>Gemini</span><span>DeepSeek</span><span>Ollama</span><a href={path('zarlcode-providers/')}>View provider setup ↗</a></div></div></div>
-  <section class="section container" id="workflow" aria-labelledby="workflow-title">
-    <div class="section-heading"><div><p class="eyebrow">01 / SESSION WORKFLOW</p><h2 id="workflow-title">Use Plan mode, Build mode, and the inspection views.</h2></div><p>Start with read-only investigation, enable workspace changes when the plan is ready, then review the files and command output produced during the turn.</p></div>
-    <div class="workflow-grid">{steps.map((step) => <article class="workflow-step"><div class="step-top"><span class="step-number">{step.number}</span><span class="eyebrow">{step.mode}</span></div><h3>{step.title}</h3><p>{step.text}</p><div class="key-note"><kbd>{step.key}</kbd><span>{step.detail}</span></div></article>)}</div>
-    <a class="text-link section-link" href={path('zarlcode-workflow/')}>Walk through your first session <span aria-hidden="true">↗</span></a>
-  </section>
-  <section class="section control-section" aria-labelledby="control-title">
-    <div class="container control-grid"><div class="control-heading"><p class="eyebrow">02 / SESSION REVIEW</p><h2 id="control-title">The interface records what the agent did.</h2><p>The timeline shows model output alongside tool calls and results. Separate views cover changed files, diffs, workspace files, and tracked processes.</p><a class="text-link" href={path('zarlcode-interface/')}>Read the interface guide <span aria-hidden="true">↗</span></a><div class="terminal-note" aria-hidden="true"><span>~/workspace</span><br /><span class="accent">❯</span> zarlcode<span class="cursor">_</span></div></div>
-      <div class="feature-list">
-        <article><span class="feature-symbol" aria-hidden="true">↳</span><div><h3>Timeline and working set</h3><p>The timeline contains model output, tool calls, and command results. The working set lists changed files, diffs, and background processes.</p><a href={path('zarlcode-interface/')}>Interface reference ↗</a></div></article>
-        <article><span class="feature-symbol" aria-hidden="true">↺</span><div><h3>Local session storage</h3><p>Sessions are stored in local SQLite. Canonical transcripts are stored separately from the model context used for later requests.</p><a href={path('sessions-transcripts/')}>Session storage reference ↗</a></div></article>
-        <article><span class="feature-symbol" aria-hidden="true">⇄</span><div><h3>Provider and model selection</h3><p>Select a hosted provider or configure a local OpenAI-compatible endpoint. Provider and model settings are available in the TUI.</p><a href={path('zarlcode-providers/')}>Provider configuration ↗</a></div></article>
+      <h1 id="hero-title">A coding agent you can run.<br /><span class="accent">A harness you can build on.</span></h1>
+      <div class="hero-copy">
+        <p class="lead">zarlcode is a terminal AI coding agent. zkit is the Go toolkit underneath it.</p>
+        <p>Use zarlcode to read code, make changes, run tests, and review diffs. If you’re building your own agent in Go, zkit provides the same runner, tools, and provider adapters as importable packages.</p>
+        <div class="actions"><a class="text-link" href="#install">Run zarlcode ↓</a><a class="text-link" href={path('toolkit/')}>Build with zkit ↗</a><a class="text-link" href={github}>Read the source ↗</a></div>
+        <p class="project-note">zarlcode runs on your machine. Connect it to a hosted provider or a local model server. The code is MIT licensed; hosted providers charge separately for model usage.</p>
       </div>
     </div>
+    <nav class="page-index" aria-label="On this page"><span class="eyebrow">IN THIS OVERVIEW</span><a href="#who-its-for">Who it’s for</a><a href="#architecture">Architecture</a><a href="#workflow">CLI workflow</a><a href="#install">Install</a></nav>
   </section>
-  <section class="section container" id="built-with-zkit" aria-labelledby="toolkit-title">
-    <div class="toolkit-panel"><div><p class="eyebrow">03 / ZKIT</p><h2 id="toolkit-title">The agent runtime is available as Go packages.</h2><p><strong>zkit supplies the runner, tool interfaces, provider adapters, guardrails, and session infrastructure used by zarlcode.</strong> Applications can import the individual packages they need.</p><a class="button button-outline" href={path('toolkit/')}>View the zkit overview <span aria-hidden="true">↗</span></a></div><div class="stack-diagram" aria-label="A Go application composed from zkit runner, tools, and provider packages."><div class="stack-label eyebrow">PACKAGE COMPOSITION</div><div class="stack-app"><span>application</span><span class="muted">.go</span></div><div class="stack-connector" aria-hidden="true">↓</div><div class="stack-modules"><span>runner</span><span>tools</span><span>providers</span></div><div class="stack-foundation"><span class="accent">zkit</span><span>Go packages</span></div><p>Used by zarlcode and the SWE-bench evaluation driver.</p></div></div>
+
+  <section class="section container" id="who-its-for" aria-labelledby="audience-title">
+    <div class="section-heading"><div><p class="eyebrow">01 / WHERE TO START</p><h2 id="audience-title">Using zarlcode or building with zkit</h2></div><p>The CLI and Go libraries are maintained in the same repository. You can use either independently.</p></div>
+    <div class="consumer-grid">
+      <a href="#workflow"><span class="eyebrow">FOR DEVELOPERS WORKING IN A CODEBASE</span><h3>zarlcode <span aria-hidden="true">↓</span></h3><p>Investigate, edit, run checks, and review diffs in a terminal session. Use the TUI interactively or the headless CLI in scripts. You don’t need to write Go to use it.</p></a>
+      <a href={path('toolkit/')}><span class="eyebrow">FOR GO DEVELOPERS</span><h3>zkit <span aria-hidden="true">↗</span></h3><p>Add an agent to a Go application with your own tools and model choice. Configure what it can do and write checks to decide whether its work is finished.</p></a>
+      <a href={path('architecture/')}><span class="eyebrow">FOR CONTRIBUTORS</span><h3>Code and architecture <span aria-hidden="true">↗</span></h3><p>See which packages handle model calls, tool execution, and sessions. The CLI and SWE-bench driver show how those packages are used in working applications.</p></a>
+    </div>
   </section>
-  <section class="install-section" id="install" aria-labelledby="install-title"><div class="container install-grid"><div><p class="eyebrow">04 / INSTALL</p><h2 id="install-title">Install and run zarlcode in a workspace.</h2><p>The first launch creates local configuration and opens provider setup in the TUI.</p><a class="text-link" href={path('zarlcode-onboarding/')}>Read the installation guide <span aria-hidden="true">↗</span></a></div><div class="install-card"><Command command="brew install zarldev/tap/zarlcode" label="01 / INSTALL WITH HOMEBREW" /><Command command="cd /path/to/your/workspace && zarlcode" label="02 / LAUNCH IN YOUR WORKSPACE" /><p class="install-help">Configure a provider in the TUI with <kbd>Ctrl + S</kbd>. Local models require a separately running model server.</p><div class="install-links"><a href={`${github}/releases`}>Release downloads ↗</a><a href={path('zarlcode/#install')}>Build from source ↗</a></div></div></div><div class="container safety-note"><span aria-hidden="true">↳</span><p>Sessions are stored locally. Hosted providers receive model requests. Build mode edits files and runs commands with the current user's privileges. <a href={path('zarlcode-safety/')}>Read the safety and access guide ↗</a></p></div></section>
+
+  <section class="section control-section" id="architecture" aria-labelledby="architecture-title">
+    <div class="container">
+      <div class="section-heading"><div><p class="eyebrow">02 / ARCHITECTURE</p><h2 id="architecture-title">How zarlcode uses zkit</h2></div><p>The model requests actions. The harness—the code around it—prepares each request, runs the tools, records what happened, and stops the task when it finishes or reaches a limit.</p></div>
+      <div class="architecture-grid" id="built-with-zkit">
+        <figure class="architecture-map">
+          <figcaption class="eyebrow">DEPENDENCIES POINT DOWNWARD</figcaption>
+          <ol class="layer-list">
+            <li><span class="eyebrow">APPLICATIONS</span><h3>zarlcode · swebench-eval · your app</h3><p>The user interface, settings, tasks, and saved sessions.</p></li>
+            <li><span class="eyebrow">ZKIT / AGENT</span><h3>runner + task management</h3><p>Calling models and tools, checking calls and results, shortening history, and running sub-agents.</p></li>
+            <li><span class="eyebrow">ZKIT / AI</span><h3>providers + tools</h3><p>Model API clients, tool definitions, argument schemas, and results.</p></li>
+            <li><span class="eyebrow">ZKIT / SUPPORTING PACKAGES</span><h3>storage · MCP · vault</h3><p>Database access, external tool connections, and credential storage.</p></li>
+          </ol>
+        </figure>
+        <div class="architecture-notes">
+          <article><h3>What belongs to zarlcode?</h3><p>zarlcode handles the terminal interface, workspace settings, provider setup, and saving and resuming sessions. It uses zkit to run tasks. The runner has no dependency on the terminal UI.</p></article>
+          <article><h3>Where are the coding tools configured?</h3><p>The <code>agent/coderunner</code> package sets up coding tools and guardrails for both zarlcode and the evaluation driver. For an agent that does something else, use the general runner and register your own tools.</p></article>
+          <article><h3>Can I use just part of zkit?</h3><p>Yes. The provider clients and tool packages do not depend on the agent runner. You can call a model or use the tool registry without running an agent.</p></article>
+          <a class="text-link" href={path('toolkit/#architecture')}>Follow a task through the runtime ↗</a>
+        </div>
+      </div>
+      <div class="toolkit-panel architecture-summary"><div><h3>How are sessions stored?</h3><p>zarlcode saves the session transcript in local SQLite. The messages sent to the model are stored separately. When a conversation gets too long, compaction shortens those messages without deleting earlier entries from the timeline or exported transcript.</p><a class="text-link" href={path('sessions-transcripts/')}>Sessions and transcripts ↗</a></div><div><h3>What can the agent access?</h3><p>The application decides which tools are available. Plan mode disables edits and shell commands. Build mode enables them, with guardrails checking tool calls. Those checks do not isolate the process from your machine.</p><a class="text-link" href={path('zarlcode-safety/')}>Safety and workspace access ↗</a></div></div>
+    </div>
+  </section>
+
+  <section class="section container" id="workflow" aria-labelledby="workflow-title">
+    <div class="section-heading"><div><p class="eyebrow">03 / USING ZARLCODE</p><h2 id="workflow-title">Working on a change</h2></div><p>Follow model responses, tool calls, and command output in the timeline. Open the working set to inspect changed files, diffs, and running processes.</p></div>
+    <div class="workflow-grid">{steps.map((step) => <article class="workflow-step"><div class="step-top"><span class="step-number">{step.number}</span><span class="eyebrow">{step.mode}</span></div><h3>{step.title}</h3><p>{step.text}</p><div class="key-note"><kbd>{step.key}</kbd><span>{step.detail}</span></div></article>)}</div>
+    <Workbench />
+    <div class="reading-links"><a href={path('zarlcode-workflow/')}>First session walkthrough ↗</a><a href={path('zarlcode-interface/')}>Interface and shortcuts ↗</a><a href={path('zarlcode-automation/')}>Headless CLI and automation ↗</a></div>
+  </section>
+
+  <section class="install-section" id="install" aria-labelledby="install-title">
+    <div class="container install-grid">
+      <div><p class="eyebrow">04 / RUN IT LOCALLY</p><h2 id="install-title">Install zarlcode.</h2><p>The first launch creates local configuration and opens provider setup in the TUI. Choose a hosted provider or connect to a model server you run yourself.</p><p>Adapters include Anthropic, OpenAI, Gemini, DeepSeek, Ollama, and llama.cpp. Local session storage does not mean local inference: hosted providers receive model requests.</p><a class="text-link" href={path('zarlcode-providers/')}>Providers and credentials ↗</a></div>
+      <div class="install-card"><Command command="brew install zarldev/tap/zarlcode" label="01 / INSTALL WITH HOMEBREW" /><Command command="cd /path/to/your/workspace && zarlcode" label="02 / LAUNCH IN YOUR WORKSPACE" /><p class="install-help">Configure a provider in the TUI with <kbd>Ctrl + S</kbd>. Local models require a separately running model server.</p><div class="install-links"><a href={path('zarlcode-onboarding/')}>Installation guide ↗</a><a href={`${github}/releases`}>Release downloads ↗</a><a href={path('zarlcode/#install')}>Build from source ↗</a></div></div>
+    </div>
+    <div class="container safety-note"><span aria-hidden="true">↳</span><p>Build mode edits files and runs commands with the current user's privileges. Review changes and use an isolated environment for untrusted work. <a href={path('zarlcode-safety/')}>Read the safety guide ↗</a></p></div>
+  </section>
+
+  <section class="section container project-section" aria-labelledby="project-title">
+    <p class="eyebrow">05 / CONTRIBUTING</p><h2 id="project-title">Working on the project</h2><p>zarlcode and zkit are MIT licensed. If you find a bug, open an issue with the steps to reproduce it. For code or documentation changes, the contributing guide covers setup and checks to run before submitting a pull request.</p><div class="reading-links"><a href={github}>Browse the repository ↗</a><a href={`${github}/blob/main/CONTRIBUTING.md`}>Contributing guide ↗</a><a href={`${github}/issues`}>Issue tracker ↗</a><a href={path('swebench-eval/')}>SWE-bench evaluation ↗</a></div>
+  </section>
 </Site>

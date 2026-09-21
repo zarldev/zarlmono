@@ -61,7 +61,7 @@ func newCodexClient(policy zhttp.RetryPolicy) *zhttp.Client {
 // required argument — without it there's no credential to send. The
 // returned llm.Provider is safe for concurrent use; the underlying
 // TokenSource is expected to serialise its own refresh.
-func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) (*Provider, error) {
+func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) *Provider {
 	p := &Provider{
 		tokens:      tokens,
 		retryPolicy: defaultRetryPolicy(),
@@ -72,7 +72,7 @@ func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) (*Provide
 		opt(p)
 	}
 	p.client = newCodexClient(p.retryPolicy)
-	return p, nil
+	return p
 }
 
 // WithModel sets the default model the provider sends. Callers can

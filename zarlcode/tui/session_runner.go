@@ -10,6 +10,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
 type setupFailedEffect struct {
@@ -44,6 +45,9 @@ func (s *Session) applyTurnSetupFailed(e turnSetupFailedMsg) setupFailedEffect {
 }
 
 func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now time.Time) conversationStartedEffect {
+	if _, active := s.Run.tasks[e.TaskID]; active {
+		return conversationStartedEffect{}
+	}
 	s.LastParentToolCallID = e.ParentToolCallID
 	s.LastAgentName = e.AgentName
 	s.logEvent("run started", e.TaskID)
@@ -62,17 +66,23 @@ func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now
 			s.Run.maxDepth = e.Depth
 		}
 	}
+	if s.Run.tasks == nil {
+		s.Run.tasks = make(map[string]taskAccounting)
+	}
+	s.Run.tasks[e.TaskID] = taskAccounting{depth: e.Depth, provider: e.Provider, model: e.Model, price: s.taskPrice(e)}
 
 	return effect
 }
 
 func (s *Session) applyContent(e teasink.ContentMsg) {
+	s.Run.observeStream(e.TaskID, e.Depth, e.Delta, ActivityPhases.ACTIVITYRESPONDING)
 	if e.Depth == 0 {
 		s.Run.turnOutBytes += len(e.Delta)
 	}
 }
 
 func (s *Session) applyThinking(e teasink.ThinkingMsg) {
+	s.Run.observeStream(e.TaskID, e.Depth, e.Delta, ActivityPhases.ACTIVITYTHINKING)
 	// Reasoning tokens are billed/generated like output, so they count toward
 	// the top-level turn's throughput. The text itself is a view concern,
 	// rendered by the timeline's thinking item.
@@ -82,6 +92,7 @@ func (s *Session) applyThinking(e teasink.ThinkingMsg) {
 }
 
 func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
+	s.Run.startActivityTool(e.TaskID, e.Depth, toolEventKey(e.ExecutionID, e.ToolID), toolEventKey(e.ParentExecutionID, e.ParentToolID), e.ToolName)
 	if e.ParentToolID != "" || e.ParentExecutionID != "" {
 		s.Run.startNestedTool(toolEventKey(e.ExecutionID, e.ToolID))
 		s.logEvent("nested tool started", e.ToolName)
@@ -103,14 +114,21 @@ func (s *Session) applyToolStarted(e teasink.ToolStartedMsg) {
 }
 
 func (s *Session) applyWorkspaceWaitStarted(e teasink.WorkspaceWaitStartedMsg) {
+	s.Run.waitActivityTool(e.TaskID, e.Depth, toolEventKey(e.ExecutionID, e.ToolID), true)
 	s.logEvent("workspace wait started", e.ToolName)
 }
 
 func (s *Session) applyWorkspaceWaitEnded(e teasink.WorkspaceWaitEndedMsg) {
+	if e.Outcome == tools.WorkspaceWaitOutcomes.WORKSPACEWAITCANCELLED {
+		s.Run.finishActivityTool(e.TaskID, e.Depth, toolEventKey(e.ExecutionID, e.ToolID))
+	} else {
+		s.Run.waitActivityTool(e.TaskID, e.Depth, toolEventKey(e.ExecutionID, e.ToolID), false)
+	}
 	s.logEvent("workspace wait ended", e.ToolName)
 }
 
 func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEffect {
+	s.Run.finishActivityTool(e.TaskID, e.Depth, toolEventKey(e.ExecutionID, e.ToolID))
 	if e.ParentToolID != "" || e.ParentExecutionID != "" {
 		s.Run.finishNestedTool(toolEventKey(e.ExecutionID, e.ToolID), e.ToolName, e.Duration, false)
 		s.logEvent("nested tool completed", e.ToolName)
@@ -132,6 +150,7 @@ func (s *Session) applyToolCompleted(e teasink.ToolCompletedMsg) toolCompletedEf
 }
 
 func (s *Session) applyToolFailed(e teasink.ToolFailedMsg) {
+	s.Run.finishActivityTool(e.TaskID, e.Depth, toolEventKey(e.ExecutionID, e.ToolID))
 	if e.ParentToolID != "" || e.ParentExecutionID != "" {
 		s.Run.finishNestedTool(toolEventKey(e.ExecutionID, e.ToolID), e.ToolName, e.Duration, true)
 		s.logEvent("nested tool failed", e.ToolName+" ✗")
@@ -165,11 +184,18 @@ func (s *Session) applyPlanUpdated(e teasink.PlanUpdatedMsg) {
 }
 
 func (s *Session) applyIterationCompleted(e teasink.IterationCompletedMsg) {
+	if s.Run.acceptsActivity(e.TaskID, e.Depth) {
+		s.Run.activity.phase = ActivityPhases.ACTIVITYWORKING
+	}
 	if e.Usage != nil {
 		s.logEvent("iteration", fmt.Sprintf("#%d in=%d out=%d", e.Iter, e.Usage.PromptTokens, e.Usage.CompletionTokens))
 	}
 	if e.Depth == 0 {
-		s.Run.foldIteration(e.Usage, e.Delta)
+		delta := e.Delta
+		if s.Run.tasks[e.TaskID].attempt > 0 {
+			delta = nil
+		}
+		s.Run.foldIteration(e.Usage, delta)
 		s.Run.setContextBreakdown(e.Context)
 		s.Run.toolSurface = e.ToolSurface
 		s.maybeWarnCompaction()
@@ -187,25 +213,32 @@ func (s *Session) applySteerInjected(e teasink.SteerInjectedMsg) {
 	s.logEvent("steer", fmt.Sprintf("%d msgs", len(e.Messages)))
 }
 
-// applyConversationEnded folds the single terminal event. It switches on
-// Reason: an error terminal surfaces an error toast and stops the run;
-// any other reason (completed / max_iterations / cancelled) folds the
-// turn's usage. The returned effect signals a toast change to the caller.
+// applyConversationEnded settles every accepted task once before presenting its
+// outcome. Terminal errors consume usage just like successful invocations.
 func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now time.Time) sessionEffect {
 	s.LastParentToolCallID = e.ParentToolCallID
 	s.logEvent("run ended", fmt.Sprintf("reason=%s iter=%d dur=%v", e.Reason, e.Iterations, e.Duration.Round(time.Millisecond)))
-	if e.Depth == 0 && s.Run.activeTopLevel != "" && s.Run.activeTopLevel != e.TaskID {
-		s.logEvent("run end ignored", "active="+s.Run.activeTopLevel+" ended="+e.TaskID)
+	task, accepted := s.Run.tasks[e.TaskID]
+	if !accepted || task.depth != e.Depth {
 		return sessionEffect{}
 	}
+	delete(s.Run.tasks, e.TaskID)
 	if e.Depth == 0 {
 		s.workingSet().CompleteTurn(e.TaskID)
 		s.checkpoints().CompleteTurn(e.TaskID, now)
 	}
+	if e.Depth == 0 {
+		s.Run.foldTurnComplete(e.TotalUsage, e.Duration, e.Iterations, task.price)
+		s.Run.activeTopLevel = ""
+	} else {
+		s.Run.foldSubAgentUsage(e.TotalUsage, task.price)
+	}
 
 	if e.Reason == runner.TerminalError {
 		if e.Depth > 0 {
-			return sessionEffect{}
+			// Child failure must still reach canonical terminal projection; it
+			// does not end the parent run or replace its error toast.
+			return sessionEffect{Accepted: true}
 		}
 		msg := userFacingProviderError(e.Error)
 		if e.RateLimit != nil {
@@ -216,12 +249,6 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 		return sessionEffect{ToastChanged: true, Accepted: true}
 	}
 
-	if e.Depth == 0 {
-		s.Run.foldTurnComplete(e.TotalUsage, e.Duration, e.Iterations)
-		s.Run.activeTopLevel = ""
-	} else {
-		s.Run.foldSubAgentUsage(e.TotalUsage)
-	}
 	return sessionEffect{Accepted: true}
 }
 
@@ -233,6 +260,7 @@ func (s *Session) reconcileTopLevelRun() {
 		return
 	}
 	s.Run.Running = false
+	s.Run.activity = runActivity{}
 	s.Run.activeTopLevel = ""
 	s.Run.bumpRevision()
 }

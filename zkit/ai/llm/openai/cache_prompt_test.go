@@ -48,10 +48,7 @@ func TestRequest_CachePromptGating(t *testing.T) {
 			if tc.enabled {
 				opts = append(opts, openai.WithCachePrompt(true))
 			}
-			provider, err := openai.NewProvider("test-key", opts...)
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			provider := openai.NewProvider("test-key", opts...)
 
 			seq := provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages: []llm.Message{{Role: "user", Content: "hi"}},
@@ -107,10 +104,7 @@ func TestRequest_ChatTemplateKwargsGating(t *testing.T) {
 			if tc.enabled {
 				opts = append(opts, openai.WithChatTemplateKwargs(true))
 			}
-			provider, err := openai.NewProvider("test-key", opts...)
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			provider := openai.NewProvider("test-key", opts...)
 
 			seq := provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages:           []llm.Message{{Role: "user", Content: "hi"}},

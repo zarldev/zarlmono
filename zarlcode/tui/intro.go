@@ -66,9 +66,13 @@ func newIntroPane(wsRoot string, sessions []sessionSummary, provider, model stri
 func (p *introPane) handleKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 	if p.setupRequired && p.setupBlocked {
 		if msg.String() == "enter" {
-			p.err = "configure a usable provider before starting"
+			p.err = "configure a usable provider before starting; v inspects saved history"
+			return nil
 		}
-		return nil
+		// Saved history remains inspectable without provider credentials.
+		if p.focus != introFocusSessions && msg.String() != "tab" && msg.String() != "shift+tab" {
+			return nil
+		}
 	}
 
 	switch msg.String() {
@@ -186,6 +190,12 @@ func (p *introPane) handleSessionKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 			p.prompt = []rune(session.Label)
 			p.pos = len(p.prompt)
 			p.err = ""
+		}
+	case "v":
+		if session, ok := p.selectedSession(); ok {
+			if err := m.OpenSavedSessionInspection(m.appContext(), session.ID); err != nil {
+				p.err = err.Error()
+			}
 		}
 	case "enter":
 		if session, ok := p.selectedSession(); ok {
@@ -640,7 +650,7 @@ func (p *introPane) footer() string {
 		if p.renaming {
 			return key("enter") + mut(" save name") + mut("    ") + key("esc") + mut(" cancel")
 		}
-		return key("↑↓") + mut(" pick") + mut("    ") + key("enter") + mut(" resume") + mut("    ") + key("p") + mut(" pin") + mut("    ") + key("/") + mut(" search") + mut("    ") + key("ctrl+n") + mut(" rename") + mut("    ") + key("tab") + mut(" prompt")
+		return key("↑↓") + mut(" pick") + mut("    ") + key("enter") + mut(" resume") + mut("    ") + key("v") + mut(" inspect/recover") + mut("    ") + key("p") + mut(" pin") + mut("    ") + key("/") + mut(" search") + mut("    ") + key("ctrl+n") + mut(" rename") + mut("    ") + key("tab") + mut(" prompt")
 	}
 	if p.setupRequired {
 		if p.setupBlocked {

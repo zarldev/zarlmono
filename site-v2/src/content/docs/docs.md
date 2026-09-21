@@ -14,13 +14,14 @@ This is the documentation entry point for the isolated V2 preview, not a live-si
 - **I want to use the coding agent.** [Install and configure zarlcode](/zarlmono/zarlcode-onboarding/), then [plan, build, and review a change](/zarlmono/zarlcode-workflow/).
 - **I want to build an agent in Go.** Follow the [zkit quickstart](/zarlmono/getting-started/), then use the [architecture map](/zarlmono/architecture/) to choose the packages you need.
 - **I want to understand what runs on my machine.** Read [Safety and workspace access](/zarlmono/zarlcode-safety/) before enabling tools or handing off a task.
+- **I want to understand the harness.** Start with the [application and runtime layers](/zarlmono/#architecture), then follow [a task through the model–tool loop](/zarlmono/toolkit/#architecture) and its [extension points](/zarlmono/toolkit/#extension-points).
 - **Something is not working.** Start with [Troubleshooting](/zarlmono/troubleshooting/) for provider, credential, session, and automation checks.
 
 ## Use zarlcode
 
 ### Setup and configuration
 
-- [Product overview](/zarlmono/zarlcode/) — installation options and the main capabilities of the terminal application.
+- [CLI overview](/zarlmono/zarlcode/) — installation options and the main capabilities of the terminal application.
 - [Install and first run](/zarlmono/zarlcode-onboarding/) — launch in a workspace, select a local or hosted model, and complete provider setup.
 - [Providers and credentials](/zarlmono/zarlcode-providers/) — model selection, the global credential vault, and global versus workspace settings.
 
@@ -41,12 +42,12 @@ This is the documentation entry point for the isolated V2 preview, not a live-si
 
 ## Build with zkit
 
-### Assemble an agent
+### Create an agent
 
-- [Toolkit overview](/zarlmono/toolkit/) — the Go packages behind zarlcode and where they fit in an application.
+- [Toolkit and runtime design](/zarlmono/toolkit/) — how the runner calls models, executes tools, stores history, and checks results, plus the Go interfaces you can implement.
 - [Quickstart](/zarlmono/getting-started/) — a complete minimal agent with a provider, typed tool, and runner.
-- [Architecture](/zarlmono/architecture/) — package boundaries, composition, and extension points.
-- [Runnable examples](/zarlmono/examples/) — focused harnesses, including deterministic modes that need no live model.
+- [Architecture](/zarlmono/architecture/) — what each package does, its dependencies, and how to use it in an application.
+- [Runnable examples](/zarlmono/examples/) — small programs demonstrating individual features, including scripted modes that run without a model.
 
 ### Models and tools
 
@@ -58,10 +59,11 @@ This is the documentation entry point for the isolated V2 preview, not a live-si
 ### Runtime, state, and verification
 
 - [Runner](/zarlmono/runner/) — construction, results, streaming events, prompt sources, and terminal conditions.
+- [Turn lifecycle](/zarlmono/turn-lifecycle/) — follow a zarlcode turn through execution, event application, durable saving, recovery, and shutdown, with implementation and test links.
 - [Sub-agent tasks](/zarlmono/spawn/) — delegation, cancellation, iteration caps, and task ownership.
 - [Compaction](/zarlmono/compaction/) — structural, tiered, and model-assisted approaches to fitting history into a context budget.
 - [Shared infrastructure](/zarlmono/shared-infra/) — retrieval, indexing, workflows, checkpoints, human review, and local session storage.
-- [Verified completion](/zarlmono/pursue/) — re-drive attempts against explicit goals and verifier feedback.
+- [Verified completion](/zarlmono/pursue/) — check whether a task succeeded and retry with feedback when it did not.
 
 ### Safety and package reference
 

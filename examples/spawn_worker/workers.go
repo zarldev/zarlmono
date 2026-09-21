@@ -55,13 +55,13 @@ func BuildWorkerRegistry(fs *FileSystem, mode spawn.SpawnMode) *tools.Registry {
 	reg := tools.NewRegistry()
 
 	// All workers can read and list
-	_ = reg.Register(&readFileTool{fs: fs})
-	_ = reg.Register(&listFilesTool{fs: fs})
+	_ = reg.Register(newReadFileTool(fs))
+	_ = reg.Register(newListFilesTool(fs))
 
 	// Only implement mode gets write/edit
 	if mode == spawn.SpawnModeImplement {
-		_ = reg.Register(&writeFileTool{fs: fs})
-		_ = reg.Register(&editFileTool{fs: fs})
+		_ = reg.Register(newWriteFileTool(fs))
+		_ = reg.Register(newEditFileTool(fs))
 	}
 
 	return reg

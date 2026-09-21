@@ -1,0 +1,11 @@
+<script is:inline>
+  (() => {
+    const allowed = ['green', 'amber', 'cyan', 'rust'];
+    let palette = 'green';
+    try {
+      const stored = localStorage.getItem('zarlmono-palette');
+      if (allowed.includes(stored)) palette = stored;
+    } catch { /* Storage may be disabled; switching still works for this page. */ }
+    document.documentElement.dataset.palette = palette;
+  })();
+</script>

@@ -18,7 +18,7 @@ func TestAgentAwareTurnQualityTracksRunningUnreadAndObservedTasks(t *testing.T) 
 	child := runner.New(client, runner.WithSink(runner.NopSink{}))
 	group := spawn.NewGroup()
 	t.Cleanup(func() { _ = group.Close(t.Context()) })
-	launch := spawn.NewAsync(spawn.New(child), group)
+	launch := spawn.NewAsync(child, group)
 	res, err := launch.Execute(t.Context(), tools.ToolCall{ID: "spawn", Arguments: tools.ToolParameters{"prompt": "work"}})
 	if err != nil || res == nil || !res.Success {
 		t.Fatalf("agent_spawn = (%#v, %v)", res, err)

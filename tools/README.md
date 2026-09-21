@@ -17,9 +17,10 @@ Use `go tool task tools-test` for all root-tool regression tests. The standard
 `go tool task check` additionally verifies every child module with `GOWORK=off`,
 then builds, vets, and tests the current workspace graph. `go tool task lint` covers
 the root tooling module and all child modules; `go tool task release-check` adds the
-zkit race suite, production site build/audit, and exact-toolchain isolated zkit
-compilation. Release workflows separately build, vet, and test selected release
-modules outside `go.work` before tags or artifacts are published.
+shared-library and application race suites, production site build/audit, and
+exact-toolchain isolated zkit compilation. Release workflows separately build,
+vet, and test selected release modules outside `go.work` before tags or artifacts
+are published.
 
 The terminal smoke always creates disposable HOME/XDG state and an isolated tmux
 socket. It never accepts a real user profile, uses fake credentials, and does not

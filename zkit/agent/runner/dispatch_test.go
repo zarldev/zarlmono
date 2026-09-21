@@ -135,7 +135,7 @@ func TestRunnerDispatchesParallelRegistryTools(t *testing.T) {
 	})
 }
 
-func TestRunnerDispatchesSequentiallyByDefault(t *testing.T) {
+func TestRunnerDispatchesUnclassifiedToolsSequentiallyByDefault(t *testing.T) {
 	tt := newConcurrencyTrackingTool("track")
 	reg := tools.NewRegistry()
 	reg.Register(tt)
@@ -144,7 +144,7 @@ func TestRunnerDispatchesSequentiallyByDefault(t *testing.T) {
 		runner.ClientFromProvider(&batchProvider{toolName: "track", batchSize: 4, finalReply: "ok"}),
 		runner.WithTools(reg),
 		runner.WithMaxIterations(4),
-		// No WithToolConcurrency — historical sequential behaviour.
+		// No read-only workspace metadata: automatic scheduling remains sequential.
 	)
 
 	res := r.Run(t.Context(), runner.TaskSpec{
@@ -159,7 +159,7 @@ func TestRunnerDispatchesSequentiallyByDefault(t *testing.T) {
 	}
 
 	if peak := tt.Peak(); peak != 1 {
-		t.Errorf("peak concurrency=%d, want 1 (default should be sequential)", peak)
+		t.Errorf("peak concurrency=%d, want 1 (unclassified tools must remain sequential)", peak)
 	}
 }
 
@@ -255,8 +255,12 @@ type identitySink struct {
 	completed chan runner.ToolCompleted
 }
 
-func (sink *identitySink) OnToolStarted(event runner.ToolStarted)     { sink.started <- event }
-func (sink *identitySink) OnToolCompleted(event runner.ToolCompleted) { sink.completed <- event }
+func (sink *identitySink) OnToolStarted(ctx context.Context, event runner.ToolStarted) {
+	sink.started <- event
+}
+func (sink *identitySink) OnToolCompleted(ctx context.Context, event runner.ToolCompleted) {
+	sink.completed <- event
+}
 
 func TestRunnerUsesExactExecutionIdentityForReusedProviderToolCallID(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

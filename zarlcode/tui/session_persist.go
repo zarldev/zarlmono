@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,6 +16,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/draft"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -67,8 +69,13 @@ type savedSession struct {
 	Context            []llm.Message
 	Transcript         transcript.Thread
 	DraftText          string
+	DraftAttachments   []llm.ContentPart
 	rejectedDraftJSON  []byte
 	restoreDiagnostics []sessionRestoreDiagnostic
+	settledTurnID      string // explicit exact-head identity; never inferred from transcript shape
+	continuation       bool   // validated durable branch provenance, not transcript shape
+	exactHead          *rewind.ResumeState
+	contentVersion     db.SessionContentVersion
 }
 
 func (s *savedSession) addRestoreDiagnostic(diagnostic sessionRestoreDiagnostic) {
@@ -119,6 +126,13 @@ func savedSessionSummary(rec db.SessionRecord) sessionSummary {
 	}
 }
 
+// exactSessionError retains the representation observed by the original load
+// so a later read cannot authorize fallback to an unrelated conversation.
+type exactSessionError struct{ cause error }
+
+func (e *exactSessionError) Error() string { return e.cause.Error() }
+func (e *exactSessionError) Unwrap() error { return e.cause }
+
 func (m *UI) resumeSession(ctx context.Context, id string) error {
 	if m.settings == nil || m.settings.Store == nil {
 		return errors.New("session store unavailable")
@@ -127,15 +141,23 @@ func (m *UI) resumeSession(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if saved.exactHead != nil {
+		if err := m.resumeExactSession(ctx, saved); err != nil {
+			return &exactSessionError{cause: err}
+		}
+		return nil
+	}
 	m.completeResumeSession(saved, false)
 	return nil
 }
 
 func (m *UI) resumeLatestSession(ctx context.Context) error {
 	var ids []string
+	var activeID string
 	if m.settings != nil && m.settings.Svc != nil {
 		if active, err := m.settings.Svc.GetSetting(ctx, prefs.ScopeWorkspace, activeSessionKey); err == nil {
 			ids = append(ids, active.Value)
+			activeID = active.Value
 		}
 	}
 	summaries, err := listSavedSessions(ctx, m.settings.Store, m.settings.WorkspaceRoot())
@@ -159,6 +181,28 @@ func (m *UI) resumeLatestSession(ctx context.Context) error {
 			return nil
 		} else {
 			errs = append(errs, fmt.Errorf("session %q: %w", id, err))
+			// Exact heads are authoritative even without branch provenance.
+			// Never silently continue another conversation after exact rejection.
+			var exactErr *exactSessionError
+			if errors.As(err, &exactErr) {
+				return errs[len(errs)-1]
+			}
+			record, readErr := m.settings.Store.GetSession(ctx, id)
+			if (readErr != nil && !errors.Is(readErr, db.ErrNotFound)) ||
+				(readErr == nil && strings.HasPrefix(strings.TrimSpace(string(record.ContextJSON)), "{")) {
+				return errs[len(errs)-1]
+			}
+			if m.rewindRecovery != "" {
+				return errs[len(errs)-1]
+			}
+			if id == activeID {
+				// A committed continuation is authoritative. Missing/corrupt exact
+				// state or unavailable credentials must not silently resume its source.
+				_, branchErr := m.settings.Store.GetSessionBranch(ctx, id)
+				if !errors.Is(branchErr, db.ErrNotFound) {
+					return fmt.Errorf("active continuation requires recovery: %w", errors.Join(err, branchErr))
+				}
+			}
 		}
 	}
 	if len(errs) == 0 {
@@ -168,12 +212,32 @@ func (m *UI) resumeLatestSession(ctx context.Context) error {
 }
 
 func loadSavedSession(ctx context.Context, store *db.Store, id, workspace string) (*savedSession, error) {
+	// Retry the whole snapshot, not just its transcript, after concurrent crash
+	// recovery. The bound prevents a competing writer from stalling the UI.
+	for range 3 {
+		saved, err := loadSavedSessionSnapshot(ctx, store, id, workspace)
+		if !errors.Is(err, db.ErrTranscriptConflict) && !errors.Is(err, db.ErrCheckpointConflict) {
+			return saved, err
+		}
+	}
+	return nil, db.ErrTranscriptConflict
+}
+
+func loadSavedSessionSnapshot(ctx context.Context, store *db.Store, id, workspace string) (_ *savedSession, resultErr error) {
 	if store == nil {
 		return nil, errors.New("session store unavailable")
 	}
-	rec, err := store.GetSession(ctx, id)
+	state, err := store.GetSessionResumeState(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	rec := state.Session
+	if strings.HasPrefix(strings.TrimSpace(string(rec.ContextJSON)), "{") {
+		defer func() {
+			if resultErr != nil {
+				resultErr = &exactSessionError{cause: resultErr}
+			}
+		}()
 	}
 	if rec.Workspace != workspace {
 		return nil, fmt.Errorf("session %q belongs to workspace %q, not %q", id, rec.Workspace, workspace)
@@ -182,25 +246,56 @@ func loadSavedSession(ctx context.Context, store *db.Store, id, workspace string
 	if err != nil {
 		return nil, err
 	}
-	storedTranscript, err := store.GetSessionTranscript(ctx, id)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			if rec.HasDraft {
-				saved.Transcript = transcript.NewBuilder().Thread()
-				return saved, nil
-			}
-			return nil, errors.New("session transcript not found")
+	saved.continuation = state.Branch != nil
+	saved.contentVersion = state.ContentVersion
+	if saved.exactHead != nil && saved.exactHead.InitialContinuation != (rewind.InitialContinuation{}) {
+		if state.Branch == nil || !saved.exactHead.InitialContinuation.Matches(*state.Branch) {
+			return nil, rewind.ErrInvalid
 		}
-		return nil, err
 	}
+	if state.Branch != nil && (saved.exactHead == nil ||
+		(saved.exactHead.SettledTurnID == "" && saved.exactHead.InitialContinuation == (rewind.InitialContinuation{}))) {
+		return nil, rewind.ErrInvalid
+	}
+	if state.Transcript == nil {
+		if saved.exactHead != nil {
+			return nil, rewind.ErrInvalid
+		}
+		if rec.HasDraft {
+			saved.Transcript = transcript.NewBuilder().Thread()
+			return saved, nil
+		}
+		return nil, errors.New("session transcript not found")
+	}
+	storedTranscript := *state.Transcript
 	if storedTranscript.FormatVersion > db.SessionTranscriptFormatVersion {
 		return nil, fmt.Errorf("session transcript format %d is newer than supported format %d", storedTranscript.FormatVersion, db.SessionTranscriptFormatVersion)
 	}
-	thread, err := transcript.FromRecords(storedTranscript.Revision, dbTranscriptRecords(storedTranscript.Entries))
-	if err != nil {
-		return nil, fmt.Errorf("session transcript is corrupted: %w", err)
+	checkpoint, strictErr := transcript.CheckpointFromRecords(storedTranscript.Revision, dbTranscriptRecords(storedTranscript.Entries))
+	var thread transcript.Thread
+	if strictErr == nil {
+		thread, err = checkpoint.Restore()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if saved.exactHead != nil {
+			return nil, fmt.Errorf("%w: %w; view history or inspect recovery options", rewind.ErrInvalid, strictErr)
+		}
+		// Legacy sessions remain browsable/resumable, but crash repair is never
+		// used as proof of an exact historical settled boundary.
+		thread, err = transcript.FromRecords(storedTranscript.Revision, dbTranscriptRecords(storedTranscript.Entries))
+		if err != nil {
+			return nil, fmt.Errorf("session transcript is corrupted: %w", err)
+		}
 	}
-	if thread.IsEmpty() {
+	if saved.exactHead != nil && saved.exactHead.Revision != storedTranscript.Revision {
+		return nil, rewind.ErrInvalid
+	}
+	if saved.exactHead != nil {
+		saved.settledTurnID = saved.exactHead.SettledTurnID
+	}
+	if thread.IsEmpty() && (storedTranscript.Revision != 0 || !rec.HasDraft || (string(rec.ContextJSON) != "[]" && saved.exactHead == nil)) {
 		return nil, errors.New("session transcript is empty")
 	}
 	recovered, _ := thread.RecoverInterrupted()
@@ -209,22 +304,13 @@ func loadSavedSession(ctx context.Context, store *db.Store, id, workspace string
 		if updateErr != nil {
 			return nil, updateErr
 		}
-		if updateErr = store.UpdateActiveTranscript(ctx, update); updateErr != nil {
-			recoveryErr := updateErr
-			storedTranscript, updateErr = store.GetSessionTranscript(ctx, id)
-			if updateErr != nil {
-				return nil, fmt.Errorf("read interrupted transcript recovery: %w", updateErr)
-			}
-			thread, updateErr = transcript.FromRecords(storedTranscript.Revision, dbTranscriptRecords(storedTranscript.Entries))
-			if updateErr != nil {
-				return nil, fmt.Errorf("session transcript is corrupted: %w", updateErr)
-			}
-			if pending, _ := thread.RecoverInterrupted(); pending.Revision() > thread.Revision() {
-				return nil, fmt.Errorf("persist interrupted transcript recovery: %w", recoveryErr)
-			}
-		} else {
-			thread = recovered
+		saved.contentVersion, updateErr = store.UpdateActiveTranscriptVersioned(ctx, update, saved.contentVersion)
+		if updateErr != nil {
+			// A competing write invalidates the entire read snapshot, including
+			// context. Never combine it with a newer transcript; retry resume.
+			return nil, fmt.Errorf("persist interrupted transcript recovery: %w", updateErr)
 		}
+		thread = recovered
 	}
 	saved.Transcript = thread
 	return saved, nil
@@ -232,16 +318,34 @@ func loadSavedSession(ctx context.Context, store *db.Store, id, workspace string
 
 func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	var contextCache []llm.Message
-	if len(rec.ContextJSON) > 0 {
+	var exactHead *rewind.ResumeState
+	if strings.HasPrefix(strings.TrimSpace(string(rec.ContextJSON)), "{") {
+		state, err := rewind.DecodeResume(rec.ContextJSON)
+		if err != nil {
+			return nil, err
+		}
+		if state.Target.Provider != rec.Provider || state.Target.Model != rec.Model {
+			return nil, rewind.ErrTarget
+		}
+		exactHead = &state
+		contextCache = state.Context
+	} else if len(rec.ContextJSON) > 0 {
 		if err := json.Unmarshal(rec.ContextJSON, &contextCache); err != nil {
 			return nil, fmt.Errorf("decode context cache: %w", err)
+		}
+		if err := rewind.ValidateLegacyContext(contextCache, rec.Provider); err != nil {
+			return nil, fmt.Errorf("validate context cache: %w", err)
 		}
 	}
 	s := &savedSession{
 		sessionSummary: savedSessionSummary(rec),
 		Context:        contextCache,
+		exactHead:      exactHead,
 	}
 	if !decodeSessionBlob(rec.PlanJSON, &s.Plan) {
+		if exactHead != nil {
+			return nil, rewind.ErrInvalid
+		}
 		s.addRestoreDiagnostic(sessionRestorePlanCorrupt)
 	}
 	if !decodeSessionBlob(rec.DiffBodiesJSON, &s.DiffBodies) {
@@ -252,10 +356,17 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	}
 	draftText, err := draft.Decode(rec.PendingJSON)
 	if err != nil {
+		if exactHead != nil {
+			return nil, rewind.ErrInvalid
+		}
 		s.rejectedDraftJSON = append([]byte(nil), rec.PendingJSON...)
 		s.addRestoreDiagnostic(sessionRestoreDraftCorrupt)
 	} else {
 		s.DraftText = draftText
+		s.DraftAttachments, err = draft.DecodeAttachments(rec.PendingJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode draft attachments: %w", err)
+		}
 	}
 	return s, nil
 }
@@ -304,7 +415,23 @@ func (m *UI) ActivateIntro(ctx context.Context) {
 	}
 }
 
+// observeInitialActive captures source-selection ownership, not permission to
+// overwrite whichever session happens to be active when a queued save executes.
+func (m *UI) observeInitialActive() {
+	m.initialActive, m.initialActiveErr = "", nil
+	if m.settings == nil || m.settings.Store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.appContext(), sessionSaveCommandTTL)
+	defer cancel()
+	m.initialActive, m.initialActiveErr = m.settings.Store.GetSettingExact(ctx, m.settings.WorkspaceRoot(), activeSessionKey)
+	if errors.Is(m.initialActiveErr, db.ErrNotFound) {
+		m.initialActiveErr = nil
+	}
+}
+
 func (m *UI) dismissIntroFresh(prompt string) tea.Cmd {
+	m.observeInitialActive()
 	m.intro = nil
 	m.session.resetSession()
 	m.draftGeneration++
@@ -334,6 +461,11 @@ func (m *UI) resumeIntroSession(id string) tea.Cmd {
 	}
 	s, err := loadSavedSession(m.appContext(), m.settings.Store, id, m.settings.WorkspaceRoot())
 	if err != nil {
+		if errors.Is(err, transcript.ErrCheckpointUnsettled) {
+			if inspectErr := m.OpenSavedSessionInspection(m.appContext(), id); inspectErr == nil {
+				return nil
+			}
+		}
 		if m.intro != nil {
 			m.intro.err = err.Error()
 		}
@@ -361,6 +493,16 @@ func (m *UI) resumeTargetDiffers(s *savedSession) bool {
 }
 
 func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd {
+	if s != nil && s.exactHead != nil {
+		if err := m.resumeExactSession(m.appContext(), s); err != nil {
+			m.session.SetErrorToast("resume continuation: " + err.Error())
+		}
+		return m.toastExpiryCmd()
+	}
+	if m.liveOperation != nil || m.sessionRetry != nil {
+		m.session.SetErrorToast("wait for the current turn to settle before switching sessions")
+		return m.toastExpiryCmd()
+	}
 	if s == nil {
 		return nil
 	}
@@ -369,16 +511,23 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	m.draftGeneration++
 	m.transcriptGeneration++
 	m.resetTranscriptPersistence()
+	m.sourceBaseline = s.contentVersion
 	m.pendingAttachments = nil
+	for _, part := range llm.CloneContentParts(s.DraftAttachments) {
+		m.pendingAttachments = append(m.pendingAttachments, restoredAttachment(part))
+	}
 	m.session.SetIdentity(s.ID, s.Label, s.LabelManual, s.CreatedAt)
+	m.initialActive, m.initialActiveErr = s.ID, nil
 	if m.live != nil {
 		m.live.RestoreContext(s.Context)
 	}
 	m.timeline.restoreThread(s.Transcript)
 	m.transcriptPersisted = s.Transcript.Revision()
 	m.transcriptPersistedSessionID = s.ID
+	m.settledTurnID = s.settledTurnID
 	m.rejectedDraftJSON = append(m.rejectedDraftJSON[:0], s.rejectedDraftJSON...)
 	m.composer.setText(s.DraftText)
+	m.durableDraftText = s.DraftText
 	m.resetInputHistoryBrowse()
 	// Rehydrate the per-session working state so the plan overlay, Files
 	// dock + diff viewer, and cockpit totals reflect the resumed session.
@@ -412,12 +561,18 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 }
 
 type sessionSnapshot struct {
-	record     db.SessionRecord
-	transcript db.TranscriptUpdate
-	allEntries []db.TranscriptEntry
+	record         db.SessionRecord
+	transcript     db.TranscriptUpdate
+	allEntries     []db.TranscriptEntry
+	exact          bool
+	history        *engine.LiveRunner       // borrowed until the full-save FIFO drains
+	historyBatches []db.SessionHistoryBatch // owned immutable retry snapshot
 }
 
 func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
+	if m.unsavedTurnError != nil {
+		return nil, m.unsavedTurnError // only a newly settled turn may advance the exact head
+	}
 	if m.settings == nil || m.settings.Store == nil || m.live == nil {
 		return nil, errSessionSnapshotEmpty
 	}
@@ -425,9 +580,40 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 	if len(contextCache) == 0 || m.timeline.transcriptThread().IsEmpty() {
 		return nil, errSessionSnapshotEmpty
 	}
-	m.session.EnsureIdentity(uuid.NewString(), time.Now())
+	return m.sessionSnapshotWithContext(contextCache)
+}
 
+// sessionSnapshotWithContext also supports the initial empty BEFORE boundary.
+// Normal shutdown/full saves retain sessionSnapshot's nonempty requirement.
+func (m *UI) sessionSnapshotWithContext(contextCache []llm.Message) (*sessionSnapshot, error) {
+	return m.sessionSnapshotForBoundary(contextCache, m.settledTurnID, m.settledWatermark, m.initialContinuation)
+}
+
+func (m *UI) sessionSnapshotForBoundary(contextCache []llm.Message, turnID string, watermark uint64, initial rewind.InitialContinuation) (*sessionSnapshot, error) {
+	if m.settings == nil || m.settings.Store == nil || m.live == nil {
+		return nil, errSessionSnapshotEmpty
+	}
+	m.session.EnsureIdentity(uuid.NewString(), time.Now())
+	if contextCache == nil {
+		contextCache = []llm.Message{}
+	}
+
+	thread := m.timeline.transcriptThread()
+	target := m.live.RunTarget()
 	contextJSON, err := json.Marshal(contextCache)
+	if m.exactResume {
+		// Admission checks the entire retained history, not just this turn's
+		// delta. Serialize only the independently owned validated snapshot.
+		checkpoint, captureErr := thread.CaptureCheckpoint()
+		if captureErr != nil {
+			return nil, fmt.Errorf("%w: %w", rewind.ErrInvalid, captureErr)
+		}
+		thread, err = checkpoint.Restore()
+		if err != nil {
+			return nil, err
+		}
+		contextJSON, err = rewind.EncodeResume(checkpoint.Revision(), contextCache, rewindTarget(target), turnID, watermark, initial)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("encode context cache: %w", err)
 	}
@@ -443,7 +629,7 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode plan: %w", err)
 	}
-	pendingJSON, err := draft.Encode(m.composer.text())
+	pendingJSON, err := draft.EncodeWithAttachments(m.composer.text(), m.attachmentParts())
 	if err != nil {
 		return nil, fmt.Errorf("encode draft: %w", err)
 	}
@@ -458,8 +644,11 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 		}
 	}
 
-	thread := m.timeline.transcriptThread()
 	messageCount := thread.MessageCount()
+	provider, model := m.session.Provider, m.session.Model
+	if m.exactResume {
+		provider, model = target.Spec.Name, target.Model
+	}
 	transcriptUpdate, allEntries, err := m.transcriptUpdate(thread, m.persistedTranscriptRevision(m.session.ID))
 	if err != nil {
 		return nil, err
@@ -469,8 +658,8 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 		Workspace:          m.settings.WorkspaceRoot(),
 		Label:              m.session.Label,
 		LabelManual:        m.session.LabelManual,
-		Provider:           m.session.Provider,
-		Model:              m.session.Model,
+		Provider:           provider,
+		Model:              model,
 		ContextJSON:        contextJSON,
 		PendingJSON:        pendingJSON,
 		LastUsageJSON:      usageJSON,
@@ -481,20 +670,45 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 		PlanTotalCount:     len(m.session.Plan.Steps),
 		MessageCount:       messageCount,
 		CreatedAt:          m.session.CreatedAt,
-	}, transcript: transcriptUpdate, allEntries: allEntries}, nil
+	}, transcript: transcriptUpdate, allEntries: allEntries, exact: m.exactResume, history: m.live,
+		historyBatches: m.live.RecordedHistory(m.session.ID)}, nil
+}
+
+func (s *sessionSnapshot) acknowledgeHistory() {
+	if s.history != nil {
+		s.history.AcknowledgeRecordedHistory(s.record.ID, s.historyBatches)
+	}
+}
+
+func (s *sessionSnapshot) commitGuarded(ctx context.Context, store *db.Store, expected db.SessionContentVersion) error {
+	if err := store.CommitCheckpointTurn(ctx, s.record, s.transcript, expected, s.historyBatches...); err != nil {
+		return err
+	}
+	s.acknowledgeHistory()
+	return nil
 }
 
 func saveSessionSnapshot(ctx context.Context, settings *engine.Settings, snapshot *sessionSnapshot) error {
 	if settings == nil || settings.Store == nil || snapshot == nil {
 		return nil
 	}
-	if err := settings.Store.CommitCompletedTurn(ctx, snapshot.record, snapshot.transcript); err != nil {
+	if err := settings.Store.CommitCompletedTurn(ctx, snapshot.record, snapshot.transcript, snapshot.historyBatches...); err != nil {
 		return fmt.Errorf("save session snapshot: %w", err)
 	}
+	snapshot.acknowledgeHistory()
 	return nil
 }
 
 func (m *UI) SaveSession(ctx context.Context) error {
+	if m.sourceConflict {
+		return fmt.Errorf("%s: %w", sourceConflictNotice, db.ErrCheckpointConflict)
+	}
+	if m.exactResume && m.liveOperation != nil {
+		return nil // retain the last paired head until durable settlement
+	}
+	if m.rewindRecovery != "" {
+		return errors.New("restart to recover committed continuation before saving")
+	}
 	snapshot, err := m.sessionSnapshot()
 	if errors.Is(err, errSessionSnapshotEmpty) {
 		return nil
@@ -502,7 +716,21 @@ func (m *UI) SaveSession(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return saveSessionSnapshot(ctx, m.settings, snapshot)
+	if m.settings == nil || m.settings.Store == nil || snapshot == nil {
+		return nil
+	}
+	op := sessionPersistOp{kind: sessionPersistFull, snapshot: snapshot, guarded: snapshot.exact,
+		sourceObserved: sourceObservation{version: m.sourceBaseline}, sourceWritten: new(atomic.Pointer[sourceWrite])}
+	if err := executeVersionedSessionPersist(ctx, m.settings.Store, &op); err != nil {
+		if errors.Is(err, db.ErrCheckpointConflict) {
+			m.sourceConflict = true
+		}
+		return err
+	}
+	m.acknowledgeSource(&op)
+	m.acknowledgeDurableDraft(&op)
+	m.transcriptPersistedSessionID, m.transcriptPersisted = snapshot.record.ID, snapshot.transcript.Revision
+	return nil
 }
 
 // FlushSessionPersistence completes queued writes in FIFO order, then writes
@@ -510,16 +738,48 @@ func (m *UI) SaveSession(ctx context.Context) error {
 // when no command can concurrently mutate the queue.
 func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 	var firstErr error
+	protectedInput := false
+	// A timed-out flush retains queued reservation ownership for the lifecycle
+	// closer's subsequent join; dependencies must remain open until then.
+	for _, op := range m.sessionPersistQueue {
+		if op.before != nil {
+			op.before.stop()
+		}
+	}
 	if m.sessionPersistRunning && m.sessionPersistCurrent != nil {
+		if m.sessionPersistCurrent.cancel != nil {
+			m.sessionPersistCurrent.cancel()
+		}
+		current := m.sessionPersistCurrent
+		if current.before != nil {
+			protectedInput = true
+		}
+		if current.claimed.CompareAndSwap(false, true) {
+			// Bubble Tea may never start a returned command after it stops. Take
+			// ownership synchronously; its late closure becomes a no-op.
+			err := m.flushUnstartedSessionPersist(ctx, current)
+			current.done <- sessionPersistedMsg{sessionID: current.sessionID(), revision: current.transcriptRevision(), err: err}
+			close(current.done)
+		}
 		select {
 		case result := <-m.sessionPersistCurrent.done:
 			if result.err != nil {
+				if result.sessionID == m.session.ID && errors.Is(result.err, db.ErrCheckpointConflict) {
+					m.sourceConflict = true
+				}
 				firstErr = fmt.Errorf("flush in-flight persistence: %w", result.err)
 			} else if result.sessionID == m.session.ID {
+				m.acknowledgeSource(current)
 				m.transcriptPersistedSessionID = result.sessionID
 				if result.revision > m.transcriptPersisted {
 					m.transcriptPersisted = result.revision
 				}
+			}
+			if current.retry != nil {
+				if result.err == nil && result.sessionID == m.session.ID {
+					m.acknowledgeDurableDraft(current)
+				}
+				m.finishSessionRetry(current, result)
 			}
 			m.sessionPersistRunning = false
 			m.sessionPersistCurrent = nil
@@ -527,29 +787,50 @@ func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 			return fmt.Errorf("flush in-flight persistence: %w", ctx.Err())
 		}
 	}
-	for _, op := range m.sessionPersistQueue {
+	for len(m.sessionPersistQueue) != 0 {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(firstErr, err)
+		}
+		op := m.sessionPersistQueue[0]
+		m.sessionPersistQueue = m.sessionPersistQueue[1:]
 		if (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) && op.sessionID() == m.transcriptPersistedSessionID {
 			op.rebaseTranscript(m.transcriptPersisted)
 			if op.kind == sessionPersistTranscript && op.transcriptRevision() <= m.transcriptPersisted {
 				continue
 			}
 		}
-		err := m.executeSessionPersist(ctx, op)
-		if err != nil && (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) {
-			err = retrySessionTranscriptPersist(ctx, m.settings, &op, err)
+		if op.before != nil {
+			protectedInput = true
 		}
+		err := m.flushUnstartedSessionPersist(ctx, &op)
 		if err != nil {
+			if op.sessionID() == m.session.ID && errors.Is(err, db.ErrCheckpointConflict) {
+				m.sourceConflict = true
+			}
 			if firstErr == nil {
 				firstErr = fmt.Errorf("flush queued persistence: %w", err)
 			}
 		} else if revision := op.transcriptRevision(); op.sessionID() == m.session.ID {
+			m.acknowledgeSource(&op)
 			m.transcriptPersistedSessionID = op.sessionID()
 			if revision > m.transcriptPersisted {
 				m.transcriptPersisted = revision
 			}
 		}
+		if op.retry != nil {
+			if err == nil && op.sessionID() == m.session.ID {
+				m.acknowledgeDurableDraft(&op)
+			}
+			m.finishSessionRetry(&op, sessionPersistedMsg{err: err})
+		}
 	}
 	m.sessionPersistQueue = nil
+	if protectedInput {
+		return firstErr // do not overwrite the protected recovery prompt with an empty composer
+	}
+	// A successful retry advanced the trusted receipt and completed boundary.
+	// Save any composer edits made after its capture; a failed retry still
+	// blocks sessionSnapshot through unsavedTurnError.
 	finalErr := m.SaveSession(ctx)
 	if firstErr != nil && finalErr != nil {
 		return errors.Join(firstErr, finalErr)
@@ -560,24 +841,30 @@ func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 	return firstErr
 }
 
-func (m *UI) executeSessionPersist(ctx context.Context, op sessionPersistOp) error {
-	switch op.kind {
-	case sessionPersistDraft:
-		return m.settings.Store.SaveSessionDraft(ctx, op.draft)
-	case sessionPersistClearDraft:
-		return m.settings.Store.ClearSessionDraft(ctx, op.oldID)
-	case sessionPersistTranscript:
-		return saveTranscriptSnapshot(ctx, m.settings.Store, op.transcript)
-	case sessionPersistFull:
-		return saveSessionSnapshot(ctx, m.settings, op.snapshot)
-	case sessionPersistDelete:
-		return clearPersistedSession(ctx, m.settings, op.oldID)
-	default:
-		return fmt.Errorf("unknown persistence operation %d", op.kind)
+// flushUnstartedSessionPersist runs only after shutdown has sole ownership of
+// an unstarted operation. BEFORE work saves recovery state but never dispatches.
+func (m *UI) flushUnstartedSessionPersist(ctx context.Context, op *sessionPersistOp) error {
+	if m.sourceConflict && op.sessionID() == m.session.ID {
+		if op.before != nil {
+			op.before.reservation.Release()
+		}
+		return db.ErrCheckpointConflict
 	}
+	if op.before != nil {
+		defer op.before.reservation.Release()
+		return op.before.save(ctx, m.settings.Store, op.snapshot)
+	}
+	err := executeSessionPersist(ctx, m.settings, op)
+	if err != nil && (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) {
+		err = retrySessionTranscriptPersist(ctx, m.settings, op, err)
+	}
+	return err
 }
 
 func (m *UI) saveSessionCmd() tea.Cmd {
+	if m.unsavedTurnError != nil || (m.exactResume && m.liveOperation != nil) {
+		return nil
+	}
 	snapshot, err := m.sessionSnapshot()
 	if errors.Is(err, errSessionSnapshotEmpty) {
 		return nil
@@ -589,11 +876,24 @@ func (m *UI) saveSessionCmd() tea.Cmd {
 }
 
 func (m *UI) clearContextAndTimeline() tea.Cmd {
-	if m.session.Run.Running {
+	if m.session.Run.Running || m.liveOperation != nil || m.sessionRetry != nil {
 		m.session.SetErrorToast("stop current turn before clearing")
 		return m.toastExpiryCmd()
 	}
+	if m.sourceConflict {
+		m.session.SetErrorToast(sourceConflictNotice)
+		return nil // never delete the competing source as conflict recovery
+	}
 	oldID := m.session.ID
+	ctx, cancel := context.WithTimeout(m.appContext(), sessionSaveCommandTTL)
+	defer cancel()
+	source, sourceErr := m.observeSource(ctx, oldID)
+	m.observeInitialActive()
+	if m.initialActive == oldID {
+		// The preceding FIFO deletion removes our active pointer. A foreign
+		// pointer still fails the subsequent initial checkpoint's comparison.
+		m.initialActive = ""
+	}
 	m.startupPrompt = ""
 	m.startupAttachments = nil
 	m.startupAttachmentMetadata = nil
@@ -610,18 +910,25 @@ func (m *UI) clearContextAndTimeline() tea.Cmd {
 	m.timeline.Clear()
 	m.session.resetSession()
 	m.session.SetSuccessToast("conversation cleared")
-	return tea.Batch(m.toastExpiryCmd(), m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete, generation: m.transcriptGeneration, oldID: oldID}))
+	return tea.Batch(m.toastExpiryCmd(), m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete,
+		generation: m.transcriptGeneration, oldID: oldID, sourceObserved: source, sourceErr: sourceErr, guarded: true}))
 }
 
 func clearPersistedSession(ctx context.Context, settings *engine.Settings, oldID string) error {
 	if settings == nil {
 		return nil
 	}
-	var err error
 	if oldID != "" && settings.Store != nil {
 		if e := settings.Store.DeleteSession(ctx, oldID); e != nil {
-			err = fmt.Errorf("delete session: %w", e)
+			return fmt.Errorf("delete session: %w", e)
 		}
+	}
+	return clearActiveSession(ctx, settings, oldID)
+}
+
+func clearActiveSession(ctx context.Context, settings *engine.Settings, oldID string) error {
+	if settings == nil {
+		return nil
 	}
 	if settings.Svc != nil {
 		active, activeErr := settings.Svc.GetSetting(ctx, prefs.ScopeWorkspace, activeSessionKey)
@@ -629,14 +936,10 @@ func clearPersistedSession(ctx context.Context, settings *engine.Settings, oldID
 			activeErr = settings.Svc.DeleteSetting(ctx, prefs.ScopeWorkspace, activeSessionKey)
 		}
 		if activeErr != nil && !errors.Is(activeErr, prefs.ErrNotFound) {
-			if err != nil {
-				err = fmt.Errorf("%w; clear active session: %w", err, activeErr)
-			} else {
-				err = fmt.Errorf("clear active session: %w", activeErr)
-			}
+			return fmt.Errorf("clear active session: %w", activeErr)
 		}
 	}
-	return err
+	return nil
 }
 
 func formatAgo(d time.Duration) string {

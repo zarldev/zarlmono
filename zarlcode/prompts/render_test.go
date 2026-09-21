@@ -304,12 +304,15 @@ func TestRender_PhaseOneOperatingPolicy(t *testing.T) {
 		"current external facts matter",
 		"exact",
 		"relevant name",
-		"destructive, external",
-		"security-sensitive, or material scope expansion",
+		"destructive actions, external",
+		"security-sensitive changes, or material scope expansion",
 		"Only read-only investigation and writes to",
 		"regardless of any unexpected",
 		"use offered tools only for",
-		"read-only investigation or plan-artifact writes",
+		"read-only investigation, plan-artifact writes, or the host-owned `set_mode` control",
+		"No approval dialog, confirmation",
+		"Explicit plan-only",
+		"A mode change never grants additional authority",
 		"even if an unexpected tool for doing so is listed",
 	} {
 		if !strings.Contains(plan, want) {

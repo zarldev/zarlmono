@@ -28,14 +28,16 @@ test('V2 responsive pages, accessibility, links, recording, clipboard and docs s
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route || 'home'} overflows at ${width}px`);
         await page.screenshot({ path: new URL(`${route.replaceAll('/', '') || 'home'}-${width}.png`, screenshots).pathname });
         if (width === 390 && !route) {
-          for (const selector of ['.workbench', '.workflow-grid', '.toolkit-panel', '.install-card', '.site-footer']) {
+          for (const selector of ['.architecture-map', '.workbench', '.workflow-grid', '.toolkit-panel', '.install-card', '.site-footer']) {
             await page.locator(selector).scrollIntoViewIfNeeded();
             await page.screenshot({ path: new URL(`home-${selector.slice(1)}-390.png`, screenshots).pathname });
           }
         }
         if (width === 390 && route === 'toolkit/') {
-          await page.locator('.code-window').scrollIntoViewIfNeeded();
-          await page.screenshot({ path: new URL('toolkit-code-390.png', screenshots).pathname });
+          for (const selector of ['.runtime-flow', '.extension-list', '.code-window']) {
+            await page.locator(selector).scrollIntoViewIfNeeded();
+            await page.screenshot({ path: new URL(`toolkit-${selector.slice(1)}-390.png`, screenshots).pathname });
+          }
         }
         if (width === 1280 || width === 390) {
           const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
@@ -47,7 +49,19 @@ test('V2 responsive pages, accessibility, links, recording, clipboard and docs s
           assert.deepEqual(violations.map(({ id, nodes }) => ({ id, elements: nodes.map((n) => n.target) })), [], `accessibility: ${route} ${width}`);
         }
       }
+      if (route === 'getting-started/') {
+        const snippet = await page.locator('.expressive-code').allTextContents();
+        assert.ok(snippet.some((text) => text.includes('tools.New(') && text.includes('tools.SchemaFor[weatherArgs]')));
+        assert.ok(snippet.every((text) => !text.includes('DecodeArgs') && !text.includes('weather{}')));
+      }
       if (route === '' || route === 'toolkit/') {
+        assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Architecture', exact: true }).count(), 1);
+        const explanation = route === '' ? '.architecture-map .layer-list > li' : '.runtime-flow > li';
+        assert.equal(await page.locator(explanation).count(), 4, 'architecture is explained on the page');
+        if (route === 'toolkit/') {
+          assert.equal(await page.locator('.extension-list dt').count(), 5);
+          assert.match(await page.locator('.code-window').textContent(), /newWeatherTool\(\)/);
+        }
         for (const href of await page.locator('a[href]').evaluateAll((nodes) => nodes.map((node) => node.href))) links.add(href);
         for (const button of await page.locator('[data-copy]').all()) {
           await button.click();
@@ -95,7 +109,7 @@ test('V2 responsive pages, accessibility, links, recording, clipboard and docs s
       assert.ok(page.url().startsWith(base));
       if (width === 390) {
         await page.getByRole('button', { name: 'Menu', exact: true }).click();
-        assert.ok(await page.getByRole('link', { name: '← Product home', exact: true }).isVisible());
+        assert.ok(await page.getByRole('link', { name: '← Project overview', exact: true }).isVisible());
       }
       for (const theme of ['light', 'dark']) {
         await page.locator('starlight-theme-select select:visible').selectOption(theme);

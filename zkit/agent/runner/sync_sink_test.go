@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -15,7 +16,7 @@ type countingSink struct {
 	got []runner.Content
 }
 
-func (c *countingSink) OnContent(e runner.Content) { c.got = append(c.got, e) }
+func (c *countingSink) OnContent(ctx context.Context, e runner.Content) { c.got = append(c.got, e) }
 
 func TestSyncSink_SerialisesConcurrentCalls(t *testing.T) {
 	t.Parallel()
@@ -24,13 +25,14 @@ func TestSyncSink_SerialisesConcurrentCalls(t *testing.T) {
 	s := runner.NewSyncSink(inner)
 
 	const goroutines, perG = 8, 100
+	ctx := t.Context()
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	for range goroutines {
 		go func() {
 			defer wg.Done()
 			for range perG {
-				s.OnContent(runner.Content{})
+				s.OnContent(ctx, runner.Content{})
 			}
 		}()
 	}

@@ -35,17 +35,16 @@ func TestProviderCapturesAndReplaysEncryptedReasoningItem(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithResponsesAPI(true), openai.WithModel("gpt-5.6"))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithResponsesAPI(true), openai.WithModel("gpt-5.6"))
+
 	request := llm.CompletionRequest{Stream: true, Thinking: llm.ThinkingConfig{Enabled: true}, Tools: []llm.Tool{responsesTool()}}
 	var final llm.CompletionChunk
 	for chunk, streamErr := range provider.Complete(t.Context(), request) {
 		if streamErr != nil {
 			t.Fatalf("first completion: %v", streamErr)
 		}
-		final = chunk.Clone()
+		final.CompletedItems = append(final.CompletedItems, chunk.Clone().CompletedItems...)
+		final.ToolCalls = append(final.ToolCalls, chunk.Clone().ToolCalls...)
 	}
 	if len(final.CompletedItems) != 1 {
 		t.Fatalf("completed items = %+v", final.CompletedItems)
@@ -90,7 +89,10 @@ func TestProviderCapturesDoneOnlyEncryptedReasoningItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	item := chunks[len(chunks)-1].CompletedItems[0]
+	if len(chunks) != 2 || len(chunks[0].CompletedItems) != 1 || len(chunks[1].CompletedItems) != 0 {
+		t.Fatalf("expected immediate, exactly-once completed item: %+v", chunks)
+	}
+	item := chunks[0].CompletedItems[0]
 	if item.OutputIndex == nil || *item.OutputIndex != 4 || item.ID != "rs_done" || string(item.Data) != reasoning {
 		t.Fatalf("continuation item = %+v data=%s", item, item.Data)
 	}
@@ -107,10 +109,8 @@ func TestProviderGatesResponsesControls(t *testing.T) {
 		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{}}}\n\n"))
 	}))
 	defer server.Close()
-	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithResponsesAPI(true), openai.WithModel("gpt-5.6"))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithResponsesAPI(true), openai.WithModel("gpt-5.6"))
+
 	req := llm.CompletionRequest{Stream: true, Options: llm.ModelOptions{
 		"reasoning_effort":       "max",
 		"text_verbosity":         "low",
@@ -159,10 +159,8 @@ func TestProviderResponsesAPISelectionIsOptionOrderIndependent(t *testing.T) {
 				opts = append(opts, tc.options...)
 			}
 			opts = append(opts, openai.WithModel("gpt-5.6"))
-			provider, err := openai.NewProvider("test-key", opts...)
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			provider := openai.NewProvider("test-key", opts...)
+
 			for _, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{Stream: true}) {
 				if streamErr != nil {
 					t.Fatalf("Complete: %v", streamErr)

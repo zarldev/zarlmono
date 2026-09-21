@@ -14,13 +14,21 @@ the parent to continue. The eventual summary is delivered by `agent_await`, term
 group := spawn.NewGroup()
 r := runner.New(client, runner.WithTools(reg) /* … */)
 coderunner.RegisterSpawnTools(reg, r, group, 1, 0)
-defer group.Close(shutdownCtx)
+defer group.Close(context.WithoutCancel(ctx))
 ```
 
 Register the family after constructing the parent runner. One concrete `Group` owns
 every child goroutine, cancellation function, terminal result, and shutdown wait path.
-zarlcode creates one group per top-level turn and shares it with named and recursive
-child runners.
+Here `ctx` is the run context. The lifecycle owner creates one group per top-level turn,
+shares it with named and recursive child runners, and must cancel and join those children
+before releasing shared dependencies or reporting the turn drained. `Group.Close` can
+return early when its supplied context is canceled, so the owner must not abandon the
+dependency-safe join; `context.WithoutCancel(ctx)` prevents prior run cancellation from
+short-circuiting deferred cleanup.
+
+For direct registration, `spawn.NewAsync(parent, group, opts...).Register(reg)` installs
+the tool family while sharing the same caller-owned group; it does not take lifecycle
+ownership.
 
 ## Tool protocol
 
@@ -40,8 +48,9 @@ RUNNING -> COMPLETED
 ```
 
 `Group.Close` rejects new starts, cancels running children, and waits for all owned
-goroutines within the caller's shutdown context. Agent tasks are turn-scoped and are
-not restored after a process restart.
+goroutines within the supplied context. Agent tasks are turn-scoped and are not restored
+after a process restart. Observed terminal tasks are pruned to a bounded history by
+default; `WithMaxObserved` sets that bound, and a non-positive value disables pruning.
 
 ## The two caps
 

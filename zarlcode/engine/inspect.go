@@ -47,11 +47,18 @@ type Inspection struct {
 // instructions, arms the guardrail chain, enumerates the tool roster (including
 // the late-registered spawn tool against an inert client), and renders the
 // next-turn system prompt.
+// Inspection reloads runtime-owned discovery state, so an exclusive reservation
+// or shutdown returns an unavailable diagnostic instead of assembling a snapshot.
 func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	var ins Inspection
 	if l == nil {
 		return ins
 	}
+	if !l.admission.enter() {
+		ins.Errors = []string{l.admission.rejection().Error()}
+		return ins
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	ins.PlanMode = l.target.Plan
 	webSearch := l.target.WebSearch
@@ -91,9 +98,9 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	// Turn assembly late-registers agent_spawn after runner.New because the tool
 	// needs a parent runner. Mirror that with an inert client so the roster and
 	// prompt match the next real turn without starting one.
-	visible := NewModeFilteredSource(src, l.isPlan)
-	dummy := runner.New(inspectorClient{}, runner.WithTools(visible), runner.WithPrompt(runner.StaticPrompt("")), runner.WithSink(runner.NopSink{}))
 	group := spawn.NewGroup()
+	visible := newModeControlSource(NewModeFilteredSource(src, l.isPlan), &modeTransition{live: l, group: group})
+	dummy := runner.New(inspectorClient{}, runner.WithTools(visible), runner.WithPrompt(runner.StaticPrompt("")), runner.WithSink(runner.NopSink{}))
 	l.registerSpawnTools(ctx, reg, dummy, group, nil, ins.SpawnDepth, ins.SpawnMaxIter)
 
 	for t := range visible.Tools(ctx) {

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -93,13 +92,5 @@ func (m *UI) persistSessionLabelCmd() tea.Cmd {
 	if id == "" || settings == nil || settings.Store == nil {
 		return nil
 	}
-	baseCtx := context.WithoutCancel(m.appContext())
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(baseCtx, sessionSaveCommandTTL)
-		defer cancel()
-		if err := settings.Store.RenameSession(ctx, id, label); err != nil {
-			return sessionSaveFailedMsg{Error: err.Error()}
-		}
-		return nil
-	}
+	return m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistRename, oldID: id, label: label})
 }

@@ -17,6 +17,8 @@ type traceEvent struct {
 	Kind     string `json:"kind"`
 	TaskID   string `json:"task_id"`
 	Name     string `json:"name"`
+
+	Fields json.RawMessage `json:"fields"`
 }
 
 func TestDeterministicTraceWritesAndReadsJSONL(t *testing.T) {
@@ -54,6 +56,18 @@ func TestDeterministicTraceWritesAndReadsJSONL(t *testing.T) {
 	for _, event := range events[:7] {
 		if event.TaskID != "trace-example" {
 			t.Fatalf("runner task ID = %q, want trace-example", event.TaskID)
+		}
+	}
+	for _, tc := range []struct {
+		index int
+		want  string
+	}{
+		{0, `{"prompt":"Find the deterministic answer."}`},
+		{1, `{"tool_id":"lookup-1"}`},
+		{7, ""}, // workflow_started has no payload
+	} {
+		if got := string(events[tc.index].Fields); got != tc.want {
+			t.Errorf("event %d fields = %s, want %s", tc.index, got, tc.want)
 		}
 	}
 	if text := string(out); !strings.Contains(text, "events=11") || !strings.Contains(text, "11 workflow.workflow_completed") {

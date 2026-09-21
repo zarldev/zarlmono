@@ -15,9 +15,10 @@ type Tool interface {
 }
 ```
 
-`ToolSpec.Parameters` is the input JSON Schema, sent to the LLM
-as-is. Results are built with helpers that encode the failure
-taxonomy:
+`tools.New` implements this interface for you. `ToolSpec.Parameters` is
+the input JSON Schema sent to the LLM. The adapter packages handler results
+with the following low-level helpers, which are also available to custom
+dispatch adapters:
 
 ```go
 import "github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -72,7 +73,7 @@ type LsResult struct {
 	Count   int      `json:"count"`
 }
 
-tool := tools.NewTyped(
+tool := tools.New(
 	tools.ToolSpec{
 		Name:        "ls",
 		Description: "List a directory.",
@@ -84,17 +85,17 @@ tool := tools.NewTyped(
 )
 ```
 
-`tools.NewTyped` decodes model arguments with `tools.DecodeArgs[Args]`, which
+`tools.New` decodes model arguments with `tools.DecodeArgs[Args]`, which
 round-trips through the JSON repairer before invoking your handler. The handler
 returns a typed result that becomes `ToolResult.Data`; if it returns a
 `*tools.Error`, the adapter emits a failed tool result the model can act on.
 
-Existing hand-written tools can use the same decoder directly:
+Typed decoding checks field types, not domain rules such as a nonempty path.
+Return a classified error from the handler when input violates those rules:
 
 ```go
-args, err := tools.DecodeArgs[LsArgs](call.Arguments)
-if err != nil {
-	return tools.Failure(call.ID, err), nil
+if args.Path == "" {
+	return LsResult{}, tools.Validation("ls", "path is required")
 }
 ```
 
@@ -140,10 +141,14 @@ When a tool mutates the world, consumers downstream need to know
 
 ```go
 // file mutation
-&tools.FileEffect{Path: "internal/foo/bar.go", Op: tools.EffectOpWrite, BytesAfter: 4200}
+fileEffect := tools.NewFileEffect(tools.FileModify, "internal/foo/bar.go")
+fileEffect.File.BytesAfter = 4200
 
 // process lifecycle
-&tools.ProcessEffect{Command: "go build ./...", PID: 8921, Background: true}
+processEffect := tools.Effect{
+	Kind: tools.EffectProcess,
+	Process: &tools.ProcessEffect{Command: "go build ./...", PID: 8921, Background: true},
+}
 ```
 
 Guardrails read effects to decide whether to trigger verifiers.
@@ -152,12 +157,12 @@ eval harnesses. Tools that don't produce effects declare `nil` —
 still a valid result.
 
 Typed tools can derive effects from their typed result without giving up the
-`NewTyped` adapter:
+`New` adapter:
 
 ```go
-tool := tools.NewTyped(spec, writeFile,
+tool := tools.New(spec, writeFile,
 	tools.WithTypedEffects(func(r WriteResult) []tools.Effect {
-		return []tools.Effect{&tools.FileEffect{Path: r.Path, Op: tools.EffectOpWrite}}
+		return []tools.Effect{tools.NewFileEffect(tools.FileModify, r.Path)}
 	}),
 )
 ```
@@ -183,14 +188,16 @@ which tools ship on a given turn:
 
 ```go
 tools.ToolPreference{
+    Tool:       "web_search",
     Enabled:    true,
     Weight:     0.8,
     Parameters: tools.ToolParameters{"max_results": 10},
 }
 ```
 
-Stored on `ToolSpec.Preference` — the tool declares its own
-affordances; the selector consumes them.
+This is a separate value for application-defined selectors, not a field on
+`ToolSpec`. `Parameters` remains a map because overrides can target any tool's
+argument schema.
 
 ## Description overrides
 

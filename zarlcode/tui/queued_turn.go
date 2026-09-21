@@ -14,6 +14,13 @@ func (m *UI) launchQueuedTurn() tea.Cmd {
 	if m == nil || m.live == nil || m.runFn == nil {
 		return nil
 	}
+	if m.durableDispatch() {
+		queue := m.live.QueueSnapshot()
+		if len(queue) == 0 {
+			return nil
+		}
+		return m.runLiveTurnInput(queue[0].Message.Content, nil, queue[0].ID)
+	}
 	msg, ok := m.live.PopQueuedInput()
 	if !ok || msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
 		return nil
@@ -21,4 +28,10 @@ func (m *UI) launchQueuedTurn() tea.Cmd {
 	m.timeline.addInjectedUser(msg.Content)
 	m.session.SetSkipStartedPrompt(msg.Content)
 	return m.runFn(msg.Content)
+}
+
+// An explicit submit can recover a queue left idle by failed dispatch/settlement.
+// Do not consume the composer: it is distinct from already accepted queued input.
+func (m *UI) hasIdleQueuedTurn() bool {
+	return m.live != nil && m.durableDispatch() && m.liveOperation == nil && !m.session.Run.Running && len(m.live.QueueSnapshot()) != 0
 }

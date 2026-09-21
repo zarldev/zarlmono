@@ -24,10 +24,8 @@ func TestProviderCapturesAndExactlyReplaysNativeThinkingBlocks(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	provider, err := anthropic.NewProvider("test-key", anthropic.WithBaseURL(server.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := anthropic.NewProvider("test-key", anthropic.WithBaseURL(server.URL))
+
 	var first llm.CompletionChunk
 	for chunk, completeErr := range provider.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "go"}}}) {
 		if completeErr != nil {
@@ -126,10 +124,7 @@ func TestProviderStreamingCapturesCompletedNativeBlocksWithoutDuplicateThinking(
 		writeAnthropicEvent(w, "message_stop", `{"type":"message_stop"}`)
 	}))
 	t.Cleanup(server.Close)
-	provider, err := anthropic.NewProvider("test-key", anthropic.WithBaseURL(server.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := anthropic.NewProvider("test-key", anthropic.WithBaseURL(server.URL))
 
 	var thinking strings.Builder
 	var items []llm.ContinuationItem

@@ -31,7 +31,7 @@ type liveRecordingSink struct {
 	content []string
 }
 
-func (s *liveRecordingSink) OnContent(event runner.Content) {
+func (s *liveRecordingSink) OnContent(ctx context.Context, event runner.Content) {
 	s.mu.Lock()
 	s.content = append(s.content, event.Delta)
 	s.mu.Unlock()

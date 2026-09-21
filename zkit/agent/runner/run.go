@@ -72,10 +72,13 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 	maxIter := cmp.Or(spec.MaxIterations, r.maxIterations)
 
 	// Initial messages: optional system prompt + spec.Context + user prompt.
+	initialPreparationStart := time.Now()
 	messages, err := r.initialMessages(ctx, spec)
+	initialPreparationDuration := time.Since(initialPreparationStart)
 	if err != nil {
 		r.publishSetupFailed(ctx, spec, start, err)
-		return TaskResult{ID: spec.ID, Reason: TerminalError, Err: err}
+		return TaskResult{ID: spec.ID, Reason: TerminalError, Err: err, Duration: time.Since(start),
+			Timing: TaskTiming{RequestPreparationDuration: initialPreparationDuration}}
 	}
 
 	r.publishConversationStarted(ctx, spec)
@@ -91,7 +94,16 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		maxIter:  maxIter,
 		messages: messages,
 		thinking: spec.Thinking,
+		timing:   TaskTiming{RequestPreparationDuration: initialPreparationDuration},
 	}
+	t.historyOffset = len(messages)
+	if spec.Prompt != "" || len(spec.Attachments) != 0 {
+		t.historyOffset--
+	}
+	if r.historySink != nil && spec.Depth == 0 {
+		t.historyOverrides = make(map[int]ReplayMessage)
+	}
+iterations:
 	for iter := range maxIter {
 		t.iter = iter
 		if err := context.Cause(ctx); err != nil {
@@ -112,12 +124,22 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// goes straight from the iter.Seq into the message slice
 		// without an intermediate buffer; the post-append slice
 		// suffix is what we publish.
-		if r.steerer != nil {
-			before := len(t.messages)
-			t.messages = slices.AppendSeq(t.messages, r.steerer.Drain(ctx))
-			if len(t.messages) > before {
-				r.publishSteerInjected(ctx, spec, t.messages[before:])
-			}
+		t.drainSteered(ctx)
+
+		// Mode/control changes can join children. Apply them before taking ready
+		// observations so their outcomes enter this same captured request.
+		controlStart := time.Now()
+		controlErr := t.refreshPrompt(ctx)
+		controlDuration := time.Since(controlStart)
+		t.timing.RequestPreparationDuration += controlDuration
+		if controlErr != nil {
+			return t.errored(ctx, controlErr)
+		}
+		if err := context.Cause(ctx); err != nil {
+			return t.cancelled(ctx, err)
+		}
+		if err := t.admitReady(ctx); err != nil {
+			return t.errored(ctx, err)
 		}
 
 		// Finalize-warn hook: when remaining iterations drop into the
@@ -137,40 +159,17 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			return t.errored(ctx, cerr)
 		}
 
-		shaped := r.template.ShapeMessages(t.messages, t.thinking)
-		if finalizeNudge != "" {
-			// Request-only: the nudge rides this iteration's request but
-			// never enters the canonical history (see finalizeNudge above).
-			// Cap the slice so append allocates rather than writing into a
-			// backing array shaped might share with messages.
-			shaped = append(shaped[:len(shaped):len(shaped)], llm.Message{Role: llm.RoleUser, Content: finalizeNudge})
-		}
-		requestTools, err := r.buildRequestTools(ctx, t.st.toolSurfaceFingerprint)
+		preparationStart := time.Now()
+		req, err := t.prepareRequest(ctx, finalizeNudge)
+		preparationDuration := time.Since(preparationStart)
+		t.timing.RequestPreparationDuration += preparationDuration
+		preparationDuration += controlDuration
 		if err != nil {
 			return t.errored(ctx, err)
 		}
-		t.st.toolSurfaceFingerprint = requestTools.surface.Fingerprint
-		t.toolSurface = requestTools.surface
-		options := r.modelOptions.Clone()
-		if options == nil {
-			options = make(llm.ModelOptions, 1)
+		if iter == 0 {
+			preparationDuration += initialPreparationDuration
 		}
-		options["prompt_cache_key"] = string(spec.ID)
-		req := llm.CompletionRequest{
-			Messages:           shaped,
-			Tools:              requestTools.tools,
-			Stream:             true,
-			MaxTokens:          r.maxTokens,
-			Temperature:        r.temperature,
-			Thinking:           llm.ThinkingConfig{Enabled: t.thinking},
-			ChatTemplateKwargs: r.template.ThinkingKwargs(t.thinking),
-			// Pin every iteration of this task to one prompt_cache_key so the
-			// OpenAI/codex Responses API routes them to the same cache node,
-			// improving prefix-cache hit rate across the loop. Other providers
-			// ignore the option.
-			Options: options,
-		}
-
 		// Per-iteration ctx so we can bail cleanly on
 		// iterationTimeout / streamIdleTimeout without killing the
 		// outer Run ctx (the caller may want to keep going on the
@@ -178,6 +177,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// ctx — no-op wrapper.
 		iterCtx, cancelIter := iterationContext(ctx, r.timeouts.iteration)
 		streamCtx, cancelStream := context.WithCancelCause(iterCtx)
+		t.attempt++
 		stream := r.client.Complete(streamCtx, req)
 		stream = withStreamIdle(cancelStream, r.timeouts.streamIdle, stream)
 
@@ -198,8 +198,16 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		if iterUsage != nil {
 			t.lastUsage = iterUsage
 		}
+		// Consumption belongs to the attempt, including failed or retried streams.
+		t.totalUsage = addUsage(t.totalUsage, iterUsage)
+		t.settleAttempt(streamCtx, sr)
 
 		if streamErr != nil {
+			outputs, captureErr := t.recordUndispatchedCalls(ctx, toolCalls, toolCallOrder, streamErr)
+			captureErr = errors.Join(captureErr, t.recordInterruptedHistory(ctx, sr, outputs))
+			if captureErr != nil {
+				return t.errored(ctx, errors.Join(streamErr, captureErr))
+			}
 			if terminal := t.recoverStreamErr(ctx, streamErr, sr.accepted); terminal != nil {
 				return *terminal
 			}
@@ -210,18 +218,6 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// (a stream that produced output means the gateway is healthy and
 		// the model isn't wedged in reasoning).
 		t.resetStreamRecovery()
-		// Rewrite each tool call's arguments to canonical JSON before they
-		// land in history — see canonicalizeToolArgs.
-		canonicalizeToolArgs(toolCalls)
-		// Fold this iteration's reported usage into the run-wide
-		// total. Done here (post-drain, on success) so we attribute
-		// once per iteration and skip iterations that errored out
-		// mid-stream (those callers already see the partial spend
-		// via the terminal LastUsage). Providers that omit Usage on
-		// some chunks leave iterUsage nil — that iteration silently
-		// contributes nothing rather than double-counting the
-		// previous iter's snapshot.
-		t.totalUsage = addUsage(t.totalUsage, iterUsage)
 
 		assistantContent := strings.TrimSpace(sr.content)
 
@@ -231,6 +227,12 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		if len(toolCalls) == 0 && clean != "" {
 			toolCallOrder, clean = appendTextToolCalls(clean, toolCalls, toolCallOrder)
 		}
+		// Keep dispatch/audit input separate from repaired provider context.
+		rawToolCalls := make(map[string]llm.ToolCall, len(toolCalls))
+		for id, call := range toolCalls {
+			rawToolCalls[id] = call.Clone()
+		}
+		canonicalizeToolArgs(toolCalls)
 		t.finalContent = clean
 
 		// Append the assistant message (text + tool calls) to history.
@@ -239,9 +241,11 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// stores it under ReasoningContent so per-provider history
 		// serializers (Inline / Field / Strip) can reshape it for the
 		// next request without re-parsing the visible body.
+		// Retain streamed bytes: trimming here contradicts native text blocks
+		// retained in ContinuationItems. Presentation/quality checks use clean.
 		assistantMsg := llm.Message{
 			Role:               llm.RoleAssistant,
-			Content:            assistantContent,
+			Content:            sr.content,
 			ContentOutputIndex: sr.contentOutputIndex,
 			ReasoningContent:   sr.thinking,
 			ContinuationItems:  sr.continuationItems,
@@ -253,71 +257,73 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			}
 		}
 		t.messages = append(t.messages, assistantMsg)
-
-		// TurnQuality hook: catch degenerate "empty content + no tool
-		// calls" turns before they exit the loop as a successful but
-		// content-less TaskResult. The thinking-budget failure mode —
-		// model burns max_tokens on thinking and emits nothing the
-		// user sees — falls into this bucket and would otherwise
-		// stall the conversation. The hook returns a decision with a
-		// correction when it wants the runner to inject a follow-up and
-		// continue; a zero decision means "this turn is fine, proceed
-		// with normal branching." Only consulted when the structured
-		// tool-call slice is empty — the dispatch path already covers
-		// turns with tools.
-		if t.applyTurnQuality(clean, len(toolCallOrder) > 0) {
-			continue
+		if r.historySink != nil && spec.Depth == 0 {
+			record := ReplayMessage{Message: assistantMsg.Clone()}
+			for _, id := range toolCallOrder {
+				record.RawToolCalls = append(record.RawToolCalls, rawToolCalls[id].Clone())
+			}
+			t.historyOverrides[len(t.messages)-1] = record
 		}
 
-		// No tool calls: we're done — record the final content and exit.
 		if len(toolCalls) == 0 {
-			// Completion gate: refuse a premature "done" when the run made
-			// no durable change (no successful mutating tool call). Inject a
-			// corrective user turn and continue so the model can make the
-			// change within THIS Run — preventing an empty-patch attempt
-			// rather than retrying after the fact. Skip on the last
-			// iteration (no turn left to act on the correction) and once the
-			// MaxCorrections budget is spent, so a genuinely stuck model
-			// still terminates cleanly.
-			if t.holdCompletion(clean) {
-				continue
+			if result, done := t.completeNoToolTurn(ctx, clean, iterUsage, preparationDuration); done {
+				return result
 			}
-
-			r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages, requestTools.surface)
-			if uo, ok := r.compactor.(compact.UsageObserver); ok {
-				uo.ObserveUsage(t.lastUsage)
-			}
-			return t.completed(ctx)
+			continue iterations
 		}
 
 		// Dispatch tool calls. Registry tools may run in parallel up to
 		// r.toolConcurrency, but their results are reassembled in the
 		// original toolCallOrder so the LLM sees tool messages in the
 		// order it emitted them.
-		dispatched := r.dispatchBatch(ctx, spec, toolCalls, toolCallOrder)
+		// Establish the initiating observation before nested outcomes can append.
+		if err := t.flushHistory(ctx); err != nil {
+			return t.errored(ctx, err)
+		}
+		dispatchStart := time.Now()
+		dispatched := t.dispatchBatch(ctx, rawToolCalls, toolCallOrder)
+		dispatchDuration := time.Since(dispatchStart)
+		t.timing.ToolDispatchDuration += dispatchDuration
+		var captureErr error
+		var admissionReferences []tools.AdmissionReference
 		for _, id := range toolCallOrder {
 			tc := toolCalls[id]
 			d := dispatched[id]
+			if errors.Is(d.err, ErrToolHistory) || errors.Is(d.err, ErrReplayHistory) {
+				captureErr = errors.Join(captureErr, d.err)
+			}
 			// Completion-gate bookkeeping: a successful mutating tool call
 			// is the "real work happened" signal. Gated on completionGate
 			// being installed so the spec lookup is skipped entirely on the
 			// default path.
-			if r.completionGate != nil && d.err == nil && d.result != nil && d.result.Success &&
+			if r.completionGate != nil && d.rawResult != nil && d.rawResult.Success &&
 				r.toolMutates(ctx, tc.Function.Name) {
 				t.st.mutatingCalls++
 			}
-			if r.toolOutputSink != nil && d.result != nil {
-				r.toolOutputSink.Record(ctx, ToolOutput{
+			if r.toolOutputSink != nil {
+				success, terminalError, kind := classifyToolOutput(d.result)
+				err := r.toolOutputSink.Record(ctx, ToolOutput{
+					ExecutionID: d.executionID,
+					TaskID:      string(spec.ID), Attempt: t.attempt, Dispatched: new(d.dispatched),
+					Parts:      resultParts(d.rawResult),
 					ToolCallID: tc.ID,
 					ToolName:   tc.Function.Name,
-					Args:       tc.Function.Arguments,
-					Output:     fullToolResultText(d.result),
-					Effects:    append([]tools.Effect(nil), d.result.Effects...),
+					Args:       rawToolCalls[id].Function.Arguments,
+					Parameters: tools.CloneParameters(d.parameters),
+					Output:     rawToolResultText(d.rawResult),
+					Success:    success,
+					Error:      terminalError,
+					Kind:       kind,
+					Effects:    resultEffects(d.rawResult),
 				})
+				if err != nil {
+					captureErr = errors.Join(captureErr, fmt.Errorf("%w: %w", ErrToolHistory, err))
+				}
 			}
+			text, retained := r.inputResultText(d.result, tc.Function.Name)
 			message := llm.Message{
 				Role:       llm.RoleTool,
-				Content:    r.toolResultText(d.result, tc.Function.Name),
+				Content:    text,
 				ToolCallID: tc.ID,
 			}
 			if d.result != nil && d.result.Success {
@@ -325,8 +331,18 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 			}
 			// Retain an owned snapshot; attachment bytes never enter text truncation.
 			t.messages = append(t.messages, message.Clone())
+			t.recordToolHistory(message, d, tc, rawToolCalls[id].Function.Arguments)
+			if retained && d.result != nil {
+				admissionReferences = append(admissionReferences, d.result.AdmissionReferences...)
+			}
 		}
 		t.totalToolCalls += len(toolCallOrder)
+		if captureErr != nil {
+			return t.errored(ctx, captureErr)
+		}
+		if err := t.admitInputs(ctx, admissionReferences, nil); err != nil {
+			return t.errored(ctx, err)
+		}
 		// Persist progress after dispatch so a SIGKILL on the outer
 		// ctx during the *next* iteration's LLM call still leaves a
 		// row reflecting "we got to iter N with M tool calls" — the
@@ -339,7 +355,7 @@ func (r *Runner) Run(ctx context.Context, spec TaskSpec) TaskResult {
 		// IterationCompleted. The compaction gate (compact.PressureGated)
 		// reads occupancy, which never goes nil mid-Run even when this
 		// turn's provider dropped usage.
-		r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages, requestTools.surface)
+		r.publishIterationCompleted(ctx, spec, iter, iterUsage, t.lastUsage, t.messages, t.toolSurface, preparationDuration, dispatchDuration)
 		if uo, ok := r.compactor.(compact.UsageObserver); ok {
 			uo.ObserveUsage(t.lastUsage)
 		}
@@ -482,7 +498,7 @@ func (r *Runner) initialMessages(ctx context.Context, spec TaskSpec) ([]llm.Mess
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrPromptRender, err)
 		}
-		if system != "" {
+		if system != "" || r.iterationPrompt {
 			msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: system})
 		}
 	}
@@ -503,9 +519,27 @@ func (r *Runner) initialMessages(ctx context.Context, spec TaskSpec) ([]llm.Mess
 	return msgs, nil
 }
 
-// fullToolResultText returns the untruncated, model-facing text of a tool
-// result: the error line for failures, "ok" for nil data, otherwise the
-// formatted data.
+// rawToolResultText preserves complete result data for audit storage, without
+// the provider-context serialization cap or failure-data omission.
+func rawToolResultText(result *tools.ToolResult) string {
+	if result == nil || result.Data == nil {
+		return ""
+	}
+	var data string
+	switch v := result.Data.(type) {
+	case string:
+		data = v
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			data = fmt.Sprint(v)
+		} else {
+			data = string(b)
+		}
+	}
+	return data
+}
+
 func fullToolResultText(result *tools.ToolResult) string {
 	if result == nil {
 		return ""
@@ -520,10 +554,6 @@ func fullToolResultText(result *tools.ToolResult) string {
 		return "ok"
 	}
 	return formatToolData(result.Data)
-}
-
-func (r *Runner) toolResultText(result *tools.ToolResult, toolName string) string {
-	return r.truncator.Truncate(fullToolResultText(result), toolName)
 }
 
 func toolErrorHint(err *tools.Error) string {

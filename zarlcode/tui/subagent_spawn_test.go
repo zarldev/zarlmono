@@ -38,11 +38,11 @@ func TestTeaSinkProjectsOneSubagentRowPerExactSpawnExecution(t *testing.T) {
 		{executionID: "execution-A", taskID: "child-A", agent: "reviewer", prompt: "review A"},
 		{executionID: "execution-B", taskID: "child-B", agent: "tester", prompt: "test B"},
 	} {
-		sink.OnToolStarted(runner.ToolStarted{
+		sink.OnToolStarted(t.Context(), runner.ToolStarted{
 			TaskID: taskscope.ID("root"), ExecutionID: spawn.executionID, ToolID: "reused", ToolName: "agent_spawn",
 			Parameters: map[string]any{"agent": spawn.agent, "prompt": spawn.prompt},
 		})
-		sink.OnConversationStarted(runner.ConversationStarted{
+		sink.OnConversationStarted(t.Context(), runner.ConversationStarted{
 			TaskID: taskscope.ID(spawn.taskID), Depth: 1, ParentExecutionID: spawn.executionID, ParentToolCallID: "reused",
 			AgentName: spawn.agent, Prompt: spawn.prompt,
 		})

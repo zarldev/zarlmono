@@ -222,8 +222,28 @@ func relUnder(root, path string) (string, bool) {
 	return rel, true
 }
 
+// globLiteralDirPrefix returns only complete literal directory segments before
+// the first metacharacter or escape. Basename patterns and non-canonical prefixes
+// retain the full walk; matching still uses the original, unmodified pattern.
+func globLiteralDirPrefix(pattern string) string {
+	end := strings.IndexAny(pattern, "*?[{\\")
+	if end < 0 {
+		end = len(pattern)
+	}
+	slash := strings.LastIndexByte(pattern[:end], '/')
+	if slash < 0 {
+		return ""
+	}
+	prefix := pattern[:slash]
+	if !fs.ValidPath(prefix) {
+		return ""
+	}
+	return prefix
+}
+
 func walkGlobMatches(ctx context.Context, ws Workspace, args GlobArgs, rootAbs string, maxResults int) ([]globEntry, bool, error) {
 	basenameOnly := !strings.ContainsRune(args.Pattern, '/')
+	prefix := globLiteralDirPrefix(args.Pattern)
 	matches := []globEntry{}
 	truncated := false
 
@@ -264,6 +284,15 @@ func walkGlobMatches(ctx context.Context, ws Workspace, args GlobArgs, rootAbs s
 			return nil
 		}
 		isDir := d.IsDir()
+		if isDir && prefix != "" {
+			dir := filepath.ToSlash(rel)
+			// Keep ancestors and descendants of the prefix, including the prefix
+			// directory itself. Prune in-place so hidden and symlink handling,
+			// traversal order, and root-relative output remain unchanged.
+			if dir != prefix && !strings.HasPrefix(prefix, dir+"/") && !strings.HasPrefix(dir, prefix+"/") {
+				return fs.SkipDir
+			}
+		}
 		target := rel
 		if basenameOnly {
 			target = d.Name()

@@ -69,9 +69,23 @@ jobs:
       - name: test repository tools
         run: go test -count=1 ./tools/...
 
-      - name: enforce test-source policy
+      - name: select test-source policy base
+        id: test-policy-base
         env:
           TEST_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$TEST_POLICY_BASE"
+          # A new branch has no previous commit. Audit the full tree rather
+          # than skip policy checks or pass GitHub's all-zero SHA to git diff.
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+            base=$(git hash-object -t tree -w --stdin </dev/null)
+          fi
+          printf 'base=%s\n' "$base" >> "$GITHUB_OUTPUT"
+
+      - name: enforce test-source policy
+        env:
+          TEST_POLICY_BASE: ${{ steps.test-policy-base.outputs.base }}
         run: go run ./tools/testpolicy/cmd/testpolicy "$TEST_POLICY_BASE"
 
   tui-smoke:
@@ -113,7 +127,29 @@ jobs:
       # zkit owns the concurrent core; race the whole module so new packages do
       # not silently fall outside a hand-maintained package list.
       - name: race test
-        run: go test -C zkit -race -count=1 ./...
+        run: go tool task race:zkit
+
+  application-race-test:
+    name: race test (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ["zarlcode", "swebench-eval"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: setup go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Application owners coordinate turns, UI events, durable writes, and
+      # evaluation workers beyond the shared runner's lifecycle.
+      - name: race test
+        run: go tool task race:${{ matrix.module }}
 
   lint:
     name: golangci-lint (${{ matrix.module }})

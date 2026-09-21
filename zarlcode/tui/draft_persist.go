@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/draft"
 	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -32,24 +34,40 @@ const (
 	sessionPersistTranscript
 	sessionPersistFull
 	sessionPersistDelete
+	sessionPersistRename
 )
 
 type sessionPersistOp struct {
-	kind       sessionPersistKind
-	generation uint64
-	draft      db.SessionRecord
-	transcript *transcriptSnapshot
-	snapshot   *sessionSnapshot
-	oldID      string
-	done       chan sessionPersistedMsg
+	kind              sessionPersistKind
+	generation        uint64
+	draft             db.SessionRecord
+	transcript        *transcriptSnapshot
+	snapshot          *sessionSnapshot
+	oldID             string
+	label             string
+	done              chan sessionPersistedMsg
+	claimed           *atomic.Bool // exactly one command or shutdown executor owns completion
+	settledGeneration uint64
+	before            *beforeTurn
+	beforeGeneration  uint64
+	cancel            context.CancelFunc
+	sourceObserved    sourceObservation
+	sourceWritten     *atomic.Pointer[sourceWrite]
+	sourceErr         error
+	guarded           bool // retain the supplied source observation; never prefix-retry
+	retry             *sessionSaveRetry
 }
 
 type sessionPersistedMsg struct {
-	kind       sessionPersistKind
-	generation uint64
-	sessionID  string
-	revision   uint64
-	err        error
+	kind              sessionPersistKind
+	generation        uint64
+	sessionID         string
+	revision          uint64
+	err               error
+	settledGeneration uint64
+	beforeGeneration  uint64
+	turnResult        tea.Msg
+	operation         <-chan sessionPersistedMsg // FIFO identity, not transcript/draft generation
 }
 
 func (m *UI) scheduleDraftSave() tea.Cmd {
@@ -76,6 +94,14 @@ func (m *UI) handleDraftPersistenceMsg(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		return m.enqueueDraftPersist(msg.Generation), true
 	case sessionPersistedMsg:
+		current := m.sessionPersistCurrent
+		if current == nil || msg.operation != current.done {
+			return nil, true // duplicate/old acknowledgement must not release a newer write
+		}
+		if msg.err == nil && msg.sessionID == m.session.ID {
+			m.acknowledgeDurableDraft(current)
+			m.acknowledgeSource(current)
+		}
 		if msg.err == nil && msg.sessionID == m.session.ID &&
 			(msg.kind == sessionPersistTranscript || msg.kind == sessionPersistFull) {
 			if m.transcriptPersistedSessionID != msg.sessionID || msg.revision > m.transcriptPersisted {
@@ -86,6 +112,23 @@ func (m *UI) handleDraftPersistenceMsg(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		m.sessionPersistRunning = false
 		m.sessionPersistCurrent = nil
+		if msg.sessionID == m.session.ID && errors.Is(msg.err, db.ErrCheckpointConflict) {
+			m.sourceConflict = true
+		}
+		if current.retry != nil {
+			cmd := m.finishSessionRetry(current, msg)
+			return tea.Batch(m.startNextSessionPersist(), cmd), true
+		}
+		if msg.beforeGeneration != 0 {
+			settled := m.handleSettledLiveTurn(settledLiveTurnMsg{
+				sessionID: msg.sessionID, generation: msg.beforeGeneration, result: msg.turnResult,
+			})
+			return tea.Batch(m.startNextSessionPersist(), settled), true
+		}
+		if msg.err != nil && msg.settledGeneration != 0 && msg.sessionID == m.session.ID {
+			settled := m.finishSettledLiveTurn(msg)
+			return tea.Batch(m.startNextSessionPersist(), settled), true
+		}
 		if msg.err != nil {
 			if msg.sessionID != "" && msg.sessionID != m.session.ID && msg.kind != sessionPersistDelete {
 				return m.startNextSessionPersist(), true
@@ -121,7 +164,8 @@ func (m *UI) handleDraftPersistenceMsg(msg tea.Msg) (tea.Cmd, bool) {
 			cmd := m.startNextSessionPersist()
 			return tea.Batch(m.toastExpiryCmd(), cmd), true
 		}
-		return m.startNextSessionPersist(), true
+		settled := m.finishSettledLiveTurn(msg)
+		return tea.Batch(m.startNextSessionPersist(), settled), true
 	default:
 		return nil, false
 	}
@@ -138,6 +182,16 @@ func (m *UI) resetTranscriptPersistence() {
 	m.transcriptPersisted = 0
 	m.transcriptPersistedSessionID = ""
 	m.lastSessionPersistError = ""
+	m.settledTurnID = ""
+	m.settledWatermark = 0
+	m.initialContinuation = rewind.InitialContinuation{}
+	m.exactResume = false
+	m.unsavedTurnError = nil
+	m.sourceConflict = false
+	m.sourceBaseline = db.SessionContentVersion{}
+	m.completedBoundary = nil
+	m.sessionRetry = nil
+	m.durableDraftText = ""
 }
 
 func (m *UI) handleComposerInputMsg(msg tea.Msg) (tea.Cmd, bool) {
@@ -176,16 +230,22 @@ func (m *UI) handleComposerInputMsg(msg tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m *UI) enqueueDraftPersist(generation uint64) tea.Cmd {
+	if m.actionableRewindPreview() {
+		return nil // cancel reschedules; apply saves the source draft transactionally
+	}
+	if m.unsavedTurnError != nil || (m.durableDispatch() && m.liveOperation != nil) {
+		return nil // settlement atomically replaces the protected recovery prompt with the current draft
+	}
 	text := m.composer.text()
-	pendingJSON, err := draft.Encode(text)
+	pendingJSON, err := draft.EncodeWithAttachments(text, m.attachmentParts())
 	if err != nil {
 		m.session.SetErrorToast("draft save: " + err.Error())
 		return m.toastExpiryCmd()
 	}
-	if text != "" {
+	if text != "" || len(m.pendingAttachments) != 0 {
 		m.rejectedDraftJSON = nil
 	}
-	if text == "" {
+	if text == "" && len(m.pendingAttachments) == 0 {
 		if m.session.ID == "" {
 			return nil
 		}
@@ -207,6 +267,9 @@ func (m *UI) enqueueDraftPersist(generation uint64) tea.Cmd {
 }
 
 func (m *UI) clearDraftCmd() tea.Cmd {
+	if m.unsavedTurnError != nil || (m.durableDispatch() && m.liveOperation != nil) {
+		return nil
+	}
 	m.draftGeneration++
 	m.rejectedDraftJSON = nil
 	if m.session.ID == "" || m.settings == nil || m.settings.Store == nil {
@@ -216,6 +279,21 @@ func (m *UI) clearDraftCmd() tea.Cmd {
 }
 
 func (m *UI) enqueueSessionPersist(op sessionPersistOp) tea.Cmd {
+	if m.rewindRecovery != "" || m.sourceConflict {
+		return nil // the committed child must be recovered before any source writes
+	}
+	// Every FIFO row mutation carries an incoming CAS. BEFORE publishes its
+	// receipt itself; deletion retires the ID and needs no outgoing receipt.
+	if m.settings != nil && m.settings.Store != nil && op.before == nil {
+		if !op.guarded {
+			ctx, cancel := context.WithTimeout(m.appContext(), sessionSaveCommandTTL)
+			op.sourceObserved, op.sourceErr = m.observeSource(ctx, op.sessionID())
+			cancel()
+		}
+		if op.kind != sessionPersistDelete {
+			op.sourceWritten = new(atomic.Pointer[sourceWrite])
+		}
+	}
 	if op.done == nil {
 		op.done = make(chan sessionPersistedMsg, 1)
 	}
@@ -233,7 +311,13 @@ func (m *UI) enqueueSessionPersist(op sessionPersistOp) tea.Cmd {
 				}
 				break
 			}
-			if queued.kind == sessionPersistTranscript && queued.sessionID() == op.sessionID() {
+			// Adjacent transcript snapshots may share the earlier receipt. Never
+			// move one across another observer or replace its captured capability.
+			if queued.kind == sessionPersistTranscript && queued.sessionID() == op.sessionID() &&
+				(op.sourceWritten == nil || i == len(m.sessionPersistQueue)-1) {
+				if queued.sourceWritten != nil {
+					op.sourceObserved, op.sourceErr, op.sourceWritten = queued.sourceObserved, queued.sourceErr, queued.sourceWritten
+				}
 				m.sessionPersistQueue[i] = op
 				return m.startNextSessionPersist()
 			}
@@ -281,7 +365,7 @@ func (op sessionPersistOp) sessionID() string {
 	switch op.kind {
 	case sessionPersistDraft:
 		return op.draft.ID
-	case sessionPersistClearDraft, sessionPersistDelete:
+	case sessionPersistClearDraft, sessionPersistDelete, sessionPersistRename:
 		return op.oldID
 	case sessionPersistTranscript:
 		if op.transcript != nil {
@@ -308,8 +392,13 @@ func (m *UI) dropQueuedTranscript(sessionID string) {
 func (m *UI) dropQueuedSession(sessionID string) {
 	queue := m.sessionPersistQueue[:0]
 	for _, queued := range m.sessionPersistQueue {
-		if queued.sessionID() != sessionID {
+		switch {
+		case queued.sessionID() != sessionID:
 			queue = append(queue, queued)
+		case queued.before != nil:
+			queued.before.reservation.Release()
+		case queued.retry != nil:
+			queued.retry.reservation.Release()
 		}
 	}
 	m.sessionPersistQueue = queue
@@ -321,6 +410,9 @@ func (m *UI) startNextSessionPersist() tea.Cmd {
 	}
 	op := m.sessionPersistQueue[0]
 	m.sessionPersistQueue = m.sessionPersistQueue[1:]
+	if m.sourceConflict && op.sessionID() == m.session.ID && op.before == nil {
+		op.sourceErr = db.ErrCheckpointConflict
+	}
 	if op.kind == sessionPersistTranscript || op.kind == sessionPersistFull {
 		if op.sessionID() == m.transcriptPersistedSessionID {
 			op.rebaseTranscript(m.transcriptPersisted)
@@ -330,11 +422,18 @@ func (m *UI) startNextSessionPersist() tea.Cmd {
 			return m.startNextSessionPersist()
 		}
 	}
+	op.claimed = new(atomic.Bool)
 	m.sessionPersistCurrent = &op
 	m.sessionPersistRunning = true
 	settings := m.settings
+	if op.before != nil {
+		return m.beforeTurnCommand(op)
+	}
 	baseCtx := context.WithoutCancel(m.appContext())
 	return func() tea.Msg {
+		if !op.claimed.CompareAndSwap(false, true) {
+			return nil // shutdown already completed this returned-but-unstarted command
+		}
 		ctx, cancel := context.WithTimeout(baseCtx, sessionSaveCommandTTL)
 		defer cancel()
 		err := executeSessionPersist(ctx, settings, &op)
@@ -344,6 +443,8 @@ func (m *UI) startNextSessionPersist() tea.Cmd {
 		msg := sessionPersistedMsg{
 			kind: op.kind, generation: op.generation, sessionID: op.sessionID(),
 			revision: op.transcriptRevision(), err: err,
+			settledGeneration: op.settledGeneration,
+			operation:         op.done,
 		}
 		op.done <- msg
 		close(op.done)
@@ -352,6 +453,12 @@ func (m *UI) startNextSessionPersist() tea.Cmd {
 }
 
 func executeSessionPersist(ctx context.Context, settings *engine.Settings, op *sessionPersistOp) error {
+	if op.sourceErr != nil {
+		return op.sourceErr
+	}
+	if op.sourceWritten != nil {
+		return executeVersionedSessionPersist(ctx, settings.Store, op)
+	}
 	switch op.kind {
 	case sessionPersistDraft:
 		return settings.Store.SaveSessionDraft(ctx, op.draft)
@@ -360,15 +467,26 @@ func executeSessionPersist(ctx context.Context, settings *engine.Settings, op *s
 	case sessionPersistTranscript:
 		return saveTranscriptSnapshot(ctx, settings.Store, op.transcript)
 	case sessionPersistFull:
+		if op.snapshot.exact || op.guarded {
+			return op.snapshot.commitGuarded(ctx, settings.Store, op.sourceObserved.expected())
+		}
 		return saveSessionSnapshot(ctx, settings, op.snapshot)
 	case sessionPersistDelete:
-		return clearPersistedSession(ctx, settings, op.oldID)
+		if op.oldID != "" && settings != nil && settings.Store != nil {
+			if err := settings.Store.DeleteSessionVersioned(ctx, op.oldID, op.sourceObserved.expected()); err != nil {
+				return err
+			}
+		}
+		return clearActiveSession(ctx, settings, op.oldID)
 	default:
 		return nil
 	}
 }
 
 func retrySessionTranscriptPersist(ctx context.Context, settings *engine.Settings, op *sessionPersistOp, original error) error {
+	if op.guarded || (op.kind == sessionPersistFull && op.snapshot.exact) || errors.Is(original, db.ErrCheckpointConflict) {
+		return original // transcript equality is not permission to replace the full row
+	}
 	target := op.transcriptRevision()
 	stored, err := settings.Store.GetSessionTranscript(ctx, op.sessionID())
 	if errors.Is(err, db.ErrNotFound) {
@@ -380,7 +498,9 @@ func retrySessionTranscriptPersist(ctx context.Context, settings *engine.Setting
 		return fmt.Errorf("%w: durable transcript diverges from pending transcript: %w", db.ErrTranscriptConflict, original)
 	}
 	op.rebaseTranscript(stored.Revision)
-	if stored.Revision == target {
+	// A matching canonical revision proves only the transcript write. A full
+	// settlement barrier must also commit context, usage, plan and draft.
+	if stored.Revision == target && op.kind == sessionPersistTranscript {
 		return nil
 	}
 	if err := executeSessionPersist(ctx, settings, op); err != nil {
@@ -440,6 +560,18 @@ func (m *UI) persistTranscriptNow() tea.Cmd {
 }
 
 func (m *UI) enqueueTranscriptPersist() tea.Cmd {
+	if m.unsavedTurnError != nil {
+		return nil // retain the last paired head until a valid completed save succeeds
+	}
+	if m.exactResume {
+		// Exact heads are paired with canonical bytes in one full transaction.
+		// During a turn retain the last durable head until the settlement barrier;
+		// an incremental transcript write would make restart reject the envelope.
+		if m.liveOperation != nil {
+			return nil
+		}
+		return m.saveSessionCmd()
+	}
 	snapshot, err := m.transcriptSnapshot()
 	if errors.Is(err, db.ErrNotFound) {
 		return nil

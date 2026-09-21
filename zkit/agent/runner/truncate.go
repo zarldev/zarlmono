@@ -118,13 +118,22 @@ func (t *SpillingTruncator) ensureSessionDir() string {
 // pass through untouched. Pointer receiver so the lazy session-dir
 // init via sync.Once survives across calls.
 func (t *SpillingTruncator) Truncate(s, toolName string) string {
+	text, _ := t.TruncateRetained(s, toolName)
+	return text
+}
+
+// TruncateRetained truncates like [SpillingTruncator.Truncate] and reports
+// whether the full text remains available, either in the returned text or in a
+// successfully written spill file. The boolean is direct retention proof, not
+// a value inferred by parsing the truncated output.
+func (t *SpillingTruncator) TruncateRetained(s, toolName string) (string, bool) {
 	mb := cmp.Or(t.MaxBytes, defaultMaxResultBytes)
 	ml := cmp.Or(t.MaxLines, defaultMaxResultLines)
 	if !needsTrim(s, mb, ml) {
-		return s
+		return s, true
 	}
 	spill := spillToDisk(s, toolName, t.ensureSessionDir(), cmp.Or(t.Prefix, "tool-"))
-	return trimWithFooter(s, mb, ml, spill)
+	return trimWithFooter(s, mb, ml, spill), spill != ""
 }
 
 // Cleanup removes the per-instance spill directory and every file

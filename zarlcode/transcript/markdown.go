@@ -94,6 +94,10 @@ func markdownEntry(entry Entry) (string, string) {
 			body += "\n\n[interrupted]"
 		}
 		return "Sub-agent", body
+	case EntryKinds.ENTRYINPUTADMISSION:
+		return "Input admitted", payload.Text
+	case EntryKinds.ENTRYINPUTWAIT:
+		return "Input wait", payload.Text
 	case EntryKinds.ENTRYNOTICE:
 		return "Notice", payload.Text
 	default:

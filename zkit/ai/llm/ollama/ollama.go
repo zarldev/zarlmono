@@ -33,10 +33,9 @@ type Provider struct {
 
 var _ llm.Provider = (*Provider)(nil)
 
-// NewProvider creates an Ollama-targeted provider. Empty baseURL defaults
-// to DefaultBaseURL. Ollama does not require an API key, but the openai
-// SDK expects a non-empty value, so we supply a placeholder.
-func NewProvider(opts ...options.Option[Provider]) (llm.Provider, error) {
+// NewProvider assembles an Ollama provider at DefaultBaseURL unless overridden.
+// Local servers need no credential; a fixed placeholder is passed to the transport.
+func NewProvider(opts ...options.Option[Provider]) *Provider {
 	p := &Provider{
 		baseURL: DefaultBaseURL,
 	}
@@ -52,12 +51,8 @@ func NewProvider(opts ...options.Option[Provider]) (llm.Provider, error) {
 		innerOpts = append(innerOpts, openai.WithModel(p.model))
 	}
 
-	inner, err := openai.NewProvider("ollama-no-auth", innerOpts...)
-	if err != nil {
-		return nil, err
-	}
-	p.inner = llm.Named(inner, "ollama")
-	return p, nil
+	p.inner = llm.Named(openai.NewProvider("ollama-no-auth", innerOpts...), "ollama")
+	return p
 }
 
 // Name returns the provider name.
@@ -68,21 +63,12 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 	return p.inner.Complete(ctx, req)
 }
 
-// WithBaseURL sets the Ollama API base URL. Empty string leaves the
-// default in place.
+// WithBaseURL sets the Ollama API base URL.
 func WithBaseURL(baseURL string) options.Option[Provider] {
-	return func(p *Provider) {
-		if baseURL != "" {
-			p.baseURL = baseURL
-		}
-	}
+	return func(p *Provider) { p.baseURL = baseURL }
 }
 
 // WithModel sets the default model for the provider.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }

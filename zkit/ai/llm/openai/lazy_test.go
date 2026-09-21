@@ -19,10 +19,8 @@ func TestCompleteIsLazyAndPreCanceledYieldsCauseOnce(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
+
 	cause := errors.New("caller stopped")
 	ctx, cancel := context.WithCancelCause(t.Context())
 	cancel(cause)
@@ -61,10 +59,8 @@ func TestCompleteStopsImmediatelyWhenYieldReturnsFalse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
+
 	calls := 0
 	provider.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}, Stream: true})(func(llm.CompletionChunk, error) bool {
 		calls++

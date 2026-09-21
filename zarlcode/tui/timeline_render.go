@@ -138,6 +138,9 @@ func (m *UI) drawTimeline(scr uv.Screen, r uv.Rectangle) {
 	keepEmoji := m.widthMethod == ansi.GraphemeWidth
 	contentW := transcriptContentWidth(innerW)
 	lines := m.timeline.renderViewport(contentW, innerH)
+	if m.graphics != nil && !m.overlay.active() {
+		m.timelineGraphics = m.timeline.timelineGraphics(uv.Rect(r.Min.X, r.Min.Y+2, contentW, innerH), len(lines))
+	}
 	for i, ln := range lines {
 		if !keepEmoji {
 			ln = stripWide(ln)
@@ -182,7 +185,7 @@ func (m *UI) transcriptHeaderSegments() (string, string, string) {
 	run := "○ idle"
 	runTone := palette.Muted
 	if m.session.Run.Running {
-		run = runActivityGlyph(m.frame, true) + " running"
+		run = runActivityGlyph(m.frame, true) + " " + m.session.Run.activityLabel()
 		runTone = palette.Success
 		if tps := m.session.Run.liveTokPerSec(); tps > 0 {
 			run += "  ·  " + itoa(int(tps+0.5)) + " tok/s"

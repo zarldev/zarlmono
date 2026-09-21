@@ -12,6 +12,13 @@ import (
 // Draw paints the pane rectangles onto scr. area is the clip region
 // (the full screen); per-pane geometry comes from m.layout.
 func (m *UI) Draw(scr uv.Screen, _ uv.Rectangle) {
+	m.timelineGraphics = ""
+	if m.overlay.active() {
+		if fv, ok := m.overlay.top().(*fileViewer); ok {
+			fv.nativeGraphics = m.graphics != nil
+			fv.imagePlacement = fileViewerImagePlacement{}
+		}
+	}
 	// A full-screen overlay (the settings surface) owns the entire frame —
 	// skip the panes + global status bar so there's one footer, not two.
 	if m.overlay.active() && m.overlay.coversScreen() {
@@ -29,6 +36,9 @@ func (m *UI) Draw(scr uv.Screen, _ uv.Rectangle) {
 	}
 	if m.startupFailure != nil {
 		m.startupFailure.draw(scr, uv.Rect(0, 0, m.width, m.height))
+		if m.overlay.active() {
+			m.overlay.draw(scr, uv.Rect(0, 0, m.width, m.height))
+		}
 		return
 	}
 	// The header rect is zero-height in the default layout; app/mode/model live

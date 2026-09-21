@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/zarldev/zarlmono/swebench-eval/internal/evaluator"
 )
@@ -36,20 +39,27 @@ type ScoreConfig struct {
 	// MaxWorkers caps the evaluator's per-task parallelism. 0 -> 4.
 	MaxWorkers int
 
-	// WorkDir is where temporary predictions files + evaluator logs
-	// land. Empty -> a fresh tempdir per Score call.
+	// WorkDir is the parent for a uniquely allocated scoring directory. Empty
+	// uses the system temp directory. Existing artifacts are never reused.
 	WorkDir string
 
-	// Cleanup, when true, removes WorkDir after the score completes.
+	// Cleanup removes only this invocation's allocated directory after scoring.
 	// Default false (keep for debugging).
 	Cleanup bool
+
+	// OnResultScored synchronously persists each final verdict before the next driver.
+	// A persistence error stops scoring and is returned to the caller.
+	OnResultScored func(TaskResult) error
+
+	// OnScoreAttempt synchronously captures invocation start and terminal records.
+	// A capture error stops scoring; rebuild retries retain their own attempt IDs.
+	OnScoreAttempt func(ScoreAttempt) error
 }
 
 // Score takes a Results set and runs the SWE-bench evaluator against
 // the diffs each driver produced. Updates each TaskResult in place
-// with the evaluator's "resolved" verdict. Returns nil only when the
-// evaluator ran cleanly — non-nil err means we never got verdicts
-// and the resolved fields should be treated as unknown.
+// with the evaluator's verdict. Earlier driver verdicts remain valid when a
+// later invocation fails; ScoreStatus and ScoreError describe that partial run.
 //
 // Behavior contract:
 //   - One predictions.json is generated per driver name. The evaluator
@@ -63,37 +73,53 @@ type ScoreConfig struct {
 //   - The evaluator's per-task output (run_id/<instance_id>/) is
 //     left on disk in cfg.WorkDir if Cleanup is false, so individual
 //     failures can be diffed against the gold patch by hand.
-func Score(ctx context.Context, r *Results, cfg ScoreConfig) error {
+func Score(ctx context.Context, r *Results, cfg ScoreConfig) (scoreErr error) {
 	if r == nil {
 		return errors.New("nil results")
 	}
+	r.ScoreStatus = ScoreStatuses.RUNNING
+	r.ScoreError = ""
+	defer func() {
+		if scoreErr == nil {
+			r.ScoreStatus = ScoreStatuses.COMPLETED
+			return
+		}
+		r.ScoreError = scoreErr.Error()
+		if ctx.Err() != nil {
+			r.ScoreStatus = ScoreStatuses.CANCELLED
+			scoreErr = errors.Join(ctx.Err(), scoreErr)
+		} else if r.ScoreStatus != ScoreStatuses.UNAVAILABLE {
+			r.ScoreStatus = ScoreStatuses.FAILED
+		}
+	}()
 	if cfg.DatasetName == "" {
 		cfg.DatasetName = "SWE-bench/SWE-bench_Multilingual"
 	}
 	if cfg.RunID == "" {
 		cfg.RunID = fmt.Sprintf("eval-%d", r.Started.Unix())
 	}
+	cfg.RunID = scorePathToken(cfg.RunID)
 	if cfg.Python == "" {
 		cfg.Python = "python3"
 	}
 	if cfg.MaxWorkers <= 0 {
 		cfg.MaxWorkers = 4
 	}
-	workDir := cfg.WorkDir
-	if workDir == "" {
-		var err error
-		workDir, err = os.MkdirTemp("", "swebench-score-*")
-		if err != nil {
-			return fmt.Errorf("mkdir tempdir: %w", err)
+	if cfg.WorkDir != "" {
+		if err := os.MkdirAll(cfg.WorkDir, 0o750); err != nil {
+			return fmt.Errorf("mkdir score parent: %w", err)
 		}
-		if cfg.Cleanup {
-			defer os.RemoveAll(workDir)
-		}
-	} else if err := os.MkdirAll(workDir, 0o750); err != nil {
-		return fmt.Errorf("mkdir workdir: %w", err)
+	}
+	workDir, err := os.MkdirTemp(cfg.WorkDir, "swebench-score-*")
+	if err != nil {
+		return fmt.Errorf("allocate score workspace: %w", err)
+	}
+	if cfg.Cleanup {
+		defer os.RemoveAll(workDir)
 	}
 
 	if err := evaluator.EnsureAvailable(ctx, cfg.Python); err != nil {
+		r.ScoreStatus = ScoreStatuses.UNAVAILABLE
 		return err
 	}
 
@@ -106,13 +132,16 @@ func Score(ctx context.Context, r *Results, cfg ScoreConfig) error {
 		}
 		byDriver[rec.DriverName] = append(byDriver[rec.DriverName], rec)
 	}
-	for driver, recs := range byDriver {
-		predsPath := filepath.Join(workDir, fmt.Sprintf("predictions-%s.json", driver))
-		if err := writePredictions(predsPath, driver, recs); err != nil {
+	var verdictErr error
+	for _, driver := range slices.Sorted(maps.Keys(byDriver)) {
+		recs := byDriver[driver]
+		modelToken := scorePathToken(driver)
+		predsPath := filepath.Join(workDir, fmt.Sprintf("predictions-%s.json", modelToken))
+		if err := writePredictions(predsPath, modelToken, recs); err != nil {
 			return fmt.Errorf("write predictions for %s: %w", driver, err)
 		}
-		verdicts, err := invokeEvaluator(ctx, cfg, driver, predsPath, workDir,
-			fmt.Sprintf("%s-%s", cfg.RunID, driver), false)
+		verdicts, err := invokeEvaluator(ctx, cfg, modelToken, predsPath, workDir,
+			fmt.Sprintf("%s-%s", cfg.RunID, modelToken), false)
 		if err != nil {
 			return fmt.Errorf("evaluator %s: %w", driver, err)
 		}
@@ -121,17 +150,35 @@ func Score(ctx context.Context, r *Results, cfg ScoreConfig) error {
 		// are retried once with a forced LOCAL image build. A genuine miss
 		// stays a miss; a false negative from a bad registry image flips to
 		// its real verdict.
+		var retryErr error
 		if retry := erroredRecs(recs, verdicts); len(retry) > 0 {
-			mergeRebuildRetry(ctx, cfg, driver, workDir, retry, verdicts)
+			retryErr = mergeRebuildRetry(ctx, cfg, modelToken, workDir, retry, verdicts)
 		}
 		for _, rec := range recs {
+			rec.Resolved = nil
 			if v, ok := verdicts[rec.InstanceID]; ok {
-				rec.Resolved = new(v.Resolved)
-				rec.EvaluatorError = v.Reason()
+				rec.EvaluatorError = ""
+				if errors.Is(v.Err, evaluator.ErrEvaluatorError) || errors.Is(v.Err, evaluator.ErrIncomplete) {
+					rec.EvaluatorError = v.Reason()
+					verdictErr = errors.Join(verdictErr, fmt.Errorf("score %s/%s: %w", driver, rec.InstanceID, v.Err))
+				} else {
+					rec.Resolved = new(v.Resolved)
+				}
+			} else {
+				rec.EvaluatorError = "evaluator omitted verdict"
+				verdictErr = errors.Join(verdictErr, fmt.Errorf("score %s/%s: evaluator omitted verdict", driver, rec.InstanceID))
+			}
+			if cfg.OnResultScored != nil {
+				if err := cfg.OnResultScored(*rec); err != nil {
+					return fmt.Errorf("persist score: %w", err)
+				}
 			}
 		}
+		if retryErr != nil {
+			return errors.Join(verdictErr, retryErr)
+		}
 	}
-	return nil
+	return errors.Join(verdictErr, ctx.Err())
 }
 
 // erroredRecs returns the records whose verdict is an un-gradeable
@@ -147,26 +194,26 @@ func erroredRecs(recs []*TaskResult, verdicts map[string]evaluator.Verdict) []*T
 }
 
 // mergeRebuildRetry re-scores retry on a forced local image build and
-// merges the fresh verdicts into verdicts in place. Best-effort: it logs
-// and returns on any failure, leaving the original evaluator-error
-// verdicts untouched rather than aborting the whole score.
-func mergeRebuildRetry(ctx context.Context, cfg ScoreConfig, driver, workDir string, retry []*TaskResult, verdicts map[string]evaluator.Verdict) {
+// merges fresh verdicts in place. Failures retain the original verdicts and
+// are returned so persistence failures cannot disappear behind a retry.
+func mergeRebuildRetry(ctx context.Context, cfg ScoreConfig, driver, workDir string, retry []*TaskResult, verdicts map[string]evaluator.Verdict) error {
 	slog.WarnContext(ctx, "scorer: retrying evaluator-error instances with forced local image rebuild",
 		"driver", driver, "count", len(retry))
 	predsPath := filepath.Join(workDir, fmt.Sprintf("predictions-%s-rebuild.json", driver))
 	if err := writePredictions(predsPath, driver, retry); err != nil {
 		slog.WarnContext(ctx, "scorer: rebuild-retry predictions write failed; keeping original verdicts",
 			"driver", driver, "err", err)
-		return
+		return err
 	}
 	fresh, err := invokeEvaluator(ctx, cfg, driver, predsPath, workDir,
 		fmt.Sprintf("%s-%s-rebuild", cfg.RunID, driver), true)
 	if err != nil {
 		slog.WarnContext(ctx, "scorer: rebuild-retry failed; keeping original verdicts",
 			"driver", driver, "err", err)
-		return
+		return err
 	}
 	maps.Copy(verdicts, fresh)
+	return nil
 }
 
 func writePredictions(path, driver string, recs []*TaskResult) error {
@@ -181,7 +228,7 @@ func writePredictions(path, driver string, recs []*TaskResult) error {
 	return evaluator.WritePredictions(path, preds)
 }
 
-func invokeEvaluator(ctx context.Context, cfg ScoreConfig, driver, predsPath, workDir, runID string, forceRebuild bool) (map[string]evaluator.Verdict, error) {
+func executeEvaluator(ctx context.Context, cfg ScoreConfig, driver, predsPath, workDir, runID string, forceRebuild bool) (map[string]evaluator.Verdict, error) {
 	args := []string{
 		"-m", "swebench.harness.run_evaluation",
 		"--dataset_name", cfg.DatasetName,
@@ -210,4 +257,23 @@ func invokeEvaluator(ctx context.Context, cfg ScoreConfig, driver, predsPath, wo
 	// the suffixed one we passed above.
 	summaryPath := filepath.Join(workDir, fmt.Sprintf("%s.%s.json", driver, runID))
 	return evaluator.ParseSummary(summaryPath)
+}
+
+// scorePathToken preserves canonical names and maps arbitrary external labels
+// to collision-resistant, filesystem/evaluator-safe tokens. Logical keys stay raw.
+func scorePathToken(value string) string {
+	if value != "" && !strings.HasPrefix(value, "id-") {
+		safe := true
+		for _, r := range value {
+			if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+				continue
+			}
+			safe = false
+			break
+		}
+		if safe {
+			return value
+		}
+	}
+	return fmt.Sprintf("id-%x", sha256.Sum256([]byte(value)))
 }

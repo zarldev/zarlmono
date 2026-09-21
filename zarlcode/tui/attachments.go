@@ -110,3 +110,18 @@ func transcriptAttachmentName(name string) string {
 	}
 	return name
 }
+
+// restoredAttachment labels persisted content without inventing an original
+// filename or filesystem metadata that was not recorded with the prompt part.
+func restoredAttachment(part llm.ContentPart) pendingAttachment {
+	metadata := attachmentMetadata{Name: "restored attachment"}
+	if part.Type == llm.ContentTypeText {
+		metadata.Name = "restored text"
+		metadata.Size = int64(len(part.Text))
+	}
+	if part.Image != nil {
+		metadata.Name = "restored image"
+		metadata.MIMEType = part.Image.MIMEType
+	}
+	return pendingAttachment{Part: part, Metadata: metadata}
+}

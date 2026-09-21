@@ -22,7 +22,7 @@ Compact, repo-wide context only. Module/package detail belongs in nested `AGENTS
 ```bash
 go tool task check   # build, vet, test CI-covered modules
 go tool task lint    # strict root golangci-lint configuration
-go tool task race    # zkit race suite
+go tool task race    # zkit, zarlcode engine/TUI, and evaluation race suites
 ```
 
 Root check/lint cover `examples`, `zkit`, `zarlcode`, and `swebench-eval`.
@@ -58,6 +58,8 @@ The parent agent owns planning, implementation, integration, and final reporting
 - Root `.golangci.yaml` is authoritative. Verify changes with `golangci-lint config verify`.
 - Use `zkit/options.Option[T]` for functional options. Avoid circular `zkit` dependencies; `zkit/options` is the universal exception.
 - Constructors return concrete types; define small interfaces in consuming packages.
+- Store map and slice elements as values when nil is not a valid domain state. Do not use pointer-valued collections or take element addresses merely to make mutation convenient. Keep synchronized state with its owner; read, modify, and write back value entries under that owner's lock.
+- Before implementing a design, inspect its concrete types and ownership against these rules. Verify map/slice element representations, cancellation, and wait paths before editing; a prose claim of style compliance is not verification.
 - Controlled construction is not an input boundary: composition roots create and pass known-valid dependencies and domain values; constructors assemble them directly and options assign directly.
 - Do not add nil checks, typed-nil reflection, option guards, input repair, or impossible error returns for dependencies/values whose creation and flow the repository controls. Such checks are a call-stack reasoning smell, not robustness.
 - Parse and validate only genuinely untrusted external representations (HTTP, config, storage, messages) at their entry boundary, convert them to semantic domain types, and pass those valid types inward.

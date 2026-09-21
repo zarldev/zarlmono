@@ -49,16 +49,23 @@ func BuildProvider(ctx context.Context, reg *backends.ProviderRegistry, svc *pre
 		if svc == nil {
 			return nil, fmt.Errorf("%s: credential service unavailable", spec.Name)
 		}
-		opts := []options.Option[openaicodex.Provider]{openaicodex.WithModel(spec.Model)}
+		var opts []options.Option[openaicodex.Provider]
+		if spec.Model != "" {
+			opts = append(opts, openaicodex.WithModel(spec.Model))
+		}
 		if spec.CodexEffort != "" {
 			opts = append(opts, openaicodex.WithDefaultReasoningEffort(spec.CodexEffort))
 		}
-		return openaicodex.NewProvider(codex.NewTokenSource(svc), opts...)
+		return openaicodex.NewProvider(codex.NewTokenSource(svc), opts...), nil
 	case backends.NameClaudeCode:
 		if svc == nil {
 			return nil, fmt.Errorf("%s: credential service unavailable", spec.Name)
 		}
-		return claudecode.NewProvider(claude.NewTokenSource(svc), claudecode.WithModel(spec.Model))
+		var opts []options.Option[claudecode.Provider]
+		if spec.Model != "" {
+			opts = append(opts, claudecode.WithModel(spec.Model))
+		}
+		return claudecode.NewProvider(claude.NewTokenSource(svc), opts...), nil
 	default:
 		if reg == nil {
 			return nil, errors.New("provider registry not initialised")

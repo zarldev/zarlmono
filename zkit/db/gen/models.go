@@ -132,6 +132,75 @@ type Session struct {
 	LabelManual        int64
 }
 
+type SessionBranch struct {
+	SessionID          string
+	SourceSessionID    string
+	SourceCheckpointID string
+	SourceRevision     int64
+	CheckpointChecksum string
+	Checksum           string
+	CreatedAtMs        int64
+}
+
+type SessionCheckpoint struct {
+	SessionID       string
+	CheckpointID    string
+	SourceSessionID string
+	Workspace       string
+	SourceRevision  int64
+	BoundaryID      string
+	FormatVersion   int64
+	Payload         []byte
+	Checksum        string
+	CreatedAtMs     int64
+	Pinned          int64
+}
+
+type SessionCheckpointHistory struct {
+	SessionID      string
+	CheckpointID   string
+	TranscriptHead string
+	ReplayHead     string
+	StateID        string
+}
+
+type SessionHistoryBatch struct {
+	SessionID string
+	BatchID   string
+	Checksum  string
+}
+
+type SessionHistoryHead struct {
+	SessionID string
+	Kind      string
+	Head      string
+}
+
+type SessionHistoryNode struct {
+	ID       string
+	ParentID string
+	ValueID  string
+}
+
+type SessionHistoryPin struct {
+	ID             string
+	TranscriptHead string
+	ReplayHead     string
+	StateID        string
+}
+
+type SessionHistoryValue struct {
+	ID      string
+	Payload []byte
+}
+
+type SessionModelContext struct {
+	SessionID   string
+	HistoryHead string
+	Generation  int64
+	RequestJson []byte
+}
+
 type SessionTranscript struct {
 	SessionID     string
 	Revision      int64
@@ -167,4 +236,27 @@ type ToolOutput struct {
 	ArgsJson   string
 	Output     string
 	CreatedAt  int64
+}
+
+type ToolOutputHistory struct {
+	ID                int64
+	SessionID         string
+	ToolCallID        string
+	ToolName          string
+	ExecutionID       string
+	ParentToolCallID  string
+	ArgsJson          string
+	ParametersJson    string
+	Output            string
+	PartsJson         string
+	EffectsJson       string
+	Success           int64
+	Error             string
+	Kind              string
+	CreatedAt         int64
+	ParentExecutionID string
+	TaskID            string
+	Attempt           int64
+	Sequence          int64
+	Dispatched        sql.NullInt64
 }

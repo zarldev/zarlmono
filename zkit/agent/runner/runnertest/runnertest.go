@@ -167,77 +167,77 @@ type Sink struct {
 func NewSink() *Sink { return &Sink{} }
 
 // OnContent appends e to the contents slice under the mutex.
-func (s *Sink) OnContent(e runner.Content) {
+func (s *Sink) OnContent(ctx context.Context, e runner.Content) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.contents = append(s.contents, e)
 }
 
 // OnToolStarted appends e to the starts slice under the mutex.
-func (s *Sink) OnToolStarted(e runner.ToolStarted) {
+func (s *Sink) OnToolStarted(ctx context.Context, e runner.ToolStarted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.starts = append(s.starts, e)
 }
 
 // OnWorkspaceWaitStarted appends e to the wait-start slice under the mutex.
-func (s *Sink) OnWorkspaceWaitStarted(e runner.WorkspaceWaitStarted) {
+func (s *Sink) OnWorkspaceWaitStarted(ctx context.Context, e runner.WorkspaceWaitStarted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.waitStarts = append(s.waitStarts, e)
 }
 
 // OnWorkspaceWaitEnded appends e to the wait-end slice under the mutex.
-func (s *Sink) OnWorkspaceWaitEnded(e runner.WorkspaceWaitEnded) {
+func (s *Sink) OnWorkspaceWaitEnded(ctx context.Context, e runner.WorkspaceWaitEnded) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.waitEnds = append(s.waitEnds, e)
 }
 
 // OnToolCompleted appends e to the completes slice under the mutex.
-func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
+func (s *Sink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.completes = append(s.completes, e)
 }
 
 // OnToolFailed appends e to the fails slice under the mutex.
-func (s *Sink) OnToolFailed(e runner.ToolFailed) {
+func (s *Sink) OnToolFailed(ctx context.Context, e runner.ToolFailed) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fails = append(s.fails, e)
 }
 
 // OnConversationStarted appends e to the convStart slice under the mutex.
-func (s *Sink) OnConversationStarted(e runner.ConversationStarted) {
+func (s *Sink) OnConversationStarted(ctx context.Context, e runner.ConversationStarted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.convStart = append(s.convStart, e)
 }
 
 // OnConversationEnded appends e to the convEnded slice under the mutex.
-func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
+func (s *Sink) OnConversationEnded(ctx context.Context, e runner.ConversationEnded) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.convEnded = append(s.convEnded, e)
 }
 
 // OnSteerInjected appends e to the steers slice under the mutex.
-func (s *Sink) OnSteerInjected(e runner.SteerInjected) {
+func (s *Sink) OnSteerInjected(ctx context.Context, e runner.SteerInjected) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.steers = append(s.steers, e)
 }
 
 // OnCompactionApplied appends e to the compacts slice under the mutex.
-func (s *Sink) OnCompactionApplied(e runner.CompactionApplied) {
+func (s *Sink) OnCompactionApplied(ctx context.Context, e runner.CompactionApplied) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.compacts = append(s.compacts, e)
 }
 
 // OnDiagnostic appends e to the diagnostics slice under the mutex.
-func (s *Sink) OnDiagnostic(e runner.Diagnostic) {
+func (s *Sink) OnDiagnostic(ctx context.Context, e runner.Diagnostic) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.diagnostics = append(s.diagnostics, e)

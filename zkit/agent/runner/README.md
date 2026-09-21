@@ -20,6 +20,21 @@ Optional plumbing: [`Steerer`] (queued user messages), [`ConversationLock`]
 (yield to a real-time conversation), [`Truncator`] (cap oversized tool
 results).
 
+## Default tool scheduling
+
+Consecutive tools declaring `WorkspaceAccess: READ`, with neither `Mutates` nor
+`AffectsWorkspace`, execute up to four at a time. Writes, shell commands,
+unclassified tools, and other non-read calls remain ordered barriers: earlier
+reads finish before the barrier starts, and later reads wait for it to finish.
+Results enter model history in the original call order. Cancellation stops
+queued execution and joins active calls before the runner returns.
+
+This default applies to zarlcode live turns, subagents, and evaluation runs.
+`WithToolConcurrency(1)` forces sequential execution. Explicit values above one
+retain the opt-in behavior of parallelizing all calls, with the caller owning
+their independence and workspace coordination. `WithToolConcurrency(0)` also
+forces sequential execution; omitting the option selects the automatic default.
+
 ## Quick start
 
 ```go

@@ -1,48 +1,72 @@
 package runner_test
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
-	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
+	"github.com/zarldev/zarlmono/zkit/agent/runner/runnertest"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-// TestRun_ToolTimeoutMarksAbandoned covers P2.2: when a tool blows its
-// per-tool time budget with its goroutine still running (blockingTool
-// ignores ctx), the ToolFailed event is marked Abandoned so a consumer
-// can distinguish it from an ordinary failure.
-func TestRun_ToolTimeoutMarksAbandoned(t *testing.T) {
-	t.Parallel()
-
-	provider := &fakeProvider{turns: [][]llm.CompletionChunk{
-		{chunkToolCall("c1", "slow", `{}`)}, // calls the blocking tool
-		{chunkText("done")},                 // completes after the timeout failure
-	}}
-	reg := newRegistry(blockingTool{name: "slow", started: make(chan struct{})})
-	sink := newRecordingSink()
-
-	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg),
-		runner.WithSink(sink),
-		runner.WithMaxIterations(3),
-		runner.WithToolTimeout(50*time.Millisecond),
-	)
-	if res := r.Run(t.Context(), runner.TaskSpec{
-		ID: taskscope.ID(uuid.NewString()), Prompt: "go",
-	}); res.Err != nil {
-		t.Fatalf("Run: %v", res.Err)
-	}
-
-	fails := sink.toolFailedEvents()
-	if len(fails) != 1 {
-		t.Fatalf("ToolFailed events = %d, want 1", len(fails))
-	}
-	if !fails[0].Abandoned {
-		t.Error("a tool abandoned past its time budget should be marked Abandoned")
-	}
+func TestRun_ToolTimeoutJoinsExecution(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		expired := make(chan struct{})
+		tool := tools.New(tools.ToolSpec{Name: "slow", Description: "late result"}, func(ctx context.Context, _ map[string]any) (string, error) {
+			<-ctx.Done()
+			close(expired)
+			<-release
+			return "CANARY-late-result", nil
+		})
+		client := runnertest.NewClient([][]llm.CompletionChunk{{runnertest.ChunkToolCall("slow-1", "slow", `{}`)}, {runnertest.ChunkText("done")}})
+		sink := newRecordingSink()
+		outputs := &recordingToolOutputSink{}
+		r := runner.New(client, runner.WithTools(tools.NewRegistry(tool)), runner.WithSink(sink), runner.WithToolOutputSink(outputs), runner.WithToolTimeout(time.Second))
+		done := make(chan runner.TaskResult, 1)
+		ctx := t.Context()
+		go func() { done <- r.Run(ctx, runner.TaskSpec{Prompt: "go"}) }()
+		<-expired
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("run returned before execution settled")
+		default:
+		}
+		close(release)
+		result := <-done
+		if result.Err != nil {
+			t.Fatal(result.Err)
+		}
+		failures := sink.toolFailedEvents()
+		if len(failures) != 1 || failures[0].Abandoned {
+			t.Fatalf("terminal events: %+v", failures)
+		}
+		if failures[0].Kind != tools.Kinds.TRANSIENT || !errors.Is(failures[0].Err, context.DeadlineExceeded) || failures[0].RawOutput != "CANARY-late-result" {
+			t.Fatalf("timeout classification/raw output: %+v", failures[0])
+		}
+		if len(outputs.records) != 1 || outputs.records[0].Output != "CANARY-late-result" {
+			t.Fatalf("late history: %+v", outputs.records)
+		}
+		history := outputs.records[0]
+		if history.Success || history.Kind != tools.Kinds.TRANSIENT || !strings.Contains(history.Error, "exceeded the per-tool time budget") {
+			t.Fatalf("late history terminal classification: %+v", history)
+		}
+		var message string
+		for _, m := range result.Messages {
+			if m.Role == llm.RoleTool {
+				message = m.Content
+			}
+		}
+		if !strings.Contains(message, "exceeded the per-tool time budget") {
+			t.Fatalf("model timeout: %q", message)
+		}
+	})
 }
 
 func (s *recordingSink) toolFailedEvents() []runner.ToolFailed {

@@ -64,6 +64,7 @@ export default defineConfig({
 					label: 'The agent loop',
 					items: [
 						{ label: 'Runner', slug: 'runner' },
+						{ label: 'Turn lifecycle', slug: 'turn-lifecycle' },
 						{ label: 'Verified completion', slug: 'pursue' },
 						{ label: 'Shared infrastructure', slug: 'shared-infra' },
 						{ label: 'Sub-agent tasks', slug: 'spawn' },

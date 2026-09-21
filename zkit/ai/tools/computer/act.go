@@ -63,7 +63,7 @@ type ActTool struct {
 // NewActTool returns the typed computer_act tool backed by actor.
 func NewActTool(actor model.Actor) *ActTool {
 	t := &ActTool{actor: actor}
-	t.tool = tools.NewTyped(actSpec(), t.executeTyped)
+	t.tool = tools.New(actSpec(), t.executeTyped)
 	return t
 }
 

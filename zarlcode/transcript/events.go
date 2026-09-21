@@ -44,6 +44,9 @@ type Clear struct{}
 
 // UserSubmitted appends a submitted user message.
 type UserSubmitted struct {
+	// EntryID binds a pre-dispatch checkpoint to this prompt. Empty allocates
+	// the usual generated identity; explicit identities must be unique.
+	EntryID     string
 	Text        string
 	Attachments []Attachment
 }
@@ -170,7 +173,21 @@ func (r *Reducer) Apply(event any) (Change, error) {
 		change.AfterRevision = r.builder.Thread().Revision()
 		return change, nil
 	case UserSubmitted:
+		if event.EntryID != "" {
+			for _, entry := range r.builder.thread.entries {
+				if entry.ID == event.EntryID {
+					return change, fmt.Errorf("%w: duplicate prompt identity", ErrInvalidEvent)
+				}
+			}
+		}
 		r.builder.AddUserWithAttachments(event.Text, event.Attachments)
+		if event.EntryID != "" {
+			r.builder.thread.entries[len(r.builder.thread.entries)-1].ID = event.EntryID
+			if number, ok := generatedEntryNumber(event.EntryID); ok && number > r.builder.nextID {
+				r.builder.nextID = number
+			}
+		}
+		change.PrimaryEntryID = r.builder.thread.entries[len(r.builder.thread.entries)-1].ID
 	case QueuedUserAdded:
 		change.PrimaryEntryID = r.builder.AddQueuedUser(event.Text)
 	case QueuedUserInjected:
@@ -212,6 +229,10 @@ func (r *Reducer) Apply(event any) (Change, error) {
 		r.builder.FinishSubagent(event.TurnID, event.Status)
 	case SubagentSpawnFailed:
 		r.builder.FailSubagentExecution(event.SpawnExecutionID, event.SpawnToolID, event.Detail)
+	case InputAdmitted:
+		r.builder.append(EntryKinds.ENTRYINPUTADMISSION, r.builder.SubagentEntryID(event.TurnID), event.TurnID, Payload{Text: event.Text, InputAdmission: event.Admission})
+	case InputWaitChanged:
+		r.builder.append(EntryKinds.ENTRYINPUTWAIT, r.builder.SubagentEntryID(event.TurnID), event.TurnID, Payload{Text: event.Text, InputWaiting: event.Waiting})
 	default:
 		return change, fmt.Errorf("%w: %T", ErrUnsupportedEvent, event)
 	}
@@ -233,7 +254,7 @@ func persistenceForEvent(event any) Persistence {
 	switch event.(type) {
 	case AssistantDelta, ReasoningDelta:
 		return Persistences.PERSISTENCEDEBOUNCED
-	case UserSubmitted, QueuedUserAdded, QueuedUserInjected, NoticeAdded,
+	case UserSubmitted, QueuedUserAdded, QueuedUserInjected, NoticeAdded, InputAdmitted, InputWaitChanged,
 		TurnStarted, TurnFinished, SkillLoaded, ToolStarted, ToolFinished,
 		DiffAdded, PlanUpdated, SubagentReserved, SubagentStarted,
 		SubagentFinished, SubagentSpawnFailed:
@@ -270,6 +291,10 @@ func validateEvent(event any) error {
 		if event.EntryID == "" || event.Text == "" {
 			return invalid("queued user identity or text is empty")
 		}
+	case InputAdmitted:
+		return event.validate()
+	case InputWaitChanged:
+		return event.validate()
 	case NoticeAdded:
 		if event.Text == "" {
 			return invalid("notice text is empty")

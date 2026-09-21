@@ -23,10 +23,8 @@ import (
 // so the same scenarios apply.
 func TestProvider_Conformance(t *testing.T) {
 	factory := func(t *testing.T, baseURL string) llm.Provider {
-		p, err := llamacpp.NewProvider(llamacpp.WithBaseURL(baseURL))
-		if err != nil {
-			t.Fatalf("NewProvider: %v", err)
-		}
+		p := llamacpp.NewProvider(llamacpp.WithBaseURL(baseURL))
+
 		return p
 	}
 

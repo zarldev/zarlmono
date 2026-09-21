@@ -37,6 +37,9 @@ type Provider struct {
 	model            string
 	apiKey           string
 	baseURL          string
+	httpClient       *http.Client
+	timeout          *time.Duration // nil preserves a supplied client's timeout; zero disables it
+	customBaseURL    bool
 	reasoningHistory llm.ReasoningHistory
 	// reasoningKeepMask is an optional per-message keep/drop mask
 	// applied in llm.ReasoningHistories.FIELD mode. A wrapping provider (e.g.
@@ -72,36 +75,39 @@ const (
 	modelGPT4oMini = "gpt-4o-mini"
 	typeFunction   = "function"
 	jsonKeyType    = "type"
+	defaultBaseURL = "https://api.openai.com/v1"
 )
 
-// NewProvider creates a new OpenAI provider with variadic options.
-func NewProvider(apiKey string, opts ...options.Option[Provider]) (*Provider, error) {
-	if apiKey == "" {
-		return nil, llm.ErrInvalidAPIKey
-	}
-
-	// Create OpenAI client with default options
-	clientOpts := []option.RequestOption{
-		option.WithAPIKey(apiKey),
-		option.WithHTTPClient(defaultHTTPClient()),
-	}
-
-	client := openai.NewClient(clientOpts...)
-
+// NewProvider assembles an OpenAI provider using an already-resolved API key.
+// Options are applied before constructing the SDK client; construction performs no I/O.
+func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 	provider := &Provider{
-		client:       client,
-		model:        modelGPT4oMini, // Default model
+		model:        modelGPT4oMini,
 		apiKey:       apiKey,
-		baseURL:      "https://api.openai.com/v1", // Default base URL
+		baseURL:      defaultBaseURL,
+		httpClient:   defaultHTTPClient(),
 		responsesAPI: true,
 	}
-
-	// Apply options
 	for _, opt := range opts {
 		opt(provider)
 	}
-
-	return provider, nil
+	if provider.customBaseURL && !provider.responsesAPIExplicit {
+		provider.responsesAPI = false
+	}
+	client := provider.httpClient
+	if provider.timeout != nil {
+		// Borrow the caller's transport without mutating its HTTP client.
+		owned := *client
+		owned.Timeout = *provider.timeout
+		client = &owned
+	}
+	provider.httpClient = client
+	provider.client = openai.NewClient(
+		option.WithAPIKey(apiKey),
+		option.WithBaseURL(provider.baseURL),
+		option.WithHTTPClient(client),
+	)
+	return provider
 }
 
 // Name returns the provider name.
@@ -930,23 +936,13 @@ func convertToolsToOpenAI(tools []llm.Tool) []openai.ChatCompletionToolUnionPara
 	return result
 }
 
-// WithBaseURL sets a custom base URL for the OpenAI API. A custom URL defaults
-// to Chat Completions unless [WithResponsesAPI] explicitly selects an endpoint.
+// WithBaseURL sets the OpenAI API base URL. A non-default URL selects Chat
+// Completions unless [WithResponsesAPI] explicitly selects an endpoint. Passing
+// the stock OpenAI URL preserves the default model-specific route.
 func WithBaseURL(baseURL string) options.Option[Provider] {
 	return func(p *Provider) {
-		if baseURL != "" {
-			p.baseURL = baseURL
-			if !p.responsesAPIExplicit {
-				p.responsesAPI = false
-			}
-			// Recreate the client with the new base URL and existing API key
-			clientOpts := []option.RequestOption{
-				option.WithAPIKey(p.apiKey),
-				option.WithBaseURL(baseURL),
-				option.WithHTTPClient(defaultHTTPClient()),
-			}
-			p.client = openai.NewClient(clientOpts...)
-		}
+		p.baseURL = baseURL
+		p.customBaseURL = baseURL != defaultBaseURL
 	}
 }
 
@@ -954,25 +950,11 @@ func WithBaseURL(baseURL string) options.Option[Provider] {
 // Streaming callers should usually leave this unset and rely on ctx
 // cancellation instead — http.Client.Timeout covers reading the
 // streaming body, so a value short enough to be useful for non-stream
-// calls will truncate long SSE generations mid-flight. When set, the
-// transport still uses [zhttp.DefaultTransport]'s connect / TLS /
-// response-header timeouts.
+// calls will truncate long SSE generations mid-flight. Non-positive values
+// disable the timeout. This overrides a supplied HTTP client's timeout without
+// mutating that client or replacing its transport, regardless of option order.
 func WithTimeout(timeout time.Duration) options.Option[Provider] {
-	return func(p *Provider) {
-		if timeout > 0 {
-			clientOpts := []option.RequestOption{
-				option.WithAPIKey(p.apiKey),
-				option.WithHTTPClient(&http.Client{
-					Transport: zhttp.DefaultTransport(),
-					Timeout:   timeout,
-				}),
-			}
-			if p.baseURL != "" {
-				clientOpts = append(clientOpts, option.WithBaseURL(p.baseURL))
-			}
-			p.client = openai.NewClient(clientOpts...)
-		}
-	}
+	return func(p *Provider) { p.timeout = &timeout }
 }
 
 // WithReasoningHistory sets how prior-turn assistant reasoning is
@@ -1002,18 +984,7 @@ func WithReasoningKeepMask(fn func([]llm.Message) []bool) options.Option[Provide
 
 // WithHTTPClient sets a custom HTTP client.
 func WithHTTPClient(client *http.Client) options.Option[Provider] {
-	return func(p *Provider) {
-		if client != nil {
-			clientOpts := []option.RequestOption{
-				option.WithAPIKey(p.apiKey),
-				option.WithHTTPClient(client),
-			}
-			if p.baseURL != "" {
-				clientOpts = append(clientOpts, option.WithBaseURL(p.baseURL))
-			}
-			p.client = openai.NewClient(clientOpts...)
-		}
-	}
+	return func(p *Provider) { p.httpClient = client }
 }
 
 // WithCachePrompt enables the non-standard `cache_prompt: true` top-level
@@ -1075,9 +1046,5 @@ func WithPromptCache(key, retention string) options.Option[Provider] {
 
 // WithModel sets the default model for the provider.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }

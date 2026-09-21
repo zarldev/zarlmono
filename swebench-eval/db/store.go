@@ -106,6 +106,11 @@ type RunRecord struct {
 	Drivers        string
 	TaskTimeoutMs  int64
 	Notes          string
+	// ScoreStatus is the recorded lifecycle label; empty on insertion means not_recorded.
+	ScoreStatus string
+	ScoreError  string
+	// ManifestJSON is the versioned input/build snapshot; empty means not recorded.
+	ManifestJSON string
 }
 
 // ResultRecord is one (task, driver) outcome within a run.
@@ -150,14 +155,17 @@ type ResultRecord struct {
 // InsertRun records the start of an eval invocation. Caller calls
 // FinishRun once the run completes.
 func (s *Store) InsertRun(ctx context.Context, r RunRecord) error {
+	if r.ScoreStatus == "" {
+		r.ScoreStatus = "not_recorded"
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO eval_runs (
 		  id, started_at, dataset_name, language_filter,
-		  sample_size, drivers, task_timeout_ms, notes
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		  sample_size, drivers, task_timeout_ms, notes, score_status, score_error, manifest_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		r.ID, r.StartedAt.Unix(), r.DatasetName, r.LanguageFilter,
-		r.SampleSize, r.Drivers, r.TaskTimeoutMs, r.Notes,
+		r.SampleSize, r.Drivers, r.TaskTimeoutMs, r.Notes, r.ScoreStatus, r.ScoreError, r.ManifestJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("insert run %q: %w", r.ID, err)
@@ -226,7 +234,7 @@ func (s *Store) BackfillResultProviderModel(ctx context.Context, runID, driverNa
 // UpdateResolved patches an existing result row with the scorer's
 // verdict. Called after Score completes.
 func (s *Store) UpdateResolved(ctx context.Context, runID, instanceID, driverName string, resolved *bool, evalErr string) error {
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE eval_results
 		SET resolved = ?, evaluator_error = ?
 		WHERE run_id = ? AND instance_id = ? AND driver_name = ?
@@ -236,6 +244,13 @@ func (s *Store) UpdateResolved(ctx context.Context, runID, instanceID, driverNam
 	)
 	if err != nil {
 		return fmt.Errorf("update resolved %q/%q/%q: %w", runID, instanceID, driverName, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count updated verdicts: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("update resolved %q/%q/%q: %w", runID, instanceID, driverName, sql.ErrNoRows)
 	}
 	return nil
 }
@@ -250,7 +265,7 @@ func (s *Store) ListRecentRuns(ctx context.Context, limit int) ([]RunRecord, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, started_at, ended_at, dataset_name, language_filter,
-		       sample_size, drivers, task_timeout_ms, notes
+		       sample_size, drivers, task_timeout_ms, notes, score_status, score_error, manifest_json
 		FROM eval_runs
 		ORDER BY started_at DESC
 		LIMIT ?
@@ -262,19 +277,9 @@ func (s *Store) ListRecentRuns(ctx context.Context, limit int) ([]RunRecord, err
 
 	var out []RunRecord
 	for rows.Next() {
-		var r RunRecord
-		var startedAt int64
-		var endedAt sql.NullInt64
-		if err := rows.Scan(
-			&r.ID, &startedAt, &endedAt, &r.DatasetName, &r.LanguageFilter,
-			&r.SampleSize, &r.Drivers, &r.TaskTimeoutMs, &r.Notes,
-		); err != nil {
+		r, err := scanRun(rows)
+		if err != nil {
 			return nil, err
-		}
-		r.StartedAt = time.Unix(startedAt, 0)
-		if endedAt.Valid {
-			t := time.Unix(endedAt.Int64, 0)
-			r.EndedAt = &t
 		}
 		out = append(out, r)
 	}
@@ -284,7 +289,11 @@ func (s *Store) ListRecentRuns(ctx context.Context, limit int) ([]RunRecord, err
 // ListResultsForRun returns every result row for one run, ordered by
 // instance_id for stable diffing against past runs.
 func (s *Store) ListResultsForRun(ctx context.Context, runID string) ([]ResultRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return listResultsForRun(ctx, s.db, runID)
+}
+
+func listResultsForRun(ctx context.Context, q queryer, runID string) ([]ResultRecord, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT run_id, instance_id, driver_name, language, worktree_path,
 		       diff, duration_ms, iterations, tool_calls,
 		       tokens_in, tokens_out, terminal_reason, error,

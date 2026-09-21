@@ -208,10 +208,8 @@ func TestLLMVerdictJudge_RejectsEmptySuccess(t *testing.T) {
 // reads cleanly.
 func newTestJudge(t *testing.T, baseURL string) *guardrails.LLMVerdictJudge {
 	t.Helper()
-	p, err := openai.NewProvider("test-key", openai.WithBaseURL(baseURL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	p := openai.NewProvider("test-key", openai.WithBaseURL(baseURL))
+
 	return guardrails.NewLLMVerdictJudge(p)
 }
 

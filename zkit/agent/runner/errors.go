@@ -78,4 +78,8 @@ var (
 	// ErrAmbiguousToolCalls means one provider response reused a tool-call ID
 	// without distinct output positions, so exact invocations cannot be bound.
 	ErrAmbiguousToolCalls = errors.New("runner: ambiguous tool calls")
+
+	// ErrToolHistory means a configured sink could not preserve a tool attempt.
+	// The runner settles owned executions and stops before another provider turn.
+	ErrToolHistory = errors.New("runner: tool history capture")
 )

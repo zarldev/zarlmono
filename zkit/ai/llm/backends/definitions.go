@@ -250,7 +250,7 @@ func init() {
 			if p.cachePrompt {
 				opts = append(opts, openai.WithCachePrompt(true))
 			}
-			return openai.NewProvider(p.apiKey, opts...)
+			return openai.NewProvider(p.apiKey, opts...), nil
 		},
 		noKeyOK: false,
 	})
@@ -268,7 +268,7 @@ func init() {
 			if p.model != "" {
 				opts = append(opts, deepseek.WithModel(p.model))
 			}
-			return deepseek.NewProvider(p.apiKey, opts...)
+			return deepseek.NewProvider(p.apiKey, opts...), nil
 		},
 		noKeyOK: false,
 	})
@@ -283,7 +283,7 @@ func init() {
 			if p.model != "" {
 				opts = append(opts, anthropic.WithModel(p.model))
 			}
-			return anthropic.NewProvider(p.apiKey, opts...)
+			return anthropic.NewProvider(p.apiKey, opts...), nil
 		},
 		noKeyOK: false,
 	})

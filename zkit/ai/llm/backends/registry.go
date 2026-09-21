@@ -41,8 +41,8 @@ func WithStore(store Store) options.Option[ProviderRegistry] {
 	return func(r *ProviderRegistry) { r.store = store }
 }
 
-// WithSettingsService wires the vault-backed key lookup. Without it
-// API keys resolve from environment variables alone.
+// WithSettingsService wires the caller-supplied provider-key credential lookup.
+// Without it, credentials must be supplied explicitly in BuildConfig.
 func WithSettingsService(svc SettingsService) options.Option[ProviderRegistry] {
 	return func(r *ProviderRegistry) { r.svc = svc }
 }
@@ -61,11 +61,10 @@ func WithModelsDevSource(s *modelsdev.Source) options.Option[ProviderRegistry] {
 	return func(r *ProviderRegistry) { r.modelsDevSource = s }
 }
 
-// NewRegistry creates a ProviderRegistry. The zero-option call is the
-// zero-dependency configuration — built-in provider definitions, API
-// keys from environment variables — which is what scripts, examples,
-// and tests want. Applications wire persistence and key storage on
-// top:
+// NewRegistry creates a ProviderRegistry. The zero-option call includes only
+// built-in provider definitions; it does not read ambient environment variables
+// or resolve credentials. Callers supply provider configuration through
+// BuildWithConfig and may wire persistence and credential lookup on top:
 //
 //	backends.NewRegistry(
 //		backends.WithStore(store),
@@ -179,8 +178,9 @@ func (r *ProviderRegistry) Parse(name string) (ProviderDefinition, error) {
 	return d, nil
 }
 
-// BuildConfig is the public override type for BuildWithConfig. Empty fields
-// fall back to the provider definition's defaults.
+// BuildConfig is the public override type for BuildWithConfig. Model and BaseURL
+// may fall back to provider-definition defaults; APIKey comes from this config or
+// the caller-supplied SettingsService, never the ambient environment.
 type BuildConfig struct {
 	Model   string
 	BaseURL string
@@ -228,6 +228,10 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 	// definition declares no key requirement.
 	if cfg.APIKey == "" && !def.RequiresKey() {
 		cfg.APIKey = "zarlcode-no-auth"
+	}
+
+	if cfg.APIKey == "" && def.RequiresKey() {
+		return nil, fmt.Errorf("provider %q: %w", def.Name, llm.ErrInvalidAPIKey)
 	}
 
 	at := adapterDiscriminator(def.AdapterType)

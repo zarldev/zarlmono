@@ -10,9 +10,13 @@
 package runner
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -53,9 +57,8 @@ type Config struct {
 	// + optional task.FilterByLanguage / task.Sample.
 	Specs []task.Spec
 
-	// WorktreeParent is the directory under which each task's
-	// worktree is materialized (parent/<instance_id>). Cleaned up
-	// after the run if KeepWorktrees is false.
+	// WorktreeParent holds uniquely allocated run and task/driver directories.
+	// Owned directories are removed after execution unless KeepWorktrees is set.
 	WorktreeParent string
 
 	// CloneCache is an optional cache directory used by
@@ -83,6 +86,10 @@ type Config struct {
 	// worker that produced the result; it should be quick and
 	// concurrency-safe (workers may be > 1).
 	OnTaskComplete func(TaskResult)
+
+	// Materialize optionally supplies a repository materializer. It must prepare
+	// the task entirely beneath parent; nil uses task.Materialize.
+	Materialize func(context.Context, task.Spec, string, string) (string, error)
 }
 
 // Run is the entry point. Materializes each spec into a worktree,
@@ -96,6 +103,27 @@ func Run(ctx context.Context, cfg Config) (Results, error) {
 		cfg.TaskConcurrency = 1
 	}
 	concurrency := cfg.TaskConcurrency
+	started := time.Now()
+	if cfg.WorktreeParent != "" {
+		if err := os.MkdirAll(cfg.WorktreeParent, 0o750); err != nil {
+			return Results{}, fmt.Errorf("create worktree parent: %w", err)
+		}
+	}
+	runDir, err := os.MkdirTemp(cfg.WorktreeParent, "eval-run-")
+	if err != nil {
+		return Results{}, fmt.Errorf("allocate run workspace: %w", err)
+	}
+	cfg.WorktreeParent, err = filepath.Abs(runDir)
+	if err != nil {
+		_ = os.RemoveAll(runDir)
+		return Results{}, fmt.Errorf("resolve run workspace: %w", err)
+	}
+	if !cfg.KeepWorktrees {
+		defer os.RemoveAll(runDir)
+	}
+	if cfg.Materialize == nil {
+		cfg.Materialize = task.Materialize
+	}
 
 	type slot struct {
 		spec   task.Spec
@@ -136,12 +164,18 @@ func Run(ctx context.Context, cfg Config) (Results, error) {
 	<-producerDone
 	close(resultsCh)
 
-	out := Results{Started: time.Now()}
+	out := Results{Started: started}
 	for r := range resultsCh {
 		out.Records = append(out.Records, r)
 	}
+	slices.SortStableFunc(out.Records, func(a, b TaskResult) int {
+		if order := cmp.Compare(a.InstanceID, b.InstanceID); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.DriverName, b.DriverName)
+	})
 	out.Ended = time.Now()
-	return out, nil
+	return out, ctx.Err()
 }
 
 // runOne materializes one worktree and runs one driver against it.
@@ -153,17 +187,18 @@ func runOne(ctx context.Context, cfg Config, spec task.Spec, drv harness.Driver)
 		Language:   spec.Language,
 	}
 
-	wt, err := task.Materialize(ctx, spec, cfg.WorktreeParent, cfg.CloneCache)
+	parent, err := os.MkdirTemp(cfg.WorktreeParent, "attempt-")
 	if err != nil {
-		out.Result = harness.Result{Err: fmt.Errorf("materialize: %w", err)}
+		out.Result = harness.Result{Err: fmt.Errorf("allocate task workspace: %w", err)}
 		return out
 	}
 	if !cfg.KeepWorktrees {
-		// Caller decides whether to keep; default is clean up after.
-		// Note: clean up happens AFTER the run records this row to the
-		// results slice, but BEFORE returning to the caller. The
-		// worktree path on TaskResult is informational only by then.
-		defer func() { _ = removeAll(wt) }()
+		defer os.RemoveAll(parent)
+	}
+	wt, err := cfg.Materialize(ctx, spec, parent, cfg.CloneCache)
+	if err != nil {
+		out.Result = harness.Result{Err: fmt.Errorf("materialize: %w", err)}
+		return out
 	}
 	out.WorktreePath = wt
 

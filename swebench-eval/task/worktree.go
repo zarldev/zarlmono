@@ -31,6 +31,9 @@ import (
 // Returns the worktree path on success. On failure, removes any
 // partially-created worktree so the next attempt starts clean.
 func Materialize(ctx context.Context, s Spec, parent, cacheDir string) (string, error) {
+	if !filepath.IsLocal(s.InstanceID) || filepath.Base(s.InstanceID) != s.InstanceID || s.InstanceID == "." {
+		return "", fmt.Errorf("invalid worktree instance ID %q", s.InstanceID)
+	}
 	wt := filepath.Join(parent, s.InstanceID)
 	repoURL := "https://github.com/" + s.Repo
 

@@ -1,11 +1,14 @@
 package teasink
 
 import (
+	"context"
 	"log/slog"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -18,6 +21,8 @@ import (
 // Sink implements [runner.EventSink] by translating each event to
 // the matching tea.Msg type and forwarding to the configured send
 // function.
+// Callback contexts are not retained in UI messages. Cancellation does not
+// suppress delivery, so buffered text and terminal events can still settle.
 //
 // The send function is held atomically so it can be swapped at
 // runtime (e.g. between testSend and program.Send). nil send
@@ -277,7 +282,7 @@ func (s *Sink) Overflows() int64 {
 // chunk in a window starts the timer; subsequent chunks just
 // append. The timer fires once, dispatches the merged ContentMsg,
 // and clears so the next burst arms a fresh window.
-func (s *Sink) OnContent(e runner.Content) {
+func (s *Sink) OnContent(ctx context.Context, e runner.Content) {
 	if e.Delta == "" {
 		return
 	}
@@ -299,7 +304,7 @@ func (s *Sink) OnContent(e runner.Content) {
 // thinking isn't coalesced — it's lower-volume and, for reasoning models,
 // arrives as a block before any visible content, so per-delta dispatch keeps
 // the reasoning pane live without a flush window.
-func (s *Sink) OnThinking(e runner.Thinking) {
+func (s *Sink) OnThinking(ctx context.Context, e runner.Thinking) {
 	if e.Delta == "" {
 		return
 	}
@@ -354,37 +359,29 @@ type barrierMsg struct{ ack chan struct{} }
 // own dispatch.
 func (s *Sink) flush() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
 	}
-	if len(s.pending) == 0 {
-		s.mu.Unlock()
-		return
-	}
-	// Snapshot under lock so concurrent OnContent calls can't see a
-	// half-drained map. Dispatch outside the lock — dispatch may
-	// block on the bubbletea send and we don't want it to hold the
-	// mutex for the duration.
-	keys := s.keyOrder
-	merged := s.pending
-	s.keyOrder = nil
-	s.pending = make(map[contentKey]string, len(merged))
-	s.mu.Unlock()
-
-	for _, k := range keys {
+	// Keep the flush serialized through enqueue. Otherwise a timer could
+	// detach pending content, unlock, and enqueue it after an event barrier
+	// that observed an empty buffer. The pump does not acquire this lock.
+	for _, k := range s.keyOrder {
 		s.dispatch(ContentMsg{
 			TaskID: k.TaskID,
 			Depth:  k.Depth,
-			Delta:  merged[k],
+			Delta:  s.pending[k],
 		})
 	}
+	s.keyOrder = nil
+	clear(s.pending)
 }
 
 // OnToolStarted flushes pending content first so "tool started"
 // never appears before the chunks that preceded it, then forwards
 // as ToolStartedMsg.
-func (s *Sink) OnToolStarted(e runner.ToolStarted) {
+func (s *Sink) OnToolStarted(ctx context.Context, e runner.ToolStarted) {
 	s.flush()
 	s.dispatch(ToolStartedMsg{
 		TaskID:            string(e.TaskID),
@@ -393,6 +390,7 @@ func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 		ToolID:            e.ToolID,
 		ToolName:          e.ToolName,
 		Parameters:        tools.CloneParameters(e.Parameters),
+		RawArguments:      e.RawArguments,
 		ParentToolID:      e.ParentToolID,
 		ParentExecutionID: e.ParentExecutionID,
 		Sequence:          e.Sequence,
@@ -400,7 +398,7 @@ func (s *Sink) OnToolStarted(e runner.ToolStarted) {
 }
 
 // OnWorkspaceWaitStarted flushes pending content, then forwards the workspace wait event.
-func (s *Sink) OnWorkspaceWaitStarted(e runner.WorkspaceWaitStarted) {
+func (s *Sink) OnWorkspaceWaitStarted(ctx context.Context, e runner.WorkspaceWaitStarted) {
 	s.flush()
 	s.dispatch(WorkspaceWaitStartedMsg{
 		TaskID: string(e.TaskID), Depth: e.Depth, ExecutionID: e.ExecutionID, ToolID: e.ToolID, ToolName: e.ToolName,
@@ -410,7 +408,7 @@ func (s *Sink) OnWorkspaceWaitStarted(e runner.WorkspaceWaitStarted) {
 }
 
 // OnToolCompleted forwards as ToolCompletedMsg.
-func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
+func (s *Sink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
 	s.flush()
 	s.dispatch(ToolCompletedMsg{
 		TaskID:            string(e.TaskID),
@@ -420,6 +418,7 @@ func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 		ToolName:          e.ToolName,
 		Result:            e.Result,
 		FormattedResult:   e.FormattedResult,
+		Parts:             llm.CloneContentParts(e.Parts),
 		Effects:           cloneEffects(e.Effects),
 		Duration:          e.Duration,
 		ParentToolID:      e.ParentToolID,
@@ -429,7 +428,7 @@ func (s *Sink) OnToolCompleted(e runner.ToolCompleted) {
 }
 
 // OnToolFailed forwards as ToolFailedMsg.
-func (s *Sink) OnToolFailed(e runner.ToolFailed) {
+func (s *Sink) OnToolFailed(ctx context.Context, e runner.ToolFailed) {
 	s.flush()
 	s.dispatch(ToolFailedMsg{
 		TaskID:            string(e.TaskID),
@@ -438,6 +437,8 @@ func (s *Sink) OnToolFailed(e runner.ToolFailed) {
 		ToolID:            e.ToolID,
 		ToolName:          e.ToolName,
 		Error:             e.Error,
+		RawOutput:         e.RawOutput,
+		Parts:             llm.CloneContentParts(e.Parts),
 		Kind:              e.Kind, // flat classification only; e.Err is not forwarded to the UI
 		Abandoned:         e.Abandoned,
 		ParentToolID:      e.ParentToolID,
@@ -449,7 +450,7 @@ func (s *Sink) OnToolFailed(e runner.ToolFailed) {
 }
 
 // OnWorkspaceWaitEnded flushes pending content, then forwards the workspace wait event.
-func (s *Sink) OnWorkspaceWaitEnded(e runner.WorkspaceWaitEnded) {
+func (s *Sink) OnWorkspaceWaitEnded(ctx context.Context, e runner.WorkspaceWaitEnded) {
 	s.flush()
 	s.dispatch(WorkspaceWaitEndedMsg{
 		TaskID: string(e.TaskID), Depth: e.Depth, ExecutionID: e.ExecutionID, ToolID: e.ToolID, ToolName: e.ToolName,
@@ -459,7 +460,7 @@ func (s *Sink) OnWorkspaceWaitEnded(e runner.WorkspaceWaitEnded) {
 }
 
 // OnConversationStarted forwards as ConversationStartedMsg.
-func (s *Sink) OnConversationStarted(e runner.ConversationStarted) {
+func (s *Sink) OnConversationStarted(ctx context.Context, e runner.ConversationStarted) {
 	s.flush()
 	s.dispatch(ConversationStartedMsg{
 		TaskID:            string(e.TaskID),
@@ -474,7 +475,7 @@ func (s *Sink) OnConversationStarted(e runner.ConversationStarted) {
 }
 
 // OnConversationEnded forwards as ConversationEndedMsg.
-func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
+func (s *Sink) OnConversationEnded(ctx context.Context, e runner.ConversationEnded) {
 	s.flush()
 	s.dispatch(ConversationEndedMsg{
 		TaskID:            string(e.TaskID),
@@ -495,7 +496,7 @@ func (s *Sink) OnConversationEnded(e runner.ConversationEnded) {
 // per iteration within a Run after content streaming and tool
 // dispatch settle. flush() drains any coalesced content so the
 // iteration boundary lands after every chunk that belongs to it.
-func (s *Sink) OnIterationCompleted(e runner.IterationCompleted) {
+func (s *Sink) OnIterationCompleted(ctx context.Context, e runner.IterationCompleted) {
 	s.flush()
 	s.dispatch(IterationCompletedMsg{
 		TaskID:      string(e.TaskID),
@@ -509,7 +510,7 @@ func (s *Sink) OnIterationCompleted(e runner.IterationCompleted) {
 }
 
 // OnSteerInjected forwards as SteerInjectedMsg.
-func (s *Sink) OnSteerInjected(e runner.SteerInjected) {
+func (s *Sink) OnSteerInjected(ctx context.Context, e runner.SteerInjected) {
 	s.flush()
 	s.dispatch(SteerInjectedMsg{
 		TaskID:   string(e.TaskID),
@@ -519,7 +520,7 @@ func (s *Sink) OnSteerInjected(e runner.SteerInjected) {
 }
 
 // OnCompactionApplied forwards as CompactionAppliedMsg.
-func (s *Sink) OnCompactionApplied(e runner.CompactionApplied) {
+func (s *Sink) OnCompactionApplied(ctx context.Context, e runner.CompactionApplied) {
 	s.flush()
 	s.dispatch(CompactionAppliedMsg{
 		TaskID:         string(e.TaskID),
@@ -566,7 +567,7 @@ func cloneMessages(messages []llm.Message) []llm.Message {
 }
 
 // OnDiagnostic intentionally keeps recovery diagnostics out of the transcript.
-func (s *Sink) OnDiagnostic(runner.Diagnostic) {}
+func (s *Sink) OnDiagnostic(context.Context, runner.Diagnostic) {}
 
 // PlanUpdated forwards a structured plan update from the update_plan tool's
 // PlanStore. Not a runner event — the tool calls it directly — but it flushes
@@ -585,4 +586,10 @@ func (s *Sink) PromptDiagnostics(diags []string) {
 	}
 	s.flush()
 	s.dispatch(PromptDiagnosticsMsg{Diagnostics: append([]string(nil), diags...)})
+}
+
+// ModeChanged delivers an already-applied workflow transition in event order.
+func (s *Sink) ModeChanged(change engine.ModeChanged) {
+	s.flush()
+	s.dispatch(ModeChangedMsg(change))
 }

@@ -22,14 +22,12 @@ func collectChunks(t *testing.T, payload string) ([]llm.CompletionChunk, error) 
 		_, _ = io.WriteString(w, payload)
 	}))
 	t.Cleanup(srv.Close)
-	provider, err := openaicodex.NewProvider(
+	provider := openaicodex.NewProvider(
 		openaicodex.StaticTokenSource{T: openaicodex.Token{Access: "access", AccountID: "account", Expires: time.Now().Add(time.Hour)}},
 		openaicodex.WithBaseURL(srv.URL),
 		openaicodex.WithNoRetry(),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+
 	var out []llm.CompletionChunk
 	var yieldedErr error
 	for chunk, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{
@@ -214,7 +212,7 @@ func TestParseSSEStream_CapturesEncryptedReasoningCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	last := chunks[len(chunks)-1]
+	last := chunks[0]
 	if len(last.CompletedItems) != 1 {
 		t.Fatalf("completed items = %#v, want one", last.CompletedItems)
 	}
@@ -227,7 +225,7 @@ func TestParseSSEStream_CapturesEncryptedReasoningCompletion(t *testing.T) {
 	}
 }
 
-func TestParseSSEStream_OrdersCompletedReasoningItemsByOutputIndex(t *testing.T) {
+func TestParseSSEStream_PreservesCompletedItemIndexesAtEmission(t *testing.T) {
 	t.Parallel()
 	stream := strings.Join([]string{
 		`data: {"type":"response.output_item.done","output_index":3,"item":{"type":"reasoning","id":"rs_3","encrypted_content":"three"}}`,
@@ -241,9 +239,12 @@ func TestParseSSEStream_OrdersCompletedReasoningItemsByOutputIndex(t *testing.T)
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	items := chunks[len(chunks)-1].CompletedItems
-	if len(items) != 2 || items[0].ID != "rs_0" || items[1].ID != "rs_3" {
-		t.Fatalf("completed items = %#v, want output-index order", items)
+	var items []llm.ContinuationItem
+	for _, chunk := range chunks {
+		items = append(items, chunk.CompletedItems...)
+	}
+	if len(items) != 2 || items[0].ID != "rs_3" || items[1].ID != "rs_0" || *items[0].OutputIndex != 3 || *items[1].OutputIndex != 0 {
+		t.Fatalf("completed items = %#v, want completion order with original output indexes", items)
 	}
 }
 

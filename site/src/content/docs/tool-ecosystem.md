@@ -1,6 +1,6 @@
 ---
 title: Tool ecosystem
-description: Beyond the workspace code tools — the typed builder every tool is made with, runtime tool authoring, web fetch, and web search.
+description: Typed in-process tools, standalone tool binaries, runtime tool authoring, web fetch, and web search.
 ---
 
 The [code tools](/zarlmono/code-tools/) are the workspace-scoped core,
@@ -9,32 +9,60 @@ the rest of what an agent reaches for: building tools (at author time
 *and* at runtime), connecting to other tool servers, and reaching the
 web.
 
-## toolkit — the typed builder
+## New — in-process tools
 
-Start here, because almost everything else is built on it.
-`zkit/ai/tools/toolkit` turns a typed Go function into a `tools.Tool`,
-so you never hand-write a JSON Schema:
+Use `tools.New` for tools registered directly with a runner. Define argument
+and result types, and generate the input schema with `tools.SchemaFor`:
 
 ```go
-type Args struct {
-	Path string `json:"path" doc:"file to read, workspace-relative"`
-	Max  int    `json:"max,omitempty" doc:"max lines to return"`
+type UpperArgs struct {
+	Text string `json:"text" doc:"Text to convert to uppercase"`
 }
 
-tool := toolkit.Tool[Args, string]{
-	Name:        "head",
-	Description: "Read the first lines of a file.",
-	Func:        func(ctx context.Context, a Args) (string, error) { /* … */ },
+type UpperResult struct {
+	Text string `json:"text"`
+}
+
+tool := tools.New(tools.ToolSpec{
+	Name:        "upper",
+	Description: "Convert text to uppercase.",
+	Parameters:  tools.SchemaFor[UpperArgs](),
+}, func(_ context.Context, args UpperArgs) (UpperResult, error) {
+	return UpperResult{Text: strings.ToUpper(args.Text)}, nil
+})
+reg := tools.NewRegistry(tool)
+```
+
+`SchemaFor[Args]` reflects the struct into a schema: `json` tags name fields,
+`doc:` / `description:` annotate them, `enum:"a,b,c"` constrains them, and
+pointer or `omitempty` fields become optional. `New` decodes arguments
+through the JSON repairer and packages the handler's typed result or error.
+Validate domain rules in the handler; use a schema guardrail to enforce the
+schema before dispatch.
+
+## toolkit — the typed builder
+
+`zkit/ai/tools/toolkit` is for **standalone tool binaries**, not in-process
+`tools.Tool` values. Its `Tool[Args, Result]` implements the binary handler
+contract, and `toolkit.Run` handles `--describe` and `--call`:
+
+```go
+func main() {
+	toolkit.Run(toolkit.Tool[UpperArgs, UpperResult]{
+		Name:        "upper",
+		Description: "Convert text to uppercase.",
+		Func: func(_ context.Context, args UpperArgs) (UpperResult, error) {
+			return UpperResult{Text: strings.ToUpper(args.Text)}, nil
+		},
+	})
 }
 ```
 
-`SchemaFor[Args]` reflects the struct into the schema — `json` tags
-name fields, `doc:` / `description:` annotate them, `enum:"a,b,c"`
-constrains them, and pointer or `omitempty` fields become optional.
-Decoding is repair-aware, tolerating the trailing commas and stray
-newlines small models emit. When a schema needs `oneOf` / `$ref` and
-reflection can't express it, implement the two-method `Handler`
-interface by hand — same dispatch, full control.
+This binary uses the same argument and result structs as above. Unlike
+`New`, its call decoder uses strict JSON decoding. For a custom binary
+schema, implement toolkit's `Handler` (`Describe` and `Call`) directly and
+pass it to `toolkit.RunHandler(handler)` in `main`. `toolkit.Run` only accepts
+a typed `toolkit.Tool[Args, Result]`.
 
 ## dynamic — tools the agent writes for itself
 

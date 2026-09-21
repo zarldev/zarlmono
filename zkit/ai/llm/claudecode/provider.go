@@ -78,10 +78,7 @@ type Provider struct {
 // it supplies the OAuth token the CLI subprocess authenticates with. The
 // defaults (model "sonnet", binary "claude" from PATH, 10-minute timeout)
 // are overridable via WithModel / WithBinaryPath / WithTimeout.
-func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) (*Provider, error) {
-	if tokens == nil {
-		return nil, errors.New("claudecode: TokenSource is required")
-	}
+func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) *Provider {
 	p := &Provider{
 		tokens:     tokens,
 		model:      defaultModel,
@@ -91,37 +88,23 @@ func NewProvider(tokens TokenSource, opts ...options.Option[Provider]) (*Provide
 	for _, opt := range opts {
 		opt(p)
 	}
-	return p, nil
+	return p
 }
 
-// WithModel selects the model alias or full model id passed to the CLI's
-// --model flag. Empty keeps the default ("sonnet").
+// WithModel selects the model alias or full model id passed to the CLI's --model flag.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }
 
-// WithBinaryPath overrides where the claude binary is found. Empty keeps
-// the default PATH lookup of "claude".
+// WithBinaryPath overrides where the claude binary is found.
 func WithBinaryPath(path string) options.Option[Provider] {
-	return func(p *Provider) {
-		if path != "" {
-			p.binaryPath = path
-		}
-	}
+	return func(p *Provider) { p.binaryPath = path }
 }
 
-// WithTimeout bounds a single completion subprocess run. Non-positive
-// values keep the 10-minute default.
+// WithTimeout bounds a single completion subprocess run. Non-positive values
+// disable the bound; the supplied completion context still controls cancellation.
 func WithTimeout(timeout time.Duration) options.Option[Provider] {
-	return func(p *Provider) {
-		if timeout > 0 {
-			p.timeout = timeout
-		}
-	}
+	return func(p *Provider) { p.timeout = timeout }
 }
 
 // Name returns the registered provider id — the "claude-code" wire

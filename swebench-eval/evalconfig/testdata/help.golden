@@ -15,6 +15,8 @@ Usage of eval:
     \tcomma-separated list of drivers to run (zarlcode) (default "zarlcode")
   -env string
     \tpath to .env loaded before provider construction (carries per-backend URL/key knobs)
+  -export-run string
+    \texport an existing run as JSON to stdout without executing tasks (use --db to select the database)
   -keep-worktrees
     \tleave worktrees on disk after the run for post-hoc inspection
   -languages string
@@ -46,7 +48,7 @@ Usage of eval:
   -tasks string
     \tpath to SWE-bench JSONL or Parquet task file (required)
   -tool-concurrency int
-    \tcap concurrent tool dispatch per iteration (0 = sequential)
+    \ttool scheduling (0 = up to 4 parallel workspace reads, 1 = sequential, >1 = parallelize all calls)
   -version
     \tprint the build version and exit
   -worktree-dir string

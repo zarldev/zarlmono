@@ -32,6 +32,7 @@ func execute[Out any, Args any](ctx context.Context, reg *tools.Registry, name t
 	return out, nil
 }
 
+// toToolParameters converts typed caller arguments to the generic dispatch map.
 func toToolParameters(args any) (tools.ToolParameters, error) {
 	by, err := json.Marshal(args)
 	if err != nil {

@@ -91,6 +91,8 @@ func run(ctx context.Context, stdin io.Reader, stdout io.Writer, decision string
 func runToReview(ctx context.Context, store checkpoint.Store) (reviewBoundary, error) {
 	graph := workflow.NewGraph()
 	if err := workflow.AddNode(graph, "prepare", workflow.NodeFunc[deployment, reviewBoundary](func(ctx context.Context, deploy deployment) (reviewBoundary, error) {
+		// Checkpoint.State and HITL Payload/Patch are map-shaped storage contracts.
+		// Keep that representation here; workflow nodes use deployment structs.
 		cp := checkpoint.Checkpoint{
 			ID: checkpointID, RunID: runID, Step: "before-production-deploy", CreatedAt: exampleTime,
 			State: map[string]any{"service": deploy.Service, "target": deploy.Target},

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -28,16 +29,16 @@ var StderrSink = ToolProgressSink{W: os.Stderr}
 var StdoutSink = ToolProgressSink{W: os.Stdout}
 
 // OnToolStarted writes "→ <tool name>" to W.
-func (s ToolProgressSink) OnToolStarted(e ToolStarted) {
+func (s ToolProgressSink) OnToolStarted(ctx context.Context, e ToolStarted) {
 	fmt.Fprintf(s.W, "  → %s\n", e.ToolName)
 }
 
 // OnToolCompleted writes "✓ <tool name>" to W.
-func (s ToolProgressSink) OnToolCompleted(e ToolCompleted) {
+func (s ToolProgressSink) OnToolCompleted(ctx context.Context, e ToolCompleted) {
 	fmt.Fprintf(s.W, "  ✓ %s\n", e.ToolName)
 }
 
 // OnToolFailed writes "✗ <tool name>: <error>" to W.
-func (s ToolProgressSink) OnToolFailed(e ToolFailed) {
+func (s ToolProgressSink) OnToolFailed(ctx context.Context, e ToolFailed) {
 	fmt.Fprintf(s.W, "  ✗ %s: %s\n", e.ToolName, e.Error)
 }

@@ -57,9 +57,9 @@ func TestDecodeArgs_TypeMismatchReturnsValidationError(t *testing.T) {
 	}
 }
 
-func TestNewTyped_DecodesArgsAndReturnsTypedResult(t *testing.T) {
+func TestNew_DecodesArgsAndReturnsTypedResult(t *testing.T) {
 	t.Parallel()
-	tool := tools.NewTyped(tools.ToolSpec{
+	tool := tools.New(tools.ToolSpec{
 		Name:        "fake",
 		Description: "fake typed tool",
 		Parameters:  tools.SchemaFor[fakeArgs](),
@@ -93,9 +93,9 @@ func TestNewTyped_DecodesArgsAndReturnsTypedResult(t *testing.T) {
 	}
 }
 
-func TestNewTyped_DecodeFailureReturnsToolFailure(t *testing.T) {
+func TestNew_DecodeFailureReturnsToolFailure(t *testing.T) {
 	t.Parallel()
-	tool := tools.NewTyped(tools.ToolSpec{Name: "fake"}, func(_ context.Context, _ fakeArgs) (fakeResult, error) {
+	tool := tools.New(tools.ToolSpec{Name: "fake"}, func(_ context.Context, _ fakeArgs) (fakeResult, error) {
 		t.Fatal("handler should not run")
 		return fakeResult{}, nil
 	})
@@ -115,9 +115,9 @@ func TestNewTyped_DecodeFailureReturnsToolFailure(t *testing.T) {
 	}
 }
 
-func TestNewTyped_AttachesDerivedEffects(t *testing.T) {
+func TestNew_AttachesDerivedEffects(t *testing.T) {
 	t.Parallel()
-	tool := tools.NewTyped(
+	tool := tools.New(
 		tools.ToolSpec{Name: "fake"},
 		func(_ context.Context, args fakeArgs) (fakeResult, error) {
 			return fakeResult{Message: args.Path}, nil

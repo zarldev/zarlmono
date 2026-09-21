@@ -206,7 +206,7 @@ func (s *Store) InsertHeadlessVerifierResult(ctx context.Context, r HeadlessVeri
 // ListHeadlessVerifierResults returns structured oracle results for one
 // headless run in attempt order.
 func (s *Store) ListHeadlessVerifierResults(ctx context.Context, runID string) ([]HeadlessVerifierResultRecord, error) {
-	rows, err := s.q.ListHeadlessVerifierResults(ctx, runID)
+	rows, err := s.read.ListHeadlessVerifierResults(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list headless verifier results for %q: %w", runID, err)
 	}
@@ -220,7 +220,7 @@ func (s *Store) ListHeadlessVerifierResults(ctx context.Context, runID string) (
 // ListHeadlessAttempts returns all attempt trace rows for one headless run in
 // attempt order.
 func (s *Store) ListHeadlessAttempts(ctx context.Context, runID string) ([]HeadlessAttemptRecord, error) {
-	rows, err := s.q.ListHeadlessAttempts(ctx, runID)
+	rows, err := s.read.ListHeadlessAttempts(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list headless attempts for %q: %w", runID, err)
 	}
@@ -277,7 +277,7 @@ func (s *Store) CompleteHeadlessRun(ctx context.Context, id string, summary Head
 // GetHeadlessRun fetches one run by id. Returns ErrNotFound when no
 // row exists.
 func (s *Store) GetHeadlessRun(ctx context.Context, id string) (HeadlessRunRecord, error) {
-	row, err := s.q.GetHeadlessRun(ctx, id)
+	row, err := s.read.GetHeadlessRun(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return HeadlessRunRecord{}, ErrNotFound
@@ -298,7 +298,7 @@ func (s *Store) ListHeadlessRunsByWorkspace(
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.q.ListHeadlessRunsByWorkspace(ctx, gen.ListHeadlessRunsByWorkspaceParams{
+	rows, err := s.read.ListHeadlessRunsByWorkspace(ctx, gen.ListHeadlessRunsByWorkspaceParams{
 		Workspace: workspace,
 		Limit:     int64(limit),
 	})

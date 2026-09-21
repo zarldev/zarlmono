@@ -114,10 +114,26 @@ the zero state from the initial insert.
 content deltas, tool start/finish, compaction, steering. See
 [Observing a run](#observing-a-run) below.
 
+## Default tool scheduling
+
+The runner executes up to four consecutive workspace reads concurrently. This
+includes the built-in file reads, directory listings, grep, and glob tools.
+Writes, shell commands, and tools without read-only workspace metadata act as
+ordered barriers: earlier calls finish before they start, and later calls wait
+until they finish. Results retain the model's original call order.
+
+This default is shared by live turns, subagents, and evaluations. Set
+`runner.WithToolConcurrency(1)` to force sequential execution. Explicit values
+above one allow all tool calls to overlap, so the caller must ensure their
+independence and coordinate workspace access. For the evaluation CLI,
+`--tool-concurrency 0` selects the automatic default and `1` forces sequential
+execution. At the runner API level, omitting the option selects the default;
+explicit `WithToolConcurrency(0)` retains sequential execution.
+
 ## Observing a run
 
 `WithSink` is how you watch a run happen — render a TUI, log
-telemetry, drive a progress bar. `EventSink` is six small sub-sinks
+telemetry, drive a progress bar. `EventSink` is eight small sub-sinks
 composed together:
 
 | Sub-sink | Fires on |
@@ -125,11 +141,24 @@ composed together:
 | `ContentSink` | each streamed assistant-text delta |
 | `ThinkingSink` | each streamed reasoning delta |
 | `ToolSink` | tool started / completed / failed |
-| `ConversationSink` | run started / ended, and each iteration |
+| `WorkspaceWaitSink` | workspace wait started / ended |
+| `ConversationSink` | run started / ended, each iteration, and provider attempt settlement |
 | `SteerSink` | queued user messages injected mid-run |
 | `CompactionSink` | history compaction applied |
+| `DiagnosticSink` | recoverable operational decisions |
 
-You rarely want all ten methods. **Embed `runner.NopSink` and
+Every callback takes `context.Context` first, followed by its typed event. The
+context preserves the publishing operation's values, deadline, and cancellation,
+so observers can correlate events with tracing spans. Wrappers forward it unchanged.
+Terminal events still arrive after cancellation; classify outcomes from the event,
+since successful cleanup can also cancel an operation's context. Extract needed
+correlation metadata during the callback rather than storing contexts in queued
+messages. This contract is shared by `tools.WorkspaceWaitObserver`.
+
+Existing custom sinks must update their method signatures to accept context;
+direct callers must pass the operation context as the first argument.
+
+You rarely want every method. **Embed `runner.NopSink` and
 override only the events you care about** — it satisfies the whole
 interface with no-ops, so this is a complete, valid sink:
 
@@ -137,10 +166,10 @@ interface with no-ops, so this is a complete, valid sink:
 // Print a line whenever a tool runs; ignore everything else.
 type toolLogger struct{ runner.NopSink }
 
-func (toolLogger) OnToolStarted(e runner.ToolStarted) {
+func (toolLogger) OnToolStarted(_ context.Context, e runner.ToolStarted) {
 	fmt.Printf("→ %s %v\n", e.ToolName, e.Parameters)
 }
-func (toolLogger) OnToolCompleted(e runner.ToolCompleted) {
+func (toolLogger) OnToolCompleted(_ context.Context, e runner.ToolCompleted) {
 	fmt.Printf("✓ %s\n", e.FormattedResult)
 }
 
@@ -162,8 +191,8 @@ ignore the future opt out by embedding `NopSink`, and say so by doing
 it.
 
 :::caution
-Sink methods must be safe for concurrent calls — `WithToolConcurrency(N>1)`
-fires tool events from parallel goroutines, and one runner can service
+Sink methods must be safe for concurrent calls — default read parallelism and
+explicit `WithToolConcurrency(N>1)` fire tool events from parallel goroutines, and one runner can service
 concurrent `Run`s. A mutex-guarded append or a channel send is enough;
 or wrap any sink in `runner.NewSyncSink(s)` to serialise every call
 behind one mutex.

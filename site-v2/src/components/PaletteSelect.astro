@@ -1,0 +1,45 @@
+<palette-select>
+  <label>
+    <span>Colour</span>
+    <select aria-label="Colour palette">
+      <option value="green">Green</option>
+      <option value="amber">Amber</option>
+      <option value="cyan">Cyan</option>
+      <option value="rust">Rust</option>
+    </select>
+  </label>
+</palette-select>
+
+<script>
+  class PaletteSelect extends HTMLElement {
+    connectedCallback() {
+      const select = this.querySelector('select')!;
+      select.value = document.documentElement.dataset.palette || 'green';
+      select.onchange = () => {
+        const palette = select.value;
+        document.documentElement.dataset.palette = palette;
+        document.querySelectorAll<HTMLSelectElement>('palette-select select').forEach((control) => {
+          control.value = palette;
+        });
+        try {
+          localStorage.setItem('zarlmono-palette', palette);
+        } catch { /* Keep the control usable when storage is disabled. */ }
+        this.updateThemeColor();
+      };
+      this.updateThemeColor();
+    }
+
+    updateThemeColor() {
+      const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+      if (meta) meta.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    }
+  }
+  customElements.define('palette-select', PaletteSelect);
+</script>
+
+<style>
+  palette-select { display: inline-block; flex-shrink: 0; }
+  label { display: flex; align-items: center; gap: .5rem; font: .75rem/1.5 var(--mono, var(--sl-font)); color: var(--muted, var(--sl-color-gray-2)); }
+  select { font: inherit; min-height: 36px; max-width: 100%; border: 1px solid var(--muted, var(--sl-color-gray-3)); border-radius: 3px; padding: .35rem .4rem; background: var(--panel, var(--sl-color-bg)); color: var(--text, var(--sl-color-text)); cursor: pointer; }
+  select:focus-visible { outline: 2px solid var(--accent, var(--sl-color-text-accent)); outline-offset: 3px; }
+</style>

@@ -379,11 +379,7 @@ func WithBaseURL(baseURL string) options.Option[Provider] {
 
 // WithModel sets the default model for the provider.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }
 
 // WithClient injects a fully-configured genai client; the constructors

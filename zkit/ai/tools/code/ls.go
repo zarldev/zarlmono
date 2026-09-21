@@ -40,7 +40,7 @@ func NewLsTool(ws Workspace, opts ...ReadOption) *LsTool {
 		opt(&policy)
 	}
 	t := &LsTool{ws: ws, allowOutsideWorkspace: policy.allowOutsideWorkspace}
-	t.tool = tools.NewTyped(lsSpec(), t.executeTyped)
+	t.tool = tools.New(lsSpec(), t.executeTyped)
 	return t
 }
 

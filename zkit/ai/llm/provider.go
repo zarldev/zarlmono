@@ -290,6 +290,10 @@ func (f ResponseFormat) Validate() error {
 type Message struct {
 	Role    string `json:"role"` // Use messages.RoleSystem, messages.RoleUser, etc.
 	Content string `json:"content"`
+	// Observation marks a host-generated, low-trust observation carried on the
+	// user-role wire path. Its zero value preserves legacy message semantics;
+	// it is never a human instruction, even though providers see RoleUser.
+	Observation ObservationProvenance `json:"observation,omitzero"`
 
 	// ReasoningContent stores an assistant turn's reasoning out-of-band
 	// from Content. The runner populates it from CompletionChunk.Thinking
@@ -331,6 +335,14 @@ type Message struct {
 	// ToolCalls projections used for display and execution. Providers that do
 	// not recognize an item's Provider and Format ignore it.
 	ContinuationItems []ContinuationItem `json:"continuation_items,omitempty"`
+}
+
+// ObservationProvenance preserves host origin independently of provider roles.
+// ID is an opaque observation identity, not a tool-call or domain task ID.
+// Version 1 is the current stored representation; zero means no observation.
+type ObservationProvenance struct {
+	Version int    `json:"version"`
+	ID      string `json:"id"`
 }
 
 // ContinuationItem is an opaque, SDK-independent provider-native output item.

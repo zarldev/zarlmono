@@ -71,6 +71,7 @@ func run(ctx context.Context, stdout io.Writer) error {
 	}
 	if err := workflow.AddNode(graph, "checkpoint", workflow.NodeFunc[Draft, Draft](func(ctx context.Context, draft Draft) (Draft, error) {
 		draft.Checkpoint = "draft-1"
+		// Checkpoint.State stores arbitrary workflow fields; Draft stays typed.
 		return draft, checkpoints.Save(ctx, checkpoint.Checkpoint{ID: draft.Checkpoint, RunID: "shared-infra", Step: "before-review", State: map[string]any{"query": draft.Query, "context": draft.Context}})
 	})); err != nil {
 		return err
@@ -134,7 +135,10 @@ func codeUnderstanding(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	defer ws.Close()
 
+	// Built-in tools expose the generic ToolCall API. Raw argument maps live
+	// only at these dispatch calls; results are decoded to their public types.
 	mapRes, err := code.NewFileMapTool(ws).Execute(ctx, tools.ToolCall{Arguments: tools.ToolParameters{}})
 	if err != nil {
 		return err

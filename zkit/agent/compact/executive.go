@@ -209,7 +209,7 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 
 	out := make([]llm.Message, 0, len(leading)+1+len(recent))
 	out = append(out, llm.CloneMessages(leading)...)
-	out = append(out, llm.Message{Role: llm.RoleAssistant, Content: briefing})
+	out = append(out, compactedMessage(llm.RoleAssistant, briefing, older))
 	out = append(out, llm.CloneMessages(recent)...)
 
 	// Same orphan-tool repair as Summary.Compact — see the note there

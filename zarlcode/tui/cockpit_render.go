@@ -116,7 +116,7 @@ func (m *UI) stateSidebarContent(width, height int) []string {
 		add(sectionHead("plan", width))
 		add(m.planStateLines(width)...)
 	}
-	if s.lastTotal > 0 || s.lastIn > 0 || s.iterations > 0 {
+	if s.Running || s.lastTotal > 0 || s.lastIn > 0 || s.iterations > 0 {
 		add("")
 		add(sectionHead("run", width))
 		add(m.cockpitStatusLine())
@@ -434,7 +434,7 @@ func (m *UI) cockpitStatusLine() string {
 	s := &m.session.Run
 	glyph, label := palette.Muted.On(runActivityGlyph(m.frame, false)), palette.Muted.On("idle")
 	if s.Running {
-		glyph, label = palette.Success.On(runActivityGlyph(m.frame, true)), palette.Success.On("running")
+		glyph, label = palette.Success.On(runActivityGlyph(m.frame, true)), palette.Success.On(s.activityLabel())
 	}
 	parts := []string{glyph + " " + label}
 	if s.Running && !s.turnStartedAt.IsZero() {
@@ -751,6 +751,9 @@ func (s *RunState) sessionTotalsLine() string {
 	}
 	if s.hasPricing() || s.hasSessionCost() {
 		parts = append(parts, palette.Fg.On(fmtUSD(s.sessionCost()))+palette.Subtle.On(" spend"))
+	}
+	if s.unpricedTasks > 0 {
+		parts = append(parts, palette.Warning.On(itoa(s.unpricedTasks)+" tasks: rate unknown (cost incomplete)"))
 	}
 	return strings.Join(parts, palette.Muted.On(" · "))
 }

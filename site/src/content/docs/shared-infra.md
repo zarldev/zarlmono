@@ -126,7 +126,8 @@ and per-node events for UIs and other observers.
 
 ## Checkpoints and HITL
 
-Checkpointing is deliberately just the shared contract:
+Checkpointing stores arbitrary workflow state, so `Checkpoint.State` is a
+map by contract. Keep application data typed outside this storage call:
 
 ```go
 store := checkpoint.NewMemoryStore()

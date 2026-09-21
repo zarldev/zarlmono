@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -17,18 +16,14 @@ const (
 	ToolPublish       tools.ToolName = "release_publish"
 )
 
-type statusTool struct{ r *Release }
-
-func (t statusTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
+func newStatusTool(r *Release) tools.Tool {
+	return tools.New(tools.ToolSpec{
 		Name:        ToolReleaseStatus,
 		Description: "Inspect current release gate state: checks, notes approval, missing requirements, and publish status.",
-		Parameters:  noArgsSchema(),
-	}
-}
-
-func (t statusTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	return tools.Success(call.ID, t.r.Snapshot()), nil
+		Parameters:  tools.SchemaFor[struct{}](),
+	}, func(_ context.Context, _ struct{}) (Snapshot, error) {
+		return r.Snapshot(), nil
+	})
 }
 
 type setCheckArgs struct {
@@ -48,7 +43,7 @@ type publishArgs struct {
 }
 
 func newSetCheckTool(r *Release) tools.Tool {
-	return tools.NewTyped(
+	return tools.New(
 		tools.ToolSpec{
 			Name:        ToolSetCheck,
 			Description: "Mark a release gate check as passing or failing, with short evidence.",
@@ -67,7 +62,7 @@ func newSetCheckTool(r *Release) tools.Tool {
 }
 
 func newWriteNotesTool(r *Release) tools.Tool {
-	return tools.NewTyped(
+	return tools.New(
 		tools.ToolSpec{
 			Name:        ToolWriteNotes,
 			Description: "Write structured release notes. A post-call guardrail approves or rejects their quality.",
@@ -82,7 +77,7 @@ func newWriteNotesTool(r *Release) tools.Tool {
 }
 
 func newPublishTool(r *Release) tools.Tool {
-	return tools.NewTyped(
+	return tools.New(
 		tools.ToolSpec{
 			Name:        ToolPublish,
 			Description: "Publish the release after every release gate requirement passes.",
@@ -93,8 +88,4 @@ func newPublishTool(r *Release) tools.Tool {
 			return "release published to " + args.Channel, nil
 		},
 	)
-}
-
-func noArgsSchema() llm.Schema {
-	return tools.SchemaFor[struct{}]()
 }

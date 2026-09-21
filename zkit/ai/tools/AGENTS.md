@@ -4,7 +4,7 @@ Owns canonical tool contracts, typed schemas, execution, workspace coordination,
 
 ## Tool contracts
 
-- Prefer `NewTyped` or `SchemaFor` plus typed decoding. Model arguments remain untrusted after schema generation and are validated at dispatch.
+- Prefer `New` or `SchemaFor` plus typed decoding. Model arguments remain untrusted after schema generation and are validated at dispatch.
 - Preserve `Mutates`, `WorkspaceAccess`, and `WorkspaceScope` through registries, wrappers, fallbacks, dynamic tools, and MCP bridges.
 - Use argument-derived scope only for the declared trusted path field or patch format. Opaque and external tools conservatively coordinate at workspace-root scope.
 - Tool names, ordering, collision behavior, and call signatures are deterministic compatibility contracts.

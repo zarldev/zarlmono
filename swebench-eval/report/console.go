@@ -28,6 +28,10 @@ func Console(w io.Writer, r runner.Results) {
 	fmt.Fprintf(w, "tasks:    %d\n", countTasks(r))
 	fmt.Fprintf(w, "drivers:  %d\n", countDrivers(r))
 	fmt.Fprintf(w, "duration: %s\n", r.Duration().Round(1e8))
+	fmt.Fprintf(w, "scoring:  %s\n", r.ScoreStatus)
+	if r.ScoreError != "" {
+		fmt.Fprintf(w, "score error: %s\n", r.ScoreError)
+	}
 	fmt.Fprintln(w)
 
 	// Per-driver aggregate. The label includes provider/model when

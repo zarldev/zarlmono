@@ -61,7 +61,7 @@ const (
 )
 
 // ToolParameters are raw model-provided arguments at the tool dispatch
-// boundary. Prefer DecodeArgs or NewTyped in tool implementations so business
+// boundary. Prefer DecodeArgs or New in tool implementations so business
 // logic receives a typed argument struct.
 type ToolParameters map[string]any
 
@@ -383,8 +383,10 @@ type ToolCall struct {
 	ExecutionID string         `json:"-"`
 	ToolName    ToolName       `json:"tool_name"`
 	Arguments   ToolParameters `json:"arguments"`
-	Status      ToolCallStatus `json:"status"`
-	CreatedAt   time.Time      `json:"created_at"`
+	// RawArguments preserves the original JSON before decoding or repair when available.
+	RawArguments string         `json:"raw_arguments,omitempty"`
+	Status       ToolCallStatus `json:"status"`
+	CreatedAt    time.Time      `json:"created_at"`
 }
 
 // ToolResult is the outcome of executing a tool.
@@ -406,6 +408,19 @@ type ToolResult struct {
 	Metadata   ToolMetadata `json:"metadata,omitempty"`
 	Effects    []Effect     `json:"effects,omitempty"`
 	ExecutedAt time.Time    `json:"executed_at"`
+	// AdmissionReferences are trusted host-only identities whose result is
+	// represented in this parent-visible output. Wrappers may propagate them
+	// only when retaining that output or a recoverable representation. Remote
+	// data and model text never populate this field.
+	AdmissionReferences []AdmissionReference `json:"-"`
+}
+
+// AdmissionReference links a locally produced tool result to an owner's pending
+// observation. The owning adapter interprets Namespace and ID; the runner only
+// forwards references after capturing the corresponding parent-visible output.
+type AdmissionReference struct {
+	Namespace string
+	ID        string
 }
 
 // DataAs returns r.Data as T when it already has that dynamic type.
@@ -540,6 +555,10 @@ type ToolSpec struct {
 	// zero value covers the whole workspace. It is host-only metadata and is not
 	// serialized into provider tool definitions.
 	WorkspaceScope WorkspaceScope `json:"-"`
+	// DispatchBarrier requires ordered, exclusive dispatch within a runner batch,
+	// including when unrestricted concurrency is configured. It is host-only
+	// control metadata, not a workspace effect or a provider-selected permission.
+	DispatchBarrier bool `json:"-"`
 	// AffectsWorkspace declares that executing the tool can change durable
 	// state by some means OTHER than a tracked file edit — the canonical case
 	// is bash, whose command may write files, mutate git state, or touch the

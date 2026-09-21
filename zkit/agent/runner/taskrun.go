@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -82,12 +83,17 @@ type taskRun struct {
 	// iter is the current iteration index, stamped at the top of each
 	// loop pass so the terminal builders agree with the loop position
 	// without threading it through every call.
-	iter int
+	iter    int
+	attempt int // one-based count of invoked provider streams
 
 	// messages is the working history: [system?, ...spec.Context, user
 	// prompt] plus every assistant / tool / corrective turn appended as
 	// the loop runs. Compaction replaces it wholesale.
-	messages []llm.Message
+	messages         []llm.Message
+	historyOffset    int
+	historyOverrides map[int]ReplayMessage
+	historyErr       error
+	historyMu        sync.Mutex // serializes nested execution appends during dispatch
 
 	// finalContent is the last iteration's user-visible text — assigned
 	// AFTER the text-tool-call fallback strips any tool syntax, so every
@@ -104,13 +110,12 @@ type taskRun struct {
 	// totalUsage accumulates every iteration's reported usage so the
 	// terminal TaskResult / ConversationEnded event can report the full
 	// token spend of the run rather than just the final iteration's
-	// snapshot. Nil until the first usage-bearing iteration lands —
-	// keeping it nil distinguishes "never made a call" from "made calls
-	// but provider didn't report usage" (the latter would surface as
-	// zeroed totals).
+	// snapshot. Nil until the first reported usage, including reported zero.
+	// Attempts without usage contribute nothing; descendants are excluded.
 	totalUsage *llm.Usage
 	// toolSurface is the accounting for the most recent provider request.
 	toolSurface ToolSurface
+	timing      TaskTiming
 
 	// st groups the per-run recovery budgets + the finalize-warn latch.
 	st loopState
@@ -169,7 +174,7 @@ func (t *taskRun) applyTurnQuality(content string, hasToolCalls bool) bool {
 	if t.r.turnQuality == nil || hasToolCalls {
 		return false
 	}
-	decision := t.r.turnQuality.Inspect(content, nil)
+	decision := t.inspectTurnQuality(content)
 	if decision.Correction == "" ||
 		(decision.MaxCorrections > 0 && t.st.turnQualityCorrections >= decision.MaxCorrections) {
 		return false
@@ -201,6 +206,9 @@ func (t *taskRun) holdCompletion(content string) bool {
 // completed builds the TerminalCompleted result: the model emitted no more
 // tool calls and the run ended on its own terms.
 func (t *taskRun) completed(ctx context.Context) TaskResult {
+	if err := t.flushHistory(ctx); err != nil {
+		return t.errored(ctx, err)
+	}
 	t.r.publishConversationEnded(ctx, t.spec, TerminalCompleted, nil, time.Since(t.start), t.iter+1, t.totalUsage, "")
 	return TaskResult{
 		ID:           t.spec.ID,
@@ -213,12 +221,16 @@ func (t *taskRun) completed(ctx context.Context) TaskResult {
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
 		ToolSurface:  t.toolSurface,
+		Timing:       t.timing,
 	}
 }
 
 // maxedOut builds the TerminalMaxIterations result: the loop exhausted its
 // iteration cap without a terminal condition.
 func (t *taskRun) maxedOut(ctx context.Context) TaskResult {
+	if err := t.flushHistory(ctx); err != nil {
+		return t.errored(ctx, err)
+	}
 	t.r.publishConversationEnded(ctx, t.spec, TerminalMaxIterations, nil, time.Since(t.start), t.maxIter, t.totalUsage, "")
 	return TaskResult{
 		ID:           t.spec.ID,
@@ -231,6 +243,7 @@ func (t *taskRun) maxedOut(ctx context.Context) TaskResult {
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
 		ToolSurface:  t.toolSurface,
+		Timing:       t.timing,
 	}
 }
 
@@ -241,12 +254,13 @@ func (t *taskRun) maxedOut(ctx context.Context) TaskResult {
 // top-of-loop checks — so all cancel paths agree. The caller decides whether
 // cancelErr is wrapped (e.g. with ErrCancelled) before passing.
 func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
-	// Detach cancellation but keep ctx's values (trace IDs, task metadata)
-	// so the terminal event carries the run's context — the publish path
-	// is cancellation-driven, so the original ctx is already Done. A sink
-	// that honors ctx cancellation would otherwise drop this event.
+	if err := t.flushHistory(ctx); err != nil {
+		cancelErr = errors.Join(cancelErr, err)
+	}
+	// Terminal delivery is unconditional. Preserve the original cancellation
+	// and cause so observers can correlate settlement with the stopped run.
 	cause := terminalCause(cancelErr)
-	t.r.publishConversationEnded(context.WithoutCancel(ctx), t.spec, TerminalCancelled, nil, time.Since(t.start), t.iter, t.totalUsage, cause)
+	t.r.publishConversationEnded(ctx, t.spec, TerminalCancelled, nil, time.Since(t.start), t.iter, t.totalUsage, cause)
 	return TaskResult{
 		ID:           t.spec.ID,
 		Reason:       TerminalCancelled,
@@ -259,6 +273,7 @@ func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
 		ToolSurface:  t.toolSurface,
+		Timing:       t.timing,
 		Err:          cancelErr,
 	}
 }
@@ -270,6 +285,12 @@ func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
 // path. Unlike the other exits it leaves SystemPrompt empty (long-standing
 // shape; consumers of error results read Err, not the prompt).
 func (t *taskRun) errored(ctx context.Context, err error) TaskResult {
+	if cause := context.Cause(ctx); cause != nil {
+		return t.cancelled(ctx, errors.Join(err, ErrCancelled, cause))
+	}
+	if historyErr := t.flushHistory(ctx); historyErr != nil && !errors.Is(err, ErrReplayHistory) {
+		err = errors.Join(err, historyErr)
+	}
 	cause := terminalCause(err)
 	t.r.publishConversationEnded(ctx, t.spec, TerminalError, err, time.Since(t.start), t.iter+1, t.totalUsage, cause)
 	return TaskResult{
@@ -283,6 +304,7 @@ func (t *taskRun) errored(ctx context.Context, err error) TaskResult {
 		LastUsage:    t.lastUsage,
 		TotalUsage:   t.totalUsage,
 		ToolSurface:  t.toolSurface,
+		Timing:       t.timing,
 		Err:          err,
 	}
 }
@@ -316,7 +338,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error, accepte
 		if backoff <= 0 {
 			backoff = 5 * time.Second
 		}
-		t.r.publishDiagnostic(t.spec, "rate_limit_retry", "provider rate limited; retrying", t.st.rateLimitRetries, rateLimitRetryLimit, backoff, streamErr)
+		t.r.publishDiagnostic(ctx, t.spec, "rate_limit_retry", "provider rate limited; retrying", t.st.rateLimitRetries, rateLimitRetryLimit, backoff, streamErr)
 		select {
 		case <-ctx.Done():
 			tr := t.cancelled(ctx, fmt.Errorf("%w: %w", ErrCancelled, context.Cause(ctx)))
@@ -329,7 +351,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error, accepte
 	if !accepted && errors.Is(streamErr, ErrEmptyStream) && t.st.emptyStreamRetries < emptyStreamRetryLimit {
 		t.st.emptyStreamRetries++
 		backoff := t.r.emptyStreamBackoff << (t.st.emptyStreamRetries - 1)
-		t.r.publishDiagnostic(t.spec, "empty_stream_retry", "provider returned an empty stream; retrying", t.st.emptyStreamRetries, emptyStreamRetryLimit, backoff, streamErr)
+		t.r.publishDiagnostic(ctx, t.spec, "empty_stream_retry", "provider returned an empty stream; retrying", t.st.emptyStreamRetries, emptyStreamRetryLimit, backoff, streamErr)
 		if backoff > 0 {
 			select {
 			case <-ctx.Done():
@@ -343,7 +365,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error, accepte
 
 	if !accepted && errors.Is(streamErr, ErrThinkingBudget) && t.st.thinkingBudgetCuts < thinkingBudgetRecoverLimit {
 		t.st.thinkingBudgetCuts++
-		t.r.publishDiagnostic(t.spec, "thinking_budget_recovery", "thinking budget exceeded; injecting correction", t.st.thinkingBudgetCuts, thinkingBudgetRecoverLimit, 0, streamErr)
+		t.r.publishDiagnostic(ctx, t.spec, "thinking_budget_recovery", "thinking budget exceeded; injecting correction", t.st.thinkingBudgetCuts, thinkingBudgetRecoverLimit, 0, streamErr)
 		t.messages = append(t.messages, llm.Message{
 			Role:    llm.RoleUser,
 			Content: thinkingBudgetRecoveryMessage,
@@ -353,7 +375,7 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error, accepte
 
 	if !accepted && isUpstreamToolCallJSONError(streamErr) && t.st.toolCallJSONRecovers < toolCallJSONRecoverLimit {
 		t.st.toolCallJSONRecovers++
-		t.r.publishDiagnostic(t.spec, "tool_call_json_recovery", "upstream rejected tool-call JSON; injecting correction", t.st.toolCallJSONRecovers, toolCallJSONRecoverLimit, 0, streamErr)
+		t.r.publishDiagnostic(ctx, t.spec, "tool_call_json_recovery", "upstream rejected tool-call JSON; injecting correction", t.st.toolCallJSONRecovers, toolCallJSONRecoverLimit, 0, streamErr)
 		t.messages = append(t.messages, llm.Message{
 			Role:    llm.RoleUser,
 			Content: upstreamToolCallJSONRecoveryMessage,
@@ -374,10 +396,14 @@ func (t *taskRun) recoverStreamErr(ctx context.Context, streamErr error, accepte
 // replacing t.messages when the engine trims. See autocompact.go for the
 // policy itself; this is the taskRun-side seam.
 func (t *taskRun) maybeCompact(ctx context.Context) error {
+	if err := t.flushHistory(ctx); err != nil {
+		return err
+	}
 	msgs, err := t.r.maybeCompact(ctx, t.spec, t.messages, t.lastUsage, t.iter, &t.st)
 	if err != nil {
 		return err
 	}
 	t.messages = msgs
+	t.historyOffset = len(msgs)
 	return nil
 }

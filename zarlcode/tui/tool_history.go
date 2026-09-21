@@ -16,26 +16,31 @@ const toolHistoryNavW = 34
 
 // toolHistory is the read-only overlay (ctrl+h) listing a session's captured
 // tool results and rendering each one's full, untruncated output. Newest calls
-// are listed first; the cursor starts on the most recent. Output bodies are
-// loaded lazily on selection rather than eagerly at open.
+// are listed first; the cursor starts on the most recent. Canonical occurrences
+// are loaded together; legacy projection bodies are loaded lazily on selection.
 type toolHistory struct {
-	ctx       context.Context
-	store     *db.Store
-	sessionID string
-	summaries []db.ToolOutputSummary
-	full      map[string]db.ToolOutputRecord
-	cursor    int
-	scroll    int
-	status    string
+	ctx        context.Context
+	store      *db.Store
+	sessionID  string
+	summaries  []db.ToolOutputSummary
+	full       map[int]db.ToolOutputRecord // keyed by displayed occurrence, never provider call ID
+	executions map[int]executionHistoryRow
+	cursor     int
+	scroll     int
+	status     string
 }
 
 // newToolHistory loads the session's tool-call metadata, newest first, plus the
 // full body of the most recent call. A nil store or empty session identity
 // yields an empty viewer with an orientation status rather than an error.
 func newToolHistory(ctx context.Context, store *db.Store, sessionID string) *toolHistory {
-	h := &toolHistory{ctx: ctx, store: store, sessionID: sessionID, full: map[string]db.ToolOutputRecord{}}
+	h := &toolHistory{ctx: ctx, store: store, sessionID: sessionID, full: map[int]db.ToolOutputRecord{}}
+	h.executions = make(map[int]executionHistoryRow)
 	if store == nil || sessionID == "" {
 		h.status = "no session yet — run a task first"
+		return h
+	}
+	if h.loadReplay(ctx) {
 		return h
 	}
 	summaries, err := store.ListToolOutputSummariesBySession(ctx, sessionID)
@@ -59,11 +64,11 @@ func (h *toolHistory) loadAt(ctx context.Context, i int) {
 		return
 	}
 	id := h.summaries[i].ToolCallID
-	if _, ok := h.full[id]; ok {
+	if _, ok := h.full[i]; ok {
 		return
 	}
 	if rec, err := h.store.GetToolOutput(ctx, h.sessionID, id); err == nil {
-		h.full[id] = rec
+		h.full[i] = rec
 	}
 }
 
@@ -71,7 +76,7 @@ func (h *toolHistory) selected() (db.ToolOutputRecord, bool) {
 	if h.cursor < 0 || h.cursor >= len(h.summaries) {
 		return db.ToolOutputRecord{}, false
 	}
-	rec, ok := h.full[h.summaries[h.cursor].ToolCallID]
+	rec, ok := h.full[h.cursor]
 	return rec, ok
 }
 
@@ -113,7 +118,7 @@ func (h *toolHistory) draw(scr uv.Screen, area uv.Rectangle) {
 	if !ok {
 		return
 	}
-	left := overlayTopBar("tool history", nil, 0, fmt.Sprintf("%d calls", len(h.summaries)), l.Context.Dx())
+	left := overlayTopBar("tool execution history", nil, 0, fmt.Sprintf("%d occurrences", len(h.summaries)), l.Context.Dx())
 	drawOverlayContext(scr, l, left, palette.Border)
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" calls · newest first"))
 	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
@@ -125,6 +130,9 @@ func (h *toolHistory) draw(scr uv.Screen, area uv.Rectangle) {
 		r := h.summaries[i]
 		screenY := navY + i - start
 		label := fmt.Sprintf("%-14s %s", r.ToolName, r.CreatedAt.Format("15:04:05"))
+		if r.CreatedAt.IsZero() {
+			label = fmt.Sprintf("%-14s #%d", r.ToolName, len(h.summaries)-i)
+		}
 		drawListRow(scr, uv.Rect(l.Nav.Min.X, screenY, l.Nav.Dx(), 1), label, i == h.cursor, true)
 	}
 
@@ -156,6 +164,9 @@ func (h *toolHistory) detailLines(width int) []string {
 		return []string{palette.Muted.On(" failed to load output for " + h.summaries[h.cursor].ToolCallID)}
 	}
 	out := []string{sectionHead(r.ToolName, width)}
+	if row, ok := h.executions[h.cursor]; ok {
+		out = append(out, row.details(width)...)
+	}
 	if r.ArgsJSON != "" && r.ArgsJSON != "null" {
 		out = append(out, palette.Subtle.On("args ")+palette.Muted.On(r.ArgsJSON))
 	}

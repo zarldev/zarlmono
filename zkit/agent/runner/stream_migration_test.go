@@ -23,7 +23,7 @@ type slowContentSink struct {
 
 // OnContent intentionally delays the downstream sink; synctest makes the
 // delay virtual while the runner proves downstream work does not trip idle timeouts.
-func (s slowContentSink) OnContent(runner.Content) { time.Sleep(s.delay) }
+func (s slowContentSink) OnContent(context.Context, runner.Content) { time.Sleep(s.delay) }
 
 type oneChunkProvider struct{}
 

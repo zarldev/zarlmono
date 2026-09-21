@@ -20,19 +20,26 @@ The runner stays synchronous and tool-agnostic. Consumers opt into delegation by
 group := spawn.NewGroup()
 r := runner.New(client, runner.WithTools(reg), /* options */)
 coderunner.RegisterSpawnTools(reg, r, group, 1, 0)
-defer group.Close(shutdownCtx)
+defer group.Close(context.WithoutCancel(ctx))
 ```
 
-zarlcode uses one group per top-level turn. Named and recursive child runners share that group and the same workspace coordinator.
+Here `ctx` is the run context. The lifecycle owner creates one group per top-level turn and shares it with named and recursive child runners and the same workspace coordinator. It must cancel and join children before releasing shared dependencies or reporting the turn drained. `Group.Close` can return early when its supplied context is canceled, so the owner must not abandon the dependency-safe join; `context.WithoutCancel(ctx)` prevents prior run cancellation from short-circuiting deferred cleanup.
+
+`spawn.NewAsync(parent, group, opts...).Register(reg)` is the direct registration-only helper. It installs the tool family on `reg` and shares the caller-owned group without taking lifecycle ownership.
 
 ## Protocol and completion
 
 Every model tool call needs exactly one paired result before the next completion. `agent_spawn` therefore returns a receipt under the original call ID; it never emits the child summary later under that call.
 
-The summary is delivered through `agent_await`, terminal `agent_status`, or `agent_stop`. Parent completion is guarded while any child is running or any terminal summary remains unobserved.
-Observed terminal tasks are retained only as bounded recent history (32 by default); the oldest observed results are evicted first. Running tasks and terminal summaries that have not yet been delivered are never evicted, so completion guardrails and recovery remain reliable.
-`WithMaxRuntime` optionally bounds each child's total lifetime. Runtime exhaustion is reported distinctly in task data and classified as a budget failure; zero leaves runtime unbounded.
-`list_agent_tasks` is metadata-only and never consumes completion evidence; terminal summaries and errors are omitted. Use terminal `agent_status` or `agent_await` to deliver and mark one result observed.
+Without an automatic input source, summaries are read through `agent_await`, terminal `agent_status`, or `agent_stop`; completion guards consider the receiving parent's own outstanding children. Omitted task IDs select only direct children of a bound caller. An explicit read from another parent does not consume the owner's unread or automatic-admission state.
+
+An opted-in parent can use `runner.WithInputSource(group)` to admit one typed host observation per child at a safe history boundary. Bind the root with `group.Bind(runCtx, spec.ID)` before `Run` and close that scope after `Run` returns, before releasing shared dependencies; child scopes are owned by the group. A no-tool parent waits for child results or genuine user input without spending provider attempts. It finishes only after ordinary completion checks accept and admission is atomically sealed. Explicit reads remain available and may intentionally repeat a result. The engine's automatic path is experimental and disabled by default (`engine.WithExperimentalAutomaticCompletion`); qualify the configured receiving endpoints before opting in.
+
+Observation by an explicit tool and admission into model history are distinct. The runner acknowledges trusted references only after history capture succeeds; buffered capture is not a promise of durable storage. Output-preserving wrappers retain these references, while discarded, transformed, or truncated output must not acknowledge a result. Host provenance survives storage, compaction and replay; child summaries remain evidence from their original assignments, not user instructions or proof of current state.
+
+Observed terminal tasks are retained as bounded recent history (32 by default). Running tasks, active waiters, and terminal results still pending automatic admission are pinned. `WithMaxObserved` sets the bound on evictable history; nonpositive disables pruning. `WithMaxRuntime` bounds child lifetime in addition to the owning parent's cancellation/deadline. Runtime exhaustion is reported distinctly as a budget failure.
+
+`list_agent_tasks` is metadata-only and never consumes completion evidence. Its explicit tree inspection does not change the parent-scoped automatic routing contract.
 
 ## Lifecycle
 
@@ -42,7 +49,7 @@ RUNNING -> COMPLETED
         -> CANCELLED
 ```
 
-`Group.Close` stops admission, cancels live children, and waits for all owned goroutines within the caller's shutdown context. Tasks are turn-scoped and do not survive session restart.
+`Group.Close` stops admission, cancels live children, and waits for all owned goroutines within the supplied context. Tasks are turn-scoped and do not survive session restart.
 
 ## Depth, fan-out, and work modes
 

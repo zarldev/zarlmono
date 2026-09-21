@@ -63,10 +63,8 @@ func TestProviderPlansRequestsOnTheWire(t *testing.T) {
 			if tc.path == "/responses" {
 				providerOptions = append(providerOptions, openai.WithResponsesAPI(true))
 			}
-			p, err := openai.NewProvider("test-key", providerOptions...)
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			p := openai.NewProvider("test-key", providerOptions...)
+
 			req := llm.CompletionRequest{Stream: tc.stream, MaxTokens: 42}
 			if tc.tools {
 				req.Tools = []llm.Tool{tool}

@@ -34,6 +34,10 @@ A capability is complete only when its provider, registration/definition, and co
 
 ## Session persistence
 
+The [turn lifecycle guide](turn-lifecycle.md) connects submission, runtime
+admission, child drain, event application, durable settlement, rewind, and
+shutdown, with links to the owning implementation and contract tests.
+
 The visible timeline and the provider-facing context have different ownership:
 
 - `transcript.Thread` is the canonical, renderer-independent session record. Typed

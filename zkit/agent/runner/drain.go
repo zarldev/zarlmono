@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -21,6 +22,7 @@ type streamResult struct {
 	usage              *llm.Usage
 	err                error
 	accepted           bool
+	streamTiming
 }
 
 // drainStream directly and synchronously consumes one completion stream. The
@@ -41,13 +43,22 @@ func (r *Runner) drainStream(
 	var streamErr error
 	var iterUsage *llm.Usage
 	accepted := false
+	timing := streamTiming{started: time.Now()}
 
 	stream(func(chunk llm.CompletionChunk, err error) bool {
+		callbackStart := time.Now()
+		defer func() { timing.callbackDuration += time.Since(callbackStart) }()
 		if err != nil {
 			streamErr = err
 			return false
 		}
-		accepted = true
+		// Usage-only snapshots report consumption, not accepted model output.
+		// They must not suppress an otherwise safe pre-output retry. Content,
+		// reasoning, calls, native items and finish metadata still do.
+		accepted = accepted || !chunk.UsageReported || chunk.Content != "" || chunk.Thinking != "" ||
+			chunk.ContentOutputIndex != nil || len(chunk.ToolCalls) != 0 || len(chunk.CompletedItems) != 0 ||
+			chunk.FinishReason != llm.FinishReasons.UNKNOWN
+		timing.observe(chunk, accepted, callbackStart)
 		if chunk.UsageReported {
 			usage := chunk.Usage
 			iterUsage = &usage
@@ -57,11 +68,11 @@ func (r *Runner) drainStream(
 			if contentOutputIndex == nil && chunk.ContentOutputIndex != nil {
 				contentOutputIndex = llm.OutputPosition(*chunk.ContentOutputIndex)
 			}
-			r.publishContentChunk(ctx, spec, chunk.Content)
+			r.publishContentChunk(streamCtx, spec, chunk.Content)
 		}
 		if chunk.Thinking != "" {
 			thinkingBuilder.WriteString(chunk.Thinking)
-			r.publishThinkingChunk(ctx, spec, chunk.Thinking)
+			r.publishThinkingChunk(streamCtx, spec, chunk.Thinking)
 			if r.thinkingBudgetBytes > 0 && contentBuilder.Len() == 0 && len(toolCallOrder) == 0 &&
 				thinkingBuilder.Len() > r.thinkingBudgetBytes {
 				streamErr = fmt.Errorf("%w (%d bytes of thinking, no output)", ErrThinkingBudget, thinkingBuilder.Len())
@@ -154,6 +165,7 @@ func (r *Runner) drainStream(
 		}
 		return true
 	})
+	timing.duration = time.Since(timing.started)
 
 	cause := context.Cause(streamCtx)
 	if cause != nil {
@@ -184,6 +196,7 @@ func (r *Runner) drainStream(
 		usage:              iterUsage,
 		err:                streamErr,
 		accepted:           accepted,
+		streamTiming:       timing,
 	}
 }
 

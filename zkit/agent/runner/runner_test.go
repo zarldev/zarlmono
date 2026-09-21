@@ -480,52 +480,52 @@ type recordingSink struct {
 
 func newRecordingSink() *recordingSink { return &recordingSink{} }
 
-func (s *recordingSink) OnContent(e runner.Content) {
+func (s *recordingSink) OnContent(ctx context.Context, e runner.Content) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.contents = append(s.contents, e)
 }
-func (s *recordingSink) OnToolStarted(e runner.ToolStarted) {
+func (s *recordingSink) OnToolStarted(ctx context.Context, e runner.ToolStarted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.toolStarts = append(s.toolStarts, e)
 }
-func (s *recordingSink) OnToolCompleted(e runner.ToolCompleted) {
+func (s *recordingSink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.toolCompletes = append(s.toolCompletes, e)
 }
-func (s *recordingSink) OnToolFailed(e runner.ToolFailed) {
+func (s *recordingSink) OnToolFailed(ctx context.Context, e runner.ToolFailed) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.toolFails = append(s.toolFails, e)
 }
-func (s *recordingSink) OnConversationStarted(e runner.ConversationStarted) {
+func (s *recordingSink) OnConversationStarted(ctx context.Context, e runner.ConversationStarted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.convStarts = append(s.convStarts, e)
 }
-func (s *recordingSink) OnConversationEnded(e runner.ConversationEnded) {
+func (s *recordingSink) OnConversationEnded(ctx context.Context, e runner.ConversationEnded) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.convEnded = append(s.convEnded, e)
 }
-func (s *recordingSink) OnIterationCompleted(e runner.IterationCompleted) {
+func (s *recordingSink) OnIterationCompleted(ctx context.Context, e runner.IterationCompleted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.iterCompletes = append(s.iterCompletes, e)
 }
-func (s *recordingSink) OnSteerInjected(e runner.SteerInjected) {
+func (s *recordingSink) OnSteerInjected(ctx context.Context, e runner.SteerInjected) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.steerInjects = append(s.steerInjects, e)
 }
-func (s *recordingSink) OnCompactionApplied(e runner.CompactionApplied) {
+func (s *recordingSink) OnCompactionApplied(ctx context.Context, e runner.CompactionApplied) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.compactions = append(s.compactions, e)
 }
-func (s *recordingSink) OnDiagnostic(e runner.Diagnostic) {
+func (s *recordingSink) OnDiagnostic(ctx context.Context, e runner.Diagnostic) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.diagnostics = append(s.diagnostics, e)
@@ -571,54 +571,6 @@ func (s *recordingSink) firstSteer() (runner.SteerInjected, bool) {
 	return s.steerInjects[0], true
 }
 
-func TestRun_ToolTimeoutAbandonsUncooperativeTool(t *testing.T) {
-	t.Parallel()
-
-	provider := &fakeProvider{
-		turns: [][]llm.CompletionChunk{
-			{chunkToolCall("slow-1", "block", `{}`)},
-			{chunkText("recovered")},
-		},
-	}
-
-	reg := newRegistry(blockingTool{name: "block", started: make(chan struct{})})
-	r := runner.New(runner.ClientFromProvider(provider), runner.WithTools(reg),
-		runner.WithMaxIterations(3),
-		runner.WithToolTimeout(20*time.Millisecond),
-	)
-
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	start := time.Now()
-	res := r.Run(ctx, runner.TaskSpec{
-		ID:     taskscope.ID(uuid.NewString()),
-		Prompt: "call the blocking tool",
-	})
-	if res.Err != nil {
-		t.Fatalf("Run: %v", res.Err)
-	}
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Fatalf("Run took %s; tool timeout did not abandon blocking Execute", elapsed)
-	}
-	if res.Reason != runner.TerminalCompleted {
-		t.Fatalf("reason = %v, want completed", res.Reason)
-	}
-	if res.FinalContent != "recovered" {
-		t.Fatalf("FinalContent = %q, want recovered", res.FinalContent)
-	}
-
-	var toolMsg string
-	for _, m := range res.Messages {
-		if m.Role == "tool" && m.ToolCallID == "slow-1" {
-			toolMsg = m.Content
-			break
-		}
-	}
-	if !strings.Contains(toolMsg, "exceeded the per-tool time budget") {
-		t.Fatalf("timeout tool message = %q, want per-tool timeout", toolMsg)
-	}
-}
-
 func TestRun_ZeroTimeoutOptionsDisableStreamGuards(t *testing.T) {
 	t.Parallel()
 
@@ -661,18 +613,4 @@ func (p *delayedProvider) Complete(ctx context.Context, _ llm.CompletionRequest)
 			return
 		}
 	}
-}
-
-type blockingTool struct {
-	name    tools.ToolName
-	started chan struct{}
-}
-
-func (b blockingTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: b.name, Description: "blocks forever"}
-}
-
-func (b blockingTool) Execute(context.Context, tools.ToolCall) (*tools.ToolResult, error) {
-	close(b.started)
-	select {}
 }

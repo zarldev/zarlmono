@@ -6,8 +6,9 @@ import (
 )
 
 // NestedToolCall describes a child tool invocation performed inside a composite
-// tool such as program. The child call is already being executed by the parent;
-// observers use this only for progress/UI reporting.
+// tool such as program. Observers receive start before dispatch (including
+// rejected attempts). The parent/child/sequence tuple must identify one live
+// invocation within the composite, including under concurrent execution.
 type NestedToolCall struct {
 	ParentID ToolCallID
 	ChildID  ToolCallID
@@ -20,11 +21,14 @@ type NestedToolCall struct {
 // performed inside a composite tool.
 type NestedToolResult struct {
 	NestedToolCall
-	Result   *ToolResult
-	Err      error
-	Kind     Kind
-	Error    string
-	Duration time.Duration
+	// Dispatched reports whether the inner executor was invoked. Nil preserves
+	// compatibility with observers that do not record dispatch disposition.
+	Dispatched *bool
+	Result     *ToolResult
+	Err        error
+	Kind       Kind
+	Error      string
+	Duration   time.Duration
 }
 
 // NestedToolObserver observes child tool calls made by composite tools. Methods

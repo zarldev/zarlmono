@@ -15,6 +15,8 @@ type thinkingItem struct {
 	expanded    bool
 	done        bool
 	interrupted bool
+	children    []item // mode disclosures owned by this thinking block
+	layout      childBlockCache
 }
 
 func (t *thinkingItem) finished() bool { return t.done }
@@ -24,13 +26,44 @@ func (t *thinkingItem) toggle() {
 	t.bump()
 }
 
-// togglerAt: the "[+]/[-] thinking" header is local line 0 (the nestPad/indent
-// prefixes don't shift line indices); everything below is body.
-func (t *thinkingItem) togglerAt(_, ln int) toggler {
+// togglerAt shares child geometry with rendering and keyboard navigation.
+func (t *thinkingItem) togglerAt(width, ln int) toggler {
 	if ln == 0 {
 		return t
 	}
-	return nil
+	if !t.expanded || len(t.children) == 0 {
+		return nil
+	}
+	childWidth := width - 4
+	bodyLines := len(t.bodyLines(width))
+	return t.layout.render(t.children, childWidth, t.version()).togglerForLine(ln-bodyLines, childWidth, t.children, t.bump)
+}
+
+func (t *thinkingItem) toggleLocals(width int) []int {
+	if !t.expanded || len(t.children) == 0 {
+		return []int{0}
+	}
+	childWidth := width - 4
+	block := t.layout.render(t.children, childWidth, t.version())
+	locals := append([]int{0}, block.toggleLocals(childWidth, t.children)...)
+	bodyLines := len(t.bodyLines(width))
+	for i := 1; i < len(locals); i++ {
+		locals[i] += bodyLines
+	}
+	return locals
+}
+
+func (t *thinkingItem) bodyLines(width int) []string {
+	if t.text == "" {
+		return nil
+	}
+	return renderContentBlock(width, contentBlock{
+		kind:       contentMarkdown,
+		text:       normalizeThinkingMarkdown(t.text),
+		bodyPrefix: "  ",
+		tone:       toneMuted,
+		stripANSI:  true,
+	})
 }
 
 func (t *thinkingItem) heading() string {
@@ -46,13 +79,8 @@ func (t *thinkingItem) render(width int) []string {
 		lines = []string{palette.Subtle.On("[") + palette.Primary.On("+") + palette.Subtle.On("]") + palette.Muted.On(t.heading())}
 	} else {
 		lines = append(lines, palette.Subtle.On("[")+palette.Primary.On("-")+palette.Subtle.On("]")+palette.Muted.On(t.heading()))
-		lines = append(lines, renderContentBlock(width, contentBlock{
-			kind:       contentMarkdown,
-			text:       normalizeThinkingMarkdown(t.text),
-			bodyPrefix: "  ",
-			tone:       toneMuted,
-			stripANSI:  true,
-		})...)
+		lines = append(lines, t.bodyLines(width)...)
+		lines = append(lines, t.layout.render(t.children, width-4, t.version()).lines...)
 	}
 	if t.nested {
 		lines = prefixLines(lines, nestPad)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -41,10 +42,12 @@ func buildClient(ctx context.Context) (runner.Client, func(), error) {
 	if model := zenv.String("LLM_MODEL", "gpt-4o"); model != "" {
 		opts = append(opts, openai.WithModel(model))
 	}
-	prov, err := openai.NewProvider(os.Getenv("OPENAI_API_KEY"), opts...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("openai provider: %w", err)
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		return nil, nil, fmt.Errorf("openai: %w", llm.ErrInvalidAPIKey)
 	}
+	prov := openai.NewProvider(apiKey, opts...)
+
 	return runner.ClientFromProvider(prov), func() {}, nil
 }
 
@@ -91,10 +94,7 @@ func buildCodexClient(ctx context.Context) (runner.Client, func(), error) {
 	if effort := os.Getenv("CODEX_REASONING_EFFORT"); effort != "" {
 		opts = append(opts, openaicodex.WithDefaultReasoningEffort(effort))
 	}
-	prov, err := openaicodex.NewProvider(tokens, opts...)
-	if err != nil {
-		_ = store.Close()
-		return nil, nil, fmt.Errorf("codex provider: %w", err)
-	}
+	prov := openaicodex.NewProvider(tokens, opts...)
+
 	return runner.ClientFromProvider(prov), func() { _ = store.Close() }, nil
 }

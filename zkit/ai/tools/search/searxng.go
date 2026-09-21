@@ -32,7 +32,7 @@ func NewSearxng(baseURL string) tools.Tool {
 		baseURL: baseURL,
 		client:  zhttp.NewClient(zhttp.WithTimeout(requestTimeout)),
 	}
-	return tools.NewTyped(specFor(searxngDescription), b.search)
+	return tools.New(specFor(searxngDescription), b.search)
 }
 
 type searxngBackend struct {

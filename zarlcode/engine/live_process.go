@@ -14,6 +14,10 @@ func (l *LiveRunner) KillProcess(processID, signal string) (code.ProcessInfo, in
 	if l == nil {
 		return code.ProcessInfo{}, 0, errors.New("live runner unavailable")
 	}
+	if !l.admission.enter() {
+		return code.ProcessInfo{}, 0, l.admission.rejection()
+	}
+	defer l.admission.leave()
 	l.mu.Lock()
 	pm := l.pm
 	l.mu.Unlock()

@@ -2,13 +2,13 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -21,43 +21,74 @@ import (
 // dispatchedCall is the result of a single tool dispatch, keyed by
 // ToolCallID inside dispatchBatch's return map.
 type dispatchedCall struct {
-	result *tools.ToolResult
-	err    error
+	result      *tools.ToolResult
+	rawResult   *tools.ToolResult // Settled execution output, even after cancellation.
+	parameters  tools.ToolParameters
+	err         error
+	executionID string
+	dispatched  bool
 }
 
-var nextExecutionID atomic.Uint64
-
 func allocateExecutionID() string {
-	return fmt.Sprintf("execution-%d", nextExecutionID.Add(1))
+	return "execution-" + rand.Text()
 }
 
 // dispatchBatch runs every tool call in toolCallOrder through the
-// registry. Calls run in parallel up to r.toolConcurrency via an
-// errgroup with SetLimit; their results are returned keyed by the
-// LLM's call ID so the caller can stitch them back into the original
-// order. A toolConcurrency value of 0 or 1 falls through to a fully
-// sequential dispatch.
+// registry. By default, only consecutive workspace reads overlap; every other
+// call is an ordered barrier. Explicit WithToolConcurrency opts into unrestricted
+// batches (or sequential dispatch). Results retain their original call keys so
+// the caller can append them in model order, regardless of completion order.
 //
 // The errgroup never returns an error to the runner: tool failures
 // are surfaced as a non-nil err on the dispatchedCall struct (and as
 // ToolExecutionFailed events) so the runner can append them as tool
 // messages and let the model recover rather than aborting the iteration.
-func (r *Runner) dispatchBatch(
+func (t *taskRun) dispatchBatch(
 	ctx context.Context,
-	spec TaskSpec,
-	toolCalls map[string]*llm.ToolCall,
+	toolCalls map[string]llm.ToolCall,
 	toolCallOrder []string,
 ) map[string]dispatchedCall {
+	r := t.r
 	out := make(map[string]dispatchedCall, len(toolCallOrder))
 	limit := max(r.toolConcurrency, 1)
+	if limit == 1 {
+		t.dispatchCalls(ctx, toolCalls, toolCallOrder, out, limit)
+		return out
+	}
+	for len(toolCallOrder) > 0 {
+		n := 1
+		if r.parallelCall(ctx, toolCalls[toolCallOrder[0]]) {
+			for n < len(toolCallOrder) && r.parallelCall(ctx, toolCalls[toolCallOrder[n]]) {
+				n++
+			}
+		}
+		// Join each group before resolving the next one: a barrier can change
+		// both workspace state and the tool registry itself.
+		t.dispatchCalls(ctx, toolCalls, toolCallOrder[:n], out, limit)
+		toolCallOrder = toolCallOrder[n:]
+	}
+	return out
+}
+
+func (r *Runner) parallelCall(ctx context.Context, call llm.ToolCall) bool {
+	spec, found := r.specForGate(ctx, tools.ToolName(call.Function.Name))
+	if !found {
+		return !r.parallelReadsOnly
+	}
+	return !spec.DispatchBarrier && (!r.parallelReadsOnly || spec.Access() == tools.WorkspaceAccesses.READ && !spec.ChangesWorkspace())
+}
+
+// dispatchCalls joins all admitted work before returning. Cancellation is
+// checked at executeTool, so queued calls still settle without executing.
+func (t *taskRun) dispatchCalls(ctx context.Context, toolCalls map[string]llm.ToolCall, toolCallOrder []string, out map[string]dispatchedCall, limit int) {
 	if limit == 1 || len(toolCallOrder) <= 1 {
 		for _, id := range toolCallOrder {
 			tc := toolCalls[id]
 			executionID := allocateExecutionID()
-			res, err := r.dispatch(ctx, spec, tc, executionID)
-			out[id] = dispatchedCall{result: res, err: err}
+			res, raw, parameters, didDispatch, err := t.dispatch(ctx, tc, executionID)
+			out[id] = dispatchedCall{result: res, rawResult: raw, parameters: parameters, err: err, executionID: executionID, dispatched: didDispatch}
 		}
-		return out
+		return
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -67,9 +98,9 @@ func (r *Runner) dispatchBatch(
 		tc := toolCalls[id]
 		executionID := allocateExecutionID()
 		g.Go(func() error {
-			res, err := r.dispatch(gctx, spec, tc, executionID)
+			res, raw, parameters, didDispatch, err := t.dispatch(gctx, tc, executionID)
 			mu.Lock()
-			out[id] = dispatchedCall{result: res, err: err}
+			out[id] = dispatchedCall{result: res, rawResult: raw, parameters: parameters, err: err, executionID: executionID, dispatched: didDispatch}
 			mu.Unlock()
 			// Returning an error would cancel the errgroup's context
 			// and short-circuit siblings. Tool failures are tracked
@@ -79,17 +110,16 @@ func (r *Runner) dispatchBatch(
 		})
 	}
 	_ = g.Wait()
-	return out
 }
 
 // dispatch routes a tool call through the Registry. Publishes
 // ToolExecutionStarted / Completed / Failed events on the way through.
-func (r *Runner) dispatch(
+func (t *taskRun) dispatch(
 	ctx context.Context,
-	spec TaskSpec,
-	tc *llm.ToolCall,
+	tc llm.ToolCall,
 	executionID string,
-) (*tools.ToolResult, error) {
+) (*tools.ToolResult, *tools.ToolResult, tools.ToolParameters, bool, error) {
+	r, spec := t.r, t.spec
 	name := tools.ToolName(tc.Function.Name)
 	args := tools.ToolParameters{}
 	// repair.Unmarshal accepts an empty buffer (decodes as `{}`) and
@@ -104,22 +134,20 @@ func (r *Runner) dispatch(
 	// failedFromError so the resulting Result carries Kind structurally
 	// (errors.AsType extracts it) — same pattern as code.failure and
 	// failedFromGuard, with no duplication of the projection logic.
-	if err := repair.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		return tools.Failure(tools.ToolCallID(tc.ID), tools.Validation(string(name), fmt.Sprintf(
-			"tool arguments did not parse as JSON (after repair attempts): %v. "+
-				"Re-emit the call with valid JSON. Common fixes: escape literal newlines "+
-				"as \\n inside string values, remove trailing commas, double-quote keys.",
-			err))), nil
-	}
 	call := tools.ToolCall{
-		ID:          tools.ToolCallID(tc.ID),
-		ExecutionID: executionID,
-		ToolName:    name,
-		Arguments:   args,
-		Status:      tools.ToolCallStatusExecuting,
-		CreatedAt:   time.Now(),
+		ID: tools.ToolCallID(tc.ID), ExecutionID: executionID, ToolName: name,
+		Arguments: args, RawArguments: tc.Function.Arguments,
+		Status: tools.ToolCallStatusExecuting, CreatedAt: time.Now(),
 	}
-
+	if err := repair.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		r.publishToolStarted(ctx, spec, call)
+		res := tools.Failure(call.ID, tools.Validation(string(name), fmt.Sprintf(
+			"tool arguments did not parse as JSON (after repair attempts): %v. Re-emit the call with valid JSON", err)))
+		r.publishToolFinished(ctx, spec, call, res, res, 0, nil)
+		return res, res, nil, false, nil
+	}
+	parameters := tools.CloneParameters(args)
+	call.Arguments = args
 	r.publishToolStarted(ctx, spec, call)
 	// Gate check: need the tool spec to evaluate capability-based policy.
 	// The tool should already be hidden from the LLM list by buildLLMTools;
@@ -135,75 +163,91 @@ func (r *Runner) dispatch(
 		if !found || !gate(toolSpec) {
 			res := tools.Failure(call.ID, tools.Validation(string(name), fmt.Sprintf(
 				"%q is not available to this sub-agent in its current work mode", name)))
-			r.publishToolFinished(ctx, spec, call, res, 0, nil, false)
-			return res, nil
+			r.publishToolFinished(ctx, spec, call, res, res, 0, nil)
+			return res, res, parameters, false, nil
 		}
 	}
 	startTS := time.Now()
 	execCtx := ctx
 	toolTimeout := r.toolTimeout(name)
 	if toolTimeout > 0 {
-		// Apply the per-tool budget. A well-behaved tool sees
-		// ctx.Done() and unwinds; one that ignores ctx keeps running
-		// in its own goroutine past the deadline, but the runner stops
-		// waiting and reports a timeout result so subsequent iterations
-		// aren't blocked by a wedged dispatch.
 		var cancel context.CancelFunc
 		execCtx, cancel = context.WithTimeout(ctx, toolTimeout)
 		defer cancel()
 	}
-	type toolExecResult struct {
-		result *tools.ToolResult
-		err    error
+	nested := newNestedToolPublisher(r, spec, call.ExecutionID)
+	nested.attempt, nested.capture = t.attempt, t.recordExecution
+	execCtx = tools.ContextWithNestedToolObserver(execCtx, nested)
+	execCtx = tools.ContextWithWorkspaceWaitObserver(execCtx, workspaceWaitPublisher{r: r, spec: spec, call: call, nested: nested})
+	execCtx = tools.ContextWithWorkspaceWaitCall(execCtx, tools.WorkspaceWaitCall{ToolID: call.ID, ToolName: call.ToolName})
+	// Execute synchronously: the batch owns this work until it actually exits.
+	// Cancellation requests a stop; it cannot forcibly terminate arbitrary Go code.
+	raw, didDispatch, err := r.executeTool(execCtx, call)
+	if raw == nil && err != nil {
+		raw = tools.Failure(call.ID, err)
 	}
-	done := make(chan toolExecResult, 1)
-	go func() {
-		// A panicking tool — Execute nil deref, a buggy MCP server, a bad
-		// dynamic tool — must not take the whole runner down. Recover here
-		// (this is the goroutine the arbitrary tool code actually runs in,
-		// not the errgroup goroutine in dispatchBatch) and turn the panic
-		// into a Transient failure so the model gets a clear signal and the
-		// loop survives. The buffered channel means this send never blocks,
-		// even if the select already moved on via the per-tool deadline.
+	result := raw
+	if cause := execCtx.Err(); cause != nil {
+		err = cause
+		result = tools.Failure(call.ID, tools.Transient(string(name), cause))
+		if errors.Is(cause, context.DeadlineExceeded) && ctx.Err() == nil && toolTimeout > 0 {
+			result = tools.Failure(call.ID, tools.Transient(string(name), fmt.Errorf(
+				"tool %q exceeded the per-tool time budget (%s); execution has now stopped: %w", name, toolTimeout, cause)))
+		}
+	}
+	r.publishToolFinished(ctx, spec, call, result, raw, time.Since(startTS), err)
+	return result, raw, parameters, didDispatch, errors.Join(err, nested.historyError())
+}
+
+func (r *Runner) executeTool(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, bool, error) {
+	var dispatched bool
+	var result *tools.ToolResult
+	var execErr error
+	func() {
 		defer func() {
-			if rec := recover(); rec != nil {
-				done <- toolExecResult{result: tools.Failure(call.ID, tools.Transient(string(name), fmt.Errorf(
-					"tool %q panicked during execution: %v; the dispatch was abandoned. "+
-						"This is a bug in the tool itself, not your arguments — try a different "+
-						"tool or approach rather than re-issuing the same call",
-					name, rec)))}
+			if value := recover(); value != nil {
+				result = tools.Failure(call.ID, tools.Transient(string(call.ToolName), fmt.Errorf(
+					"tool %q panicked during execution: %v", call.ToolName, value)))
 			}
 		}()
-		nested := newNestedToolPublisher(r, spec, call.ExecutionID)
-		nestedCtx := tools.ContextWithNestedToolObserver(execCtx, nested)
-		nestedCtx = tools.ContextWithWorkspaceWaitObserver(nestedCtx, workspaceWaitPublisher{r: r, spec: spec, call: call})
-		nestedCtx = tools.ContextWithWorkspaceWaitCall(nestedCtx, tools.WorkspaceWaitCall{ToolID: call.ID, ToolName: call.ToolName})
-		result, err := r.tools.Execute(nestedCtx, call)
-		done <- toolExecResult{result: result, err: err}
+		if err := ctx.Err(); err != nil {
+			execErr = err
+			return
+		}
+		dispatched = true
+		result, execErr = r.tools.Execute(ctx, call)
 	}()
+	return result, dispatched, execErr
+}
 
-	var result *tools.ToolResult
-	var err error
-	var inFlight bool
-	select {
-	case out := <-done:
-		result, err = out.result, out.err
-	case <-execCtx.Done():
-		err = execCtx.Err()
-		inFlight = true
+// recordUndispatchedCalls retains partial attempts without admitting execution.
+func (t *taskRun) recordUndispatchedCalls(ctx context.Context, calls map[string]*llm.ToolCall, order []string, cause error) ([]ToolOutput, error) {
+	r, spec := t.r, t.spec
+	var outputs []ToolOutput
+	var captureErr error
+	for _, id := range order {
+		tc := calls[id]
+		call := tools.ToolCall{
+			ID: tools.ToolCallID(tc.ID), ExecutionID: allocateExecutionID(),
+			ToolName: tools.ToolName(tc.Function.Name), RawArguments: tc.Function.Arguments,
+			Status: tools.ToolCallStatusExecuting, CreatedAt: time.Now(),
+		}
+		result := tools.Failure(call.ID, tools.Transient(tc.Function.Name, fmt.Errorf("completion interrupted before tool dispatch: %w", cause)))
+		r.publishToolStarted(ctx, spec, call)
+		r.publishToolFinished(ctx, spec, call, result, result, 0, cause)
+		success, terminalError, kind := classifyToolOutput(result)
+		output := ToolOutput{ExecutionID: call.ExecutionID, ToolCallID: tc.ID, ToolName: tc.Function.Name,
+			TaskID: string(spec.ID), Attempt: t.attempt, Dispatched: new(false),
+			Args: tc.Function.Arguments, Output: rawToolResultText(result), Success: success, Error: terminalError, Kind: kind}
+		outputs = append(outputs, output)
+		if r.toolOutputSink != nil {
+			err := r.toolOutputSink.Record(ctx, output)
+			if err != nil {
+				captureErr = errors.Join(captureErr, fmt.Errorf("%w: %w", ErrToolHistory, err))
+			}
+		}
 	}
-	abandoned := false
-	if err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && toolTimeout > 0 {
-		abandoned = inFlight
-		err = nil
-		result = tools.Failure(call.ID, tools.Transient(string(name), fmt.Errorf(
-			"tool %q exceeded the per-tool time budget (%s); the dispatch was abandoned. "+
-				"If the work is legitimately long-running, split it across multiple calls "+
-				"or run it as a background bash with `background: true`",
-			name, toolTimeout)))
-	}
-	r.publishToolFinished(ctx, spec, call, result, time.Since(startTS), err, abandoned)
-	return result, err
+	return outputs, captureErr
 }
 
 func (r *Runner) toolTimeout(tools.ToolName) time.Duration {

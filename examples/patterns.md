@@ -9,24 +9,26 @@ Patterns for building systems on the zarlcode harness, runner, tool, and guardra
 Tools should verify their own effects against the world, not just report success.
 
 ```go
-func (t *upvoteTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-    // 1. Perform the action
-    t.page.Click(".upvote-button")
-
-    // 2. Verify the effect
-    count := t.page.QuerySelector(".vote-count").TextContent()
-    t.session.RecordUpvote(count)
-
-    // 3. Return verified result
-    type UpvoteResult struct {
-        VoteCount string `json:"vote_count"`
-        Verified  bool   `json:"verified"`
-    }
-    return tools.Success(call.ID, UpvoteResult{
-        VoteCount: count,
-        Verified:  true,
-    }), nil
+type UpvoteResult struct {
+    Title    string `json:"title"`
+    Verified bool   `json:"verified"`
 }
+
+upvote := tools.New(tools.ToolSpec{
+    Name:       "upvote",
+    Description: "Upvote the top post and confirm the vote registered.",
+    Parameters: tools.SchemaFor[struct{}](),
+}, func(ctx context.Context, _ struct{}) (UpvoteResult, error) {
+    title, _ := session.page.Text(ctx, selTopTitle)
+    if err := session.page.Click(ctx, selTopVote); err != nil {
+        return UpvoteResult{}, tools.Transient("upvote", err)
+    }
+    if !pollVoted(ctx, session) {
+        return UpvoteResult{}, tools.Transient("upvote", errors.New("vote did not register"))
+    }
+    session.record("upvoted", true, title)
+    return UpvoteResult{Title: title, Verified: true}, nil
+})
 ```
 
 **Why**: The model might claim success even when the tool silently failed. Verification against the world catches these cases.

@@ -209,6 +209,7 @@ func (m *MemoSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 // arbitrary Data and metadata while isolating retained multimodal payloads.
 func cloneToolResultAttachments(result tools.ToolResult) tools.ToolResult {
 	result.Parts = llm.CloneContentParts(result.Parts)
+	result.AdmissionReferences = append([]tools.AdmissionReference(nil), result.AdmissionReferences...)
 	return result
 }
 

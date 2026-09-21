@@ -43,7 +43,7 @@ type SessionRecord struct {
 // the row is absent so callers can branch without importing
 // database/sql.
 func (s *Store) GetSession(ctx context.Context, id string) (SessionRecord, error) {
-	row, err := s.q.GetSession(ctx, id)
+	row, err := s.read.GetSession(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SessionRecord{}, ErrNotFound
@@ -56,7 +56,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (SessionRecord, error
 // ListSessionSummaries returns resumable-session metadata without loading
 // large context, diff, or plan JSON blobs.
 func (s *Store) ListSessionSummaries(ctx context.Context, workspace string) ([]SessionRecord, error) {
-	rows, err := s.q.ListSessionSummariesByWorkspace(ctx, workspace)
+	rows, err := s.read.ListSessionSummariesByWorkspace(ctx, workspace)
 	if err != nil {
 		return nil, fmt.Errorf("list session summaries: %w", err)
 	}
@@ -70,7 +70,7 @@ func (s *Store) ListSessionSummaries(ctx context.Context, workspace string) ([]S
 // ListSessions returns every session for the workspace, most recent
 // first. Empty slice (not nil) when no sessions are stored.
 func (s *Store) ListSessions(ctx context.Context, workspace string) ([]SessionRecord, error) {
-	rows, err := s.q.ListSessionsByWorkspace(ctx, workspace)
+	rows, err := s.read.ListSessionsByWorkspace(ctx, workspace)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
@@ -175,15 +175,20 @@ func (s *Store) SaveSessionDraft(ctx context.Context, r SessionRecord) error {
 // once both its context and pending content are empty.
 func (s *Store) ClearSessionDraft(ctx context.Context, id string) error {
 	if err := s.WithTx(ctx, func(tx *Store) error {
-		if err := tx.q.ClearSessionDraft(ctx, id); err != nil {
-			return fmt.Errorf("clear pending content: %w", err)
-		}
-		if err := tx.q.DeleteEmptySession(ctx, id); err != nil {
-			return fmt.Errorf("delete empty session: %w", err)
-		}
-		return nil
+		return tx.clearSessionDraft(ctx, id)
 	}); err != nil {
 		return fmt.Errorf("clear session %q draft: %w", id, err)
+	}
+	return nil
+}
+
+// clearSessionDraft requires a transaction-bound store.
+func (s *Store) clearSessionDraft(ctx context.Context, id string) error {
+	if err := s.q.ClearSessionDraft(ctx, id); err != nil {
+		return fmt.Errorf("clear pending content: %w", err)
+	}
+	if err := s.q.DeleteEmptySession(ctx, id); err != nil {
+		return fmt.Errorf("delete empty session: %w", err)
 	}
 	return nil
 }

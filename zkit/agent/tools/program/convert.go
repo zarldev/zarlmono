@@ -97,20 +97,24 @@ func toStarlark(v any) (starlark.Value, error) {
 		}
 		return starlark.NewList(elems), nil
 	case map[string]any:
-		d := starlark.NewDict(len(x))
-		for k, elem := range x {
-			v, err := toStarlark(elem)
-			if err != nil {
-				return nil, err
-			}
-			if err := d.SetKey(starlark.String(k), v); err != nil {
-				return nil, err
-			}
-		}
-		return d, nil
+		return toStarlarkDict(x)
 	default:
 		return nil, fmt.Errorf("unsupported value type %T", v)
 	}
+}
+
+func toStarlarkDict(values map[string]any) (*starlark.Dict, error) {
+	d := starlark.NewDict(len(values))
+	for key, element := range values {
+		value, err := toStarlark(element)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.SetKey(starlark.String(key), value); err != nil {
+			return nil, err
+		}
+	}
+	return d, nil
 }
 
 func fromStarlark(v starlark.Value) (any, error) {

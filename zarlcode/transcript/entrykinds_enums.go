@@ -37,6 +37,8 @@ type entryKindsContainer struct {
 	ENTRYSKILLS           EntryKind
 	ENTRYSUBAGENT         EntryKind
 	ENTRYNOTICE           EntryKind
+	ENTRYINPUTADMISSION   EntryKind
+	ENTRYINPUTWAIT        EntryKind
 }
 
 // EntryKinds is a main entry point using the EntryKind type.
@@ -73,6 +75,12 @@ var EntryKinds = entryKindsContainer{
 	ENTRYNOTICE: EntryKind{
 		entryKind: entryNotice,
 	},
+	ENTRYINPUTADMISSION: EntryKind{
+		entryKind: entryInputAdmission,
+	},
+	ENTRYINPUTWAIT: EntryKind{
+		entryKind: entryInputWait,
+	},
 }
 
 // invalidEntryKind is an invalid sentinel value for EntryKind
@@ -94,6 +102,8 @@ func (e entryKindsContainer) allSlice() []EntryKind {
 		EntryKinds.ENTRYSKILLS,
 		EntryKinds.ENTRYSUBAGENT,
 		EntryKinds.ENTRYNOTICE,
+		EntryKinds.ENTRYINPUTADMISSION,
+		EntryKinds.ENTRYINPUTWAIT,
 	}
 }
 
@@ -198,6 +208,8 @@ var entryKindsNameMap = map[string]EntryKind{
 	"skills":            EntryKinds.ENTRYSKILLS,
 	"subagent":          EntryKinds.ENTRYSUBAGENT,
 	"notice":            EntryKinds.ENTRYNOTICE,
+	"input_admission":   EntryKinds.ENTRYINPUTADMISSION,
+	"input_wait":        EntryKinds.ENTRYINPUTWAIT,
 }
 
 // stringToEntryKind converts a string representation of an enum value into its EntryKind representation
@@ -249,6 +261,8 @@ var validEntryKinds = map[EntryKind]bool{
 	EntryKinds.ENTRYSKILLS:           true,
 	EntryKinds.ENTRYSUBAGENT:         true,
 	EntryKinds.ENTRYNOTICE:           true,
+	EntryKinds.ENTRYINPUTADMISSION:   true,
+	EntryKinds.ENTRYINPUTWAIT:        true,
 }
 
 // IsValid checks whether the EntryKinds value is valid.
@@ -349,7 +363,7 @@ func (e *EntryKind) UnmarshalYAML(by []byte) error {
 }
 
 // entrykindNames is a constant string slice containing all enum values cononical absolute names
-const entrykindNames = "user_messagequeued_userassistant_messagereasoningtool_calldiffplanskillssubagentnotice"
+const entrykindNames = "user_messagequeued_userassistant_messagereasoningtool_calldiffplanskillssubagentnoticeinput_admissioninput_wait"
 
 // entrykindNamesMap is a map of enum values to their canonical absolute
 // name positions within the entrykindNames string slice
@@ -364,6 +378,8 @@ var entrykindNamesMap = map[EntryKind]string{
 	EntryKinds.ENTRYSKILLS:           entrykindNames[66:72],
 	EntryKinds.ENTRYSUBAGENT:         entrykindNames[72:80],
 	EntryKinds.ENTRYNOTICE:           entrykindNames[80:86],
+	EntryKinds.ENTRYINPUTADMISSION:   entrykindNames[86:101],
+	EntryKinds.ENTRYINPUTWAIT:        entrykindNames[101:111],
 }
 
 // String implements the Stringer interface.
@@ -382,7 +398,7 @@ func _() {
 	// An "invalid array index" compiler error signifies that the constant values have changed.
 	// Re-run the goenums command to generate them again.
 	// Does not identify newly added constant values unless order changes
-	var x [10]struct{}
+	var x [12]struct{}
 	_ = x[entryUserMessage]
 	_ = x[entryQueuedUser-1]
 	_ = x[entryAssistantMessage-2]
@@ -393,4 +409,6 @@ func _() {
 	_ = x[entrySkills-7]
 	_ = x[entrySubagent-8]
 	_ = x[entryNotice-9]
+	_ = x[entryInputAdmission-10]
+	_ = x[entryInputWait-11]
 }

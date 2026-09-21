@@ -34,6 +34,7 @@ type cacheEntry struct {
 
 type userItem struct {
 	versioned
+	entryID     string // canonical identity, never inferred from rendered text
 	text        string
 	attachments []transcript.Attachment
 }
@@ -141,7 +142,7 @@ type toolItem struct {
 	data           any    // typed structured result (code.GrepResult, …); nil = render from result string
 	dur            time.Duration
 	sequence       int
-	expanded       bool // result shown ([-]) vs hidden ([+]); only meaningful once result != ""
+	expanded       bool // result shown ([-]) vs hidden ([+])
 	children       []*toolItem
 	layout         childBlockCache
 	layoutChildren []item
@@ -233,7 +234,7 @@ func (t *toolItem) render(width int) []string {
 	// Prefix a clickable disclosure when the tool has output or nested calls. For
 	// program, the disclosure hides/shows the nested call list; each child row can
 	// then open its own result independently.
-	hasDisclosure := t.result != "" || len(t.children) > 0
+	hasDisclosure := t.hasResult() || len(t.children) > 0
 	if hasDisclosure {
 		glyph := palette.Subtle.On("[") + palette.Primary.On("-") + palette.Subtle.On("] ")
 		if !t.expanded {
@@ -256,7 +257,7 @@ func (t *toolItem) render(width int) []string {
 // header and any nested child calls. Hit-testing uses the same rows so deeply
 // nested disclosure coordinates cannot drift from rendering.
 func (t *toolItem) resultBodyLines(width int) []string {
-	if t.result == "" || !t.expanded {
+	if !t.hasResult() || !t.expanded {
 		return nil
 	}
 	if t.suppressesResultBody() {
@@ -274,6 +275,11 @@ func (t *toolItem) resultBodyLines(width int) []string {
 
 func (t *toolItem) suppressesResultBody() bool {
 	return t.name == "program" && len(t.children) > 0 && t.childSummary() != ""
+}
+
+func (t *toolItem) hasResult() bool {
+	_, hasImages := t.data.(toolResultPresentation)
+	return t.result != "" || hasImages
 }
 
 func (t *toolItem) togglerAt(width, ln int) toggler {

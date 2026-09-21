@@ -2,13 +2,16 @@ package program_test
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	program "github.com/zarldev/zarlmono/zkit/agent/tools/program"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -135,6 +138,325 @@ emit(rs)
 		if finished[i].ChildID != wantID || finished[i].Result == nil || !finished[i].Result.Success {
 			t.Fatalf("finished seq %d = %#v", i, finished[i])
 		}
+	}
+}
+
+func TestProgramNestedObserverArgumentsAreMutationIsolated(t *testing.T) {
+	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
+		"mutate": {spec: tools.ToolSpec{Name: "mutate"}, fn: func(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+			call.Arguments["top"] = "mutated"
+			call.Arguments["nested"].(map[string]any)["value"] = "mutated"
+			call.Arguments["items"].([]any)[0] = "mutated"
+			return tools.Success(call.ID, nil), nil
+		}},
+	}}
+	src, err := program.NewSource(inner, program.WithPolicy(func(tools.ToolSpec) bool { return true }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := &recordingNestedObserver{}
+	ctx := tools.ContextWithNestedToolObserver(t.Context(), obs)
+	res, err := src.Execute(ctx, tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
+call("mutate", {"top": "original", "nested": {"value": "original"}, "items": ["original"]})
+emit(None)
+`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("program failed: %v", res.Err)
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.started) != 1 || len(obs.finished) != 1 {
+		t.Fatalf("events = %d started/%d finished, want 1/1", len(obs.started), len(obs.finished))
+	}
+	for _, event := range []tools.NestedToolCall{obs.started[0], obs.finished[0].NestedToolCall} {
+		if event.Call.Arguments["top"] != "original" ||
+			event.Call.Arguments["nested"].(map[string]any)["value"] != "original" ||
+			event.Call.Arguments["items"].([]any)[0] != "original" {
+			t.Fatalf("observer arguments were mutated by executor: %#v", event.Call.Arguments)
+		}
+		if event.Call.RawArguments != "" {
+			t.Fatalf("raw arguments = %q, want unavailable for Starlark", event.Call.RawArguments)
+		}
+	}
+}
+
+func TestProgramObservesDeniedSingleCallWithDecodedArguments(t *testing.T) {
+	var executions atomic.Int32
+	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
+		"echo": {spec: tools.ToolSpec{Name: "echo"}, fn: func(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+			executions.Add(1)
+			return tools.Success(call.ID, nil), nil
+		}},
+	}}
+	src, err := program.NewSource(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := &recordingNestedObserver{}
+	ctx := tools.ContextWithNestedToolObserver(t.Context(), obs)
+	res, err := src.Execute(ctx, tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit(call("echo", {"secret": "single-secret"}))`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || res.Err == nil || res.Err.Kind != tools.Kinds.PERMISSION {
+		t.Fatalf("denied result = %#v", res)
+	}
+	if executions.Load() != 0 {
+		t.Fatalf("executor calls = %d, want 0", executions.Load())
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.started) != 1 || len(obs.finished) != 1 {
+		t.Fatalf("events = %d started/%d finished, want 1/1", len(obs.started), len(obs.finished))
+	}
+	if got := obs.started[0].Call.Arguments["secret"]; got != "single-secret" {
+		t.Fatalf("decoded secret = %#v", got)
+	}
+	if obs.started[0].Call.RawArguments != "" {
+		t.Fatalf("raw arguments = %q, want unavailable", obs.started[0].Call.RawArguments)
+	}
+	if obs.finished[0].Kind != tools.Kinds.PERMISSION || obs.finished[0].Err == nil || obs.finished[0].Result != nil {
+		t.Fatalf("finished event = %#v", obs.finished[0])
+	}
+}
+
+func TestProgramObservesEveryCallWhenBatchIsDenied(t *testing.T) {
+	var executions atomic.Int32
+	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
+		"echo": {spec: tools.ToolSpec{Name: "echo"}, fn: func(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+			executions.Add(1)
+			return tools.Success(call.ID, nil), nil
+		}},
+		"blocked": {spec: tools.ToolSpec{Name: "blocked"}, fn: func(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+			executions.Add(1)
+			return tools.Success(call.ID, nil), nil
+		}},
+	}}
+	src, err := program.NewSource(inner, program.WithPolicy(func(spec tools.ToolSpec) bool { return spec.Name == "echo" }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := &recordingNestedObserver{}
+	ctx := tools.ContextWithNestedToolObserver(t.Context(), obs)
+	res, err := src.Execute(ctx, tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
+call_many([
+  {"name": "echo", "args": {"secret": "allowed-secret"}},
+  {"name": "blocked", "args": {"secret": "blocked-secret"}},
+])
+emit(None)
+`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || res.Err == nil || res.Err.Kind != tools.Kinds.PERMISSION {
+		t.Fatalf("denied result = %#v", res)
+	}
+	if executions.Load() != 0 {
+		t.Fatalf("executor calls = %d, want 0", executions.Load())
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.started) != 2 || len(obs.finished) != 2 {
+		t.Fatalf("events = %d started/%d finished, want 2/2", len(obs.started), len(obs.finished))
+	}
+	for i, want := range []string{"allowed-secret", "blocked-secret"} {
+		if got := obs.started[i].Call.Arguments["secret"]; got != want {
+			t.Fatalf("event %d decoded secret = %#v, want %q", i, got, want)
+		}
+		if obs.started[i].Call.RawArguments != "" {
+			t.Fatalf("event %d raw arguments = %q, want unavailable", i, obs.started[i].Call.RawArguments)
+		}
+		if obs.finished[i].Kind != tools.Kinds.PERMISSION || obs.finished[i].Err == nil || obs.finished[i].Result != nil {
+			t.Fatalf("finished event %d = %#v", i, obs.finished[i])
+		}
+	}
+}
+
+func TestProgramObservesBatchRejectedByRemainingCallBudget(t *testing.T) {
+	var executions atomic.Int32
+	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
+		"echo": {spec: tools.ToolSpec{Name: "echo"}, fn: func(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+			executions.Add(1)
+			return tools.Success(call.ID, nil), nil
+		}},
+	}}
+	src, err := program.NewSource(inner,
+		program.WithPolicy(func(tools.ToolSpec) bool { return true }),
+		program.WithLimits(program.Limits{MaxToolCalls: 2, MaxParallelCalls: 2}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := &recordingNestedObserver{}
+	ctx := tools.ContextWithNestedToolObserver(t.Context(), obs)
+	res, err := src.Execute(ctx, tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
+call("echo", {"secret": "executed-secret"})
+call_many([
+  {"name": "echo", "args": {"secret": "budget-secret-a"}},
+  {"name": "echo", "args": {"secret": "budget-secret-b"}},
+])
+emit(None)
+`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || res.Err == nil || res.Err.Kind != tools.Kinds.BUDGET {
+		t.Fatalf("budget result = %#v", res)
+	}
+	if executions.Load() != 1 {
+		t.Fatalf("executor calls = %d, want 1", executions.Load())
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.started) != 3 || len(obs.finished) != 3 {
+		t.Fatalf("events = %d started/%d finished, want 3/3", len(obs.started), len(obs.finished))
+	}
+	for i, want := range []string{"budget-secret-a", "budget-secret-b"} {
+		event := obs.started[i+1]
+		if got := event.Call.Arguments["secret"]; got != want || event.Call.RawArguments != "" {
+			t.Fatalf("budget event %d call = %#v", i, event.Call)
+		}
+		finished := obs.finished[i+1]
+		if finished.Kind != tools.Kinds.BUDGET || finished.Err == nil || finished.Result != nil {
+			t.Fatalf("budget finished event %d = %#v", i, finished)
+		}
+	}
+}
+
+func TestProgramObservesReservedCallsCancelledBeforeDispatch(t *testing.T) {
+	var executions atomic.Int32
+	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
+		"echo": {spec: tools.ToolSpec{Name: "echo"}, fn: func(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+			executions.Add(1)
+			return tools.Success(call.ID, nil), nil
+		}},
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	var cancelOnce sync.Once
+	src, err := program.NewSource(inner, program.WithPolicy(func(tools.ToolSpec) bool {
+		cancelOnce.Do(cancel)
+		return true
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := &recordingNestedObserver{}
+	ctx = tools.ContextWithNestedToolObserver(ctx, obs)
+	res, err := src.Execute(ctx, tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
+emit(call_many([
+  {"name": "echo", "args": {"secret": "cancelled-secret-a"}},
+  {"name": "echo", "args": {"secret": "cancelled-secret-b"}},
+]))
+`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || res.Err == nil || res.Err.Kind != tools.Kinds.TRANSIENT {
+		t.Fatalf("cancelled result = %#v", res)
+	}
+	if executions.Load() != 0 {
+		t.Fatalf("executor calls = %d, want 0", executions.Load())
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.started) != 2 || len(obs.finished) != 2 {
+		t.Fatalf("events = %d started/%d finished, want 2/2", len(obs.started), len(obs.finished))
+	}
+	started := map[int]tools.NestedToolCall{}
+	finished := map[int]tools.NestedToolResult{}
+	for _, event := range obs.started {
+		started[event.Sequence] = event
+	}
+	for _, event := range obs.finished {
+		finished[event.Sequence] = event
+	}
+	for i, want := range []string{"cancelled-secret-a", "cancelled-secret-b"} {
+		if got := started[i].Call.Arguments["secret"]; got != want {
+			t.Fatalf("cancelled event %d decoded secret = %#v, want %q", i, got, want)
+		}
+		if started[i].Call.RawArguments != "" {
+			t.Fatalf("cancelled event %d raw arguments = %q, want unavailable", i, started[i].Call.RawArguments)
+		}
+		if finished[i].Kind != tools.Kinds.TRANSIENT || finished[i].Err == nil || finished[i].Result != nil {
+			t.Fatalf("cancelled finished event %d = %#v", i, finished[i])
+		}
+	}
+}
+
+func TestProgramClassifiesCancellationAfterNestedToolSettles(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	lateResult := &tools.ToolResult{
+		ToolCallID: "outer/0",
+		Success:    true,
+		Data:       map[string]any{"value": "CANARY", "raw": make(chan struct{})},
+		Parts:      []llm.ContentPart{{Type: llm.ContentTypeText, Text: "CANARY part"}},
+		Effects:    []tools.Effect{tools.NewFileEffect(tools.FileModify, "CANARY-effect")},
+	}
+	var executions atomic.Int32
+	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
+		"late": {spec: tools.ToolSpec{Name: "late"}, fn: func(ctx context.Context, _ tools.ToolCall) (*tools.ToolResult, error) {
+			executions.Add(1)
+			cancel()
+			<-ctx.Done()
+			return lateResult, nil
+		}},
+		"next": {spec: tools.ToolSpec{Name: "next"}, fn: func(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+			executions.Add(1)
+			return tools.Success(call.ID, nil), nil
+		}},
+	}}
+	src, err := program.NewSource(inner, program.WithPolicy(func(tools.ToolSpec) bool { return true }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := &recordingNestedObserver{}
+	ctx = tools.ContextWithNestedToolObserver(ctx, obs)
+	res, err := src.Execute(ctx, tools.ToolCall{ID: "outer", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `
+call("late", {})
+call("next", {})
+emit(None)
+`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || res.Err == nil || res.Err.Kind != tools.Kinds.TRANSIENT {
+		t.Fatalf("cancelled result = %#v", res)
+	}
+	if executions.Load() != 1 {
+		t.Fatalf("executor calls = %d, want 1", executions.Load())
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.started) != 1 || len(obs.finished) != 1 {
+		t.Fatalf("events = %d started/%d finished, want 1/1", len(obs.started), len(obs.finished))
+	}
+	finished := obs.finished[0]
+	if finished.Result != lateResult || !finished.Result.Success {
+		t.Fatalf("raw result = %#v, want exact successful result %#v", finished.Result, lateResult)
+	}
+	data, ok := finished.Result.Data.(map[string]any)
+	if !ok || data["value"] != "CANARY" || data["raw"] == nil {
+		t.Fatalf("raw data = %#v", finished.Result.Data)
+	}
+	if len(finished.Result.Parts) != 1 || finished.Result.Parts[0].Text != "CANARY part" {
+		t.Fatalf("raw parts = %#v", finished.Result.Parts)
+	}
+	if len(finished.Result.Effects) != 1 || finished.Result.Effects[0].File == nil || finished.Result.Effects[0].File.Path != "CANARY-effect" {
+		t.Fatalf("raw effects = %#v", finished.Result.Effects)
+	}
+	if finished.Err == nil || !errors.Is(finished.Err, context.Canceled) || finished.Kind != tools.Kinds.TRANSIENT || finished.Error == "" {
+		t.Fatalf("finished event = %#v", finished)
 	}
 }
 

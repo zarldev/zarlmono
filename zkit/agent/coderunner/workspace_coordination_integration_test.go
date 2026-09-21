@@ -166,8 +166,8 @@ func newWorkspaceWaitSink() *workspaceWaitSink {
 	}
 }
 
-func (s *workspaceWaitSink) OnWorkspaceWaitStarted(event runner.WorkspaceWaitStarted) {
-	s.Sink.OnWorkspaceWaitStarted(event)
+func (s *workspaceWaitSink) OnWorkspaceWaitStarted(ctx context.Context, event runner.WorkspaceWaitStarted) {
+	s.Sink.OnWorkspaceWaitStarted(ctx, event)
 	s.started <- event
 }
 

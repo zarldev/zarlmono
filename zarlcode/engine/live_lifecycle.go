@@ -19,14 +19,18 @@ func (l *LiveRunner) Close(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
+	drained, err := l.admission.startClosing()
+	if err != nil {
+		return err
+	}
+
 	l.mu.Lock()
 	if !l.closing {
 		l.closing = true
 		l.shutdownDone = make(chan struct{})
 		turnCancel := l.turnCancel
-		turnDone := l.turnDone
 		shutdownDone := l.shutdownDone
-		go l.shutdown(turnDone, shutdownDone)
+		go l.shutdown(drained, shutdownDone)
 		if turnCancel != nil {
 			turnCancel()
 		}
@@ -45,10 +49,8 @@ func (l *LiveRunner) Close(ctx context.Context) error {
 	}
 }
 
-func (l *LiveRunner) shutdown(turnDone, shutdownDone chan struct{}) {
-	if turnDone != nil {
-		<-turnDone
-	}
+func (l *LiveRunner) shutdown(drained <-chan struct{}, shutdownDone chan struct{}) {
+	<-drained
 
 	l.mu.Lock()
 	mcp := l.mcp
@@ -97,7 +99,12 @@ func (l *LiveRunner) beginTurn(ctx context.Context) (context.Context, func(), er
 	if l.closing {
 		l.mu.Unlock()
 		cancel()
-		return nil, nil, errors.New("live runner is closing")
+		return nil, nil, ErrRuntimeClosed
+	}
+	if l.turnDone != nil {
+		l.mu.Unlock()
+		cancel()
+		return nil, nil, ErrRuntimeBusy
 	}
 	l.turnCancel = cancel
 	l.turnDone = done

@@ -27,13 +27,11 @@ func TestProviderKeepsReasoningOnlyInToolCallWindows(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	provider, err := deepseek.NewProvider("test-key",
+	provider := deepseek.NewProvider("test-key",
 		deepseek.WithBaseURL(server.URL),
 		deepseek.WithModel("deepseek-v4"),
 	)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+
 	messages := []llm.Message{
 		{Role: llm.RoleUser, Content: "use a tool"},
 		{Role: llm.RoleAssistant, ReasoningContent: "keep-call", ToolCalls: []llm.ToolCall{{ID: "call-1", Type: "function", Function: llm.ToolCallFunction{Name: "lookup", Arguments: `{}`}}}},

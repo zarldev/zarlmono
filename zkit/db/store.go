@@ -13,23 +13,20 @@ package db
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
 
-	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite" // sqlite driver — pure Go, no CGO.
 
 	"github.com/zarldev/zarlmono/zkit/db/gen"
+	"github.com/zarldev/zarlmono/zkit/db/migrations"
 	"github.com/zarldev/zarlmono/zkit/filesystem"
 )
-
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
 
 // ErrNotFound is returned when a Get does not match a row. Callers
 // branch on it via errors.Is.
@@ -90,12 +87,17 @@ func DefaultPath() (string, error) {
 	return filepath.Join(d, "state.db"), nil
 }
 
-// Store owns the sqlite connection and the sqlc Queries facade.
+// Store owns a single-connection writer pool and a bounded read-only pool.
 // Goroutine-safe by virtue of [database/sql.DB].
 type Store struct {
-	db *sql.DB
-	q  *gen.Queries
+	db     *sql.DB
+	reader *sql.DB
+	q      *gen.Queries // writer, or the current transaction
+	read   *gen.Queries // reader, or the same current transaction
+	inTx   bool
 }
+
+const readerConnections = 4
 
 // Open returns a Store backed by the sqlite file at path. When path
 // is empty it resolves to [DefaultPath]. Parent directories are
@@ -116,18 +118,23 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := hardenSQLitePath(path); err != nil {
 		return nil, err
 	}
-	// Pragmas: WAL for concurrent reads + foreign_keys for safety. A longer busy
-	// timeout lets a second zarlcode process finish its brief write before this
-	// one gives up.
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)"
+	// Resolve and URI-escape the filesystem path so both pools open the same
+	// database, including filenames containing SQLite URI metacharacters.
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sqlite path: %w", err)
+	}
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}
+	// WAL allows the reader pool to progress while the writer is occupied.
+	// The busy timeout also applies to contention with other processes.
+	dsn := uri.String() + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)"
 	d, err := sql.Open("sqlite", dsn)
 
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", path, err)
 	}
-	// SQLite permits one writer. Keep this Store on one connection so concurrent
-	// writes from the application wait in database/sql instead of contending for
-	// SQLite's write lock.
+	// SQLite permits one writer. Queue this Store's writes in database/sql
+	// instead of contending for SQLite's write lock between local connections.
 	d.SetMaxOpenConns(1)
 	d.SetMaxIdleConns(1)
 
@@ -143,7 +150,21 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		_ = d.Close()
 		return nil, err
 	}
-	return &Store{db: d, q: gen.New(d)}, nil
+	// Open readers only after creation and migration. mode=ro enforces read-only
+	// access on every connection, including connections opened later by the pool.
+	readDB, err := sql.Open("sqlite", uri.String()+"?mode=ro&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)")
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("open sqlite readers: %w", err)
+	}
+	readDB.SetMaxOpenConns(readerConnections)
+	readDB.SetMaxIdleConns(readerConnections)
+	if err := readDB.PingContext(ctx); err != nil {
+		_ = readDB.Close()
+		_ = d.Close()
+		return nil, fmt.Errorf("ping sqlite readers: %w", err)
+	}
+	return &Store{db: d, reader: readDB, q: gen.New(d), read: gen.New(readDB)}, nil
 }
 
 func hardenSQLitePath(path string) error {
@@ -173,26 +194,26 @@ func chmodSQLiteFiles(path string) error {
 	return nil
 }
 
-// Close releases the underlying connection. Safe to call on a nil
-// receiver so deferred cleanup paths stay tidy.
+// Close releases both owned pools. Safe to call on a nil receiver so deferred
+// cleanup paths stay tidy.
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	return errors.Join(s.reader.Close(), s.db.Close())
 }
 
-// DB returns the underlying *sql.DB. Exposed so tests and the rare
-// caller that needs raw access can reach in; normal code should go
-// through the typed methods.
+// DB returns the single-connection writer pool for raw access. Ordinary reads
+// should use typed methods or ReadDB so they do not queue behind writers.
 func (s *Store) DB() *sql.DB { return s.db }
 
+// ReadDB returns the bounded read-only pool for raw inspection. Callers must
+// close rows and transactions promptly so readers do not hold back WAL cleanup.
+// Store owns this pool; callers must not close it or change its connection limits.
+func (s *Store) ReadDB() *sql.DB { return s.reader }
+
 func migrate(ctx context.Context, d *sql.DB) error {
-	sub, err := fs.Sub(migrationsFS, "migrations")
-	if err != nil {
-		return fmt.Errorf("sub migrations: %w", err)
-	}
-	p, err := goose.NewProvider(goose.DialectSQLite3, d, sub)
+	p, err := migrations.NewProvider(d)
 	if err != nil {
 		return fmt.Errorf("goose provider: %w", err)
 	}
@@ -226,12 +247,26 @@ func migrate(ctx context.Context, d *sql.DB) error {
 // so a multi-statement sequence (e.g. prefs promote: write-global then
 // delete-workspace) can't be left half-applied by a crash between statements.
 func (s *Store) WithTx(ctx context.Context, fn func(*Store) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	return s.withPoolTx(ctx, s.db, fn)
+}
+
+// Snapshot reads borrow an existing transaction when called within a write;
+// otherwise they use a reader connection without occupying the writer pool.
+func (s *Store) withReadTx(ctx context.Context, fn func(*Store) error) error {
+	if s.inTx {
+		return fn(s)
+	}
+	return s.withPoolTx(ctx, s.reader, fn)
+}
+
+func (s *Store) withPoolTx(ctx context.Context, pool *sql.DB, fn func(*Store) error) error {
+	tx, err := pool.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	if err := fn(&Store{db: s.db, q: s.q.WithTx(tx)}); err != nil {
-		_ = tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
+	queries := gen.New(tx)
+	if err := fn(&Store{db: s.db, reader: s.reader, q: queries, read: queries, inTx: true}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

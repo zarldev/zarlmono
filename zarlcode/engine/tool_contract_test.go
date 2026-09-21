@@ -50,12 +50,12 @@ func TestDefaultBuildToolContractSizes(t *testing.T) {
 	slices.Sort(names)
 	wantNames := []string{
 		"bash", "computer_act", "computer_observe", "edit", "instruction_load", "program",
-		"save_plan", "save_plan_append", "skill_create", "skill_load", "update_plan", "write",
+		"save_plan", "save_plan_append", "set_mode", "skill_create", "skill_load", "update_plan", "write",
 	}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("BUILD membership changed:\ngot  %v\nwant %v", names, wantNames)
 	}
-	const maxCompactBytes = 13_143 // 25% below the 17,524-byte baseline.
+	const maxCompactBytes = 13_143 + 602 // Existing compact budget plus the typed set_mode control contract.
 	if total > maxCompactBytes {
 		t.Errorf("tool contract bytes = %d, want <= %d", total, maxCompactBytes)
 	}

@@ -141,10 +141,7 @@ func TestRequest_ResponseFormatInjection(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			provider, err := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			provider := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL))
 
 			req := llm.CompletionRequest{
 				Messages:       []llm.Message{{Role: "user", Content: "hi"}},
@@ -152,11 +149,10 @@ func TestRequest_ResponseFormatInjection(t *testing.T) {
 				ResponseFormat: tc.format,
 			}
 
-			seq := provider.Complete(t.Context(), req)
-			if err != nil {
-				t.Fatalf("Complete: %v", err)
-			}
-			for range seq {
+			for _, err := range provider.Complete(t.Context(), req) {
+				if err != nil {
+					t.Fatalf("Complete: %v", err)
+				}
 			}
 
 			var body map[string]any
@@ -182,10 +178,7 @@ func TestRequest_ReasoningEffortWithToolsDisabledForChatCompletions(t *testing.T
 	}))
 	defer srv.Close()
 
-	provider, err := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL), openai.WithModel("gpt-5.6-sol"))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := openai.NewProvider("test-key", openai.WithBaseURL(srv.URL), openai.WithModel("gpt-5.6-sol"))
 
 	seq := provider.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hi"}},

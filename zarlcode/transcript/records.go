@@ -43,6 +43,10 @@ func (t Thread) RecordsSince(revision uint64) ([]Record, error) {
 
 // FromRecords validates ordered persistence rows and restores a canonical thread.
 func FromRecords(revision uint64, records []Record) (Thread, error) {
+	return fromRecords(revision, records, true)
+}
+
+func fromRecords(revision uint64, records []Record, recoverOpenAssistant bool) (Thread, error) {
 	sorted := append([]Record(nil), records...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Sequence < sorted[j].Sequence })
 	thread := Thread{revision: revision, entries: make([]Entry, 0, len(sorted))}
@@ -76,7 +80,7 @@ func FromRecords(revision uint64, records []Record) (Thread, error) {
 	// runtime-open shape before applying quiescent transcript validation.
 	for i := range thread.entries {
 		entry := &thread.entries[i]
-		if entry.Kind == EntryKinds.ENTRYASSISTANTMESSAGE && entry.Payload.Text == "" &&
+		if recoverOpenAssistant && entry.Kind == EntryKinds.ENTRYASSISTANTMESSAGE && entry.Payload.Text == "" &&
 			!entry.Payload.Complete && !entry.Payload.Interrupted {
 			thread.revision++
 			entry.Revision = thread.revision

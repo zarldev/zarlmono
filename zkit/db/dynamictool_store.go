@@ -23,7 +23,7 @@ type DynamicToolRow struct {
 // slot — reserved for "shared across all workspaces" semantics
 // later; nothing writes there today.
 func (s *Store) ListDynamicTools(ctx context.Context, workspace string) ([]DynamicToolRow, error) {
-	rows, err := s.q.ListDynamicTools(ctx, workspace)
+	rows, err := s.read.ListDynamicTools(ctx, workspace)
 	if err != nil {
 		return nil, fmt.Errorf("list dynamic tools for %q: %w", workspace, err)
 	}

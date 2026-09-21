@@ -39,8 +39,8 @@ func TestSink_PumpSurvivesPanic(t *testing.T) {
 	s := teasink.New(send)
 	defer s.Close()
 
-	s.OnThinking(runner.Thinking{TaskID: taskscope.ID("task"), Delta: "one"}) // panics inside send
-	s.OnThinking(runner.Thinking{TaskID: taskscope.ID("task"), Delta: "two"}) // must still be delivered
+	s.OnThinking(t.Context(), runner.Thinking{TaskID: taskscope.ID("task"), Delta: "one"}) // panics inside send
+	s.OnThinking(t.Context(), runner.Thinking{TaskID: taskscope.ID("task"), Delta: "two"}) // must still be delivered
 
 	s.Drain()
 
@@ -73,7 +73,7 @@ func TestSink_TeardownPanicNotLogged(t *testing.T) {
 
 	// Closing during delivery models the program-teardown race through the
 	// public API: recovery observes shutdown and suppresses the panic log.
-	s.OnThinking(runner.Thinking{TaskID: taskscope.ID("task"), Delta: "x"})
+	s.OnThinking(t.Context(), runner.Thinking{TaskID: taskscope.ID("task"), Delta: "x"})
 	s.Drain()
 
 	if logOut := logBuf.String(); strings.Contains(logOut, "recovered panic") {

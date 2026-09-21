@@ -2,13 +2,11 @@ package db_test
 
 import (
 	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/pressly/goose/v3"
-
 	"github.com/zarldev/zarlmono/zkit/db"
+	"github.com/zarldev/zarlmono/zkit/db/migrations"
 )
 
 func TestMCPServerAuthIntentRoundTrip(t *testing.T) {
@@ -40,7 +38,7 @@ func TestMCPAuthIntentMigrationPreservesRequiredState(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	provider, err := goose.NewProvider(goose.DialectSQLite3, database, os.DirFS("migrations"))
+	provider, err := migrations.NewProvider(database)
 	if err != nil {
 		t.Fatal(err)
 	}

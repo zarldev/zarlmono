@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
@@ -29,14 +30,16 @@ type Thinking struct {
 	Delta  string
 }
 
-// ToolStarted fires when the runner dispatches a tool call.
+// ToolStarted records a dispatch attempt, including calls rejected before execution.
 type ToolStarted struct {
-	TaskID            taskscope.ID
-	Depth             int
-	ExecutionID       string
-	ToolID            string
-	ToolName          string
-	Parameters        map[string]any
+	TaskID      taskscope.ID
+	Depth       int
+	ExecutionID string
+	ToolID      string
+	ToolName    string
+	Parameters  map[string]any
+	// RawArguments is the original, unredacted argument JSON before repair.
+	RawArguments      string
 	ParentToolID      string
 	ParentExecutionID string
 	Sequence          int
@@ -85,6 +88,9 @@ type ToolCompleted struct {
 	ParentToolID      string
 	ParentExecutionID string
 	Sequence          int
+
+	// Parts is an owned snapshot of successful tool-result attachments.
+	Parts []llm.ContentPart
 }
 
 // ToolFailed fires when a tool call errors or reports failure.
@@ -106,13 +112,12 @@ type ToolFailed struct {
 	// fatal / …) from the tool result's typed Err.Kind, so consumers render
 	// or react to the class rather than substring-matching Error.
 	Kind tools.Kind
-	// Abandoned is true when the failure is the runner giving up on a tool
-	// that blew its per-tool time budget while still in flight: the runner
-	// stopped waiting and reported a timeout, but the tool's goroutine may
-	// still be running and mutating state. Distinguishes "the tool failed"
-	// and "the tool timed out and stopped" from "the tool timed out and
-	// was abandoned with side effects possibly still in flight" — the one
-	// a consumer may want to surface or alert on.
+	// RawOutput retains the settled output, including data returned with failure
+	// or after cancellation. Error remains the terminal classification.
+	RawOutput string
+	// Parts retains attachments returned with the settled failed execution.
+	Parts []llm.ContentPart
+	// Abandoned is retained for compatibility. Joined dispatch always sets false.
 	Abandoned         bool
 	Effects           []tools.Effect
 	Duration          time.Duration
@@ -194,8 +199,9 @@ type IterationCompleted struct {
 	Usage *llm.Usage
 	// Delta is this iteration's own reported usage. Nil when the
 	// provider omitted usage on this stream (llama.cpp's openai-compat
-	// endpoint is known to drop it on the final chunk). Sum Delta across
-	// iterations for per-turn flow; read Usage for occupancy.
+	// endpoint is known to drop it on the final chunk). Failed attempts do
+	// not emit IterationCompleted; use ProviderAttemptSettled for all-attempt
+	// flow or ConversationEnded.TotalUsage for the task total.
 	Delta *llm.Usage
 
 	// Context is a per-role byte/message breakdown of the working history
@@ -207,6 +213,13 @@ type IterationCompleted struct {
 	// ToolSurface describes the exact post-gate tool snapshot sent on this
 	// iteration. It is present even when the surface is empty.
 	ToolSurface ToolSurface
+	// RequestPreparationDuration covers request shaping, tool enumeration and
+	// request-history capture; iteration zero also includes initial prompt setup.
+	// Compaction, retries and event publication are excluded.
+	RequestPreparationDuration time.Duration
+	// ToolDispatchDuration is wall time for this batch, including synchronous
+	// dispatch observers and workspace admission waits, not summed tool time.
+	ToolDispatchDuration time.Duration
 }
 
 // ToolSurface is request accounting for the exact model-visible tool set.
@@ -283,7 +296,7 @@ type Diagnostic struct {
 // field (no batching, no joining); subscribers wanting the full
 // final message accumulate themselves.
 type ContentSink interface {
-	OnContent(Content)
+	OnContent(context.Context, Content)
 }
 
 // ThinkingSink observes streamed reasoning deltas (extended thinking /
@@ -291,22 +304,22 @@ type ContentSink interface {
 // them in a dedicated reasoning surface. One OnThinking per reasoning-bearing
 // chunk; subscribers accumulate themselves.
 type ThinkingSink interface {
-	OnThinking(Thinking)
+	OnThinking(context.Context, Thinking)
 }
 
 // ToolSink observes tool-call lifecycle. Each call dispatched by
 // the runner produces exactly one OnToolStarted and exactly one
 // of OnToolCompleted or OnToolFailed.
 type ToolSink interface {
-	OnToolStarted(ToolStarted)
-	OnToolCompleted(ToolCompleted)
-	OnToolFailed(ToolFailed)
+	OnToolStarted(context.Context, ToolStarted)
+	OnToolCompleted(context.Context, ToolCompleted)
+	OnToolFailed(context.Context, ToolFailed)
 }
 
 // WorkspaceWaitSink observes path-aware workspace wait lifecycle events.
 type WorkspaceWaitSink interface {
-	OnWorkspaceWaitStarted(WorkspaceWaitStarted)
-	OnWorkspaceWaitEnded(WorkspaceWaitEnded)
+	OnWorkspaceWaitStarted(context.Context, WorkspaceWaitStarted)
+	OnWorkspaceWaitEnded(context.Context, WorkspaceWaitEnded)
 }
 
 // ConversationSink observes the bookend events around a single
@@ -315,28 +328,29 @@ type WorkspaceWaitSink interface {
 // their own Started/Ended pairs. OnIterationCompleted fires once per
 // iteration *within* a Run, between Started and Ended.
 type ConversationSink interface {
-	OnConversationStarted(ConversationStarted)
-	OnConversationEnded(ConversationEnded)
-	OnIterationCompleted(IterationCompleted)
+	OnConversationStarted(context.Context, ConversationStarted)
+	OnConversationEnded(context.Context, ConversationEnded)
+	OnIterationCompleted(context.Context, IterationCompleted)
+	OnProviderAttemptSettled(context.Context, ProviderAttemptSettled)
 }
 
 // SteerSink observes when the runner picked up queued user
 // messages from the Steerer between iterations. Useful for UIs
 // that want to render the injected lines in the transcript.
 type SteerSink interface {
-	OnSteerInjected(SteerInjected)
+	OnSteerInjected(context.Context, SteerInjected)
 }
 
 // CompactionSink observes when the runner's Compactor returned
 // a shrunken history. MessagesBefore/After let subscribers show
 // the size delta to the user.
 type CompactionSink interface {
-	OnCompactionApplied(CompactionApplied)
+	OnCompactionApplied(context.Context, CompactionApplied)
 }
 
 // DiagnosticSink observes non-terminal recovery decisions.
 type DiagnosticSink interface {
-	OnDiagnostic(Diagnostic)
+	OnDiagnostic(context.Context, Diagnostic)
 }
 
 // EventSink is the composite the runner takes. Adding an event method
@@ -344,6 +358,16 @@ type DiagnosticSink interface {
 // that's the compile-time exhaustiveness contract. Implementers that
 // genuinely want to ignore future events embed NopSink and override
 // only what they care about.
+//
+// Each callback receives the context of the operation that published it,
+// preserving caller values, deadlines, and cancellation. Stream callbacks use
+// the provider attempt context; tool callbacks use the dispatch context.
+// Contexts are borrowed for the callback and must not be retained in queued
+// events. Observers may extract correlation metadata for their own records.
+//
+// Cancellation does not suppress lifecycle events. A settled operation's
+// context may already be cancelled by cleanup even on success; use the event's
+// outcome fields to classify it. Wrappers must forward the supplied context.
 //
 // # Concurrency
 //
@@ -370,6 +394,7 @@ type EventSink interface {
 	SteerSink
 	CompactionSink
 	DiagnosticSink
+	InputSink
 }
 
 // NopSink satisfies EventSink with no-op methods. Embed when you want
@@ -378,16 +403,19 @@ type NopSink struct{}
 
 // Every NopSink event method discards its event and returns immediately.
 
-func (NopSink) OnContent(Content)                           {}
-func (NopSink) OnThinking(Thinking)                         {}
-func (NopSink) OnToolStarted(ToolStarted)                   {}
-func (NopSink) OnToolCompleted(ToolCompleted)               {}
-func (NopSink) OnToolFailed(ToolFailed)                     {}
-func (NopSink) OnConversationStarted(ConversationStarted)   {}
-func (NopSink) OnConversationEnded(ConversationEnded)       {}
-func (NopSink) OnIterationCompleted(IterationCompleted)     {}
-func (NopSink) OnSteerInjected(SteerInjected)               {}
-func (NopSink) OnCompactionApplied(CompactionApplied)       {}
-func (NopSink) OnDiagnostic(Diagnostic)                     {}
-func (NopSink) OnWorkspaceWaitStarted(WorkspaceWaitStarted) {}
-func (NopSink) OnWorkspaceWaitEnded(WorkspaceWaitEnded)     {}
+func (NopSink) OnContent(context.Context, Content)                               {}
+func (NopSink) OnThinking(context.Context, Thinking)                             {}
+func (NopSink) OnToolStarted(context.Context, ToolStarted)                       {}
+func (NopSink) OnToolCompleted(context.Context, ToolCompleted)                   {}
+func (NopSink) OnToolFailed(context.Context, ToolFailed)                         {}
+func (NopSink) OnConversationStarted(context.Context, ConversationStarted)       {}
+func (NopSink) OnConversationEnded(context.Context, ConversationEnded)           {}
+func (NopSink) OnIterationCompleted(context.Context, IterationCompleted)         {}
+func (NopSink) OnProviderAttemptSettled(context.Context, ProviderAttemptSettled) {}
+func (NopSink) OnSteerInjected(context.Context, SteerInjected)                   {}
+func (NopSink) OnCompactionApplied(context.Context, CompactionApplied)           {}
+func (NopSink) OnDiagnostic(context.Context, Diagnostic)                         {}
+func (NopSink) OnWorkspaceWaitStarted(context.Context, WorkspaceWaitStarted)     {}
+func (NopSink) OnWorkspaceWaitEnded(context.Context, WorkspaceWaitEnded)         {}
+func (NopSink) OnWaitingForInputs(context.Context, WaitingForInputs)             {}
+func (NopSink) OnInputsAdmitted(context.Context, InputsAdmitted)                 {}

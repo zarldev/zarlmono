@@ -53,6 +53,32 @@ verification telemetry was not recorded for the historical row; they must not be
 reported as a newly verified failure. The detailed commands and migration notes live in
 [`swebench-eval/README.md`](https://github.com/zarldev/zarlmono/tree/main/swebench-eval#readme).
 
+## Reproducible run records
+
+New runs save a versioned manifest before task execution: the ordered selected
+task definitions and their fingerprint, expanded ablation drivers, requested
+runtime settings, and available executable/dependency build identity.
+
+Export a saved run without starting an agent or scorer:
+
+```bash
+go run -C swebench-eval ./cmd/eval \
+  --db /path/to/eval.db --export-run RUN_ID > run.json
+```
+
+The JSON artifact includes the manifest, task results, and ordered scoring events
+from one consistent database snapshot. Historical manifests and unscored verdicts
+remain `null`; missing telemetry is not converted into failure or zero cost.
+
+Compare task fingerprints, actual per-result models, settings, and missing/error
+outcomes before interpreting a difference in resolution rate. The manifest keeps
+requested defaults as defaults and excludes credentials, environment contents,
+endpoint URLs, and local configuration paths. External provider/scorer setup and
+dirty local source still need to be retained separately for reproduction.
+
+See the [run identity and export reference](https://github.com/zarldev/zarlmono/blob/main/swebench-eval/README.md#run-identity-and-offline-export)
+for artifact fields, limitations, migration behavior, and an offline fixture check.
+
 ## Where to find it
 
 The source lives at [`swebench-eval/`](https://github.com/zarldev/zarlmono/tree/main/swebench-eval).

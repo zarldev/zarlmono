@@ -32,10 +32,9 @@ type Provider struct {
 	timeout time.Duration
 }
 
-// NewProvider creates a DeepSeek-targeted provider. Empty apiKey errors;
-// empty baseURL defaults to DefaultBaseURL; empty model defaults to
-// DefaultModel.
-func NewProvider(apiKey string, opts ...options.Option[Provider]) (llm.Provider, error) {
+// NewProvider assembles a DeepSeek provider using an already-resolved API key.
+// The endpoint and model default to DefaultBaseURL and DefaultModel.
+func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 	p := &Provider{
 		baseURL: DefaultBaseURL,
 		model:   DefaultModel,
@@ -65,12 +64,8 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) (llm.Provider,
 		optsInner = append(optsInner, openai.WithTimeout(p.timeout))
 	}
 
-	inner, err := openai.NewProvider(apiKey, optsInner...)
-	if err != nil {
-		return nil, err
-	}
-	p.inner = inner
-	return p, nil
+	p.inner = openai.NewProvider(apiKey, optsInner...)
+	return p
 }
 
 // Name returns the provider name.
@@ -165,24 +160,14 @@ func messagesMentionJSON(msgs []llm.Message) bool {
 	return false
 }
 
-// WithBaseURL sets the DeepSeek API base URL. Empty string leaves the
-// default (https://api.deepseek.com) in place.
+// WithBaseURL sets the DeepSeek API base URL.
 func WithBaseURL(baseURL string) options.Option[Provider] {
-	return func(p *Provider) {
-		if baseURL != "" {
-			p.baseURL = baseURL
-		}
-	}
+	return func(p *Provider) { p.baseURL = baseURL }
 }
 
-// WithModel sets the default model. Empty string leaves the default
-// (deepseek-chat) in place.
+// WithModel sets the default model.
 func WithModel(model string) options.Option[Provider] {
-	return func(p *Provider) {
-		if model != "" {
-			p.model = model
-		}
-	}
+	return func(p *Provider) { p.model = model }
 }
 
 // WithTimeout sets the HTTP request timeout. Zero leaves the openai

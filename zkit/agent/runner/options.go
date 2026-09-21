@@ -75,6 +75,15 @@ func WithPrompt(p PromptSource) options.Option[Runner] {
 	return func(r *Runner) { r.prompt = p }
 }
 
+// WithIterationPrompt installs a system prompt source refreshed before every
+// request, after the previous batch has settled. The source may apply host-owned
+// workflow transitions at that boundary. One system slot is retained even for an
+// empty prompt, so replay-history indices remain stable. Errors end the same Run;
+// task identity, history and budgets are never reset by a refresh.
+func WithIterationPrompt(p PromptSource) options.Option[Runner] {
+	return func(r *Runner) { r.prompt = p; r.iterationPrompt = true }
+}
+
 // WithPromptText is a shorthand for [WithPrompt]([StaticPrompt](prompt)).
 func WithPromptText(prompt string) options.Option[Runner] {
 	return WithPrompt(StaticPrompt(prompt))
@@ -127,12 +136,16 @@ func WithToolOutputSink(s ToolOutputSink) options.Option[Runner] {
 	}
 }
 
-// WithToolConcurrency caps how many tool calls in a single LLM
-// tool-call batch the runner dispatches in parallel. n <= 1 disables
-// parallelism entirely (sequential dispatch, the safe default).
-// Default is 1.
+// WithToolConcurrency overrides the default read-only parallel scheduling.
+// n > 1 permits any calls in a batch to overlap up to n at a time; the caller
+// owns their independence and workspace coordination. n <= 1 makes every call
+// sequential. Without this option, up to four consecutive workspace reads
+// overlap, with all other calls acting as ordered barriers.
 func WithToolConcurrency(n int) options.Option[Runner] {
-	return func(r *Runner) { r.toolConcurrency = n }
+	return func(r *Runner) {
+		r.toolConcurrency = n
+		r.parallelReadsOnly = false
+	}
 }
 
 // WithProgressUpdater installs a callback the runner fires after every
@@ -162,21 +175,11 @@ func WithContextBreakdown() options.Option[Runner] {
 
 // -- Timeouts --
 
-// WithToolTimeout caps a single tool dispatch's wall-clock budget.
-// The default ([defaultToolTimeout], 5 minutes) is a balance: long
-// enough for `go test ./...` on a non-trivial project to finish,
-// short enough that a blocking dynamic / MCP tool can't wedge the
-// run. Pass 0 to disable the per-tool cap entirely (the runner
-// then trusts tools to honour ctx.Done — fine for trusted local
-// tooling, not for arbitrary third-party MCP servers).
-//
-// Implementation note: the cap is applied as a context deadline
-// around tool.Execute, and Execute runs in a goroutine so the runner
-// can stop waiting when the deadline fires. Well-behaved tools see
-// ctx.Done() fire and unwind cleanly. Tools that ignore context keep
-// running past the deadline until they eventually return, but the
-// runner records the timeout in the tool result and subsequent
-// iterations continue unaffected.
+// WithToolTimeout requests cancellation after a single tool's execution budget.
+// The default is five minutes; zero disables this deadline. Dispatch remains
+// owned and joined until Execute returns, even when the tool ignores cancellation.
+// Late execution output is retained in history; the model receives a timeout.
+// A hard wall-clock limit requires a process boundary, not an in-process tool.
 func WithToolTimeout(d time.Duration) options.Option[Runner] {
 	return func(r *Runner) {
 		r.timeouts.tool = d

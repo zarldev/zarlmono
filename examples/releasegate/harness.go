@@ -32,7 +32,7 @@ const goalPrompt = "Publish release v1.2.3 to production once it is safe. This i
 // harness oracle that verifies the world state rather than trusting the model.
 func RunReleaseGate(ctx context.Context, client runner.Client, rel *Release, maxAttempts int) pursue.Outcome {
 	reg := tools.NewRegistry(
-		statusTool{r: rel},
+		newStatusTool(rel),
 		newSetCheckTool(rel),
 		newWriteNotesTool(rel),
 		newPublishTool(rel))

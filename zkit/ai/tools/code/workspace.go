@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/zarldev/zarlmono/zkit/filesystem"
 	"github.com/zarldev/zarlmono/zkit/zsync"
@@ -41,20 +42,13 @@ type Workspace struct {
 	root      string
 	osRoot    *os.Root
 	pathLocks *pathLockMap
+	lifecycle *workspaceLifecycle
 }
 
-// pathLockMap dispenses per-path mutexes keyed by canonical absolute
-// path. Used by write/edit/append to serialise writers targeting the
-// same file, so a parallel tool batch from a single LLM turn doesn't
-// lose updates when two tools target the same path.
-type pathLockMap struct {
-	m zsync.Map[string, *sync.Mutex]
-}
-
-func (p *pathLockMap) lock(absPath string) func() {
-	mu, _ := p.m.LoadOrStore(absPath, &sync.Mutex{})
-	mu.Lock()
-	return mu.Unlock
+type workspaceLifecycle struct {
+	once   sync.Once
+	closed atomic.Bool
+	err    error
 }
 
 // NewWorkspace returns a Workspace rooted at the given absolute path.
@@ -78,14 +72,45 @@ func NewWorkspace(root string) (Workspace, error) {
 	if err != nil {
 		return Workspace{}, fmt.Errorf("workspace open root %q: %w", resolved, err)
 	}
-	return Workspace{root: resolved, osRoot: r, pathLocks: &pathLockMap{}}, nil
+	return Workspace{root: resolved, osRoot: r, pathLocks: &pathLockMap{}, lifecycle: &workspaceLifecycle{}}, nil
 }
 
-// OSRoot returns the underlying [os.Root] handle. Writers in this
-// package use it for openat-style file operations; external callers
-// almost never need it. May be nil for zero-value Workspaces (e.g.
-// constructed in tests without NewWorkspace); callers should fall
-// back to plain os operations in that case.
+// Close releases the root handle exactly once across all Workspace copies.
+// The opener owns closure and must first drain tools and processes borrowing it.
+func (w Workspace) Close() error {
+	if w.lifecycle == nil {
+		return nil
+	}
+	w.lifecycle.once.Do(func() {
+		w.lifecycle.closed.Store(true)
+		w.lifecycle.err = w.osRoot.Close()
+	})
+	return w.lifecycle.err
+}
+
+func (w Workspace) checkOpen() error {
+	if w.lifecycle != nil && w.lifecycle.closed.Load() {
+		return os.ErrClosed
+	}
+	return nil
+}
+
+// pathLockMap dispenses per-path mutexes keyed by canonical absolute
+// path. Used by write/edit/append to serialise writers targeting the
+// same file, so a parallel tool batch from a single LLM turn doesn't
+// lose updates when two tools target the same path.
+type pathLockMap struct {
+	m zsync.Map[string, *sync.Mutex]
+}
+
+func (p *pathLockMap) lock(absPath string) func() {
+	mu, _ := p.m.LoadOrStore(absPath, &sync.Mutex{})
+	mu.Lock()
+	return mu.Unlock
+}
+
+// OSRoot returns a borrowed root handle. Callers must not close it; the opener
+// closes Workspace after draining borrowers. It remains non-nil after Close.
 func (w Workspace) OSRoot() *os.Root { return w.osRoot }
 
 // RelToRoot returns the path of abs relative to the workspace root.
@@ -94,6 +119,9 @@ func (w Workspace) OSRoot() *os.Root { return w.osRoot }
 // is outside the root — defensive check; callers normally pass a
 // path that Resolve already validated.
 func (w Workspace) RelToRoot(abs string) (string, error) {
+	if err := w.checkOpen(); err != nil {
+		return "", err
+	}
 	rel, err := filepath.Rel(w.root, abs)
 	if err != nil {
 		return "", fmt.Errorf("workspace: rel %q from %q: %w", abs, w.root, err)
@@ -266,6 +294,9 @@ func (w Workspace) Resolve(p string) (string, error) {
 // paths are cleaned after joining to the workspace root, so ../ segments may
 // walk out.
 func (w Workspace) ResolveForRead(p string, unrestricted bool) (string, error) {
+	if err := w.checkOpen(); err != nil {
+		return "", err
+	}
 	if p == "" {
 		return "", errors.New("workspace: path must not be empty")
 	}
@@ -293,6 +324,9 @@ func (w Workspace) ResolveForRead(p string, unrestricted bool) (string, error) {
 // under root) or directly through the host filesystem (for unrestricted
 // read-side paths outside the workspace).
 func (w Workspace) StatPath(abs string) (os.FileInfo, error) {
+	if err := w.checkOpen(); err != nil {
+		return nil, err
+	}
 	if w.contains(abs) {
 		return w.StatInRoot(abs)
 	}
@@ -303,6 +337,9 @@ func (w Workspace) StatPath(abs string) (os.FileInfo, error) {
 // under the workspace, falling back to direct host reads for unrestricted
 // read-side paths outside the workspace.
 func (w Workspace) ReadFilePath(abs string) ([]byte, error) {
+	if err := w.checkOpen(); err != nil {
+		return nil, err
+	}
 	if w.contains(abs) {
 		return w.ReadFileInRoot(abs)
 	}
@@ -313,6 +350,9 @@ func (w Workspace) ReadFilePath(abs string) ([]byte, error) {
 // under the workspace, falling back to direct host directory reads for
 // unrestricted read-side paths outside the workspace.
 func (w Workspace) ReadDirPath(abs string) ([]os.DirEntry, error) {
+	if err := w.checkOpen(); err != nil {
+		return nil, err
+	}
 	if w.contains(abs) {
 		return w.ReadDirInRoot(abs)
 	}
@@ -327,7 +367,7 @@ func (w Workspace) contains(p string) bool {
 	if rel == "." {
 		return true
 	}
-	return !strings.HasPrefix(rel, "..")
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // evalExisting resolves symlinks for the longest existing prefix of p

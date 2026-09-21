@@ -42,10 +42,8 @@ func TestProviderSerializesReasoningHistory(t *testing.T) {
 			}))
 			defer server.Close()
 
-			p, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithReasoningHistory(tc.mode))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			p := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithReasoningHistory(tc.mode))
+
 			for _, err := range p.Complete(t.Context(), llm.CompletionRequest{Stream: true, Messages: []llm.Message{{Role: llm.RoleAssistant, Content: tc.content, ReasoningContent: tc.reasoning}}}) {
 				if err != nil {
 					t.Fatalf("Complete: %v", err)
@@ -85,10 +83,8 @@ func TestProviderReasoningKeepMask(t *testing.T) {
 		}
 		return []bool{false, true, false, false}
 	}
-	p, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithReasoningHistory(llm.ReasoningHistories.FIELD), openai.WithReasoningKeepMask(mask))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	p := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithReasoningHistory(llm.ReasoningHistories.FIELD), openai.WithReasoningKeepMask(mask))
+
 	messages := []llm.Message{{Role: llm.RoleUser, Content: "q1"}, {Role: llm.RoleAssistant, Content: "a1", ReasoningContent: "keep"}, {Role: llm.RoleUser, Content: "q2"}, {Role: llm.RoleAssistant, Content: "a2", ReasoningContent: "drop"}}
 	for _, err := range p.Complete(t.Context(), llm.CompletionRequest{Stream: true, Messages: messages}) {
 		if err != nil {
@@ -114,10 +110,8 @@ func TestProviderExtractsCompatibleReasoningFields(t *testing.T) {
 				_, _ = w.Write([]byte("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"" + field + "\":\"thinking...\"},\"index\":0}]}\n\ndata: [DONE]\n\n"))
 			}))
 			defer server.Close()
-			p, err := openai.NewProvider("test-key", openai.WithBaseURL(server.URL))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			p := openai.NewProvider("test-key", openai.WithBaseURL(server.URL))
+
 			var thinking strings.Builder
 			for chunk, err := range p.Complete(t.Context(), llm.CompletionRequest{Stream: true}) {
 				if err != nil {

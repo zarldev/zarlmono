@@ -34,7 +34,7 @@ type toolDataSink struct {
 	formatted map[string]string
 }
 
-func (s *toolDataSink) OnToolCompleted(event runner.ToolCompleted) {
+func (s *toolDataSink) OnToolCompleted(ctx context.Context, event runner.ToolCompleted) {
 	s.formatted[event.ToolName] = event.FormattedResult
 }
 

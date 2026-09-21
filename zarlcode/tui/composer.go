@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-
-	"github.com/zarldev/zarlmono/zarlcode/engine"
 )
 
 // composer is the editor-pane text input. It is a plain rune buffer with
@@ -143,6 +141,25 @@ func (c *composer) draw(scr uv.Screen, r uv.Rectangle, planMode bool) {
 // global shortcuts are handled first; focused surfaces get small dedicated
 // handlers so the root routing stays readable.
 func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
+	// Recovery stays reachable even behind the BEFORE dispatch barrier.
+	if msg.String() == "ctrl+q" && m.sessionLossRisk() {
+		m.openSessionRecovery(false)
+		return nil
+	}
+	if m.overlay.active() {
+		if d, ok := m.overlay.top().(*sessionRecoveryDialog); ok {
+			return m.handleAction(d.handleKey(msg))
+		}
+		if m.sessionRetry != nil && msg.String() != "ctrl+c" {
+			return nil // underlying settings/session controls wait for the retry acknowledgement
+		}
+	}
+	if m.liveOperation != nil && m.liveOperation.turnID == "" && msg.String() != "ctrl+c" {
+		// A BEFORE boundary is frozen until its start event or failure is applied.
+		// Do not let settings/session shortcuts mutate UI state behind the snapshot.
+		m.session.SetToast("saving the BEFORE checkpoint; input is retained")
+		return m.toastExpiryCmd()
+	}
 	if msg.String() == "ctrl+c" {
 		confirming := false
 		if m.overlay.active() {
@@ -164,6 +181,14 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	if msg.String() == "ctrl+q" {
 		m.overlay.push(newConversationActionsDialog())
 		return nil
+	}
+	if m.sessionRetry != nil {
+		// Keep editing available, but do not mutate session/target/queue state
+		// while a completed-boundary acknowledgement is outstanding.
+		if strings.HasPrefix(msg.String(), "ctrl+") || msg.String() == "tab" {
+			return nil
+		}
+		return m.handleComposerKey(msg)
 	}
 	if msg.String() == "ctrl+n" {
 		if m.intro != nil {
@@ -206,7 +231,11 @@ func (m *UI) handleStartupFailureKey(msg tea.KeyPressMsg) tea.Cmd {
 	if cmd, ok := m.handleCommonShortcut(msg); ok {
 		return cmd
 	}
-	return m.startupFailure.handleKey(msg)
+	cmd := m.startupFailure.handleKey(msg)
+	if cmd != nil && m.sessionLossRisk() {
+		return m.handleQuit()
+	}
+	return cmd
 }
 
 func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
@@ -231,7 +260,7 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.session.SetToast("state bar " + state)
 		return m.toastExpiryCmd(), true
 	case "ctrl+r":
-		m.overlay.push(newTranscriptReader(m.timeline))
+		m.openTranscriptReader()
 		return nil, true
 	case "ctrl+a":
 		m.overlay.push(newAgentActivityScreen(m.timeline))
@@ -430,6 +459,16 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "down":
 		m.nextInputHistory()
 	case "enter":
+		if m.sourceConflict {
+			m.session.SetErrorToast(sourceConflictNotice)
+			return nil
+		}
+		if m.liveOperation != nil && !m.session.Run.Running {
+			return m.blockUnsettledSubmit()
+		}
+		if m.hasIdleQueuedTurn() {
+			return m.launchQueuedTurn()
+		}
 		if text := strings.TrimSpace(m.composer.text()); text != "" {
 			cmd, accepted := m.acceptSubmit(text)
 			if accepted {
@@ -574,16 +613,37 @@ func (m *UI) submit(text string) tea.Cmd {
 }
 
 func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
+	if m.sessionRetry != nil {
+		m.session.SetErrorToast("waiting for Retry save acknowledgement; input retained")
+		return nil, false
+	}
+	if m.sourceConflict && !strings.HasPrefix(text, "/") {
+		m.session.SetErrorToast(sourceConflictNotice)
+		return nil, false
+	}
+	if m.liveOperation != nil && !m.session.Run.Running {
+		return m.blockUnsettledSubmit(), false
+	}
 	if strings.HasPrefix(text, "/") {
 		return m.handleSlashSubmit(text), true
+	}
+	if m.hasIdleQueuedTurn() {
+		return m.launchQueuedTurn(), false
 	}
 	if m.session.Run.Running && m.live != nil {
 		if len(m.pendingAttachments) > 0 {
 			m.session.SetErrorToast("image attachments can only be sent with a new turn")
 			return m.toastExpiryCmd(), false
 		}
-		m.live.QueueInput(text)
-		m.timeline.addQueuedUser(text)
+		if _, id := m.live.QueueAppend(text); id == 0 {
+			m.session.SetErrorToast("input queue is reserved; try again after the transition")
+			return m.toastExpiryCmd(), false
+		}
+		if m.durableDispatch() {
+			m.timeline.addQueueIntent(text)
+		} else {
+			m.timeline.addQueuedUser(text)
+		}
 		return nil, true
 	}
 	m.generateFirstPromptLabel(text)
@@ -599,7 +659,7 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 			return m.toastExpiryCmd(), true
 		}
 		m.session.SetSubmittedAttachments(attachmentMetadata)
-		return RunFnWithAttachments(engine.WithToolOutputSession(m.appContext(), m.session.ID), m.live, text, attachments), true
+		return m.runLiveTurn(text, attachments), true
 	}
 	if m.runFn != nil {
 		return m.runFn(text), true

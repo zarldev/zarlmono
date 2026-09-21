@@ -158,7 +158,7 @@ func (c *WorkspaceCoordinator) AcquirePathsWait(ctx context.Context, owner Works
 	started := time.Now()
 	call := workspaceWaitCallFromContext(ctx)
 	if observer != nil {
-		observer.OnWorkspaceWaitStarted(WorkspaceWaitStarted{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Blockers: blockers, Call: call, Started: started})
+		observer.OnWorkspaceWaitStarted(ctx, WorkspaceWaitStarted{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Blockers: blockers, Call: call, Started: started})
 	}
 	for {
 		select {
@@ -169,7 +169,7 @@ func (c *WorkspaceCoordinator) AcquirePathsWait(ctx context.Context, owner Works
 			}
 			c.mu.Unlock()
 			if observer != nil {
-				observer.OnWorkspaceWaitEnded(WorkspaceWaitEnded{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Call: call, Outcome: WorkspaceWaitOutcomes.WORKSPACEWAITCANCELLED, Waited: time.Since(started)})
+				observer.OnWorkspaceWaitEnded(ctx, WorkspaceWaitEnded{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Call: call, Outcome: WorkspaceWaitOutcomes.WORKSPACEWAITCANCELLED, Waited: time.Since(started)})
 			}
 			return WorkspaceLease{}, fmt.Errorf("wait for workspace access: %w", ctx.Err())
 		case <-changed:
@@ -178,7 +178,7 @@ func (c *WorkspaceCoordinator) AcquirePathsWait(ctx context.Context, owner Works
 				c.removeWaiterLocked(waiter.id)
 				c.mu.Unlock()
 				if observer != nil {
-					observer.OnWorkspaceWaitEnded(WorkspaceWaitEnded{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Call: call, Outcome: WorkspaceWaitOutcomes.WORKSPACEWAITCANCELLED, Waited: time.Since(started)})
+					observer.OnWorkspaceWaitEnded(ctx, WorkspaceWaitEnded{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Call: call, Outcome: WorkspaceWaitOutcomes.WORKSPACEWAITCANCELLED, Waited: time.Since(started)})
 				}
 				return WorkspaceLease{}, ErrWorkspaceCoordinatorClosed
 			}
@@ -187,7 +187,7 @@ func (c *WorkspaceCoordinator) AcquirePathsWait(ctx context.Context, owner Works
 				lease := c.grantLocked(owner, access, normalized)
 				c.mu.Unlock()
 				if observer != nil {
-					observer.OnWorkspaceWaitEnded(WorkspaceWaitEnded{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Call: call, Outcome: WorkspaceWaitOutcomes.WORKSPACEWAITACQUIRED, Waited: time.Since(started)})
+					observer.OnWorkspaceWaitEnded(ctx, WorkspaceWaitEnded{Owner: owner, Access: access, Paths: append([]string(nil), normalized...), Call: call, Outcome: WorkspaceWaitOutcomes.WORKSPACEWAITACQUIRED, Waited: time.Since(started)})
 				}
 				return lease, nil
 			}

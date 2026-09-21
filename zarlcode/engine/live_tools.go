@@ -265,6 +265,9 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, d
 		base = ComposeSources(base, l.mcpHost)
 	}
 	base = newGuidanceSource(base, l.instructionNestedSnapshot())
+	// Enforce the live workflow and immutable authority ceiling on nested
+	// dispatch too, before program constructs its read-only inner surface.
+	base = NewModeFilteredSource(base, l.isPlan)
 
 	// User-defined command hooks ride the same chain as the production
 	// guardrails, appended last so they only see calls the production set
@@ -305,11 +308,6 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, d
 		guarded = RouteToolBoundary(programSource, programBoundary.Source, programtools.ToolName)
 	}
 	return guarded, reg, nil
-}
-
-func (l *LiveRunner) buildHeadlessTurn(ctx context.Context, extraOpts ...options.Option[runner.Runner]) (*runner.Runner, *turnResources, error) {
-	r, _, resources, err := l.buildTurnWithSource(ctx, l.headlessSource, extraOpts...)
-	return r, resources, err
 }
 
 type turnPolicy struct {
@@ -378,17 +376,24 @@ func (l *LiveRunner) resolveTurnPolicy(ctx context.Context) turnPolicy {
 	return policy
 }
 
-type turnResources struct {
+// turn owns the root runner and every delegated task for one top-level run.
+// Its close must finish before the LiveRunner marks that turn drained.
+type turn struct {
+	runner      *runner.Runner
+	thinking    bool
 	group       *spawn.Group
 	coordinator *tools.WorkspaceCoordinator
 }
 
-func (r *turnResources) Close(ctx context.Context) error {
-	r.coordinator.BeginShutdown()
-	return r.group.Close(ctx)
+func (t *turn) close(ctx context.Context) {
+	t.coordinator.BeginShutdown()
+	// A cancelled run stops the children, but cannot abandon their join.
+	// LiveRunner.Close bounds its caller's wait separately while keeping
+	// shared dependencies alive until this owner has actually drained.
+	_ = t.group.Close(context.WithoutCancel(ctx))
 }
 
-func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*runner.Runner, bool, *turnResources, error) {
+func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*turn, error) {
 	policy := l.resolveTurnPolicy(ctx)
 	if l.catalog != nil {
 		l.catalog.Reload(l.ws.Root())
@@ -409,9 +414,9 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 		StreamIdle:    policy.streamIdle,
 	})
 	var visible tools.Source
+	automaticCompletion := receivesAutomaticCompletion(policy.target.Provider)
 	opts = append(opts,
 		runner.WithSteerer(l.queue),
-		runner.WithPrompt(l.promptFunc(func() tools.Source { return visible })),
 		runner.WithResultTruncator(l.truncator),
 		runner.WithTemperature(policy.temperature),
 		runner.WithModelOptions(policy.modelOptions),
@@ -429,20 +434,35 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 
 	src, reg, err := sourceFn(ctx, policy.target.WebSearch)
 	if err != nil {
-		return nil, false, nil, err
+		return nil, err
 	}
 	src = newOperationalSource(src, l.operational)
 	evidence := NewCompletionEvidence()
-	group := spawn.NewGroup(spawn.WithMaxConcurrent(policy.spawnConcurrent), spawn.WithMaxRuntime(policy.spawnRuntime))
+	group := spawn.NewGroup(
+		spawn.WithMaxConcurrent(policy.spawnConcurrent),
+		spawn.WithMaxRuntime(policy.spawnRuntime),
+		spawn.WithCompletionBytes(l.truncator.MaxBytes),
+	)
 	coordinator := tools.NewWorkspaceCoordinator()
 	src = coderunner.CoordinateWorkspace(src, coordinator)
-	visible = NewModeFilteredSource(WithCompletionEvidence(src, evidence), l.isPlan)
+	transition := &modeTransition{live: l, group: group}
+	visible = newModeControlSource(NewModeFilteredSource(WithCompletionEvidence(src, evidence), l.isPlan), transition)
+	iterationPrompt := transition.prompt(l.promptFunc(func() tools.Source { return visible }))
+	if automaticCompletion {
+		iterationPrompt = automaticCompletionPrompt(iterationPrompt)
+	}
+	opts = append(opts, runner.WithIterationPrompt(iterationPrompt))
 	opts = append(opts, extraOpts...)
-	opts = append(opts, runner.WithTurnQuality(NewAgentAwareTurnQuality(newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence), group)))
+	quality := newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence)
+	if automaticCompletion {
+		opts = append(opts, runner.WithInputSource(group), runner.WithTurnQuality(quality))
+	} else {
+		opts = append(opts, runner.WithTurnQuality(NewAgentAwareTurnQuality(quality, group)))
+	}
 	opts = append(opts, runner.WithTools(visible))
 	r := runner.New(runner.ClientFromProvider(policy.target.Provider), opts...)
 	// Late-register spawn onto the base registry now that the parent runner exists
 	// (the registry enumerates lazily, so it is visible to this turn's schema).
 	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter)
-	return r, policy.thinking, &turnResources{group: group, coordinator: coordinator}, nil
+	return &turn{runner: r, thinking: policy.thinking, group: group, coordinator: coordinator}, nil
 }

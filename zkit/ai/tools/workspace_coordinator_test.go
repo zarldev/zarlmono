@@ -199,8 +199,12 @@ type waitObserver struct {
 	ended   chan tools.WorkspaceWaitEnded
 }
 
-func (o *waitObserver) OnWorkspaceWaitStarted(event tools.WorkspaceWaitStarted) { o.started <- event }
-func (o *waitObserver) OnWorkspaceWaitEnded(event tools.WorkspaceWaitEnded)     { o.ended <- event }
+func (o *waitObserver) OnWorkspaceWaitStarted(ctx context.Context, event tools.WorkspaceWaitStarted) {
+	o.started <- event
+}
+func (o *waitObserver) OnWorkspaceWaitEnded(ctx context.Context, event tools.WorkspaceWaitEnded) {
+	o.ended <- event
+}
 
 func TestWorkspaceCoordinatorNoneAndValidation(t *testing.T) {
 	t.Parallel()

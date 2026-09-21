@@ -55,6 +55,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		}
 
 	case teasink.ConversationStartedMsg:
+		m.bindStartedLiveTurn(e)
 		effect := m.session.applyConversationStarted(e, time.Now())
 
 		// --- Timeline / cockpit ---
@@ -62,7 +63,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		case e.Depth == 0:
 			m.timeline.closeGroups()
 			if effect.PromptToRender != "" || len(effect.Attachments) > 0 {
-				m.timeline.addUserWithAttachments(effect.PromptToRender, effect.Attachments)
+				m.addBoundPrompt(effect.PromptToRender, effect.Attachments)
 			}
 			m.timeline.startTurn(e.TaskID, 0)
 		case e.Depth > 0:
@@ -72,6 +73,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			m.timeline.startSubAgentWithParent(e.TaskID, e.Depth, agentName, e.Provider, e.Model, e.Prompt, e.ParentExecutionID, e.ParentToolCallID)
 		}
+
+	case teasink.WaitingForInputsMsg, teasink.InputsAdmittedMsg:
+		m.applyInputEvent(e)
 
 	case teasink.ContentMsg:
 		m.session.applyContent(e)
@@ -103,21 +107,21 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 
 	case teasink.ToolCompletedMsg:
 		effect := m.session.applyToolCompleted(e)
-		m.timeline.finishTool(e.ExecutionID, e.ToolID, e.FormattedResult, e.Result, e.Duration, false, tools.Kinds.UNKNOWN, effectSummaries(e.Effects)...)
+		presentation := prepareToolResultPresentation(e.Result, e.Parts, m.graphics != nil)
+		m.timeline.finishTool(e.ExecutionID, e.ToolID, e.FormattedResult, presentation, e.Duration, false, tools.Kinds.UNKNOWN, effectSummaries(e.Effects)...)
 		if effect.LoadedSkillName != "" {
 			m.timeline.addLoadedSkill(e.TaskID, effect.LoadedSkillName)
 		}
 
 	case teasink.ToolFailedMsg:
-		m.session.applyToolFailed(e)
-		m.timeline.finishTool(e.ExecutionID, e.ToolID, e.Error, nil, e.Duration, true, e.Kind, effectSummaries(e.Effects)...)
-		if e.ToolName == "agent_spawn" {
-			m.timeline.failSubAgentSpawn(e.ExecutionID, e.ToolID, e.Error)
-		}
+		m.handleToolFailed(e)
 
 	case teasink.DiffMsg:
 		m.session.applyDiff(e)
 		m.timeline.addDiff(e.TaskID, e.Path, e.Diff)
+
+	case teasink.ModeChangedMsg:
+		m.handleModeChanged(e)
 
 	case teasink.PlanUpdatedMsg:
 		before := m.session.Plan
@@ -134,6 +138,9 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			m.session.SetToastTone(diag, toastInfo)
 			cmd = tea.Batch(cmd, m.toastExpiryCmd())
 		}
+
+	case teasink.ProviderAttemptSettledMsg:
+		m.session.applyProviderAttemptSettled(e)
 
 	case teasink.IterationCompletedMsg:
 		m.session.applyIterationCompleted(e)
@@ -180,6 +187,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		failed := e.Reason == runner.TerminalError
+		m.markEndedLiveTurn(e, failed)
 		if e.Depth > 0 {
 			if sa := m.timeline.subAgent(e.TaskID); sa != nil {
 				if failed {
@@ -206,7 +214,8 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 					m.timeline.addNotice(notice)
 				}
 				m.timeline.closeGroups()
-				cmd = tea.Batch(cmd, m.launchQueuedTurn())
+				// Queue promotion waits for committed context, in-band event
+				// application and the full session save in live_settlement.go.
 			}
 			// Re-resolve the PR after the turn settles: catches an agent
 			// checkout (branch change) or a git/gh tool that opened/pushed a PR.
@@ -214,10 +223,36 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 				cmd = tea.Batch(cmd, completionSoundCmd(m.appContext(), m.settings))
 			}
 			cmd = tea.Batch(cmd, m.refreshPRCmd())
+			cmd = tea.Batch(cmd, m.persistSettledLiveTurn())
 		}
 
 	default:
 		return false, nil
 	}
 	return true, cmd
+}
+
+func (m *UI) handleToolFailed(e teasink.ToolFailedMsg) {
+	m.session.applyToolFailed(e)
+	text := e.Error
+	if e.RawOutput != "" && e.RawOutput != e.Error {
+		text += "\n" + e.RawOutput
+	}
+	presentation := prepareToolResultPresentation(nil, e.Parts, m.graphics != nil)
+	m.timeline.finishTool(e.ExecutionID, e.ToolID, text, presentation, e.Duration, true, e.Kind, effectSummaries(e.Effects)...)
+	if e.ToolName == "agent_spawn" {
+		m.timeline.failSubAgentSpawn(e.ExecutionID, e.ToolID, e.Error)
+	}
+}
+
+func (m *UI) handleModeChanged(e teasink.ModeChangedMsg) {
+	if m.live != nil && e.Generation != m.live.AppliedMode().Generation {
+		return // A newer automatic transition or operator override already won.
+	}
+	m.session.PlanMode = e.Plan
+	mode := "Build"
+	if e.Plan {
+		mode = "Plan"
+	}
+	m.timeline.addModeChange(e.TaskID, mode, e.Reason)
 }

@@ -35,7 +35,7 @@ const goalPrompt = "Upvote the top post on Hacker News."
 // The runner.Client is injected so the same wiring serves a real LLM
 // (main) and a scripted client (the deterministic test) unchanged.
 func RunUpvote(ctx context.Context, client runner.Client, sess *Session, maxAttempts int) pursue.Outcome {
-	reg := tools.NewRegistry(&upvoteTop{s: sess}, &login{s: sess})
+	reg := tools.NewRegistry(newUpvoteTopTool(sess), newLoginTool(sess))
 
 	// The rail: upvoting is blocked until authenticated. Login detection
 	// lives here, not in the tool — the actuator stays dumb.

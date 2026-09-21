@@ -20,10 +20,8 @@ import (
 // providertest itself.
 func TestProvider_Conformance(t *testing.T) {
 	factory := func(t *testing.T, baseURL string) llm.Provider {
-		p, err := openai.NewProvider("test-key", openai.WithBaseURL(baseURL))
-		if err != nil {
-			t.Fatalf("NewProvider: %v", err)
-		}
+		p := openai.NewProvider("test-key", openai.WithBaseURL(baseURL))
+
 		return p
 	}
 

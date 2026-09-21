@@ -15,7 +15,7 @@ type checkEndpointArgs struct {
 }
 
 func newCheckEndpointTool(farm *ServerFarm) tools.Tool {
-	return tools.NewTyped(
+	return tools.New(
 		tools.ToolSpec{
 			Name:        ToolCheckEndpoint,
 			Description: "Check the health of an endpoint. Returns healthy, degraded, down, or transient.",

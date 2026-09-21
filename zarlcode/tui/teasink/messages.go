@@ -3,6 +3,8 @@ package teasink
 import (
 	"time"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
+
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -36,12 +38,14 @@ type ThinkingMsg struct {
 
 // ToolStartedMsg fires when the runner dispatches a tool call.
 type ToolStartedMsg struct {
-	TaskID            string
-	Depth             int
-	ExecutionID       string
-	ToolID            string
-	ToolName          string
-	Parameters        map[string]any
+	TaskID      string
+	Depth       int
+	ExecutionID string
+	ToolID      string
+	ToolName    string
+	Parameters  map[string]any
+	// RawArguments retains original argument JSON, including rejected or repaired input.
+	RawArguments      string
 	ParentToolID      string
 	ParentExecutionID string
 	Sequence          int
@@ -90,6 +94,9 @@ type ToolCompletedMsg struct {
 	ParentToolID      string
 	ParentExecutionID string
 	Sequence          int
+
+	// Parts owns the attachments forwarded with this completion.
+	Parts []llm.ContentPart
 }
 
 // ToolFailedMsg fires when a tool call errors or reports failure.
@@ -100,6 +107,8 @@ type ToolFailedMsg struct {
 	ToolID            string
 	ToolName          string
 	Error             string
+	RawOutput         string
+	Parts             []llm.ContentPart
 	Kind              tools.Kind // typed failure classification (validation / transient / …)
 	Abandoned         bool       // timed out with its goroutine possibly still in flight
 	Effects           []tools.Effect
@@ -184,6 +193,9 @@ type PlanUpdatedMsg struct {
 	TaskID string
 	Plan   code.Plan
 }
+
+// ModeChangedMsg reports an applied mode, never a request for approval.
+type ModeChangedMsg engine.ModeChanged
 
 // PromptDiagnosticsMsg surfaces non-fatal prompt resolution diagnostics such as
 // unreadable optional files.

@@ -57,7 +57,7 @@ func TestToolHistoryListsNewestFirst(t *testing.T) {
 }
 func TestToolHistoryShowsFullOutput(t *testing.T) {
 	out := ansi.Strip(historyUI(t, "sess-1").View().Content)
-	for _, w := range []string{"tool history", "2 calls", "bash", "read", "content"} {
+	for _, w := range []string{"tool execution history", "2 occurrences", "bash", "read", "content"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("missing %q:\n%s", w, out)
 		}
@@ -68,14 +68,14 @@ func TestToolHistoryNarrowHeightKeepsSelectedCallAndFooterVisible(t *testing.T) 
 	step(t, m, textKey("j"))
 	step(t, m, window(42, 7))
 	out := ansi.Strip(m.View().Content)
-	if !strings.Contains(out, "tool history") || !strings.Contains(out, "bash") || !strings.Contains(out, "esc close") {
+	if !strings.Contains(out, "tool execution history") || !strings.Contains(out, "bash") || !strings.Contains(out, "esc close") {
 		t.Fatalf("narrow:\n%s", out)
 	}
 }
 func TestToolHistoryEscapeCloses(t *testing.T) {
 	m := historyUI(t, "sess-1")
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if strings.Contains(m.View().Content, "tool history") {
+	if strings.Contains(m.View().Content, "tool execution history") {
 		t.Fatal("viewer remained open")
 	}
 }

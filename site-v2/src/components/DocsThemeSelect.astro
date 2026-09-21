@@ -1,0 +1,11 @@
+---
+import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+import PaletteSelect from './PaletteSelect.astro';
+---
+<div class="preferences">
+  <PaletteSelect />
+  <ThemeSelect />
+</div>
+<style>
+  .preferences { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+</style>

@@ -54,45 +54,36 @@ func loggedInSelector(user string) string {
 	return fmt.Sprintf("a[href*='user?id=%s']", user)
 }
 
-// upvoteTop is a dumb actuator: open HN, click the top post's upvote
-// anchor, and confirm the vote registered by waiting for the anchor to
-// disappear (HN hides it after a successful vote). It does NOT handle the
-// login wall — the require_auth guardrail blocks it until the session is
-// authenticated, so by the time Execute runs we're logged in.
-type upvoteTop struct{ s *Session }
-
-func (*upvoteTop) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
+// newUpvoteTopTool clicks the top post's upvote and verifies the vote registered.
+// The require_auth guardrail blocks it until the session is authenticated.
+func newUpvoteTopTool(s *Session) tools.Tool {
+	return tools.New(tools.ToolSpec{
 		Name:        ToolUpvoteTop,
 		Description: "Upvote the current top post on Hacker News.",
-		Parameters:  tools.SchemaFor[struct{}]()}
-}
-
-func (t *upvoteTop) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	p := t.s.page
-	if err := p.Goto(ctx, hnURL); err != nil {
-		return tools.Failure(call.ID, fmt.Errorf("open HN: %w", err)), nil
-	}
-	// Capture what we're about to upvote (best-effort — a missing title
-	// shouldn't sink the vote, which is the actual goal).
-	title, _ := p.Text(ctx, selTopTitle)
-	if err := p.Click(ctx, selTopVote); err != nil {
-		return tools.Failure(call.ID, fmt.Errorf("click upvote arrow: %w", err)), nil
-	}
-	// The vote is AJAX, so the hide isn't instant — poll the voted signal
-	// for a few seconds rather than racing it with a single read.
-	if !t.pollVoted(ctx) {
-		t.s.record("not_voted", false, "")
-		return tools.Failure(call.ID, errors.New("vote did not register (top arrow still active after click)")), nil
-	}
-	t.s.record("upvoted", true, title)
-	return tools.Success(call.ID, "top post upvoted: "+title), nil
+		Parameters:  tools.SchemaFor[struct{}](),
+	}, func(ctx context.Context, _ struct{}) (string, error) {
+		p := s.page
+		if err := p.Goto(ctx, hnURL); err != nil {
+			return "", fmt.Errorf("open HN: %w", err)
+		}
+		// A missing title shouldn't sink the vote, which is the actual goal.
+		title, _ := p.Text(ctx, selTopTitle)
+		if err := p.Click(ctx, selTopVote); err != nil {
+			return "", fmt.Errorf("click upvote arrow: %w", err)
+		}
+		if !pollVoted(ctx, s) {
+			s.record("not_voted", false, "")
+			return "", errors.New("vote did not register (top arrow still active after click)")
+		}
+		s.record("upvoted", true, title)
+		return "top post upvoted: " + title, nil
+	})
 }
 
 // pollVoted reports whether votedExpr becomes true within a short window.
-func (t *upvoteTop) pollVoted(ctx context.Context) bool {
+func pollVoted(ctx context.Context, s *Session) bool {
 	for range 20 {
-		if voted, err := t.s.page.Eval(ctx, votedExpr); err == nil && voted {
+		if voted, err := s.page.Eval(ctx, votedExpr); err == nil && voted {
 			return true
 		}
 		select {
@@ -104,42 +95,36 @@ func (t *upvoteTop) pollVoted(ctx context.Context) bool {
 	return false
 }
 
-// login fills the HN login form, submits, and confirms authentication by
-// waiting for the top-bar username link to appear (which also rides out
-// the login POST + redirect). On success it flips the session's logged-in
-// flag — exactly what require_auth gates the upvote on.
-type login struct{ s *Session }
-
-func (*login) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
+// newLoginTool confirms authentication before updating the session flag.
+func newLoginTool(s *Session) tools.Tool {
+	return tools.New(tools.ToolSpec{
 		Name:        ToolLogin,
 		Description: "Log in to Hacker News with the configured account.",
-		Parameters:  tools.SchemaFor[struct{}]()}
-}
-
-func (t *login) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	if t.s.creds.User == "" || t.s.creds.Pass == "" {
-		return tools.Failure(call.ID, errors.New("no Hacker News credentials configured (set HN_USER / HN_PASS)")), nil
-	}
-	p := t.s.page
-	if err := p.Goto(ctx, hnLoginURL); err != nil {
-		return tools.Failure(call.ID, fmt.Errorf("open login: %w", err)), nil
-	}
-	if err := p.Fill(ctx, selAcct, t.s.creds.User); err != nil {
-		return tools.Failure(call.ID, fmt.Errorf("fill username: %w", err)), nil
-	}
-	if err := p.Fill(ctx, selPw, t.s.creds.Pass); err != nil {
-		return tools.Failure(call.ID, fmt.Errorf("fill password: %w", err)), nil
-	}
-	if err := p.Click(ctx, selLoginBtn); err != nil {
-		return tools.Failure(call.ID, fmt.Errorf("submit login: %w", err)), nil
-	}
-	if err := p.WaitVisible(ctx, loggedInSelector(t.s.creds.User)); err != nil {
-		cur, _ := p.URL(ctx)
-		return tools.Failure(call.ID, fmt.Errorf(
-			"login not confirmed (page=%q): no user link for %q — likely bad credentials, a captcha, or a headless block: %w",
-			cur, t.s.creds.User, err)), nil
-	}
-	t.s.setLoggedIn(true)
-	return tools.Success(call.ID, "logged in"), nil
+		Parameters:  tools.SchemaFor[struct{}](),
+	}, func(ctx context.Context, _ struct{}) (string, error) {
+		if s.creds.User == "" || s.creds.Pass == "" {
+			return "", errors.New("no Hacker News credentials configured (set HN_USER / HN_PASS)")
+		}
+		p := s.page
+		if err := p.Goto(ctx, hnLoginURL); err != nil {
+			return "", fmt.Errorf("open login: %w", err)
+		}
+		if err := p.Fill(ctx, selAcct, s.creds.User); err != nil {
+			return "", fmt.Errorf("fill username: %w", err)
+		}
+		if err := p.Fill(ctx, selPw, s.creds.Pass); err != nil {
+			return "", fmt.Errorf("fill password: %w", err)
+		}
+		if err := p.Click(ctx, selLoginBtn); err != nil {
+			return "", fmt.Errorf("submit login: %w", err)
+		}
+		if err := p.WaitVisible(ctx, loggedInSelector(s.creds.User)); err != nil {
+			cur, _ := p.URL(ctx)
+			return "", fmt.Errorf(
+				"login not confirmed (page=%q): no user link for %q — likely bad credentials, a captcha, or a headless block: %w",
+				cur, s.creds.User, err)
+		}
+		s.setLoggedIn(true)
+		return "logged in", nil
+	})
 }

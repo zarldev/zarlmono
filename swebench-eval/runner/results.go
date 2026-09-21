@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"os"
 	"time"
 
 	"github.com/zarldev/zarlmono/swebench-eval/harness"
@@ -31,11 +30,10 @@ type Results struct {
 	Started time.Time
 	Ended   time.Time
 	Records []TaskResult
+	// ScoreStatus distinguishes unrequested, incomplete, and completed scoring.
+	ScoreStatus ScoreStatus
+	ScoreError  string
 }
 
 // Duration returns the wall-clock span of the evaluation.
 func (r Results) Duration() time.Duration { return r.Ended.Sub(r.Started) }
-
-// removeAll is a thin wrapper around os.RemoveAll so the runner's
-// happy-path doesn't need to import os directly.
-func removeAll(path string) error { return os.RemoveAll(path) }

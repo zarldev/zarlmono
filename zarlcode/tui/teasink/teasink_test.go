@@ -42,8 +42,8 @@ func TestSink_ContentCoalescing(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: " world"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: " world"})
 		s.Drain()
 
 		msgs := snap()
@@ -67,9 +67,9 @@ func TestSink_ContentCoalescing(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("A"), Depth: 0, Delta: "a"})
-		s.OnContent(runner.Content{TaskID: taskscope.ID("B"), Depth: 0, Delta: "b"})
-		s.OnContent(runner.Content{TaskID: taskscope.ID("A"), Depth: 1, Delta: "c"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("A"), Depth: 0, Delta: "a"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("B"), Depth: 0, Delta: "b"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("A"), Depth: 1, Delta: "c"})
 		s.Drain()
 
 		msgs := snap()
@@ -104,8 +104,8 @@ func TestSink_ToolEventsFlushContent(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "pre-tool chunk"})
-		s.OnToolStarted(runner.ToolStarted{
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "pre-tool chunk"})
+		s.OnToolStarted(t.Context(), runner.ToolStarted{
 			TaskID:   taskscope.ID("task1"),
 			Depth:    0,
 			ToolID:   "t1",
@@ -130,8 +130,8 @@ func TestSink_ToolEventsFlushContent(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "result chunk"})
-		s.OnToolCompleted(runner.ToolCompleted{
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "result chunk"})
+		s.OnToolCompleted(t.Context(), runner.ToolCompleted{
 			TaskID:   taskscope.ID("task1"),
 			Depth:    0,
 			ToolID:   "t1",
@@ -159,9 +159,9 @@ func TestSink_Drain(t *testing.T) {
 		defer s.Close()
 
 		// Use different (TaskID, Depth) keys so they don't coalesce.
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "a"})
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 1, Delta: "b"})
-		s.OnToolStarted(runner.ToolStarted{
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "a"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 1, Delta: "b"})
+		s.OnToolStarted(t.Context(), runner.ToolStarted{
 			TaskID:   taskscope.ID("task1"),
 			Depth:    0,
 			ToolID:   "t1",
@@ -200,16 +200,16 @@ func TestSink_NilSendSafety(t *testing.T) {
 		s := New(nil)
 
 		// These must not panic.
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
-		s.OnToolStarted(runner.ToolStarted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
-		s.OnToolCompleted(runner.ToolCompleted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
-		s.OnToolFailed(runner.ToolFailed{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read", Error: "boom"})
-		s.OnConversationStarted(runner.ConversationStarted{TaskID: taskscope.ID("task1"), Depth: 0})
-		s.OnConversationEnded(runner.ConversationEnded{TaskID: taskscope.ID("task1"), Depth: 0, Reason: runner.TerminalCompleted})
-		s.OnConversationEnded(runner.ConversationEnded{TaskID: taskscope.ID("task1"), Depth: 0, Reason: runner.TerminalError, Error: "boom"})
-		s.OnIterationCompleted(runner.IterationCompleted{TaskID: taskscope.ID("task1"), Depth: 0})
-		s.OnSteerInjected(runner.SteerInjected{TaskID: taskscope.ID("task1"), Depth: 0})
-		s.OnCompactionApplied(runner.CompactionApplied{TaskID: taskscope.ID("task1"), Depth: 0})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
+		s.OnToolStarted(t.Context(), runner.ToolStarted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
+		s.OnToolCompleted(t.Context(), runner.ToolCompleted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
+		s.OnToolFailed(t.Context(), runner.ToolFailed{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read", Error: "boom"})
+		s.OnConversationStarted(t.Context(), runner.ConversationStarted{TaskID: taskscope.ID("task1"), Depth: 0})
+		s.OnConversationEnded(t.Context(), runner.ConversationEnded{TaskID: taskscope.ID("task1"), Depth: 0, Reason: runner.TerminalCompleted})
+		s.OnConversationEnded(t.Context(), runner.ConversationEnded{TaskID: taskscope.ID("task1"), Depth: 0, Reason: runner.TerminalError, Error: "boom"})
+		s.OnIterationCompleted(t.Context(), runner.IterationCompleted{TaskID: taskscope.ID("task1"), Depth: 0})
+		s.OnSteerInjected(t.Context(), runner.SteerInjected{TaskID: taskscope.ID("task1"), Depth: 0})
+		s.OnCompactionApplied(t.Context(), runner.CompactionApplied{TaskID: taskscope.ID("task1"), Depth: 0})
 		s.Flush()
 		s.Close()
 	})
@@ -217,8 +217,8 @@ func TestSink_NilSendSafety(t *testing.T) {
 	t.Run("no messages delivered when send is nil", func(t *testing.T) {
 		s := New(nil)
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
-		s.OnToolStarted(runner.ToolStarted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
+		s.OnToolStarted(t.Context(), runner.ToolStarted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
 		// Flush dispatches through the pump, but since started is false
 		// (no SetSend called), dispatch returns immediately.
 		s.Flush()
@@ -241,8 +241,8 @@ func TestSink_Close(t *testing.T) {
 		s.Close()
 
 		// After Close, dispatch should silently drop.
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
-		s.OnToolStarted(runner.ToolStarted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
+		s.OnToolStarted(t.Context(), runner.ToolStarted{TaskID: taskscope.ID("task1"), Depth: 0, ToolID: "t1", ToolName: "read"})
 
 		// Drain returns immediately because stop is closed.
 		s.Drain()
@@ -263,7 +263,7 @@ func TestSink_CloseWaitsForPump(t *testing.T) {
 		close(entered)
 		<-release
 	})
-	s.OnToolStarted(runner.ToolStarted{TaskID: taskscope.ID("task"), ToolID: "tool", ToolName: "read"})
+	s.OnToolStarted(t.Context(), runner.ToolStarted{TaskID: taskscope.ID("task"), ToolID: "tool", ToolName: "read"})
 	<-entered
 	closed := make(chan struct{})
 	go func() {
@@ -283,25 +283,26 @@ func TestSink_CloseWaitsForPump(t *testing.T) {
 func TestSink_Overflows(t *testing.T) {
 	t.Run("increments when pump buffer is full", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
+			ctx := t.Context()
 			sendBlocked := make(chan struct{})
 			releaseSend := make(chan struct{})
 			s := New(func(tea.Msg) {
 				close(sendBlocked)
 				select {
 				case <-releaseSend:
-				case <-t.Context().Done():
+				case <-ctx.Done():
 				}
 			})
 			defer s.Close()
 
-			s.OnThinking(runner.Thinking{TaskID: taskscope.ID("blocked"), Delta: "x"})
+			s.OnThinking(ctx, runner.Thinking{TaskID: taskscope.ID("blocked"), Delta: "x"})
 			<-sendBlocked
 
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
 				for range 4097 {
-					s.OnThinking(runner.Thinking{TaskID: taskscope.ID("fill"), Delta: "x"})
+					s.OnThinking(ctx, runner.Thinking{TaskID: taskscope.ID("fill"), Delta: "x"})
 				}
 			}()
 
@@ -354,7 +355,7 @@ func TestSink_Flush(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "hello"})
 		s.Flush()
 		s.Drain()
 
@@ -383,7 +384,7 @@ func TestSink_EmptyDelta(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: ""})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: ""})
 		s.Drain()
 
 		msgs := snap()
@@ -400,7 +401,7 @@ func TestSink_SetSend(t *testing.T) {
 		defer s.Close()
 
 		// Deliver one event to confirm send is wired.
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "before"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "before"})
 		s.Drain()
 		if len(snap()) != 1 {
 			t.Fatal("expected 1 message before SetSend(nil)")
@@ -410,7 +411,7 @@ func TestSink_SetSend(t *testing.T) {
 		s.SetSend(nil)
 
 		// This event should be silently dropped.
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "after"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "after"})
 		s.Drain()
 
 		msgs := snap()
@@ -428,13 +429,14 @@ func TestSink_ConcurrentSafety(t *testing.T) {
 
 		const goroutines = 10
 		const callsPerG = 100
+		ctx := t.Context()
 		var wg sync.WaitGroup
 		wg.Add(goroutines)
 		for g := range goroutines {
 			go func(_ int) {
 				defer wg.Done()
 				for range callsPerG {
-					s.OnContent(runner.Content{
+					s.OnContent(ctx, runner.Content{
 						TaskID: taskscope.ID("task"),
 						Depth:  0,
 						Delta:  "x",
@@ -468,7 +470,7 @@ func TestSink_Diff(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "before diff"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "before diff"})
 		s.Diff("file.go", "--- a/file.go\n+++ b/file.go\n@@ -1 +1 @@\n-old\n+new\n")
 		s.Drain()
 
@@ -495,7 +497,7 @@ func TestSink_PlanUpdated(t *testing.T) {
 		s := New(send)
 		defer s.Close()
 
-		s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "pre-plan"})
+		s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "pre-plan"})
 		s.PlanUpdated("task1", code.Plan{
 			Steps:       []code.PlanStep{{Text: "step1", Status: code.StepStatuses.PENDING}},
 			Explanation: "test plan",
@@ -533,11 +535,12 @@ func TestSink_QueuedEventsOwnMutableValues(t *testing.T) {
 
 	// Occupy the pump so every event below remains queued while producer-owned
 	// values are mutated after their callbacks return.
-	s.OnThinking(runner.Thinking{TaskID: taskscope.ID("block"), Delta: "block"})
+	s.OnThinking(t.Context(), runner.Thinking{TaskID: taskscope.ID("block"), Delta: "block"})
 	<-entered
 
 	args := tools.ToolParameters{"nested": map[string]any{"items": []any{"original"}}}
 	completedEffects := []tools.Effect{tools.NewFileEffect(tools.FileModify, "original.go")}
+	completedParts := []llm.ContentPart{llm.ImagePartFromDataURI("original", "image/png")}
 	failedEffects := []tools.Effect{tools.NewProcessEffect("original", 0)}
 	rateLimit := &llm.RateLimitError{Message: "original"}
 	messages := []llm.Message{{
@@ -546,14 +549,15 @@ func TestSink_QueuedEventsOwnMutableValues(t *testing.T) {
 		Parts:     []llm.ContentPart{llm.ImagePartFromURL("original")},
 	}}
 
-	s.OnToolStarted(runner.ToolStarted{Parameters: args})
-	s.OnToolCompleted(runner.ToolCompleted{Effects: completedEffects})
-	s.OnToolFailed(runner.ToolFailed{Effects: failedEffects})
-	s.OnConversationEnded(runner.ConversationEnded{RateLimit: rateLimit})
-	s.OnSteerInjected(runner.SteerInjected{Messages: messages})
+	s.OnToolStarted(t.Context(), runner.ToolStarted{Parameters: args})
+	s.OnToolCompleted(t.Context(), runner.ToolCompleted{Effects: completedEffects, Parts: completedParts})
+	s.OnToolFailed(t.Context(), runner.ToolFailed{Effects: failedEffects})
+	s.OnConversationEnded(t.Context(), runner.ConversationEnded{RateLimit: rateLimit})
+	s.OnSteerInjected(t.Context(), runner.SteerInjected{Messages: messages})
 
 	args["nested"].(map[string]any)["items"].([]any)[0] = "mutated"
 	completedEffects[0].File.Path = "mutated.go"
+	completedParts[0].Image.DataURI = "mutated"
 	failedEffects[0].Process.Command = "mutated"
 	rateLimit.Message = "mutated"
 	messages[0].Content = "mutated"
@@ -568,6 +572,9 @@ func TestSink_QueuedEventsOwnMutableValues(t *testing.T) {
 	}
 	if got := msgs[2].(ToolCompletedMsg).Effects[0].File.Path; got != "original.go" {
 		t.Errorf("ToolCompleted effect path = %q, want original.go", got)
+	}
+	if got := msgs[2].(ToolCompletedMsg).Parts[0].Image.DataURI; got != "original" {
+		t.Errorf("ToolCompleted image = %q, want original", got)
 	}
 	if got := msgs[3].(ToolFailedMsg).Effects[0].Process.Command; got != "original" {
 		t.Errorf("ToolFailed effect command = %q, want original", got)
@@ -592,8 +599,8 @@ func TestSink_TimerCoalesceWindow(t *testing.T) {
 			s := New(send)
 			defer s.Close()
 
-			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "timer"})
-			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: " test"})
+			s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "timer"})
+			s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: " test"})
 
 			// Advance the fake clock so the coalescing timer expires.
 			time.Sleep(CoalesceWindow())
@@ -617,13 +624,13 @@ func TestSink_TimerCoalesceWindow(t *testing.T) {
 			defer s.Close()
 
 			// First burst.
-			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst1"})
+			s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst1"})
 			// Advance the fake clock so the first burst is dispatched.
 			time.Sleep(CoalesceWindow())
 			synctest.Wait()
 
 			// Second burst.
-			s.OnContent(runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst2"})
+			s.OnContent(t.Context(), runner.Content{TaskID: taskscope.ID("task1"), Depth: 0, Delta: "burst2"})
 			// Advance the fake clock so the re-armed timer dispatches the second burst.
 			time.Sleep(CoalesceWindow())
 			synctest.Wait()
@@ -653,7 +660,7 @@ func TestSink_New(t *testing.T) {
 		s := New(nil)
 		defer s.Close()
 		s.SetSend(func(tea.Msg) {})
-		s.OnThinking(runner.Thinking{TaskID: taskscope.ID("task"), Delta: "started"})
+		s.OnThinking(t.Context(), runner.Thinking{TaskID: taskscope.ID("task"), Delta: "started"})
 		s.Drain()
 	})
 }

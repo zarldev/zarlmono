@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/zarldev/zarlmono/swebench-eval/internal/evaluator"
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
@@ -91,8 +93,8 @@ type ZarlcodeDriver struct {
 	EnvFile string
 	// MaxIter caps the agent loop. Zero uses the loop's default.
 	MaxIter int
-	// ToolConcurrency caps concurrent tool dispatch per batch. Zero is
-	// sequential.
+	// ToolConcurrency overrides dispatch: zero keeps up to four concurrent
+	// workspace reads, one is sequential, and larger values parallelize all calls.
 	ToolConcurrency int
 	// ContextWindow sizes the compactor. Zero uses defaultContextWindow.
 	ContextWindow int
@@ -286,20 +288,14 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 	if err != nil {
 		return Result{Err: fmt.Errorf("workspace %q: %w", t.RepoPath, err), Duration: time.Since(start)}
 	}
+	defer ws.Close()
 	root := ws.Root()
 
-	// Kernel sandbox for the agent's shell: same Landlock policy the TUI
-	// uses, rooted at the task worktree (DefaultPolicy grants the linked
-	// .git common dir, so git inside the worktree keeps working). On a
-	// kernel without Landlock the run proceeds unconfined with a notice —
-	// an eval shouldn't silently change shape, just say so.
-	var sb code.Sandboxer
-	if !sandbox.EnabledFromEnv() {
-		fmt.Fprintln(os.Stderr, "zarlcode driver: sandbox disabled via ZARLCODE_SANDBOX")
-	} else if s, serr := sandbox.New(sandbox.DefaultPolicy(root)); serr != nil {
-		fmt.Fprintf(os.Stderr, "zarlcode driver: sandbox unavailable, running unconfined: %v\n", serr)
-	} else {
-		sb = s
+	// Kernel sandbox matches the TUI: requested confinement fails closed.
+	// Operators can explicitly disable it with ZARLCODE_SANDBOX=0.
+	sb, err := engine.ShellSandbox(sandbox.EnabledFromEnv(), root, sandbox.DefaultPolicy(root), sandbox.New)
+	if err != nil {
+		return Result{Err: err, Duration: time.Since(start)}
 	}
 
 	pm := code.NewProcessManager(ws,
@@ -683,17 +679,20 @@ func writeVerifyPrediction(path, driver, instanceID, diff string) error {
 }
 
 func sanitizeRunID(s string) string {
-	s = strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			return r
-		case r == '-', r == '_', r == '.':
-			return r
-		default:
-			return '-'
+	if s != "" && s != "." && s != ".." && !strings.HasPrefix(s, "id-") {
+		safe := true
+		for _, r := range s {
+			if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+				continue
+			}
+			safe = false
+			break
 		}
-	}, s)
-	return strings.Trim(s, "-")
+		if safe {
+			return s
+		}
+	}
+	return fmt.Sprintf("id-%x", sha256.Sum256([]byte(s)))
 }
 
 // reportProvider names the provider for the eval report. Falls back to
@@ -710,9 +709,9 @@ func (d *ZarlcodeDriver) reportProvider() string {
 }
 
 // writeTranscript persists one task's full agent message history to
-// <dir>/<id>.json so empty or failed patches can be diagnosed after the
-// worktree is cleaned up. Best-effort: a failure logs and is otherwise
-// ignored — a missing transcript must never fail the run.
+// <dir>/<id>-<unique>.json so repeated tasks never overwrite earlier exports and
+// failures can be diagnosed after worktree cleanup. Best-effort: a failure logs
+// and is otherwise ignored — a missing transcript must never fail the run.
 func writeTranscript(dir, id string, msgs []llm.Message) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		fmt.Fprintf(os.Stderr, "zarlcode driver: transcript dir %q: %v\n", dir, err)
@@ -723,9 +722,14 @@ func writeTranscript(dir, id string, msgs []llm.Message) {
 		fmt.Fprintf(os.Stderr, "zarlcode driver: marshal transcript %s: %v\n", id, err)
 		return
 	}
-	path := filepath.Join(dir, id+".json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "zarlcode driver: write transcript %s: %v\n", path, err)
+	f, err := os.CreateTemp(dir, sanitizeRunID(id)+"-*.json")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zarlcode driver: create transcript: %v\n", err)
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		fmt.Fprintf(os.Stderr, "zarlcode driver: write transcript %s: %v\n", f.Name(), err)
 	}
 }
 

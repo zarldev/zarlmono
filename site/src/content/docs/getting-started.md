@@ -44,32 +44,25 @@ type weatherArgs struct {
 	City string `json:"city" doc:"City to report the weather for"`
 }
 
-type weather struct{}
-
-func (weather) Definition() tools.ToolSpec {
-	return tools.ToolSpec{
+func newWeatherTool() tools.Tool {
+	return tools.New(tools.ToolSpec{
 		Name:        "weather",
 		Description: "Report the weather for a city.",
 		Parameters:  tools.SchemaFor[weatherArgs](),
-	}
-}
-
-func (weather) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	args, err := tools.DecodeArgs[weatherArgs](call.Arguments)
-	if err != nil {
-		return tools.Failure(call.ID, err), nil
-	}
-	return tools.Success(call.ID, args.City+": sunny, 21C"), nil
+	}, func(_ context.Context, args weatherArgs) (string, error) {
+		return args.City + ": sunny, 21C", nil
+	})
 }
 
 func main() {
-	prov, err := anthropic.NewProvider(os.Getenv("ANTHROPIC_API_KEY"))
-	if err != nil {
-		log.Fatal(err)
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		log.Fatal("ANTHROPIC_API_KEY not set")
 	}
+	prov := anthropic.NewProvider(apiKey)
 
 	r := runner.New(runner.ClientFromProvider(prov),
-		runner.WithTools(tools.NewRegistry(weather{})),
+		runner.WithTools(tools.NewRegistry(newWeatherTool())),
 		runner.WithMaxIterations(8),
 	)
 

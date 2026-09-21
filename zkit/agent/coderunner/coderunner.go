@@ -37,6 +37,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
+	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
@@ -102,7 +103,7 @@ func RegisterStandardTools(reg *tools.Registry, ws code.Workspace, pm *code.Proc
 		bashOpts = append(bashOpts, code.WithEnv(cfg.env))
 	}
 	var readOpts []code.ReadOption
-	if cfg.unrestrictedReads || cfg.sandbox == nil {
+	if cfg.unrestrictedReads {
 		readOpts = append(readOpts, code.WithUnrestrictedReads())
 	}
 	if pm != nil {
@@ -150,9 +151,7 @@ func WithToolEnv(env map[string]string) ToolsOption {
 
 // WithUnrestrictedReads allows read-only tools (read, ls, grep, glob) to
 // access paths outside the workspace root. Mutating tools remain rooted to the
-// workspace. Callers normally rely on the default derived from sandbox mode
-// (sandbox off => unrestricted reads); this option exists for tests and custom
-// embeddings.
+// workspace. Reads are workspace-confined unless callers opt in explicitly.
 func WithUnrestrictedReads() ToolsOption {
 	return func(c *toolsConfig) { c.unrestrictedReads = true }
 }
@@ -160,23 +159,15 @@ func WithUnrestrictedReads() ToolsOption {
 // RegisterSpawnTools registers the asynchronous agent task family. The caller
 // owns group and must close it after the root run and before runner dependencies.
 func RegisterSpawnTools(reg *tools.Registry, parent *runner.Runner, group *spawn.Group, maxDepth, spawnMaxIter int) {
-	if maxDepth == 0 || group == nil {
+	if maxDepth == 0 {
 		return
 	}
-	base := spawn.New(parent,
+	launch := spawn.NewAsync(parent, group,
 		spawn.WithMaxDepth(maxDepth),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
 		spawn.WithModeToolPolicy(SpawnModePolicy()),
 	)
-	for _, tool := range []tools.Tool{
-		spawn.NewAsync(base, group),
-		spawn.NewAwait(group),
-		spawn.NewStatus(group),
-		spawn.NewStop(group),
-		spawn.NewList(group),
-	} {
-		_ = reg.Register(tool)
-	}
+	launch.Register(reg)
 }
 
 // SpawnModePolicy is the work-mode tool policy enforced by the spawn tool
@@ -214,6 +205,13 @@ func RegisterSpawnTools(reg *tools.Registry, parent *runner.Runner, group *spawn
 // than sandboxing it.
 func SpawnModePolicy() func(spawn.SpawnMode, tools.ToolSpec) bool {
 	return func(mode spawn.SpawnMode, spec tools.ToolSpec) bool {
+		// Connection management acquires or revokes external execution authority,
+		// even when it does not directly edit workspace files.
+		if mode == spawn.SpawnModeExplore || mode == spawn.SpawnModeVerify {
+			if spec.Name == dynamic.ToolNameMCPConnect || spec.Name == dynamic.ToolNameMCPDisconnect {
+				return false
+			}
+		}
 		switch mode {
 		case spawn.SpawnModeExplore:
 			return !spec.ChangesWorkspace()
@@ -240,8 +238,9 @@ type Tuning struct {
 	// can still override).
 	MaxIterations int
 
-	// ToolConcurrency caps concurrent tool dispatch per batch. Zero/one
-	// is sequential.
+	// ToolConcurrency overrides tool scheduling. Zero keeps the runner default
+	// of up to four concurrent workspace reads with ordered non-read barriers.
+	// One forces sequential calls; larger values allow all calls to overlap.
 	ToolConcurrency int
 
 	// ContextWindow is the model's context window in tokens. When > 0 it

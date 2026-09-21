@@ -230,32 +230,38 @@ func (m *UI) handleAction(a action) tea.Cmd {
 		return cmd
 	}
 	switch a := a.(type) {
+	case actionViewSavedHistory:
+		m.viewSavedHistory(a)
+		return nil
+	case actionPreviewSavedRecovery:
+		return m.previewSavedRecovery(a)
+	case actionConfirmSavedRecovery:
+		return m.confirmSavedRecovery(a.selection)
+	case actionPreviewRewind:
+		return m.previewRewind(a)
+	case actionApplyRewind:
+		return m.applyRewind(a.selection)
 	case actionClose:
-		if m.overlay.active() {
-			m.cancelOAuthForDialog(m.overlay.top())
-		}
-		m.overlay.pop()
-		if !m.overlay.active() {
-			if m.pendingTarget != nil {
-				selection := *m.pendingTarget
-				m.pendingTarget = nil
-				return m.switchTarget(selection, nil)
-			}
-			// Overlay fully dismissed — if other settings changed the active
-			// provider definition, re-point the live runner so it takes effect now.
-			return m.maybeRepoint()
-		}
-		// A nested picker closed back onto the settings surface: drain any
-		// queued model fetch (e.g. after the compaction provider changed).
-		if d, ok := topSettingsDialog(m); ok {
-			if selection, done, ok := d.takePendingTarget(); ok {
-				return tea.Batch(m.switchTarget(selection, done), m.fetchModelsCmd(d.takePendingFetch()))
-			}
-			if p := d.takePendingFetch(); p != "" {
-				return m.fetchModelsCmd(p)
-			}
-		}
+		return m.closeActionDialog()
+	case actionSessionRecovery:
+		m.openSessionRecovery(false)
+		return nil
+	case actionRetrySessionSave:
+		return m.retrySessionSave()
+	case actionExportLiveSession:
+		return m.exportSession("")
 	case actionQuit:
+		if m.sessionLossRisk() {
+			var warned bool
+			if m.overlay.active() {
+				d, ok := m.overlay.top().(*sessionRecoveryDialog)
+				warned = ok && d.quitting
+			}
+			if !warned {
+				m.openSessionRecovery(true)
+				return nil
+			}
+		}
 		m.cancelLiveTurnForQuit()
 		m.cancelOAuthOperation(false)
 		return tea.Quit
@@ -356,6 +362,43 @@ func (m *UI) handleAction(a action) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *UI) closeActionDialog() tea.Cmd {
+	var resumeDraft bool
+	if m.overlay.active() {
+		if _, recovery := m.overlay.top().(*sessionRecoveryDialog); recovery {
+			m.overlay.pop()
+			return nil // recovery does not change settings or repoint the runtime
+		}
+		preview, ok := m.overlay.top().(*rewindPreviewDialog)
+		resumeDraft = ok && preview.holdDraft
+		m.cancelOAuthForDialog(m.overlay.top())
+	}
+	m.overlay.pop()
+	var draftCmd tea.Cmd
+	if resumeDraft {
+		draftCmd = m.scheduleDraftSave()
+	}
+	if !m.overlay.active() {
+		if m.pendingTarget != nil {
+			selection := *m.pendingTarget
+			m.pendingTarget = nil
+			return tea.Batch(draftCmd, m.switchTarget(selection, nil))
+		}
+		// Apply settings changes only after the overlay is fully dismissed.
+		return tea.Batch(draftCmd, m.maybeRepoint())
+	}
+	// Drain a nested picker's queued model selection or fetch.
+	if d, ok := topSettingsDialog(m); ok {
+		if selection, done, ok := d.takePendingTarget(); ok {
+			return tea.Batch(draftCmd, m.switchTarget(selection, done), m.fetchModelsCmd(d.takePendingFetch()))
+		}
+		if p := d.takePendingFetch(); p != "" {
+			return tea.Batch(draftCmd, m.fetchModelsCmd(p))
+		}
+	}
+	return draftCmd
 }
 
 // --- help dialog ---
@@ -624,6 +667,10 @@ func newConversationActionsDialog() *conversationActionsDialog { return &convers
 
 func (conversationActionsDialog) handleKey(msg tea.KeyPressMsg) action {
 	switch msg.String() {
+	case "r":
+		return actionSessionRecovery{}
+	case "e":
+		return actionExportLiveSession{}
 	case "c", "C", "enter":
 		return actionCompactNow{}
 	case "x", "X", "delete", "backspace":
@@ -637,7 +684,7 @@ func (conversationActionsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 		palette.Primary.On("conversation context"),
 		palette.Muted.On("Compact keeps the transcript visible but shrinks what the next turn remembers."),
 		palette.Muted.On("Clear drops the transcript and live conversation context."),
-	}, keyLegend(keyHint{"c / enter", "compact now"}, keyHint{"x", "clear…"}, keyHint{"any other", "cancel"}), 80)
+	}, keyLegend(keyHint{"c / enter", "compact now"}, keyHint{"x", "clear…"}, keyHint{"r", "session recovery"}, keyHint{"e", "export"}, keyHint{"esc", "cancel"}), 100)
 }
 
 // clearContextConfirmDialog asks before dropping the live conversation context

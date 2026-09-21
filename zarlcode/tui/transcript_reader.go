@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/db"
+
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -13,12 +15,16 @@ import (
 // transcript. It owns independent navigation state while sharing immutable
 // item objects with the live timeline.
 type transcriptReader struct {
-	view           timeline
-	query          string
-	searching      bool
-	initialTail    bool
-	viewportWidth  int
-	viewportHeight int
+	view              timeline
+	query             string
+	searching         bool
+	initialTail       bool
+	viewportWidth     int
+	viewportHeight    int
+	rewindSource      rewindSelection
+	rewindCandidates  map[string]db.CheckpointSummary
+	rewindUnavailable string
+	readOnly          bool // saved history, never bound to the active runtime
 }
 
 func newTranscriptReader(source *timeline) *transcriptReader {
@@ -121,6 +127,10 @@ func (r *transcriptReader) handleKey(msg tea.KeyPressMsg) action {
 		r.jumpUser(-1)
 	case "]":
 		r.jumpUser(1)
+	case "r":
+		if !r.readOnly {
+			return r.rewindIntent()
+		}
 	case "ctrl+f":
 		r.searching = true
 		r.query = ""
@@ -199,7 +209,10 @@ func (r *transcriptReader) draw(scr uv.Screen, area uv.Rectangle) {
 	for i, line := range lines {
 		drawLine(scr, uv.Rect(body.Min.X, body.Min.Y+i, body.Dx(), 1), line)
 	}
-	footer := ""
+	footer := " [ / ] prompt · r preview rewind · ctrl+f search · Y copy · esc close"
+	if r.readOnly {
+		footer = " READ-ONLY saved history · [ / ] prompt · ctrl+f search · Y copy · esc back"
+	}
 	switch {
 	case r.searching:
 		footer = " search: " + r.query + "█"

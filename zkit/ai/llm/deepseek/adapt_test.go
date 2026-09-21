@@ -17,10 +17,7 @@ func TestProviderDowngradesJSONSchemaWithoutMutatingRequest(t *testing.T) {
 
 	var captured []byte
 	server := newCaptureServer(t, &captured)
-	provider, err := deepseek.NewProvider("test-key", deepseek.WithBaseURL(server.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	provider := deepseek.NewProvider("test-key", deepseek.WithBaseURL(server.URL))
 
 	schema := map[string]any{
 		"type":       "object",
@@ -75,10 +72,8 @@ func TestProviderAddsJSONObjectKeywordOnlyWhenNeeded(t *testing.T) {
 
 			var captured []byte
 			server := newCaptureServer(t, &captured)
-			provider, err := deepseek.NewProvider("test-key", deepseek.WithBaseURL(server.URL))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
+			provider := deepseek.NewProvider("test-key", deepseek.WithBaseURL(server.URL))
+
 			consume(t, provider.Complete(t.Context(), llm.CompletionRequest{
 				Messages:       []llm.Message{{Role: llm.RoleUser, Content: tc.content}},
 				Stream:         true,

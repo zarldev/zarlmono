@@ -28,12 +28,18 @@ Normal return/EOF is success. A terminal failure is exactly one zero-chunk error
 | `openaicodex` | OAuth | ChatGPT-subscription backend. Retries 429/5xx honouring Retry-After. |
 | `claudecode` | OAuth | Claude-subscription backend. |
 | `deepseek` | API key | OpenAI-compatible facade pointed at api.deepseek.com. |
-Constructors are option-based:
+Constructors accept explicit configuration:
 
 ```go
-p, err := openai.NewProvider(apiKey, openai.WithModel("gpt-5.5"))
-p, err := llamacpp.NewProvider(llamacpp.WithBaseURL("http://127.0.0.1:8081"))
+openAIProvider := openai.NewProvider(apiKey, openai.WithModel("gpt-5.5"))
+localProvider := llamacpp.NewProvider(llamacpp.WithBaseURL("http://127.0.0.1:8081"))
 ```
+
+These direct constructors return concrete `*Provider` values and assemble trusted,
+caller-supplied credentials and configuration. They do not validate a missing key or
+resolve configuration from the environment; the caller or configuration registry owns
+that boundary. `google.NewProvider` and `google.NewVertexProvider` remain fallible
+because they create the `genai.NewClient` SDK client during setup.
 
 ## The backends registry
 
@@ -54,7 +60,9 @@ p, err := reg.BuildWithConfig(ctx, "anthropic", backends.BuildConfig{
 Credentials come from an explicit `BuildConfig.APIKey`, then the credential
 source supplied through `WithSettingsService`. There are no environment-variable
 fallbacks for API keys or provider URLs. Zarlcode supplies its database-backed
-preference service; protected credentials require an explicitly unlocked vault.
+preference service; protected credentials require an explicitly unlocked vault. The
+registry remains fallible, and `BuildWithConfig` rejects a missing required key with
+`llm.ErrInvalidAPIKey`.
 
 `WithStore` adds user-defined providers from your storage;
 `WithProviderDefinitions` replaces the builtin seed set. Local backends

@@ -112,10 +112,8 @@ func liveProvider(t *testing.T) llm.Provider {
 	if model := os.Getenv("LLAMACPP_LIVE_MODEL"); model != "" {
 		opts = append(opts, llamacpp.WithModel(model))
 	}
-	p, err := llamacpp.NewProvider(opts...)
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	p := llamacpp.NewProvider(opts...)
+
 	return p
 }
 

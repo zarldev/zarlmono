@@ -30,8 +30,12 @@ Starlight; `cd site && npm run build` must pass when touching it).
   ```bash
   go tool task check   # isolated manifests, workspace build/vet/tests, repository policy
   go tool task lint    # root tools and every child module, using .golangci.yaml
-  go tool task race    # zkit race suite
+  go tool task race    # zkit, zarlcode engine/TUI, and evaluation race suites
   ```
+
+  Use `go tool task race:zkit`, `go tool task race:zarlcode`, or
+  `go tool task race:swebench-eval` to run one suite. CI runs them in separate
+  jobs; `release-check` runs all three through the aggregate `race` target.
 
 ## Style
 

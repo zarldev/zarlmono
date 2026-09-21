@@ -17,4 +17,6 @@ const (
 	entrySkills                            // skills
 	entrySubagent                          // subagent
 	entryNotice                            // notice
+	entryInputAdmission                    // input_admission
+	entryInputWait                         // input_wait
 )

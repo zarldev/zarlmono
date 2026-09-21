@@ -43,6 +43,10 @@ func rawToolArg(name string, params map[string]any) string {
 		return get("path", "file", "filename")
 	case "grep", "search", "ripgrep":
 		return get("pattern", "query", "regex", "regexp")
+	case "web_fetch":
+		return get("url")
+	case "web_search":
+		return get("query")
 	case "glob", "ls", "list", "list_dir":
 		return get("pattern", "path", "glob", "dir")
 	case "skill_load":

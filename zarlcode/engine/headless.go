@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,14 +39,40 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 		MaxIterations: maxIter,
 	}
 
+	if !l.admission.enter() {
+		return runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: l.admission.rejection()}
+	}
+	defer l.admission.leave()
+
+	// Preserve headless's immediate busy rejection while snapshotting context
+	// only inside the cache transition gate.
+	turnCtx, finish, err := l.beginTurn(ctx)
+	if err != nil {
+		return runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
+	}
+	defer finish()
+	var result runner.TaskResult
+	err = l.context.transition(turnCtx, spec, func() (func(runner.TaskSpec) runner.TaskResult, error) {
+		return func(seed runner.TaskSpec) runner.TaskResult {
+			result = l.runHeadlessTurn(turnCtx, seed)
+			return result
+		}, nil
+	}, finish)
+	if err != nil {
+		return runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
+	}
+	return result
+}
+
+func (l *LiveRunner) runHeadlessTurn(ctx context.Context, spec runner.TaskSpec) runner.TaskResult {
 	// Persist the run lifecycle: a row at start, live progress after each
 	// iteration (so a SIGKILL leaves a trail), and the terminal summary on
 	// completion. The recorder is nil (no-op) when no store is configured.
-	rec := l.newHeadlessRecorder(id)
+	rec := l.newHeadlessRecorder(string(spec.ID))
 	provider, model := l.headlessProviderModel()
-	rec.start(ctx, prompt, provider, model)
+	rec.start(ctx, spec.Prompt, provider, model)
 
-	r, resources, err := l.buildHeadlessTurn(ctx, runner.WithProgressUpdater(rec.progress))
+	turn, err := l.buildTurnWithSource(ctx, l.headlessSource, runner.WithProgressUpdater(rec.progress))
 	if err != nil {
 		res := runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
 		rec.complete(ctx, res)
@@ -89,11 +116,9 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 			rec.attempt(ctx, report)
 		}))
 	}
-	result := driveHeadless(ctx, r, spec, rec, reqOpts, driveOpts...)
-	if closeErr := resources.Close(ctx); closeErr != nil && result.Err == nil {
-		result.Reason = runner.TerminalError
-		result.Err = closeErr
-	}
+	result := driveHeadless(ctx, turn.runner, spec, reqOpts, driveOpts...)
+	turn.close(ctx)
+	rec.complete(ctx, result)
 	return result
 }
 
@@ -136,12 +161,58 @@ func gitWorktreeState(root string) string {
 	return b.String()
 }
 
-// driveHeadless runs the single headless attempt and records its terminal
-// state. A panic in the runner is recovered and recorded as a terminal
-// error so the row never strands "in flight" and the process exits
-// cleanly (mapped to exit code 2 by RunHeadlessProcess).
-func driveHeadless(ctx context.Context, r *runner.Runner, spec runner.TaskSpec, rec *headlessRecorder, reqOpts []pursue.RequestOption, driveOpts ...options.Option[pursue.Config]) runner.TaskResult {
+// driveHeadless runs the headless attempts and recovers runner panics as terminal
+// errors. The turn owner joins children before recording the final result.
+func driveHeadless(ctx context.Context, r *runner.Runner, spec runner.TaskSpec, reqOpts []pursue.RequestOption, driveOpts ...options.Option[pursue.Config]) runner.TaskResult {
 	var res runner.TaskResult
+	// Drive's watcher may stop waiting before an attempt exits. Serialize access
+	// and seal admission before leaving, joining active work and rejecting any
+	// callback scheduled only after the driver returned.
+	var attemptMu sync.Mutex
+	var attempts sync.WaitGroup
+	sealed := false
+	var settled runner.TaskResult
+	settledOK := false
+	attempt := func(ctx context.Context, attemptSpec runner.TaskSpec) runner.TaskResult {
+		attemptMu.Lock()
+		if sealed {
+			attemptMu.Unlock()
+			return runner.TaskResult{ID: attemptSpec.ID, Reason: runner.TerminalError, Err: context.Canceled}
+		}
+		attempts.Add(1) // Admission and sealing are atomic under attemptMu.
+		attemptMu.Unlock()
+		defer attempts.Done()
+
+		var result runner.TaskResult
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					slog.ErrorContext(ctx, "headless attempt panicked", "panic", p, "stack", string(debug.Stack()))
+					result = runner.TaskResult{
+						ID:     attemptSpec.ID,
+						Reason: runner.TerminalError,
+						Err:    fmt.Errorf("headless attempt panicked: %v", p),
+					}
+				}
+			}()
+			result = r.Run(ctx, attemptSpec)
+		}()
+		attemptMu.Lock()
+		settled = result
+		settledOK = true
+		attemptMu.Unlock()
+		return result
+	}
+	sealAndJoin := func() {
+		attemptMu.Lock()
+		sealed = true
+		attemptMu.Unlock()
+		attempts.Wait()
+	}
+	defer sealAndJoin()
+
+	var out pursue.Outcome
+	drove := false
 	// Inner func so the deferred recover can override res on panic without the
 	// outer signature needing a named return.
 	func() {
@@ -153,17 +224,31 @@ func driveHeadless(ctx context.Context, r *runner.Runner, spec runner.TaskSpec, 
 					Reason: runner.TerminalError,
 					Err:    fmt.Errorf("headless run panicked: %v", p),
 				}
-				rec.complete(ctx, res)
 			}
 		}()
-		out := pursue.Drive(ctx, pursue.NewRequest(r.Run, spec, reqOpts...), driveOpts...)
-		res = out.Result
-		if out.Attempts > 1 || out.Verified {
-			slog.InfoContext(ctx, "headless verified re-drive",
-				"attempts", out.Attempts, "verified", out.Verified, "reason", res.Reason)
-		}
-		rec.complete(ctx, res)
+		out = pursue.Drive(ctx, pursue.NewRequest(attempt, spec, reqOpts...), driveOpts...)
+		drove = true
 	}()
+	sealAndJoin()
+	if !drove {
+		return res
+	}
+
+	res = out.Result
+	if err := out.Err(); err != nil {
+		attemptMu.Lock()
+		if settledOK {
+			res = settled
+		}
+		attemptMu.Unlock()
+		res.ID = spec.ID
+		res.Reason = runner.TerminalError
+		res.Err = err
+	}
+	if out.Attempts > 1 || out.Verified {
+		slog.InfoContext(ctx, "headless verified re-drive",
+			"attempts", out.Attempts, "verified", out.Verified, "reason", res.Reason)
+	}
 	return res
 }
 
@@ -192,25 +277,48 @@ type HeadlessReport struct {
 	TerminalCause    runner.TerminalCause  `json:"terminal_cause,omitempty"`
 	Iterations       int                   `json:"iterations"`
 	Duration         time.Duration         `json:"duration"`
+	// TotalUsage sums reported attempt snapshots for this Run only; nil means
+	// unreported. Timing.AttemptsWithUsage identifies partial totals. Descendant
+	// usage and earlier verified re-drive Runs are not included.
+	TotalUsage *HeadlessUsage    `json:"total_usage"`
+	Timing     runner.TaskTiming `json:"timing"`
+	// UnattributedDuration retains setup, compaction, backoff and settlement
+	// rather than presenting those as provider or tool execution time.
+	UnattributedDuration time.Duration `json:"unattributed_duration"`
+}
+
+// HeadlessUsage is the reported whole-Run token total, distinct from latest
+// context occupancy. CachedTokens retains provider semantics: providers that
+// omit cache accounting cannot be distinguished from reported zero here.
+type HeadlessUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 // Report returns cold-start accounting for res.
 func Report(res runner.TaskResult) HeadlessReport {
 	report := HeadlessReport{
-		PromptBytes:     len(res.SystemPrompt),
-		PromptWords:     len(strings.Fields(res.SystemPrompt)),
-		ToolCount:       res.ToolSurface.Count,
-		ToolJSONBytes:   res.ToolSurface.JSONBytes,
-		ToolFingerprint: res.ToolSurface.Fingerprint,
-		TerminalReason:  res.Reason,
-		TerminalCause:   res.Cause,
-		Iterations:      res.Iterations,
-		Duration:        res.Duration,
+		PromptBytes:          len(res.SystemPrompt),
+		PromptWords:          len(strings.Fields(res.SystemPrompt)),
+		ToolCount:            res.ToolSurface.Count,
+		ToolJSONBytes:        res.ToolSurface.JSONBytes,
+		ToolFingerprint:      res.ToolSurface.Fingerprint,
+		TerminalReason:       res.Reason,
+		TerminalCause:        res.Cause,
+		Iterations:           res.Iterations,
+		Duration:             res.Duration,
+		Timing:               res.Timing,
+		UnattributedDuration: res.Duration - res.Timing.ProviderDuration - res.Timing.RequestPreparationDuration - res.Timing.ToolDispatchDuration,
 	}
 	if res.LastUsage != nil {
 		report.PromptTokens = res.LastUsage.PromptTokens
 		report.CachedTokens = res.LastUsage.CachedTokens
 		report.CompletionTokens = res.LastUsage.CompletionTokens
+	}
+	if u := res.TotalUsage; u != nil {
+		report.TotalUsage = &HeadlessUsage{PromptTokens: u.PromptTokens, CachedTokens: u.CachedTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
 	}
 	return report
 }

@@ -325,8 +325,9 @@ func assistantInputItems(m llm.Message) []inputItem {
 	}
 	indexed := make([]indexedItem, 0, len(m.ContinuationItems)+len(projected))
 	occupied := make(map[int]bool, len(m.ContinuationItems))
+	hasNativeText := false
 	for order, continuation := range m.ContinuationItems {
-		item, ok := codexReasoningInput(continuation)
+		item, ok := codexContinuationInput(continuation)
 		if !ok {
 			continue
 		}
@@ -336,11 +337,15 @@ func assistantInputItems(m llm.Message) []inputItem {
 		}
 		indexed = append(indexed, indexedItem{index: index, order: order, item: item})
 		occupied[index] = true
+		hasNativeText = hasNativeText || item.Type == sseTypeMessage
 	}
 	index := 0
 	for order, item := range projected {
 		var position *int
 		if item.Type == sseTypeMessage {
+			if hasNativeText {
+				continue // Native text retains item boundaries and suppresses the projection.
+			}
 			position = m.ContentOutputIndex
 		} else {
 			toolIndex := order
@@ -375,13 +380,19 @@ func assistantInputItems(m llm.Message) []inputItem {
 	return out
 }
 
-func codexReasoningInput(continuation llm.ContinuationItem) (inputItem, bool) {
-	if continuation.Provider != codexContinuationProvider || continuation.Format != codexReasoningFormat ||
-		(continuation.Kind != "" && continuation.Kind != sseTypeReasoning) {
+func codexContinuationInput(continuation llm.ContinuationItem) (inputItem, bool) {
+	if continuation.Provider != codexContinuationProvider || continuation.Format != codexReasoningFormat {
 		return inputItem{}, false
 	}
 	var item inputItem
-	if err := json.Unmarshal(continuation.Data, &item); err != nil || item.Type != sseTypeReasoning || item.ID == "" || item.EncryptedContent == "" {
+	if err := json.Unmarshal(continuation.Data, &item); err != nil {
+		return inputItem{}, false
+	}
+	validReasoning := item.Type == sseTypeReasoning && item.ID != "" && item.EncryptedContent != "" &&
+		(continuation.Kind == "" || continuation.Kind == sseTypeReasoning)
+	validText := item.Type == sseTypeMessage && item.Role == llm.RoleAssistant && hasCodexOutputText(item.Content) &&
+		continuation.Kind == sseTypeMessage && continuation.OutputIndex != nil
+	if !validReasoning && !validText {
 		return inputItem{}, false
 	}
 	item.Raw = append(item.Raw[:0], continuation.Data...)

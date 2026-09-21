@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
@@ -13,7 +14,7 @@ type modelIdentitySink struct {
 	started runner.ConversationStarted
 }
 
-func (s *modelIdentitySink) OnConversationStarted(event runner.ConversationStarted) {
+func (s *modelIdentitySink) OnConversationStarted(ctx context.Context, event runner.ConversationStarted) {
 	s.started = event
 }
 

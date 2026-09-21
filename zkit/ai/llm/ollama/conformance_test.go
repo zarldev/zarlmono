@@ -23,10 +23,8 @@ import (
 // scenarios apply.
 func TestProvider_Conformance(t *testing.T) {
 	factory := func(t *testing.T, baseURL string) llm.Provider {
-		p, err := ollama.NewProvider(ollama.WithBaseURL(baseURL))
-		if err != nil {
-			t.Fatalf("NewProvider: %v", err)
-		}
+		p := ollama.NewProvider(ollama.WithBaseURL(baseURL))
+
 		return p
 	}
 

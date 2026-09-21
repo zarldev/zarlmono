@@ -59,7 +59,7 @@ func (s *Store) GetAPIKeyExact(ctx context.Context, workspace, provider string) 
 }
 
 func (s *Store) getAPIKeyRow(ctx context.Context, workspace, provider string) (APIKeyCiphertext, error) {
-	row, err := s.q.GetAPIKey(ctx, gen.GetAPIKeyParams{Workspace: workspace, Provider: provider})
+	row, err := s.read.GetAPIKey(ctx, gen.GetAPIKeyParams{Workspace: workspace, Provider: provider})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return APIKeyCiphertext{}, ErrNotFound
@@ -108,7 +108,7 @@ type APIKeyRecord struct {
 // ciphertext. Used only by the one-time vault key migration to re-encrypt
 // rows under a new master key.
 func (s *Store) AllAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
-	rows, err := s.q.ListAllAPIKeys(ctx)
+	rows, err := s.read.ListAllAPIKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list all api keys: %w", err)
 	}
@@ -141,7 +141,7 @@ func (s *Store) DeleteAPIKey(ctx context.Context, workspace, provider string) er
 // to workspace (workspace-specific + global, deduped). Order is
 // alphabetical. The actual key material is never returned.
 func (s *Store) ListAPIKeyProviders(ctx context.Context, workspace string) ([]string, error) {
-	globals, err := s.q.ListAPIKeyProvidersByWorkspace(ctx, "")
+	globals, err := s.read.ListAPIKeyProvidersByWorkspace(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("list global api-key providers: %w", err)
 	}
@@ -150,7 +150,7 @@ func (s *Store) ListAPIKeyProviders(ctx context.Context, workspace string) ([]st
 		seen[p] = struct{}{}
 	}
 	if workspace != "" {
-		local, err := s.q.ListAPIKeyProvidersByWorkspace(ctx, workspace)
+		local, err := s.read.ListAPIKeyProvidersByWorkspace(ctx, workspace)
 		if err != nil {
 			return nil, fmt.Errorf("list workspace api-key providers: %w", err)
 		}

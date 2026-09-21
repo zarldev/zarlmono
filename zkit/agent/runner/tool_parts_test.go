@@ -30,7 +30,8 @@ func TestRunnerToolResultParts(t *testing.T) {
 				{runnertest.ChunkToolCall("image-call", "image_tool", `{}`)},
 				{runnertest.ChunkText("done")},
 			})}
-			r := runner.New(client, runner.WithTools(tools.NewRegistry(tool)))
+			sink := &runnertest.Sink{}
+			r := runner.New(client, runner.WithTools(tools.NewRegistry(tool)), runner.WithSink(sink))
 			result := r.Run(t.Context(), runner.TaskSpec{Prompt: "look"})
 			if result.Err != nil {
 				t.Fatalf("Run: %v", result.Err)
@@ -40,6 +41,15 @@ func TestRunnerToolResultParts(t *testing.T) {
 			}
 			// Producer mutation must not change the runner-owned history.
 			tool.result.Parts[0].Image.DataURI = "changed"
+			completed, found := sink.FirstToolCompleted()
+			if success {
+				if !found || len(completed.Parts) != 1 || completed.Parts[0].Image.DataURI != uri {
+					t.Fatal("completion event lost or aliased attachment")
+				}
+				completed.Parts[0].Image.DataURI = "sink-mutated"
+			} else if found {
+				t.Fatal("failure published a successful completion")
+			}
 			raw, err := json.Marshal(result.Messages)
 			if err != nil {
 				t.Fatalf("marshal history: %v", err)

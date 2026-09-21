@@ -22,6 +22,9 @@ func (q *Queries) ClearSessionDraft(ctx context.Context, id string) error {
 const deleteEmptySession = `-- name: DeleteEmptySession :exec
 DELETE FROM sessions
 WHERE id = ? AND context_json = '[]' AND pending_json = '[]'
+  AND NOT EXISTS (SELECT 1 FROM session_transcripts WHERE session_id = sessions.id)
+  AND NOT EXISTS (SELECT 1 FROM session_checkpoints WHERE session_id = sessions.id)
+  AND NOT EXISTS (SELECT 1 FROM session_branches WHERE session_id = sessions.id)
 `
 
 // Empty == default context/pending. Used to clean up a draft-only session

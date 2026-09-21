@@ -17,10 +17,8 @@ import (
 // the assertions on top are the same, only the stub bytes differ.
 func TestProvider_Conformance(t *testing.T) {
 	factory := func(t *testing.T, baseURL string) llm.Provider {
-		p, err := anthropic.NewProvider("test-key", anthropic.WithBaseURL(baseURL))
-		if err != nil {
-			t.Fatalf("NewProvider: %v", err)
-		}
+		p := anthropic.NewProvider("test-key", anthropic.WithBaseURL(baseURL))
+
 		return p
 	}
 

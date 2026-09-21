@@ -276,6 +276,11 @@ func (tl *timeline) addQueuedUser(text string) {
 }
 
 func (tl *timeline) addInjectedUser(text string) {
+	if len(tl.queued) != 0 && tl.queuedEntries[0] == "" {
+		tl.removeQueueIntent()
+		tl.addUser(text)
+		return
+	}
 	if len(tl.queued) == 0 {
 		tl.addUser(text)
 		return
@@ -305,6 +310,10 @@ func (tl *timeline) addNotice(text string) { tl.addNoticeForTurn("", text) }
 
 func (tl *timeline) addNoticeForTurn(taskID, text string) {
 	tl.applyTranscript(transcript.NoticeAdded{TurnID: taskID, Text: text})
+	tl.appendNoticeForTurn(taskID, text)
+}
+
+func (tl *timeline) appendNoticeForTurn(taskID, text string) {
 	if sa := tl.subAgents[taskID]; sa != nil {
 		sa.addNotice(text)
 		return
@@ -476,10 +485,7 @@ func (tl *timeline) appendThinking(taskID string, depth int, delta string) {
 	}
 	ot := tl.ensureTurn(taskID, depth)
 	tl.markTurnActivity(ot)
-	if ot.think == nil {
-		ot.think = &thinkingItem{depth: depth, nested: true}
-		tl.pushItem(ot.think)
-	}
+	tl.ensureThinking(ot)
 	ot.think.text += delta
 	ot.think.bump()
 	tl.invalidateItem(ot.think)
@@ -488,6 +494,14 @@ func (tl *timeline) appendThinking(taskID string, depth int, delta string) {
 		ot.resp.bump()
 		tl.invalidateItem(ot.resp)
 	}
+}
+
+func (tl *timeline) ensureThinking(ot *openTurn) *thinkingItem {
+	if ot.think == nil {
+		ot.think = &thinkingItem{depth: ot.resp.depth, nested: true}
+		tl.pushItem(ot.think)
+	}
+	return ot.think
 }
 
 func (tl *timeline) endTurn(taskID string) {

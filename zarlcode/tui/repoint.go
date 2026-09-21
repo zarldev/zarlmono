@@ -153,6 +153,13 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 	if !ok {
 		return false
 	}
+	if m.liveOperation != nil || m.sessionRetry != nil {
+		if rp.done != nil {
+			rp.done(engine.ErrRuntimeBusy)
+		}
+		m.session.SetErrorToast("provider switch deferred: wait for the turn to settle")
+		return true
+	}
 	if rp.seq != 0 && rp.seq != atomic.LoadUint64(&m.repointSeq) {
 		return true
 	}

@@ -44,11 +44,19 @@ func newBrowserSession(ctx context.Context, opts ...browser.Option) (ComputerSes
 
 // ComputerObserve observes the reusable browser session owned by the runner.
 func (l *LiveRunner) ComputerObserve(ctx context.Context, req model.ObserveRequest) (model.Observation, error) {
+	if !l.admission.enter() {
+		return model.Observation{}, l.admission.rejection()
+	}
+	defer l.admission.leave()
 	return l.computer.Observe(ctx, req)
 }
 
 // ComputerAct performs an action in the reusable browser session owned by the runner.
 func (l *LiveRunner) ComputerAct(ctx context.Context, req model.ActionRequest) (model.Observation, error) {
+	if !l.admission.enter() {
+		return model.Observation{}, l.admission.rejection()
+	}
+	defer l.admission.leave()
 	return l.computer.Act(ctx, req)
 }
 

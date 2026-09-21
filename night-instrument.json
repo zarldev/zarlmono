@@ -1,0 +1,22 @@
+{
+  "name":        "night-instrument",
+  "bg":          "#03060b",
+  "fg":          "#e5edf1",
+  "subtle":      "#a9b4bc",
+  "muted":       "#92a0ad",
+  "primary":     "#78a9ed",
+  "secondary":   "#a5b8d8",
+  "success":     "#98c379",
+  "warning":     "#d8b26e",
+  "error":       "#e47780",
+  "info":        "#63bde8",
+  "user":        "#78a9ed",
+  "assistant":   "#e5edf1",
+  "tool":        "#7abdb2",
+  "system":      "#a5b8d8",
+  "border":      "#3b5065",
+  "borderFocus": "#78a9ed",
+  "highlight":   "#101d2c",
+  "selection":   "#192c43",
+  "planMode":    "#d8b26e"
+}

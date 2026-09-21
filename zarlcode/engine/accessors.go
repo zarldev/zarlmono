@@ -38,6 +38,8 @@ func (l *LiveRunner) RunTarget() RunTarget {
 	if l == nil {
 		return RunTarget{}
 	}
+	l.publication.Lock()
+	defer l.publication.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.target

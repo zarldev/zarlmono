@@ -13,7 +13,7 @@ Every concern the runner has lives behind a small interface. When adding a featu
 - `Client` — LLM streaming. One method.
 - `ToolSource` — reads + executes tools. `Iterable` + `Executor`.
 - `PromptSource` — system prompt. One method.
-- `EventSink` — runner observability. Composite of six typed sub-sinks.
+- `EventSink` — runner observability. Composite of eight typed sub-sinks.
 - `Steerer` — user messages between iterations. One method.
 - `compact.Compactor` — history compaction. One method.
 
@@ -33,13 +33,13 @@ The cost is one extra read per iteration — a few hundred microseconds for tool
 
 ## Why compile-time exhaustiveness on EventSink
 
-`EventSink` is a composite of six small sinks (`ContentSink`, `ThinkingSink`, `ToolSink`, `ConversationSink`, `SteerSink`, `CompactionSink`). Adding a method to any of them breaks every full-`EventSink` implementer until they handle it. That's intentional: a UI rendering sub-agent indentation needs to know when a new event lands, or it silently drops it.
+`EventSink` is a composite of eight small sinks (`ContentSink`, `ThinkingSink`, `ToolSink`, `WorkspaceWaitSink`, `ConversationSink`, `SteerSink`, `CompactionSink`, `DiagnosticSink`). Adding a method to any of them breaks every full-`EventSink` implementer until they handle it. That's intentional: a UI rendering sub-agent indentation needs to know when a new event lands, or it silently drops it.
 
 Consumers that want to ignore future events embed `NopSink`:
 
 ```go
 type myMetricsSink struct{ runner.NopSink }
-func (s *myMetricsSink) OnToolCompleted(e runner.ToolCompleted) { /* count */ }
+func (s *myMetricsSink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) { /* count */ }
 ```
 
 The opt-out is explicit. Don't add `// no-op` overrides for events you should be handling.
@@ -51,6 +51,12 @@ To add a new event type: add a flat payload struct (with `TaskID` and `Depth`) t
 `New` always installs `NopSink`; `Runner.sink` is non-nil after construction. `WithSink(nil)` is invalid configuration and panics. Do not add downstream sink nil checks or silently normalize a nil option.
 
 Recoverable operational decisions—retries, corrective injections, compaction outcomes, invalid-tool skips, and recovered panics—belong in typed events such as `Diagnostic`, not `slog`. Internal runner/provider code returns errors or publishes events; the CLI, TUI, HTTP handler, or worker boundary decides whether to render or log them.
+
+Every event callback accepts the publishing operation's `context.Context` first.
+Forward that context through wrappers, including workspace-wait observers; never
+substitute a background context. Do not retain it in queued UI messages. Terminal
+events still fire after cancellation, and outcome fields remain authoritative
+because successful operation cleanup may also cancel a context.
 
 ## Why `ClientFromProvider` exists
 
@@ -105,11 +111,18 @@ if result.Err != nil {
 
 ## Concurrency under concurrent Runs
 
+Default dispatch overlaps up to four consecutive workspace-read calls whose
+specs do not change workspace state. Every other call is an ordered barrier.
+Resolve later groups after earlier barriers finish so registry changes take
+effect. Explicit `WithToolConcurrency` retains unrestricted batching for values
+above one and sequential execution otherwise. Always join dispatched work and
+preserve model result order regardless of completion order.
+
 Read-only after construction (safe to share): client, tools, prompt, template, max iterations. Shared mutable plumbing needs care:
 
 - **EventSink** — receives interleaved events from multiple Runs; needs internal locking. The shipped `runnertest.Sink` uses a mutex.
 - **Steerer** — one shared queue splits inbound messages across Runs arbitrarily; use one per Run.
-- **Truncator** — invoked from goroutines under `WithToolConcurrency`; the shipped truncators are concurrency-safe.
+- **Truncator** — shared across concurrently dispatched tools; the shipped truncators are concurrency-safe.
 - **Compactor** — concurrent Runs invoke concurrently; implementations should be parallel-safe.
 - **MemoSource** (when wired as the ToolSource) — safe to share, but the Get→Execute→Set sequence is NOT atomic: two concurrent identical calls in one task can both miss and both re-run the inner tool. Fine for pure tools.
 

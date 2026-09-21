@@ -45,7 +45,7 @@ func (s *Store) SaveToolOutput(ctx context.Context, sessionID string, r ToolOutp
 // ListToolOutputsBySession returns the captured tool results for a session,
 // oldest first. Empty slice (not nil) when none are stored.
 func (s *Store) ListToolOutputsBySession(ctx context.Context, sessionID string) ([]ToolOutputRecord, error) {
-	rows, err := s.q.ListToolOutputsBySession(ctx, sessionID)
+	rows, err := s.read.ListToolOutputsBySession(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list tool outputs for %q: %w", sessionID, err)
 	}
@@ -60,7 +60,7 @@ func (s *Store) ListToolOutputsBySession(ctx context.Context, sessionID string) 
 // [ErrNotFound] when the row is absent so callers can branch without
 // importing database/sql.
 func (s *Store) GetToolOutput(ctx context.Context, sessionID, toolCallID string) (ToolOutputRecord, error) {
-	row, err := s.q.GetToolOutput(ctx, gen.GetToolOutputParams{
+	row, err := s.read.GetToolOutput(ctx, gen.GetToolOutputParams{
 		SessionID:  sessionID,
 		ToolCallID: toolCallID,
 	})
@@ -98,7 +98,7 @@ type ToolOutputSummary struct {
 // session — metadata only, no output bodies — oldest first. Use GetToolOutput
 // to load a single result's full output on demand.
 func (s *Store) ListToolOutputSummariesBySession(ctx context.Context, sessionID string) ([]ToolOutputSummary, error) {
-	rows, err := s.q.ListToolOutputSummariesBySession(ctx, sessionID)
+	rows, err := s.read.ListToolOutputSummariesBySession(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list tool output summaries for %q: %w", sessionID, err)
 	}

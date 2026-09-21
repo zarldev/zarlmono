@@ -26,7 +26,7 @@ type MCPServerRow struct {
 
 // ListMCPServers returns all configured MCP servers.
 func (s *Store) ListMCPServers(ctx context.Context) ([]MCPServerRow, error) {
-	rows, err := s.q.ListMCPServers(ctx)
+	rows, err := s.read.ListMCPServers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list mcp servers: %w", err)
 	}

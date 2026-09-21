@@ -110,6 +110,14 @@ type Entry struct {
 	Payload  Payload `json:"payload"`
 }
 
+// InputAdmission identifies a result admitted to a parent's model context. It
+// records admission, not durable runner-history delivery or live task ownership.
+type InputAdmission struct {
+	Namespace string `json:"namespace"`
+	ID        string `json:"id"`
+	Explicit  bool   `json:"explicit,omitempty"`
+}
+
 // Payload carries kind-specific durable facts. Fields unrelated to Kind remain zero.
 type Payload struct {
 	Text        string `json:"text,omitempty"`
@@ -117,15 +125,18 @@ type Payload struct {
 	Complete    bool   `json:"complete,omitempty"`
 	Interrupted bool   `json:"interrupted,omitempty"`
 
-	ToolID       string    `json:"tool_id,omitempty"`
-	ParentToolID string    `json:"parent_tool_id,omitempty"`
-	ToolName     string    `json:"tool_name,omitempty"`
-	Argument     string    `json:"argument,omitempty"`
-	Effect       string    `json:"effect,omitempty"`
-	ToolState    ToolState `json:"tool_state,omitempty"`
-	FailureKind  string    `json:"failure_kind,omitempty"`
-	DurationMS   int64     `json:"duration_ms,omitempty"`
-	Sequence     int       `json:"sequence,omitempty"`
+	ToolID       string `json:"tool_id,omitempty"`
+	ParentToolID string `json:"parent_tool_id,omitempty"`
+	// Execution links correlate inspector data; Entry.ID/ParentID own hierarchy.
+	ExecutionID       string    `json:"execution_id,omitempty"`
+	ParentExecutionID string    `json:"parent_execution_id,omitempty"`
+	ToolName          string    `json:"tool_name,omitempty"`
+	Argument          string    `json:"argument,omitempty"`
+	Effect            string    `json:"effect,omitempty"`
+	ToolState         ToolState `json:"tool_state,omitempty"`
+	FailureKind       string    `json:"failure_kind,omitempty"`
+	DurationMS        int64     `json:"duration_ms,omitempty"`
+	Sequence          int       `json:"sequence,omitempty"`
 
 	Path        string       `json:"path,omitempty"`
 	Diff        string       `json:"diff,omitempty"`
@@ -133,12 +144,16 @@ type Payload struct {
 	Skills      []string     `json:"skills,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 
-	AgentName   string        `json:"agent_name,omitempty"`
-	Provider    string        `json:"provider,omitempty"`
-	Model       string        `json:"model,omitempty"`
-	Prompt      string        `json:"prompt,omitempty"`
-	SpawnToolID string        `json:"spawn_tool_id,omitempty"`
-	Subagent    SubagentState `json:"subagent,omitempty"`
+	AgentName        string        `json:"agent_name,omitempty"`
+	Provider         string        `json:"provider,omitempty"`
+	Model            string        `json:"model,omitempty"`
+	Prompt           string        `json:"prompt,omitempty"`
+	SpawnToolID      string        `json:"spawn_tool_id,omitempty"`
+	SpawnExecutionID string        `json:"spawn_execution_id,omitempty"`
+	Subagent         SubagentState `json:"subagent,omitempty"`
+
+	InputAdmission InputAdmission `json:"input_admission,omitzero"`
+	InputWaiting   bool           `json:"input_waiting,omitempty"`
 }
 
 // Builder mutates one Thread while maintaining stable semantic identities.
@@ -200,14 +215,22 @@ func NewBuilderFrom(thread Thread) *Builder {
 			}
 		case EntryKinds.ENTRYTOOLCALL:
 			if entry.Payload.ToolState == ToolRunning {
-				builder.legacyTools[entry.Payload.ToolID] = append(builder.legacyTools[entry.Payload.ToolID], entry.ID)
+				if entry.Payload.ExecutionID != "" {
+					builder.tools[entry.Payload.ExecutionID] = entry.ID
+				} else {
+					builder.legacyTools[entry.Payload.ToolID] = append(builder.legacyTools[entry.Payload.ToolID], entry.ID)
+				}
 			}
 		case EntryKinds.ENTRYSUBAGENT:
-			if entry.TurnID != "" {
+			if entry.TurnID != "" && entry.Payload.Subagent == SubagentRunning {
 				builder.subagents[entry.TurnID] = entry.ID
 			}
 			if entry.Payload.SpawnToolID != "" && entry.Payload.Subagent == SubagentPending {
-				builder.legacySpawns[entry.Payload.SpawnToolID] = append(builder.legacySpawns[entry.Payload.SpawnToolID], entry.ID)
+				if entry.Payload.SpawnExecutionID != "" {
+					builder.spawnAgents[entry.Payload.SpawnExecutionID] = entry.ID
+				} else {
+					builder.legacySpawns[entry.Payload.SpawnToolID] = append(builder.legacySpawns[entry.Payload.SpawnToolID], entry.ID)
+				}
 			}
 		case EntryKinds.ENTRYPLAN:
 			builder.currentPlan = entry.ID
@@ -316,9 +339,16 @@ func (b *Builder) AppendReasoning(turnID, parentID, delta string) {
 
 // FinishTurn marks streamed assistant and reasoning entries complete.
 func (b *Builder) FinishTurn(turnID string) {
+	b.finishTurn(turnID, false)
+}
+
+func (b *Builder) finishTurn(turnID string, interrupted bool) {
 	for _, id := range []string{b.turnResponse[turnID], b.turnReason[turnID]} {
 		if id != "" {
-			b.update(id, func(entry *Entry) { entry.Payload.Complete = true })
+			b.update(id, func(entry *Entry) {
+				entry.Payload.Complete = !interrupted
+				entry.Payload.Interrupted = interrupted
+			})
 		}
 	}
 	delete(b.turnResponse, turnID)
@@ -352,6 +382,7 @@ func (b *Builder) StartTool(turnID, parentID, toolID, parentToolID, name, argume
 func (b *Builder) StartToolExecution(turnID, parentID, executionID, toolID, parentExecutionID, parentToolID, name, argument string, sequence int) string {
 	id := b.append(EntryKinds.ENTRYTOOLCALL, parentID, turnID, Payload{
 		ToolID: toolID, ParentToolID: parentToolID, ToolName: name,
+		ExecutionID: executionID, ParentExecutionID: parentExecutionID,
 		Argument: argument, ToolState: ToolRunning, Sequence: sequence,
 	})
 	if executionID != "" {
@@ -444,6 +475,7 @@ func (b *Builder) ReserveSubagent(spawnToolID, agentName, prompt string) string 
 func (b *Builder) ReserveSubagentExecution(spawnExecutionID, spawnToolID, agentName, prompt string) string {
 	id := b.append(EntryKinds.ENTRYSUBAGENT, "", "", Payload{
 		AgentName: agentName, Prompt: prompt, SpawnToolID: spawnToolID, Subagent: SubagentPending,
+		SpawnExecutionID: spawnExecutionID,
 	})
 	if spawnExecutionID != "" {
 		b.spawnAgents[spawnExecutionID] = id
@@ -499,9 +531,14 @@ func (b *Builder) StartSubagentExecution(turnID, spawnExecutionID, spawnToolID, 
 	return id
 }
 
-// FinishSubagent marks a child task terminal with its final state.
+// FinishSubagent marks a child task terminal and settles only its owned streams.
+// Failed or interrupted children retain partial output as interrupted, not complete.
 func (b *Builder) FinishSubagent(turnID string, status SubagentState) {
 	id := b.subagents[turnID]
+	if id == "" {
+		return // duplicate or unknown terminal event owns no active child
+	}
+	b.finishTurn(turnID, status != SubagentCompleted)
 	b.update(id, func(entry *Entry) { entry.Payload.Subagent = status })
 	delete(b.subagents, turnID)
 }
@@ -661,6 +698,14 @@ func validateEntry(entry Entry) error {
 	case EntryKinds.ENTRYQUEUEDUSER, EntryKinds.ENTRYREASONING, EntryKinds.ENTRYNOTICE:
 		if p.Text == "" {
 			return errors.New("text is empty")
+		}
+	case EntryKinds.ENTRYINPUTADMISSION:
+		if p.Text == "" || p.InputAdmission.Namespace == "" || p.InputAdmission.ID == "" {
+			return errors.New("input admission identity or text is empty")
+		}
+	case EntryKinds.ENTRYINPUTWAIT:
+		if p.Text == "" {
+			return errors.New("input wait text is empty")
 		}
 	case EntryKinds.ENTRYASSISTANTMESSAGE:
 		if !p.Complete && !p.Interrupted && p.Text == "" {

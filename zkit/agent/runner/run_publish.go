@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -27,8 +28,8 @@ func (r *Runner) publishSetupFailed(ctx context.Context, spec TaskSpec, start ti
 
 // --- event publishing helpers ---
 
-func (r *Runner) publishConversationStarted(_ context.Context, spec TaskSpec) {
-	r.sink.OnConversationStarted(ConversationStarted{
+func (r *Runner) publishConversationStarted(ctx context.Context, spec TaskSpec) {
+	r.sink.OnConversationStarted(ctx, ConversationStarted{
 		TaskID:            spec.ID,
 		Depth:             spec.Depth,
 		Prompt:            spec.Prompt,
@@ -41,7 +42,7 @@ func (r *Runner) publishConversationStarted(_ context.Context, spec TaskSpec) {
 }
 
 func (r *Runner) publishConversationEnded(
-	_ context.Context,
+	ctx context.Context,
 	spec TaskSpec,
 	reason TerminalReason,
 	err error,
@@ -61,7 +62,7 @@ func (r *Runner) publishConversationEnded(
 			rateLimit = rle
 		}
 	}
-	r.sink.OnConversationEnded(ConversationEnded{
+	r.sink.OnConversationEnded(ctx, ConversationEnded{
 		TaskID:            spec.ID,
 		Depth:             spec.Depth,
 		Reason:            reason,
@@ -90,12 +91,13 @@ func terminalCause(err error) TerminalCause {
 }
 
 func (r *Runner) publishIterationCompleted(
-	_ context.Context,
+	ctx context.Context,
 	spec TaskSpec,
 	iter int,
 	delta, occupancy *llm.Usage,
 	messages []llm.Message,
 	toolSurface ToolSurface,
+	preparationDuration, dispatchDuration time.Duration,
 ) {
 	// The per-role breakdown is an O(history) walk + alloc; only compute it
 	// when a consumer opted in via WithContextBreakdown. Otherwise Context
@@ -106,33 +108,36 @@ func (r *Runner) publishIterationCompleted(
 		b := computeContextBreakdown(messages)
 		bd = &b
 	}
-	r.sink.OnIterationCompleted(IterationCompleted{
-		TaskID:      spec.ID,
-		Depth:       spec.Depth,
-		Iter:        iter,
-		Usage:       occupancy,
-		Delta:       delta,
-		Context:     bd,
-		ToolSurface: toolSurface,
+	r.sink.OnIterationCompleted(ctx, IterationCompleted{
+		TaskID:                     spec.ID,
+		Depth:                      spec.Depth,
+		Iter:                       iter,
+		Usage:                      occupancy,
+		Delta:                      delta,
+		Context:                    bd,
+		ToolSurface:                toolSurface,
+		RequestPreparationDuration: preparationDuration,
+		ToolDispatchDuration:       dispatchDuration,
 	})
 }
 
-func (r *Runner) publishContentChunk(_ context.Context, spec TaskSpec, content string) {
-	r.sink.OnContent(Content{TaskID: spec.ID, Depth: spec.Depth, Delta: content})
+func (r *Runner) publishContentChunk(ctx context.Context, spec TaskSpec, content string) {
+	r.sink.OnContent(ctx, Content{TaskID: spec.ID, Depth: spec.Depth, Delta: content})
 }
 
-func (r *Runner) publishThinkingChunk(_ context.Context, spec TaskSpec, thinking string) {
-	r.sink.OnThinking(Thinking{TaskID: spec.ID, Depth: spec.Depth, Delta: thinking})
+func (r *Runner) publishThinkingChunk(ctx context.Context, spec TaskSpec, thinking string) {
+	r.sink.OnThinking(ctx, Thinking{TaskID: spec.ID, Depth: spec.Depth, Delta: thinking})
 }
 
-func (r *Runner) publishToolStarted(_ context.Context, spec TaskSpec, call tools.ToolCall) {
-	r.sink.OnToolStarted(ToolStarted{
-		TaskID:      spec.ID,
-		Depth:       spec.Depth,
-		ExecutionID: call.ExecutionID,
-		ToolID:      call.ID.String(),
-		ToolName:    call.ToolName.String(),
-		Parameters:  call.Arguments,
+func (r *Runner) publishToolStarted(ctx context.Context, spec TaskSpec, call tools.ToolCall) {
+	r.sink.OnToolStarted(ctx, ToolStarted{
+		TaskID:       spec.ID,
+		Depth:        spec.Depth,
+		ExecutionID:  call.ExecutionID,
+		ToolID:       call.ID.String(),
+		ToolName:     call.ToolName.String(),
+		Parameters:   tools.CloneParameters(call.Arguments),
+		RawArguments: call.RawArguments,
 	})
 }
 
@@ -142,6 +147,9 @@ type nestedToolPublisher struct {
 	parentExecutionID string
 	mu                sync.Mutex
 	nested            map[nestedExecutionKey][]string
+	captureErr        error
+	attempt           int
+	capture           func(context.Context, ToolOutput) error
 }
 
 type nestedExecutionKey struct {
@@ -182,52 +190,89 @@ func (p *nestedToolPublisher) OnNestedToolFinished(ctx context.Context, e tools.
 	}
 	p.mu.Unlock()
 	p.r.publishNestedToolFinished(ctx, p.spec, e, executionID, p.parentExecutionID)
+	output := rawToolResultText(e.Result)
+	success, terminalError, kind, _ := classifyNestedToolOutput(e)
+	if e.Result == nil && e.Err != nil {
+		output = e.Err.Error()
+	}
+	out := ToolOutput{
+		TaskID: string(p.spec.ID), Attempt: p.attempt,
+		ToolCallID: e.ChildID.String(), ToolName: e.Call.ToolName.String(),
+		ExecutionID: executionID, ParentToolCallID: e.ParentID.String(),
+		ParentExecutionID: p.parentExecutionID, Sequence: e.Sequence,
+		Args: e.Call.RawArguments, Parameters: tools.CloneParameters(e.Call.Arguments),
+		Output: output, Success: success, Error: terminalError, Kind: kind,
+		Parts: resultParts(e.Result), Effects: resultEffects(e.Result),
+	}
+	if e.Dispatched != nil {
+		out.Dispatched = new(*e.Dispatched)
+	}
+	var captureErr error
+	if p.capture != nil {
+		captureErr = p.capture(ctx, out)
+	}
+	if p.r.toolOutputSink != nil {
+		if err := p.r.toolOutputSink.Record(ctx, out); err != nil {
+			captureErr = errors.Join(captureErr, fmt.Errorf("%w: %w", ErrToolHistory, err))
+		}
+	}
+	if captureErr != nil {
+		p.mu.Lock()
+		p.captureErr = errors.Join(p.captureErr, captureErr)
+		p.mu.Unlock()
+	}
 }
 
-func (r *Runner) publishNestedToolStarted(_ context.Context, spec TaskSpec, e tools.NestedToolCall, executionID, parentExecutionID string) {
-	r.sink.OnToolStarted(ToolStarted{
+func (p *nestedToolPublisher) historyError() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.captureErr
+}
+
+func (p *nestedToolPublisher) executionForWait(call tools.WorkspaceWaitCall) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ids := p.nested[nestedExecutionKey{parentID: call.ParentToolID.String(), childID: call.ToolID.String(), sequence: call.Sequence}]
+	if len(ids) == 1 {
+		return ids[0]
+	}
+	// Unknown/ambiguous observer metadata must not be attributed to the parent.
+	return ""
+}
+
+func (r *Runner) publishNestedToolStarted(ctx context.Context, spec TaskSpec, e tools.NestedToolCall, executionID, parentExecutionID string) {
+	r.sink.OnToolStarted(ctx, ToolStarted{
 		ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth,
-		ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Parameters: e.Call.Arguments,
+		ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Parameters: tools.CloneParameters(e.Call.Arguments),
+		RawArguments: e.Call.RawArguments,
 		ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence,
 	})
 }
 
-func (r *Runner) publishNestedToolFinished(_ context.Context, spec TaskSpec, e tools.NestedToolResult, executionID, parentExecutionID string) {
+func (r *Runner) publishNestedToolFinished(ctx context.Context, spec TaskSpec, e tools.NestedToolResult, executionID, parentExecutionID string) {
 	effects := resultEffects(e.Result)
-	failed := e.Err != nil || e.Result == nil || !e.Result.Success || e.Error != ""
-	if failed {
-		errMsg := e.Error
-		if errMsg == "" && e.Err != nil {
-			errMsg = e.Err.Error()
-		} else if errMsg == "" && e.Result != nil {
-			errMsg = e.Result.Error
-		}
-		kind := e.Kind
-		realErr := e.Err
-		if e.Result != nil && e.Result.Err != nil {
-			kind = e.Result.Err.Kind
-			realErr = e.Result.Err
-		}
-		r.sink.OnToolFailed(ToolFailed{ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Error: errMsg, Err: realErr, Kind: kind, Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence})
+	success, terminalError, kind, realErr := classifyNestedToolOutput(e)
+	if !success {
+		errMsg := terminalError
+		r.sink.OnToolFailed(ctx, ToolFailed{ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Error: errMsg, Err: realErr, Kind: kind, RawOutput: rawToolResultText(e.Result), Parts: resultParts(e.Result), Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence})
 		return
 	}
 	var data any
 	if e.Result != nil {
 		data = e.Result.Data
 	}
-	r.sink.OnToolCompleted(ToolCompleted{ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Result: data, FormattedResult: formatToolData(data), Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence})
+	r.sink.OnToolCompleted(ctx, ToolCompleted{ExecutionID: executionID, TaskID: spec.ID, Depth: spec.Depth, ToolID: e.ChildID.String(), ToolName: e.Call.ToolName.String(), Result: data, FormattedResult: formatToolData(data), Parts: llm.CloneContentParts(e.Result.Parts), Effects: effects, Duration: e.Duration, ParentToolID: e.ParentID.String(), ParentExecutionID: parentExecutionID, Sequence: e.Sequence})
 }
 
 func (r *Runner) publishToolFinished(
-	_ context.Context,
+	ctx context.Context,
 	spec TaskSpec,
 	call tools.ToolCall,
-	result *tools.ToolResult,
+	result, raw *tools.ToolResult,
 	dur time.Duration,
 	execErr error,
-	abandoned bool,
 ) {
-	effects := resultEffects(result)
+	effects := resultEffects(raw)
 	if execErr != nil || (result != nil && !result.Success) {
 		errMsg := ""
 		if execErr != nil {
@@ -251,15 +296,13 @@ func (r *Runner) publishToolFinished(
 		// the result's *tools.Error when present, otherwise the exec error
 		// (cancel / timeout). The UI consumes only errMsg + kind, so this
 		// detail never reaches the transcript.
-		var kind tools.Kind
+		kind := tools.Kinds.UNKNOWN
 		realErr := execErr
-		if result != nil {
-			if result.Err != nil {
-				kind = result.Err.Kind
-				realErr = result.Err
-			}
+		if result != nil && result.Err != nil {
+			kind = result.Err.Kind
+			realErr = result.Err
 		}
-		r.sink.OnToolFailed(ToolFailed{
+		r.sink.OnToolFailed(ctx, ToolFailed{
 			TaskID:      spec.ID,
 			ExecutionID: call.ExecutionID,
 			Depth:       spec.Depth,
@@ -269,16 +312,19 @@ func (r *Runner) publishToolFinished(
 			Error:       errMsg,
 			Err:         realErr,
 			Kind:        kind,
-			Abandoned:   abandoned,
 			Effects:     effects,
+			RawOutput:   rawToolResultText(raw),
+			Parts:       resultParts(raw),
 		})
 		return
 	}
 	var data any
+	var parts []llm.ContentPart
 	if result != nil {
 		data = result.Data
+		parts = llm.CloneContentParts(result.Parts)
 	}
-	r.sink.OnToolCompleted(ToolCompleted{
+	r.sink.OnToolCompleted(ctx, ToolCompleted{
 		TaskID:          spec.ID,
 		ExecutionID:     call.ExecutionID,
 		Depth:           spec.Depth,
@@ -286,20 +332,39 @@ func (r *Runner) publishToolFinished(
 		ToolName:        call.ToolName.String(),
 		Result:          data,
 		FormattedResult: formatToolData(data),
+		Parts:           parts,
 		Effects:         effects,
 		Duration:        dur,
 	})
+}
+
+func resultParts(result *tools.ToolResult) []llm.ContentPart {
+	if result == nil {
+		return nil
+	}
+	return llm.CloneContentParts(result.Parts)
 }
 
 func resultEffects(result *tools.ToolResult) []tools.Effect {
 	if result == nil || len(result.Effects) == 0 {
 		return nil
 	}
-	return append([]tools.Effect(nil), result.Effects...)
+	effects := append([]tools.Effect(nil), result.Effects...)
+	for i := range effects {
+		if effects[i].File != nil {
+			file := *effects[i].File
+			effects[i].File = &file
+		}
+		if effects[i].Process != nil {
+			process := *effects[i].Process
+			effects[i].Process = &process
+		}
+	}
+	return effects
 }
 
-func (r *Runner) publishSteerInjected(_ context.Context, spec TaskSpec, drained []llm.Message) {
-	r.sink.OnSteerInjected(SteerInjected{
+func (r *Runner) publishSteerInjected(ctx context.Context, spec TaskSpec, drained []llm.Message) {
+	r.sink.OnSteerInjected(ctx, SteerInjected{
 		TaskID:   spec.ID,
 		Depth:    spec.Depth,
 		Messages: drained,
@@ -307,12 +372,12 @@ func (r *Runner) publishSteerInjected(_ context.Context, spec TaskSpec, drained 
 }
 
 func (r *Runner) publishCompactionApplied(
-	_ context.Context,
+	ctx context.Context,
 	spec TaskSpec,
 	before, after, bytesTrimmed int,
 	engine string,
 ) {
-	r.sink.OnCompactionApplied(CompactionApplied{
+	r.sink.OnCompactionApplied(ctx, CompactionApplied{
 		TaskID:         spec.ID,
 		Depth:          spec.Depth,
 		MessagesBefore: before,
@@ -322,8 +387,8 @@ func (r *Runner) publishCompactionApplied(
 	})
 }
 
-func (r *Runner) publishDiagnostic(spec TaskSpec, kind, message string, attempt, limit int, backoff time.Duration, err error) {
-	r.sink.OnDiagnostic(Diagnostic{
+func (r *Runner) publishDiagnostic(ctx context.Context, spec TaskSpec, kind, message string, attempt, limit int, backoff time.Duration, err error) {
+	r.sink.OnDiagnostic(ctx, Diagnostic{
 		TaskID: spec.ID, Depth: spec.Depth, Kind: kind, Message: message,
 		Attempt: attempt, Limit: limit, Backoff: backoff, Err: err,
 	})

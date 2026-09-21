@@ -7,9 +7,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/zarldev/zarlmono/zkit/options"
-
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 const (
@@ -33,8 +34,23 @@ type AsyncTool struct {
 
 // NewAsync returns an asynchronous agent_spawn protocol bound to group. The
 // caller owns group and must close it before its runners are released.
-func NewAsync(tool *Tool, group *Group) *AsyncTool {
-	return &AsyncTool{tool: tool, group: group}
+func NewAsync(parent *runner.Runner, group *Group, opts ...options.Option[Tool]) *AsyncTool {
+	return &AsyncTool{tool: New(parent, opts...), group: group}
+}
+
+// Register installs the five asynchronous task tools on reg, all bound to the
+// same group. Await options configure polling only; group ownership stays with
+// the caller. The registry must not already contain these tool names.
+func (a *AsyncTool) Register(reg *tools.Registry, opts ...options.Option[AwaitTool]) {
+	for _, tool := range []tools.Tool{
+		a,
+		NewAwait(a.group, opts...),
+		NewStatus(a.group),
+		NewStop(a.group),
+		NewList(a.group),
+	} {
+		_ = reg.Register(tool)
+	}
 }
 
 // Definition returns the agent_spawn schema shared with the synchronous tool.
@@ -49,6 +65,7 @@ func (a *AsyncTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.To
 	if failure != nil {
 		return failure, nil
 	}
+	inv.executionID = call.ExecutionID
 	snapshot, err := a.group.Start(inv.ctx, inv)
 	if err != nil {
 		return tools.Failure(call.ID, spawnAdmissionError(err)), nil
@@ -100,8 +117,8 @@ func WithAwaitMaxTimeout(timeout time.Duration) options.Option[AwaitTool] {
 
 // Definition advertises agent_await.
 func (*AwaitTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: ToolNameAgentAwait, Description: "Wait for an asynchronous sub-agent task and return its final summary. Omit task_id when exactly one task is running, or when no task is running and exactly one terminal result is unread; otherwise use list_agent_tasks to recover it.", Parameters: tools.SchemaFor[struct {
-		TaskID         string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted when exactly one task is running, or when no task is running and exactly one terminal result is unread."`
+	return tools.ToolSpec{Name: ToolNameAgentAwait, Description: "Explicitly wait for a sub-agent task and read its summary, including intentional rereads. Omit task_id when exactly one task is running, or no task is running and exactly one terminal result is unread; otherwise use list_agent_tasks. For a bound parent, omitted-ID selection considers only its direct children. Hosts with automatic delivery do not require await solely to receive a result.", Parameters: tools.SchemaFor[struct {
+		TaskID         string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. Omission selects a sole running or unread terminal task; bound parents consider only their direct children."`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty" doc:"Maximum seconds to wait before returning the latest RUNNING status. Must be non-negative. Zero uses the host-configured default; the host may enforce an upper bound."`
 	}]()}
 }
@@ -111,7 +128,7 @@ func (a *AwaitTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.To
 	if err := configuredGroup(a.group, "agent_await"); err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
-	id, err := resolveTaskID(a.group, call.Arguments, true)
+	id, err := resolveTaskID(a.group, taskscope.IDFrom(ctx), call.Arguments, true)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
@@ -151,7 +168,7 @@ func (a *AwaitTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.To
 			if snapshot.State != AgentTaskStates.RUNNING {
 				// The task and timer became ready together. Observe and report the
 				// terminal result rather than claiming work is still running.
-				snapshot, snapshotErr = a.group.Snapshot(id)
+				snapshot, snapshotErr = a.group.snapshotFor(ctx, id)
 				if snapshotErr != nil {
 					return tools.Failure(call.ID, tools.Validation("agent_await", snapshotErr.Error())), nil
 				}
@@ -178,25 +195,25 @@ func NewStatus(group *Group) *StatusTool { return &StatusTool{group: group} }
 
 // Definition advertises agent_status.
 func (*StatusTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: ToolNameAgentStatus, Description: "Inspect the latest status of an asynchronous sub-agent task. Omit task_id only when exactly one task exists; otherwise use list_agent_tasks.", Parameters: tools.SchemaFor[struct {
-		TaskID string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted only when exactly one task exists."`
+	return tools.ToolSpec{Name: ToolNameAgentStatus, Description: "Inspect the latest status and any terminal summary of a sub-agent task. Omit task_id only when exactly one task exists among the bound parent's direct children (or the group for an unbound caller); otherwise use list_agent_tasks. Explicit IDs permit intentional tree inspection.", Parameters: tools.SchemaFor[struct {
+		TaskID string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted only when exactly one task is eligible in the caller's parent scope."`
 	}]()}
 }
 
 // Execute returns the current task snapshot.
-func (s *StatusTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+func (s *StatusTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
 	if err := configuredGroup(s.group, "agent_status"); err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
-	id, err := resolveTaskID(s.group, call.Arguments, false)
+	id, err := resolveTaskID(s.group, taskscope.IDFrom(ctx), call.Arguments, false)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
-	snapshot, err := s.group.Snapshot(id)
+	snapshot, err := s.group.snapshotFor(ctx, id)
 	if err != nil {
 		return tools.Failure(call.ID, tools.Validation("agent_status", err.Error())), nil
 	}
-	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: taskData(snapshot), ExecutedAt: time.Now()}, nil
+	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: taskData(snapshot), ExecutedAt: time.Now(), AdmissionReferences: taskReferences(snapshot)}, nil
 }
 
 // StopTool cancels asynchronous tasks.
@@ -207,8 +224,8 @@ func NewStop(group *Group) *StopTool { return &StopTool{group: group} }
 
 // Definition advertises agent_stop.
 func (*StopTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: ToolNameAgentStop, Description: "Request cancellation of an asynchronous sub-agent task. Omit task_id only when exactly one task is running; otherwise use list_agent_tasks.", Parameters: tools.SchemaFor[struct {
-		TaskID string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted only when exactly one task is running."`
+	return tools.ToolSpec{Name: ToolNameAgentStop, Description: "Request cancellation of a sub-agent task and join it. Omit task_id only when one running task is eligible; bound parents consider only their direct children. Otherwise use list_agent_tasks to recover an explicit ID.", Parameters: tools.SchemaFor[struct {
+		TaskID string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted only when one running task is eligible in the caller's parent scope."`
 	}]()}
 }
 
@@ -217,7 +234,7 @@ func (s *StopTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Too
 	if err := configuredGroup(s.group, "agent_stop"); err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
-	id, err := resolveTaskID(s.group, call.Arguments, true)
+	id, err := resolveTaskID(s.group, taskscope.IDFrom(ctx), call.Arguments, true)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
@@ -226,7 +243,7 @@ func (s *StopTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Too
 		return tools.Failure(call.ID, taskOperationError("agent_stop", err)), nil
 	}
 	if snapshot.State == AgentTaskStates.CANCELLED {
-		return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: taskData(snapshot), ExecutedAt: time.Now()}, nil
+		return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: taskData(snapshot), ExecutedAt: time.Now(), AdmissionReferences: taskReferences(snapshot)}, nil
 	}
 	return taskResult(call, snapshot), nil
 }
@@ -239,7 +256,7 @@ func NewList(group *Group) *ListTool { return &ListTool{group: group} }
 
 // Definition advertises list_agent_tasks.
 func (*ListTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: ToolNameListAgentTasks, Description: "List asynchronous sub-agent task receipts and lifecycle metadata. Summaries are intentionally omitted; use agent_status or agent_await to deliver a terminal result.", Parameters: tools.SchemaFor[struct{}]()}
+	return tools.ToolSpec{Name: ToolNameListAgentTasks, Description: "List turn-owned asynchronous sub-agent receipts and lifecycle metadata without consuming results. Summaries are omitted; use agent_status or agent_await for an explicit read. Automatic delivery, when enabled by the host, remains scoped to each task's parent.", Parameters: tools.SchemaFor[struct{}]()}
 }
 
 // Execute returns retained task snapshots.

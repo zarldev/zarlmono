@@ -48,7 +48,7 @@ type WriteArgs struct {
 // type caches a typed-tool adapter so Execute stays a thin dispatch boundary.
 func NewWriteTool(ws Workspace) *WriteTool {
 	t := &WriteTool{ws: ws}
-	t.tool = tools.NewTyped(
+	t.tool = tools.New(
 		writeSpec(),
 		t.executeTyped,
 		tools.WithTypedEffects(func(result WriteResult) []tools.Effect {

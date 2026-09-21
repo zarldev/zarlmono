@@ -49,6 +49,9 @@ func PlanAllows(name tools.ToolName) bool {
 		code.ToolNameListProcesses,
 		spawn.ToolNameAgentSpawn,
 		spawn.ToolNameAgentStatus,
+		spawn.ToolNameAgentAwait,
+		spawn.ToolNameAgentStop,
+		ToolNameSetMode,
 		spawn.ToolNameListAgentTasks:
 		return true
 	default:
@@ -94,7 +97,7 @@ func (s *modeFilteredSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 func (s *modeFilteredSource) Execute(ctx context.Context, c tools.ToolCall) (*tools.ToolResult, error) {
 	if s.plan() && !PlanAllows(c.ToolName) {
 		return nil, fmt.Errorf(
-			"%q is not callable in PLAN mode — switch to BUILD (shift+tab) to run it",
+			"%q is not callable in PLAN mode — use set_mode to enter Build only for an authorized implementation task",
 			c.ToolName)
 	}
 	return s.inner.Execute(ctx, c)

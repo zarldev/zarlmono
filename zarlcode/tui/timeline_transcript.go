@@ -47,10 +47,10 @@ func (tl *timeline) addUserWithAttachments(text string, attachments []attachment
 }
 
 func (tl *timeline) addUserTranscript(text string, attachments []transcript.Attachment) {
+	change := tl.applyTranscript(transcript.UserSubmitted{Text: text, Attachments: attachments})
 	if text != "" || len(attachments) > 0 {
-		tl.appendItem(&userItem{text: text, attachments: append([]transcript.Attachment(nil), attachments...)})
+		tl.appendItem(&userItem{entryID: change.PrimaryEntryID, text: text, attachments: append([]transcript.Attachment(nil), attachments...)})
 	}
-	tl.applyTranscript(transcript.UserSubmitted{Text: text, Attachments: attachments})
 }
 
 func (tl *timeline) restoreThread(thread transcript.Thread) {
@@ -63,6 +63,27 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 	subEditGroups := make(map[string]*groupItem)
 	var topTools, topEdits, topAgents *groupItem
 	turnAssistants := make(map[string]*assistantItem)
+	turnThinking := make(map[[2]string]*thinkingItem)
+	var latestRootTurn string
+	ensureThinking := func(entry transcript.Entry) *thinkingItem {
+		turnID := entry.TurnID
+		if turnID == "" && entry.ParentID == "" {
+			// Historical mode notices did not carry a turn ID.
+			turnID = latestRootTurn
+		}
+		key := [2]string{turnID, entry.ParentID}
+		if turnID == "" {
+			key[0] = entry.ID
+		}
+		it := turnThinking[key]
+		if it == nil {
+			it = &thinkingItem{done: true, nested: true}
+			turnThinking[key] = it
+			appendProjectedItem(tl, entry.ParentID, it, subagents, &topTools, &topEdits)
+		}
+		markRestoredTurnActivity(turnAssistants, turnID)
+		return it
+	}
 
 	appendTop := func(it item) {
 		tl.appendItem(it)
@@ -72,7 +93,8 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 		payload := entry.Payload
 		switch entry.Kind {
 		case transcript.EntryKinds.ENTRYUSERMESSAGE:
-			it := &userItem{text: payload.Text, attachments: append([]transcript.Attachment(nil), payload.Attachments...)}
+			latestRootTurn = ""
+			it := &userItem{entryID: entry.ID, text: payload.Text, attachments: append([]transcript.Attachment(nil), payload.Attachments...)}
 			appendTop(it)
 			items[entry.ID] = it
 		case transcript.EntryKinds.ENTRYQUEUEDUSER:
@@ -85,11 +107,14 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 			items[entry.ID] = it
 			if entry.TurnID != "" {
 				turnAssistants[entry.TurnID] = it
+				if entry.ParentID == "" {
+					latestRootTurn = entry.TurnID
+				}
 			}
 		case transcript.EntryKinds.ENTRYREASONING:
-			it := &thinkingItem{text: payload.Text, done: true, interrupted: payload.Interrupted, nested: true}
-			appendProjectedItem(tl, entry.ParentID, it, subagents, &topTools, &topEdits)
-			markRestoredTurnActivity(turnAssistants, entry.TurnID)
+			it := ensureThinking(entry)
+			it.text += payload.Text
+			it.interrupted = it.interrupted || payload.Interrupted
 			items[entry.ID] = it
 		case transcript.EntryKinds.ENTRYSKILLS:
 			sk := make([]skillRef, len(payload.Skills))
@@ -184,7 +209,22 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 			topAgents.children = append(topAgents.children, it)
 			items[entry.ID] = it
 			subagents[entry.ID] = it
+		case transcript.EntryKinds.ENTRYINPUTADMISSION, transcript.EntryKinds.ENTRYINPUTWAIT:
+			// Historical facts render without rebuilding live wait/task state.
+			if entry.Kind == transcript.EntryKinds.ENTRYINPUTADMISSION && payload.InputAdmission.Namespace == "spawn.completion" {
+				tl.appendAgentAdmission(payload.InputAdmission.ID, payload.Text)
+				continue
+			}
+			it := &noticeItem{text: payload.Text}
+			appendProjectedItem(tl, entry.ParentID, it, subagents, &topTools, &topEdits)
+			items[entry.ID] = it
 		case transcript.EntryKinds.ENTRYNOTICE:
+			if mode, ok := restoredModeNotice(payload.Text); ok {
+				think := ensureThinking(entry)
+				think.children = append(think.children, mode)
+				items[entry.ID] = mode
+				continue
+			}
 			it := &noticeItem{text: payload.Text}
 			appendProjectedItem(tl, entry.ParentID, it, subagents, &topTools, &topEdits)
 			items[entry.ID] = it

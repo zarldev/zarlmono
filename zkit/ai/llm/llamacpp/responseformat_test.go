@@ -58,10 +58,8 @@ func TestResponseFormat_WireShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, err := llamacpp.NewProvider(llamacpp.WithBaseURL(srv.URL))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	p := llamacpp.NewProvider(llamacpp.WithBaseURL(srv.URL))
+
 	chunks := p.Complete(t.Context(), llm.CompletionRequest{
 		Messages:       []llm.Message{{Role: llm.RoleUser, Content: "pick"}},
 		Stream:         true,
@@ -122,10 +120,8 @@ func TestResponseFormat_LiveEnumConstraint(t *testing.T) {
 	if base == "" {
 		t.Skip("LLAMACPP_LIVE_URL not set — skipping live llama-server conformance")
 	}
-	p, err := llamacpp.NewProvider(llamacpp.WithBaseURL(base))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
+	p := llamacpp.NewProvider(llamacpp.WithBaseURL(base))
+
 	ctx, cancel := context.WithTimeout(t.Context(), 120_000_000_000) // 2m: cold model load
 	defer cancel()
 	chunks := p.Complete(ctx, llm.CompletionRequest{

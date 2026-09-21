@@ -128,7 +128,7 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 
 	out := make([]llm.Message, 0, len(leading)+1)
 	out = append(out, llm.CloneMessages(leading)...)
-	out = append(out, llm.Message{Role: llm.RoleUser, Content: seed})
+	out = append(out, compactedMessage(llm.RoleUser, seed, older))
 
 	// The whole non-system history collapses to the seed, so the byte saving is
 	// the older content minus the seed — reported so the cockpit gauge drops

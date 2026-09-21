@@ -43,7 +43,7 @@ func NewBrave(apiKey string, opts ...options.Option[braveBackend]) tools.Tool {
 	for _, opt := range opts {
 		opt(b)
 	}
-	return tools.NewTyped(specFor(braveDescription), b.search)
+	return tools.New(specFor(braveDescription), b.search)
 }
 
 type braveBackend struct {

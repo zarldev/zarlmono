@@ -67,7 +67,7 @@ func selectLivePrompt(plan bool, profile PromptProfile) livePromptSelection {
 		selection.PreferencesSource = resolved.PreferencesSource
 	}
 	if plan {
-		selection.Name = "plan"
+		selection.Name = modePlan
 		selection.Body = prompts.Plan
 		selection.BodySource = "embedded plan prompt"
 		selection.Preferences = resolved.Preferences
@@ -82,7 +82,7 @@ func selectLivePrompt(plan bool, profile PromptProfile) livePromptSelection {
 func (l *LiveRunner) promptFunc(src func() tools.Source) runner.PromptFunc {
 	return func(ctx context.Context, _ runner.PromptVars) (string, error) {
 		l.mu.Lock()
-		plan := l.target.Plan
+		plan := l.target.Plan || l.readOnly
 		profile := l.promptProfile
 		l.mu.Unlock()
 
@@ -159,7 +159,7 @@ func buildPromptStackWithSources(name, body, rendered string, sources promptStac
 	if source == "" {
 		source = "embedded system prompt or user override"
 	}
-	if name == "plan" || name == "inspector:plan" {
+	if name == modePlan || name == "inspector:plan" {
 		kind = prompts.FragmentPlan
 		if sources.BodySource == "" {
 			source = "embedded plan prompt"

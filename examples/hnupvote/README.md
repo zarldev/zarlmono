@@ -105,19 +105,23 @@ Tools set these only after confirming the corresponding state against the world,
 
 ### 2. Tools: dumb actuators that verify their own effect
 
-Implement `tools.Tool` (`Definition() tools.ToolSpec` + `Execute(ctx, tools.ToolCall) (*tools.ToolResult, error)`). Act, then verify, then record into the state object. Return a success result only when the effect is observable.
+Use `tools.New` with `tools.SchemaFor[Args]()` and a handler that returns a typed value and an error. The adapter handles decoding and the `ToolResult` envelope. Act, then verify, then record into the session. Return success only when the effect is observable.
 
 ```go
-func (t *upvote) Execute(ctx context.Context, _ tools.ToolCall) (*tools.ToolResult, error) {
-    if err := t.page.Click(ctx, sel); err != nil {
-        return &tools.ToolResult{Success: false, Error: "click: " + err.Error()}, nil
+upvote := tools.New(tools.ToolSpec{
+    Name:        ToolUpvoteTop,
+    Description: "Upvote the top post and confirm the vote registered.",
+    Parameters:  tools.SchemaFor[struct{}](),
+}, func(ctx context.Context, _ struct{}) (string, error) {
+    if err := session.page.Click(ctx, selTopVote); err != nil {
+        return "", tools.Transient(ToolUpvoteTop.String(), err)
     }
-    if !t.verifiedAgainstPage(ctx) {
-        return &tools.ToolResult{Success: false, Error: "did not register"}, nil
+    if !pollVoted(ctx, session) {
+        return "", tools.Transient(ToolUpvoteTop.String(), errors.New("vote did not register"))
     }
-    t.session.markDone()
-    return &tools.ToolResult{Success: true, Data: "done"}, nil
-}
+    session.record("upvoted", true, "")
+    return "done", nil
+})
 ```
 
 Put I/O (browser, HTTP, filesystem) behind a narrow port interface so tools stay testable with a fake.
@@ -127,13 +131,11 @@ Put I/O (browser, HTTP, filesystem) behind a narrow port interface so tools stay
 A guardrail runs before a tool executes. `RequireAuth` is built in; the general shape is a `PreCall` returning an error when a precondition fails. Wrap the registry:
 
 ```go
-reg := tools.NewRegistry()
-reg.Register(&upvote{...})
-reg.Register(&login{...})
+reg := tools.NewRegistry(newUpvoteTopTool(session), newLoginTool(session))
 
 source := guardrails.NewGuardedSource(reg,
     guardrails.NewRequireAuth(session.LoggedIn,
-        "you are not logged in — call login first", ToolUpvote))
+        "you are not logged in — call hn_login first", ToolUpvoteTop))
 ```
 
 A blocked call returns a validation error in the tool result. The model reads it as feedback and corrects course — the guardrail is both a safety rail and a hint.

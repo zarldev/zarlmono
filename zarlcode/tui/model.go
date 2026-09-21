@@ -17,17 +17,22 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
+	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/db"
 )
 
 // UI is the sole bubbletea v2 model. Per-pane state lives in imperative
 // sub-structs the root drives directly; they do not implement tea.Model.
 type UI struct {
-	width    int
-	height   int
-	layout   uiLayout
-	timeline *timeline
-	composer composer
+	width            int
+	height           int
+	layout           uiLayout
+	timeline         *timeline
+	graphics         *terminalGraphics
+	timelineGraphics string // rebuilt by Draw; never part of the styled text grid
+	composer         composer
 	// inputHistory is the in-memory prompt history for the editor pane. historyPos
 	// is an index into inputHistory while browsing, or len(inputHistory) when the
 	// user is editing a fresh draft; historyDraft preserves that fresh draft while
@@ -59,7 +64,23 @@ type UI struct {
 	settings *engine.Settings
 	// live is the run target; held so a provider change in the settings
 	// overlay can re-point it (SetProvider) without a restart.
-	live *engine.LiveRunner
+	live                *engine.LiveRunner
+	liveSink            *teasink.Sink
+	liveOperation       *liveTurnOperation
+	liveGeneration      uint64
+	unsavedTurnError    error // persistence failure does not retain turn admission
+	completedBoundary   *completedSessionBoundary
+	sessionRetry        *sessionSaveRetry
+	durableDraftText    string
+	settledTurnID       string
+	settledWatermark    uint64
+	initialContinuation rewind.InitialContinuation
+	exactResume         bool                     // protected heads require the versioned, strict resume envelope
+	rewindRecovery      string                   // committed child whose runtime publication needs restart
+	sourceConflict      bool                     // competing durable state requires reload before more writes
+	sourceBaseline      db.SessionContentVersion // loaded atomically; advanced only by local receipts
+	initialActive       string                   // active pointer observed when this source was selected
+	initialActiveErr    error                    // observation failures must not become an absent pointer
 	// appliedReasoning / appliedWindow are the build-affecting definition
 	// fields the live provider was last built with (reasoning policy and the
 	// declared context window). They aren't part of ProviderSpec, so
@@ -227,7 +248,7 @@ func (m *UI) appContext() context.Context {
 func (m *UI) SetLiveRunner(l *engine.LiveRunner) {
 	m.live = l
 	m.runFn = func(prompt string) tea.Cmd {
-		return RunFn(engine.WithToolOutputSession(m.appContext(), m.session.ID), l, prompt)
+		return m.runLiveTurn(prompt, nil)
 	}
 }
 
@@ -253,6 +274,7 @@ func (m *UI) togglePlan() {
 	planMode := m.session.TogglePlanMode()
 	if m.live != nil {
 		m.live.SetPlanMode(planMode)
+		m.session.PlanMode = m.live.AppliedMode().Plan
 	}
 }
 
@@ -313,6 +335,7 @@ func (m *UI) SetModelChoices(provider string, models []string) {
 // Also resolves the confirm_quit setting.
 func (m *UI) SetSettings(s *engine.Settings) {
 	m.settings = s
+	m.observeInitialActive()
 	m.session.SetConfirmQuit(s.ConfirmQuit(m.appContext()))
 	if s != nil && s.Registry != nil {
 		m.session.SetModelMeta(s.Registry)
@@ -322,6 +345,10 @@ func (m *UI) SetSettings(s *engine.Settings) {
 // handleQuit returns a quit command, optionally showing a confirmation
 // dialog first when confirm_quit is enabled.
 func (m *UI) handleQuit() tea.Cmd {
+	if m.sessionLossRisk() {
+		m.openSessionRecovery(true)
+		return nil
+	}
 	if m.session.ConfirmQuit {
 		m.overlay.push(newQuitConfirmDialog())
 		return nil
@@ -358,6 +385,7 @@ func New() *UI {
 	}
 	m.startupReady = true
 	m.statusPane.input = m.composer.text
+	m.statusPane.settlement = m.liveSettlementStatus
 	s.Run = RunState{window: engine.LiveContextWindow}
 	return m
 }
@@ -375,6 +403,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	if persist := m.transcriptPersistenceCmd(); persist != nil {
 		cmd = tea.Batch(cmd, persist)
+	}
+	if m.graphics != nil {
+		if _, raw := msg.(tea.RawMsg); !raw {
+			// Layout now so image-only changes can wake the terminal writer.
+			m.View()
+			cmd = tea.Batch(cmd, m.graphics.refreshCmd())
+		}
 	}
 	return model, cmd
 }
@@ -415,6 +450,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
+	case settledLiveTurnMsg:
+		return m, m.handleSettledLiveTurn(msg)
 	case liveTurnFinishedMsg:
 		m.session.reconcileTopLevelRun()
 		return m, m.saveSessionCmd()
@@ -487,7 +524,7 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.startupPrompt, m.startupAttachments = "", nil
 			m.session.SetSubmittedAttachments(m.startupAttachmentMetadata)
 			m.startupAttachmentMetadata = nil
-			return m, RunFnWithAttachments(engine.WithToolOutputSession(m.appContext(), m.session.ID), m.live, prompt, attachments)
+			return m, m.runLiveTurn(prompt, attachments)
 		}
 		return m, nil
 	}
@@ -561,16 +598,24 @@ func (m *UI) View() tea.View {
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = appDisplayName
 	if m.width <= 0 || m.height <= 0 {
+		if m.graphics != nil {
+			m.graphics.publish("", "")
+		}
 		return v
 	}
 	canvas := uv.NewScreenBuffer(m.width, m.height)
 	canvas.Method = m.widthMethod // match the renderer's negotiated width method
 	m.Draw(canvas, canvas.Bounds())
 	v.Content = strings.ReplaceAll(canvas.Render(), "\r\n", "\n")
-	if m.overlay.active() {
-		if fv, ok := m.overlay.top().(*fileViewer); ok {
-			v.Content += fv.kittyGraphicsOverlay()
+	if m.graphics != nil {
+		frame := m.timelineGraphics
+		if m.overlay.active() {
+			frame = "" // even a partial dialog must not be covered by images
+			if fv, ok := m.overlay.top().(*fileViewer); ok {
+				frame = fv.kittyGraphicsOverlay()
+			}
 		}
+		m.graphics.publish(frame, v.Content)
 	}
 	return v
 }

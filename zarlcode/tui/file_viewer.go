@@ -55,10 +55,11 @@ type fileViewer struct {
 	entriesCancel  context.CancelFunc
 	previewCancel  context.CancelFunc
 
-	mode   fileViewerMode
-	skills []catalog.Skill
-	agents []catalog.Agent
-	hooks  []catalog.Hook
+	mode           fileViewerMode
+	nativeGraphics bool // selected by the UI's actual terminal output transport
+	skills         []catalog.Skill
+	agents         []catalog.Agent
+	hooks          []catalog.Hook
 }
 
 type fileViewerMode int
@@ -830,7 +831,7 @@ func (v *fileViewer) drawImageContent(scr uv.Screen, x, y, w, footerY int) {
 	}
 	cw := w - scrollbarWidth
 	v.imagePlacement = fileViewerImagePlacement{x: x, y: y, w: cw, h: contentH}
-	if fileViewerTerminalGraphicsEnabled() && preview.data != nil {
+	if v.nativeGraphics && preview.data != nil {
 		drawLine(scr, uv.Rect(x, y, cw, 1), palette.Subtle.On(" rendering image with terminal graphics"))
 		return
 	}
@@ -847,7 +848,7 @@ func (v *fileViewer) drawImageContent(scr uv.Screen, x, y, w, footerY int) {
 }
 
 func (v *fileViewer) kittyGraphicsOverlay() string {
-	if v == nil || v.imagePreview == nil || !fileViewerTerminalGraphicsEnabled() {
+	if v == nil || v.imagePreview == nil || !v.nativeGraphics {
 		return ""
 	}
 	p := v.imagePlacement
@@ -861,7 +862,7 @@ func (v *fileViewer) kittyGraphicsOverlay() string {
 	// Center within the preview body. Terminal cursor positions are 1-based.
 	x := p.x + max(0, (p.w-cols)/2) + 1
 	y := p.y + max(0, (p.h-rows)/2) + 1
-	return kittyGraphicsAt(x, y, cols, rows, v.imagePreview.data)
+	return kittyGraphicsAt(x, y, cols, rows, v.imagePreview.data, "")
 }
 
 func fileViewerTerminalGraphicsEnabled() bool {
@@ -885,7 +886,10 @@ func fileViewerImageCells(width, height, maxCols, maxRows int) (int, int) {
 	return cols, rows
 }
 
-func kittyGraphicsAt(x, y, cols, rows int, data []byte) string {
+const kittyGraphicsClear = "\x1b_Ga=d,d=A,q=2\x1b\\"
+
+// kittyGraphicsAt transmits one PNG without clearing other images in the frame.
+func kittyGraphicsAt(x, y, cols, rows int, data []byte, crop string) string {
 	if x <= 0 || y <= 0 || cols <= 0 || rows <= 0 || len(data) == 0 {
 		return ""
 	}
@@ -893,8 +897,6 @@ func kittyGraphicsAt(x, y, cols, rows int, data []byte) string {
 	const chunkSize = 4096
 	var b strings.Builder
 	b.WriteString("\x1b7")
-	// Clear any previous zarlcode image placement before drawing the current one.
-	b.WriteString("\x1b_Ga=d,d=A\x1b\\")
 	fmt.Fprintf(&b, "\x1b[%d;%dH", y, x)
 	for offset := 0; offset < len(encoded); offset += chunkSize {
 		end := min(len(encoded), offset+chunkSize)
@@ -903,7 +905,7 @@ func kittyGraphicsAt(x, y, cols, rows int, data []byte) string {
 			more = 1
 		}
 		if offset == 0 {
-			fmt.Fprintf(&b, "\x1b_Ga=T,f=100,c=%d,r=%d,m=%d;%s\x1b\\", cols, rows, more, encoded[offset:end])
+			fmt.Fprintf(&b, "\x1b_Ga=T,f=100,q=2,C=1,c=%d,r=%d%s,m=%d;%s\x1b\\", cols, rows, crop, more, encoded[offset:end])
 		} else {
 			fmt.Fprintf(&b, "\x1b_Gm=%d;%s\x1b\\", more, encoded[offset:end])
 		}

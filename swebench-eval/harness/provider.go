@@ -77,14 +77,21 @@ func (e *providerEnv) buildProvider(ctx context.Context, name, model, codexEffor
 	switch id, _ := llm.ParseLLMProvider(name); id {
 	case backends.NameOpenAICodex:
 		tokens := codex.NewTokenSource(e.svc)
-		opts := []options.Option[openaicodex.Provider]{openaicodex.WithModel(model)}
+		var opts []options.Option[openaicodex.Provider]
+		if model != "" {
+			opts = append(opts, openaicodex.WithModel(model))
+		}
 		if codexEffort != "" {
 			opts = append(opts, openaicodex.WithDefaultReasoningEffort(codexEffort))
 		}
-		return openaicodex.NewProvider(tokens, opts...)
+		return openaicodex.NewProvider(tokens, opts...), nil
 	case backends.NameClaudeCode:
 		tokens := claude.NewTokenSource(e.svc)
-		return claudecode.NewProvider(tokens, claudecode.WithModel(model))
+		var opts []options.Option[claudecode.Provider]
+		if model != "" {
+			opts = append(opts, claudecode.WithModel(model))
+		}
+		return claudecode.NewProvider(tokens, opts...), nil
 	default:
 		reg := backends.NewRegistry(backends.WithStore(e.store), backends.WithSettingsService(settingsAdapter{svc: e.svc}))
 		if err := reg.Reload(ctx); err != nil {

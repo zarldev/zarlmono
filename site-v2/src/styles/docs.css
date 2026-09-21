@@ -27,6 +27,85 @@
   --sl-color-gray-6: #edf0e5;
   --sl-color-black: #fafbf6;
 }
+/* Palette and brightness are independent in the documentation. */
+:root[data-palette='amber'] {
+  --sl-color-accent-low: #3c2e16;
+  --sl-color-accent: #f2c66d;
+  --sl-color-accent-high: #ffe0a1;
+  --sl-color-white: #f5f0e7;
+  --sl-color-gray-1: #e3d9c9;
+  --sl-color-gray-2: #c3b8a6;
+  --sl-color-gray-3: #a3937a;
+  --sl-color-gray-4: #736249;
+  --sl-color-gray-5: #453c2e;
+  --sl-color-gray-6: #23201a;
+  --sl-color-black: #191714;
+}
+:root[data-theme='light'][data-palette='amber'] {
+  --sl-color-accent-low: #fae7bc;
+  --sl-color-accent: #795000;
+  --sl-color-accent-high: #5d3d00;
+  --sl-color-white: #302719;
+  --sl-color-gray-1: #3d3120;
+  --sl-color-gray-2: #57472f;
+  --sl-color-gray-3: #796648;
+  --sl-color-gray-4: #a69980;
+  --sl-color-gray-5: #d3c6ad;
+  --sl-color-gray-6: #f2ead9;
+  --sl-color-black: #fcf9f1;
+}
+:root[data-palette='cyan'] {
+  --sl-color-accent-low: #19333f;
+  --sl-color-accent: #7eddeb;
+  --sl-color-accent-high: #b4eef5;
+  --sl-color-white: #ecf4f8;
+  --sl-color-gray-1: #d3e4ed;
+  --sl-color-gray-2: #b5cbd9;
+  --sl-color-gray-3: #8eaabb;
+  --sl-color-gray-4: #547487;
+  --sl-color-gray-5: #334b5b;
+  --sl-color-gray-6: #172431;
+  --sl-color-black: #101923;
+}
+:root[data-theme='light'][data-palette='cyan'] {
+  --sl-color-accent-low: #d3f0f4;
+  --sl-color-accent: #086779;
+  --sl-color-accent-high: #084959;
+  --sl-color-white: #162b38;
+  --sl-color-gray-1: #203c4b;
+  --sl-color-gray-2: #395867;
+  --sl-color-gray-3: #587786;
+  --sl-color-gray-4: #8da6b1;
+  --sl-color-gray-5: #bfd4dd;
+  --sl-color-gray-6: #e8f2f6;
+  --sl-color-black: #f6fbfd;
+}
+:root[data-palette='rust'] {
+  --sl-color-accent-low: #44271d;
+  --sl-color-accent: #f1a080;
+  --sl-color-accent-high: #ffd1b9;
+  --sl-color-white: #f8efe6;
+  --sl-color-gray-1: #e7d8cc;
+  --sl-color-gray-2: #c9b8aa;
+  --sl-color-gray-3: #ae9684;
+  --sl-color-gray-4: #7f6251;
+  --sl-color-gray-5: #49372c;
+  --sl-color-gray-6: #2b211b;
+  --sl-color-black: #201915;
+}
+:root[data-theme='light'][data-palette='rust'] {
+  --sl-color-accent-low: #f4ddce;
+  --sl-color-accent: #983d21;
+  --sl-color-accent-high: #752c17;
+  --sl-color-white: #302820;
+  --sl-color-gray-1: #44362c;
+  --sl-color-gray-2: #584536;
+  --sl-color-gray-3: #78624f;
+  --sl-color-gray-4: #a18a74;
+  --sl-color-gray-5: #cbbca9;
+  --sl-color-gray-6: #f1e9dd;
+  --sl-color-black: #faf6ef;
+}
 .site-title { font-weight: 650; letter-spacing: -.04em; }
 .sl-markdown-content :is(h1, h2, h3) { letter-spacing: -.035em; }
 .sl-markdown-content img { max-width: 100%; height: auto; border: 1px solid var(--sl-color-gray-5); border-radius: 4px; }
