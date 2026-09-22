@@ -17,11 +17,12 @@ import (
 )
 
 type delegatingDrainProvider struct {
-	childStarted   chan struct{}
-	childCancelled chan struct{}
-	release        chan struct{}
-	rootCalls      int
-	panicRoot      bool
+	rootSecondStarted chan struct{}
+	childStarted      chan struct{}
+	childCancelled    chan struct{}
+	release           chan struct{}
+	rootCalls         int
+	panicRoot         bool
 }
 
 func (*delegatingDrainProvider) Name() string { return "drain" }
@@ -41,6 +42,7 @@ func (p *delegatingDrainProvider) Complete(ctx context.Context, _ llm.Completion
 			yield(llm.CompletionChunk{ToolCalls: []llm.ToolCall{{ID: "spawn", Type: "function", Function: llm.ToolCallFunction{Name: "agent_spawn", Arguments: `{"prompt":"wait","mode":"implement"}`}}}}, nil)
 			return
 		}
+		close(p.rootSecondStarted)
 		<-ctx.Done()
 		if p.panicRoot {
 			panic("root provider panic")
@@ -65,7 +67,12 @@ func TestTurnDrainJoinsChildrenBeforeClosingDependencies(t *testing.T) {
 				t.Fatal(err)
 			}
 			synctest.Test(t, func(t *testing.T) {
-				provider := &delegatingDrainProvider{childStarted: make(chan struct{}), childCancelled: make(chan struct{}), release: make(chan struct{})}
+				provider := &delegatingDrainProvider{
+					rootSecondStarted: make(chan struct{}),
+					childStarted:      make(chan struct{}),
+					childCancelled:    make(chan struct{}),
+					release:           make(chan struct{}),
+				}
 				provider.panicRoot = tc.panicRoot
 				computer := &fakeComputerSession{}
 				live := engine.NewLiveRunner(provider, ws, "local", engine.WithComputerSessionFactory(func(context.Context, ...browser.Option) (engine.ComputerSession, error) { return computer, nil }))
@@ -97,6 +104,11 @@ func TestTurnDrainJoinsChildrenBeforeClosingDependencies(t *testing.T) {
 					}
 				}()
 				<-provider.childStarted
+				if tc.panicRoot {
+					// Child startup does not imply the root reached its panic path.
+					// Let that request begin before shutdown can cancel the next iteration.
+					<-provider.rootSecondStarted
+				}
 				if result := live.RunHeadless(t.Context(), "overlapping turn", 1); result.Err == nil {
 					t.Fatal("headless turn replaced the active turn owner")
 				}
