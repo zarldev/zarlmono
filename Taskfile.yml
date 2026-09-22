@@ -12,7 +12,7 @@ vars:
 
 tasks:
   release-check:
-    desc: Run the complete module-isolated local pre-release gate
+    desc: Run workspace QA and isolated zkit compilation; release workflows also verify selected modules in isolation
     cmds:
       - task: check
       - task: lint
@@ -246,6 +246,11 @@ tasks:
         GOPROXY=https://proxy.golang.org GOWORK=off \
           go list -m "github.com/zarldev/zarlmono/zkit@$zkit_version" >/dev/null
         go tool task release-check
+        GOWORK=off go -C zarlcode mod verify
+        GOWORK=off go build -C zarlcode ./...
+        GOWORK=off go vet -C zarlcode ./...
+        GOWORK=off go test -C zarlcode -count=1 ./...
+        go tool task tui-smoke -- -timeout 45s
         git tag -a "$tag" -m "zarlcode $version"
         test "$(git cat-file -t "$tag")" = tag
         git push origin "$tag"

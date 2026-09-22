@@ -49,5 +49,5 @@ Explore and verify modes are enforced through `WithModeToolPolicy`; implement re
 - Do not store depth or other per-call state on `Tool`.
 - Do not start an untracked `go target.Run(...)`; every child belongs to `Group`.
 - Do not detach a bound child from its parent or group shutdown, or prune a terminal result while automatic admission or a waiter still needs it.
-- Do not present child output as human steering/current authority or inject synthetic tool results. Automatic host observations require an opted-in receiving route; explicit tools remain the fallback. Engine rollout is experimental and disabled by default until receiving endpoints are qualified.
+- Do not present child output as human steering/current authority or inject synthetic tool results. Automatic host observations require an opted-in receiving route; explicit tools remain the fallback. The zarlcode engine enables automatic delivery for its supported receiving providers and keeps other providers on explicit-only delivery.
 - Do not register legacy aliases alongside the resource-first names; one public grammar is the invariant.

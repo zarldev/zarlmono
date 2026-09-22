@@ -7,17 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.20.0] — 2026-09-22
+
 ### Added
 
+- Added durable conversation checkpoints, rewind preview and branching, and saved-session recovery backed by canonical replay history.
+- Added automatic child-result delivery for supported receiving providers, with parent-scoped routing and explicit status/await rereads still available.
+- Added multimodal tool-result rendering and replay, terminal image support, richer web-tool output, and draft attachment recovery.
 - Added offline, read-only `zarlcode doctor` checks for the running binary, home layout, state database file, and credential-vault presence with actionable status and exit codes.
 
 ### Changed
 
+- Separated provider-attempt usage, live activity, event settlement, and durable session commits so cancellation, queued work, and save status remain distinguishable.
+- Made Plan/Build transitions and provider/model changes coordinated runtime operations, preserving active-child and session ownership.
 - Promoted the deterministic PTY onboarding, encrypted-credential, restart, unlock, resize, and shutdown walkthrough to a required CI golden workflow.
 
 ### Fixed
 
+- Preserved raw tool results, attachments, reasoning, provider continuation, and child-result provenance across save, resume, compaction, and checkpoint replay.
+- Hardened session save-conflict recovery, independent-writer detection, rewind activation, queued-turn reservations, OAuth cancellation, and shutdown settlement.
 - Made Escape and Ctrl+C at the startup credential-unlock prompt exit cleanly instead of continuing with locked credentials, and covered the path in the PTY golden workflow.
+
+### Migration notes
+
+- Back up `~/.zarlcode/state.db` together with its credential-vault files before first launch if rollback may be required. Opening the database applies migrations `00029`–`00034`, including the Go-based `00031` tool-history schema repair; rollback to an older binary requires restoring the backup.
+- Conversation rewind branches recorded history; it is not a rollback of external tool side effects or workspace files.
+
+## [zkit/v0.20.0] — 2026-09-22
+
+### Added
+
+- Added durable session checkpoints and branches, canonical replay and model-context storage, pinned history capture, and tool-output history with execution provenance.
+- Added parent-scoped automatic child-result admission through typed runner inputs, preserving host-observation provenance across history capture, compaction, and provider replay.
+- Added provider-attempt usage and timing events, request/dispatch timing, and multimodal tool-result attachments across supported provider adapters.
+
+### Changed
+
+- Runner event callbacks now receive the publishing operation's context, with explicit input-admission and provider-attempt settlement events.
+- Independent read-only tools now run concurrently by default, while writes and other non-read calls remain ordered barriers; settled results retain original call order.
+- Simplified controlled provider construction to concrete return values and moved required-key validation to the provider registry boundary.
+- Separated SQLite writer and reader ownership and strengthened transactional session/history persistence.
+
+### Fixed
+
+- Joined cancelled and timed-out tool executions before returning, retained partial failure output, and prevented cross-parent reads from consuming another parent's automatic child result.
+- Preserved tool attachments, raw arguments, provider-native continuation, and observation identity through compaction and replay.
+- Corrected rooted glob traversal, workspace lifecycle handling, and conditional repair of historical tool-output schemas.
+
+### Migration notes
+
+- Update custom runner sinks to accept `context.Context` and implement the new input and provider-attempt callbacks, or embed `runner.NopSink` when ignoring those events is intentional.
+- OpenAI, Anthropic, Claude Code, DeepSeek, llama.cpp, and Ollama `NewProvider` constructors now return only a concrete provider pointer; remove the obsolete constructor error handling and validate external configuration at its boundary. Google provider construction still returns an error.
+- `WithToolConcurrency(1)` retains sequential tool dispatch. Omit the option for the new read-only parallel default; explicit values above one continue to opt into broader parallel dispatch.
+- Back up application databases before applying migrations `00029`–`00034`; migration `00031` is registered in Go and intentionally has no SQL file. Restore the backup when reverting to an older binary.
 
 ## [zarlcode/v0.19.0] — 2026-09-06
 
