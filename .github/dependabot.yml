@@ -8,6 +8,10 @@ updates:
       minor-and-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    # The workspace-wide root update must not bypass the validated SDK/schema pair.
+    ignore:
+      - dependency-name: "github.com/anthropics/anthropic-sdk-go"
+      - dependency-name: "github.com/invopop/jsonschema"
 
   - package-ecosystem: "gomod"
     directory: "/examples"
