@@ -3,6 +3,9 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -51,6 +54,12 @@ func TestHeadlessWatcherJoinsRootBeforeClosingDependencies(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ws.Close() })
+	// The early-stop probe is diff-gated, so the readiness marker must
+	// change the workspace's Git status after an initial unsuccessful probe.
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "--quiet", ws.Root()).CombinedOutput(); err != nil {
+		t.Fatalf("initialize watcher workspace: %v\n%s", err, out)
+	}
+	readyPath := filepath.Join(ws.Root(), "watcher-ready")
 	synctest.Test(t, func(t *testing.T) {
 		provider := &watchedDrainProvider{
 			cancelled: make(chan struct{}),
@@ -59,7 +68,7 @@ func TestHeadlessWatcherJoinsRootBeforeClosingDependencies(t *testing.T) {
 		}
 		computer := &fakeComputerSession{}
 		live := engine.NewLiveRunner(provider, ws, "local", engine.WithComputerSessionFactory(func(context.Context, ...browser.Option) (engine.ComputerSession, error) { return computer, nil }))
-		live.SetEarlyStopCommand([]string{"true"})
+		live.SetEarlyStopCommand([]string{"test", "-f", readyPath})
 		if _, err := live.ComputerObserve(t.Context(), model.ObserveRequest{}); err != nil {
 			t.Fatal(err)
 		}
@@ -72,8 +81,29 @@ func TestHeadlessWatcherJoinsRootBeforeClosingDependencies(t *testing.T) {
 			defer close(done)
 			results <- live.RunHeadless(ctx, "wait", 1)
 		}()
-		originalTaskID := <-provider.taskID
-		<-provider.cancelled
+		startupCtx, stopStartup := context.WithTimeout(t.Context(), time.Minute)
+		defer stopStartup()
+		var originalTaskID string
+		select {
+		case originalTaskID = <-provider.taskID:
+		case <-done:
+			t.Fatalf("headless returned before provider entry: %+v", <-results)
+		case <-startupCtx.Done():
+			t.Fatal("timed out waiting for provider entry")
+		}
+		// Only let the watcher succeed once the root attempt is inside the
+		// provider, where cancellation cannot bypass the drain being tested.
+		if err := os.WriteFile(readyPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-provider.cancelled:
+		case <-done:
+			t.Fatalf("headless returned before provider cancellation: %+v", <-results)
+		case <-startupCtx.Done():
+			t.Fatal("timed out waiting for watcher cancellation")
+		}
+		stopStartup()
 		// Let the pursuit watcher's bounded drain expire in virtual time.
 		time.Sleep(time.Minute)
 		synctest.Wait()
