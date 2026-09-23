@@ -235,7 +235,7 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 				{label: "shell policy", section: "Shell", key: prefs.KeyShellGuard, kind: rowEnum, def: "auto", opts: []string{"auto", "strict", "lenient", "off"},
 					desc: "static shell-command guardrail leniency. auto follows the sandbox (strict when on, lenient when off); strict/lenient pin it regardless of the sandbox; off removes the guardrail from the chain entirely."},
 				{label: "sandbox", section: "Shell", key: prefs.KeySandbox, kind: rowEnum, def: "on", opts: []string{"on", "off"},
-					desc: "kernel-enforced filesystem confinement for bash commands. turn off only when a command needs host paths outside the workspace allow-list. applies on restart."},
+					desc: "Linux-only kernel filesystem confinement for shell commands. macOS startup asks before saving an unconfined workspace choice; explicitly enabling it there refuses startup. off runs with your account's permissions. applies on restart."},
 				{label: "sudo askpass", section: "Shell", key: prefs.KeySudoAskpass, kind: rowEnum, def: "off", opts: []string{"off", "on"},
 					desc: "enable sudo -A support for bash commands. when on, sudo requests show a password popup in the TUI. applies on restart."},
 				{label: "verify command", section: "Verification", key: prefs.KeyVerifyTests, kind: rowText, def: "(off)",

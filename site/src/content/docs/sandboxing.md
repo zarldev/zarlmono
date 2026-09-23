@@ -120,5 +120,36 @@ silently degrades, because a sandbox that quietly does nothing is worse
 than none: it lets a "confined" run lie about its safety. The caller
 decides what to do with the error. zarlcode refuses startup if requested
 shell sandboxing cannot be established. Running unconfined requires explicitly
-turning off `shell_sandbox` or setting `ZARLCODE_SANDBOX=0`; shell policy checks
+turning off the **Shell → sandbox** setting or setting `ZARLCODE_SANDBOX=0`; shell policy checks
 still apply. Other callers of `sandbox.New` choose their own fallback policy.
+
+### macOS startup
+
+The macOS binary does **not** provide kernel shell confinement: that backend is
+Linux-only. On a fresh interactive launch with no saved sandbox choice and no
+`ZARLCODE_SANDBOX` override, zarlcode explains this and asks whether to continue
+unconfined. Only an explicit **y** accepts; Enter, **n**, Escape, or Ctrl+C exits
+without changing settings. Pasted text is not consent.
+
+Acceptance remembers **sandbox = off** for the current workspace only. Future
+launches there use that explicit preference; other workspaces still require their
+own choice unless you explicitly set a global preference. The settings dialog
+shows the saved choice. Explicit **sandbox = on** or `ZARLCODE_SANDBOX=1` still
+refuses startup on macOS—there is no silent fallback. Linux's default and
+fail-closed behavior are unchanged.
+
+Headless runs never prompt. With no prior preference, explicitly opt out for an
+invocation only if you accept shell tools running with your account's permissions
+and without kernel confinement:
+
+```sh
+ZARLCODE_SANDBOX=0 zarlcode
+```
+
+Shell policy checks still apply, but are not a replacement for kernel confinement.
+If you require confinement, use a supported Linux environment instead.
+
+**v0.20.0:** that release predates the consent screen and exits with
+`unsupported platform (requires linux)` on fresh macOS installs. The explicit
+environment opt-out above is its workaround; upgrading to a release containing
+the startup fix removes the need to set the variable for interactive onboarding.

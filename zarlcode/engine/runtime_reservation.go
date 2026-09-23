@@ -182,16 +182,28 @@ func (r *RuntimeReservation) Release() {
 // Snapshot returns deeply owned context and non-secret target policy observed
 // under this reservation. It does not establish an applied-event watermark.
 func (r *RuntimeReservation) Snapshot() ([]llm.Message, rewind.Target, error) {
+	messages, target, exact, err := r.PersistenceSnapshot()
+	if err != nil {
+		return nil, rewind.Target{}, err
+	}
+	if !exact {
+		return nil, rewind.Target{}, rewind.ErrTarget
+	}
+	return messages, target, nil
+}
+
+// PersistenceSnapshot returns owned context and non-secret target metadata for
+// ordinary durable saves. exact reports whether this route supports exact
+// checkpoints; false does not prevent ordinary conversation dispatch or saving.
+// Callers must not publish exact checkpoints when exact is false.
+func (r *RuntimeReservation) PersistenceSnapshot() ([]llm.Message, rewind.Target, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.active {
-		return nil, rewind.Target{}, ErrRuntimeBusy
+		return nil, rewind.Target{}, false, ErrRuntimeBusy
 	}
 	target := r.owner.RunTarget()
-	if !r.owner.checkpointTargetSupported(target) {
-		return nil, rewind.Target{}, rewind.ErrTarget
-	}
-	return r.owner.context.snapshot(), checkpointTarget(target), nil
+	return r.owner.context.snapshot(), checkpointTarget(target), r.owner.checkpointTargetSupported(target), nil
 }
 
 // PlanSnapshot returns independently owned historical plan intent under the reservation.
@@ -209,8 +221,9 @@ func checkpointTarget(target RunTarget) rewind.Target {
 }
 
 // RunTurn converts this reservation into turn admission after target setup,
-// without an unreserved gap. The caller must first durably save the exact BEFORE
-// checkpoint. This method consumes the reservation only once setup succeeds;
+// without an unreserved gap. The caller must first durably save recovery input
+// and context, including a BEFORE checkpoint for exact routes. This method consumes
+// the reservation only once setup succeeds;
 // on earlier failure the caller still owns it and must Release. Queue injection
 // resumes during execution, while new reservations remain excluded through
 // context commit and child drain.
@@ -311,6 +324,13 @@ func (r *RuntimeReservation) restoreConversation(messages []llm.Message, savedTa
 	plan.mu.Unlock()
 	r.owner.operational.resetForRewind()
 	return nil
+}
+
+// SupportsExactTarget reports whether a proposed constructed provider route can
+// preserve exact checkpoint protection. It does not mutate the live target or
+// infer compatibility from a provider name alone.
+func (l *LiveRunner) SupportsExactTarget(update TargetUpdate) bool {
+	return l.checkpointTargetSupported(RunTarget{Provider: update.Provider, Spec: update.Spec, Model: update.Spec.Model})
 }
 
 // Only stock replay adapters are admitted in M1. Custom endpoints/configs need

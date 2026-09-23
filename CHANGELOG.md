@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.20.1] — 2026-09-23
+
+### Fixed
+
+- Restored durable first-turn dispatch, queued input, save retry, and ordinary resume for custom and other provider routes that do not support exact rewind. Exact checkpoint validation remains restricted to qualified routes.
+- Replaced the fresh macOS interactive startup failure with explicit, remembered workspace consent to run without the Linux-only shell sandbox. Declining exits without changing settings; explicit sandbox-on requests and Linux startup still fail closed, and headless runs require an explicit opt-out.
+- Reject unsupported provider switches in exact-checkpoint conversations before changing the live target or saved selection, with guidance to start a new conversation. Mixed ordinary history is never silently promoted to exact replay.
+- Made the watched-provider panic regression fixture deterministic instead of racing a successful early-stop cancellation against the expected panic.
+
+### Verification
+
+- Added encrypted custom-provider save/restart coverage that rebuilds the registry, adapter, credentials and session from disk against a local test endpoint.
+- Added native macOS startup CI covering explicit sandbox consent, decline, remembered preferences and credential restart, alongside existing Linux checks.
+
+### Upgrade notes
+
+- This patch keeps zkit at v0.20.0 and introduces no new database migrations. Existing backups remain useful; do not delete state to work around the v0.20.0 dispatch error.
+- macOS still has no kernel shell sandbox. Interactive consent explicitly permits unconfined execution for one workspace; headless use requires a saved opt-out or `ZARLCODE_SANDBOX=0`.
+
 ## [zarlcode/v0.20.0] — 2026-09-23
 
 ### Added

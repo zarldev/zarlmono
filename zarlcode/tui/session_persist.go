@@ -703,7 +703,7 @@ func (m *UI) SaveSession(ctx context.Context) error {
 	if m.sourceConflict {
 		return fmt.Errorf("%s: %w", sourceConflictNotice, db.ErrCheckpointConflict)
 	}
-	if m.exactResume && m.liveOperation != nil {
+	if m.liveOperation != nil && (m.exactResume || m.durableDispatch()) {
 		return nil // retain the last paired head until durable settlement
 	}
 	if m.rewindRecovery != "" {
@@ -862,7 +862,7 @@ func (m *UI) flushUnstartedSessionPersist(ctx context.Context, op *sessionPersis
 }
 
 func (m *UI) saveSessionCmd() tea.Cmd {
-	if m.unsavedTurnError != nil || (m.exactResume && m.liveOperation != nil) {
+	if m.unsavedTurnError != nil || (m.liveOperation != nil && (m.exactResume || m.durableDispatch())) {
 		return nil
 	}
 	snapshot, err := m.sessionSnapshot()

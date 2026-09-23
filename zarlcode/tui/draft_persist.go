@@ -563,13 +563,12 @@ func (m *UI) enqueueTranscriptPersist() tea.Cmd {
 	if m.unsavedTurnError != nil {
 		return nil // retain the last paired head until a valid completed save succeeds
 	}
+	if m.liveOperation != nil && (m.exactResume || m.durableDispatch()) {
+		// Retain the paired recovery context and input until settlement. A
+		// separate transcript write must not replace a reserved source version.
+		return nil
+	}
 	if m.exactResume {
-		// Exact heads are paired with canonical bytes in one full transaction.
-		// During a turn retain the last durable head until the settlement barrier;
-		// an incremental transcript write would make restart reject the envelope.
-		if m.liveOperation != nil {
-			return nil
-		}
 		return m.saveSessionCmd()
 	}
 	snapshot, err := m.transcriptSnapshot()

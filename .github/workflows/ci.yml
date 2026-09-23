@@ -151,6 +151,23 @@ jobs:
       - name: race test
         run: go tool task race:${{ matrix.module }}
 
+  macos-startup:
+    name: macOS startup and provider recovery
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: install terminal harness
+        run: brew list tmux >/dev/null 2>&1 || brew install tmux
+      - name: native startup and provider regressions
+        run: go test -C zarlcode -race -count=1 -run 'Test(ResolveShellSandbox|SandboxConsent|RequestedSandbox|OrdinaryProvider|OrdinaryPersistence|ExactSessionRejects)' ./engine ./tui
+      - name: native clean-install, consent, restart and credential smoke
+        run: go tool task tui-smoke -- -timeout 45s
+
   lint:
     name: golangci-lint (${{ matrix.module }})
     runs-on: ubuntu-latest

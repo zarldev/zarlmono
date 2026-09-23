@@ -178,6 +178,14 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 		m.session.SetErrorToast(err.Error())
 		return true
 	}
+	if m.exactResume && !m.live.SupportsExactTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}) {
+		err := errors.New("this conversation has exact checkpoints: start a new conversation to use a provider without exact replay support")
+		if rp.done != nil {
+			rp.done(err)
+		}
+		m.session.SetErrorToast("provider switch rejected: " + err.Error())
+		return true
+	}
 	if rp.persist {
 		if m.settings == nil || m.settings.Svc == nil {
 			err := errors.New("provider switch persistence unavailable")

@@ -3,14 +3,37 @@ package tuismoke
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 )
 
 const keyEnter = "Enter"
 
 func (h *harness) walkthrough(ctx context.Context) error {
+	if runtime.GOOS == "darwin" {
+		if err := h.start(ctx, "sandbox-decline"); err != nil {
+			return err
+		}
+		if _, err := h.wait(ctx, "remember for this workspace"); err != nil {
+			return err
+		}
+		if err := h.keys(ctx, keyEnter); err != nil {
+			return err
+		}
+		if err := h.waitForShutdown(ctx); err != nil {
+			return err
+		}
+	}
 	if err := h.start(ctx, "smoke"); err != nil {
 		return err
+	}
+	if runtime.GOOS == "darwin" {
+		if _, err := h.wait(ctx, "remember for this workspace"); err != nil {
+			return err
+		}
+		if err := h.keys(ctx, "y"); err != nil {
+			return err
+		}
 	}
 	if _, err := h.wait(ctx, "first-run setup"); err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -165,9 +166,12 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	if cp := settings.ChromeBinPath(ctx); cp != "" {
 		sbPolicy = grantSandboxExecPath(sbPolicy, cp)
 	}
-	sandboxEnabled := settings.ShellSandbox(ctx)
-	if enabled, ok := sandbox.EnvOverride(); ok {
-		sandboxEnabled = enabled
+	sandboxEnabled, err := settings.ResolveShellSandbox(ctx, runtime.GOOS, p.confirmUnconfinedShell)
+	if errors.Is(err, context.Canceled) {
+		return &Zarlcode{startupCancelled: true}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve shell sandbox: %w", err)
 	}
 	if !sandboxEnabled {
 		if _, ok := sandbox.EnvOverride(); ok {

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -84,15 +83,16 @@ func (m *UI) enqueueBeforeTurn(op liveTurnOperation, prompt string, attachments 
 	if err != nil {
 		return m.rejectBeforeTurn(op, prompt, attachments, err)
 	}
-	if !m.exactResume {
+	_, _, exact, err := reservation.PersistenceSnapshot()
+	if err != nil {
+		return m.rejectBeforeTurn(op, prompt, attachments, err)
+	}
+	if !m.exactResume && exact && canonical.Revision() == 0 {
 		if m.initialActiveErr != nil {
 			return m.rejectBeforeTurn(op, prompt, attachments, m.initialActiveErr)
 		}
-		if canonical.Revision() != 0 {
-			return m.rejectBeforeTurn(op, prompt, attachments, errors.New("exact checkpoint protection is unavailable for this legacy session; start a new conversation"))
-		}
-		// Suppress independent transcript writes while the atomic promotion is
-		// pending. Only this operation may roll it back on a BEFORE failure.
+		// Only a qualified, new conversation can acquire exact protection.
+		// Other conversations retain guarded ordinary persistence.
 		m.liveOperation.promotingExact = true
 		m.exactResume = true
 	}
@@ -149,6 +149,13 @@ type beforeTurnFailedMsg struct {
 // saveBeforeTurn publishes the guarded recovery row, immutable history and BEFORE
 // checkpoint in one transaction. Retained batches are acknowledged only afterward.
 func saveBeforeTurn(ctx context.Context, store *db.Store, snapshot *sessionSnapshot, input rewind.CaptureInput, expectedActive string, expectedSource db.SessionContentVersion) (db.SessionContentVersion, error) {
+	if !snapshot.exact {
+		version, err := store.CommitCompletedTurnVersioned(ctx, snapshot.record, snapshot.transcript, expectedSource, snapshot.historyBatches...)
+		if err == nil {
+			snapshot.acknowledgeHistory()
+		}
+		return version, err
+	}
 	if initial := input.Boundary.InitialContinuation; initial != (rewind.InitialContinuation{}) {
 		branch, err := store.GetSessionBranch(ctx, input.SessionID)
 		if err != nil {
@@ -179,7 +186,17 @@ func (b *beforeTurn) run(ctx, saveCtx context.Context, store *db.Store, snapshot
 	if !b.admit() {
 		return beforeTurnFailedMsg{prompt: input.Boundary.PromptText, attachments: b.attachments, err: context.Canceled, checkpointSaved: true}, nil
 	}
-	if err := b.reservation.RunRecordedTurn(engine.WithToolOutputSession(ctx, input.SessionID), input.Boundary.PromptText, b.attachments, store, input.SessionID); err != nil {
+	ctx = engine.WithToolOutputSession(ctx, input.SessionID)
+	var err error
+	if snapshot.exact {
+		err = b.reservation.RunRecordedTurn(ctx, input.Boundary.PromptText, b.attachments, store, input.SessionID)
+	} else {
+		// Canonical exact replay requires the history root established with a
+		// BEFORE checkpoint. Ordinary routes retain transcript/context saves
+		// and raw tool output without claiming that replay qualification.
+		err = b.reservation.RunTurn(ctx, input.Boundary.PromptText, b.attachments)
+	}
+	if err != nil {
 		return beforeTurnFailedMsg{prompt: input.Boundary.PromptText, attachments: b.attachments, err: err, checkpointSaved: true}, nil
 	}
 	return liveTurnFinishedMsg{}, nil
@@ -191,7 +208,11 @@ func (b *beforeTurn) run(ctx, saveCtx context.Context, store *db.Store, snapshot
 func (b *beforeTurn) save(ctx context.Context, store *db.Store, snapshot *sessionSnapshot) error {
 	input := b.input
 	var err error
-	input.Context, input.Target, err = b.reservation.Snapshot()
+	var exact bool
+	input.Context, input.Target, exact, err = b.reservation.PersistenceSnapshot()
+	if err == nil && snapshot.exact && !exact {
+		err = rewind.ErrTarget
+	}
 	if err != nil {
 		return err
 	}

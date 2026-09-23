@@ -161,7 +161,7 @@ func (m *UI) sessionSaveRetryUnavailable() string {
 		return "No failed completed-turn save to retry."
 	case errors.Is(m.unsavedTurnError, rewind.ErrInvalid), errors.Is(m.unsavedTurnError, rewind.ErrTarget):
 		return "Exact context is unsupported or invalid. Retrying unchanged context cannot help; export instead."
-	case m.completedBoundary == nil || m.completedBoundary.sessionID != m.session.ID || m.completedBoundary.snapshot == nil || !m.completedBoundary.snapshot.exact:
+	case m.completedBoundary == nil || m.completedBoundary.sessionID != m.session.ID || m.completedBoundary.snapshot == nil:
 		return "No validated completed boundary is available for retry; export instead."
 	case m.completedBoundary.sourceErr != nil:
 		return "No trusted source version is available; export before reloading."
@@ -185,7 +185,10 @@ func (m *UI) retrySessionSave() tea.Cmd {
 	}
 	// Capture current context under exclusive admission, not the historical
 	// candidate: compaction/target changes must be validated anew.
-	messages, _, err := reservation.Snapshot()
+	messages, _, exact, err := reservation.PersistenceSnapshot()
+	if err == nil && m.exactResume && !exact {
+		err = rewind.ErrTarget
+	}
 	if err != nil {
 		reservation.Release()
 		m.session.SetErrorToast("Exact context is unsupported or invalid; export instead.")

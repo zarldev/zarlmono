@@ -99,7 +99,7 @@ func isolatedEnv(home string) []string {
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		switch key {
-		case "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "TMUX", "TMUX_PANE", "TERM":
+		case "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "TMUX", "TMUX_PANE", "TERM", "ZARLCODE_SANDBOX":
 			continue
 		}
 		env = append(env, value)

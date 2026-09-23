@@ -59,7 +59,7 @@ func (m *UI) runLiveTurnInput(prompt string, attachments []llm.ContentPart, queu
 	}
 	run := RunFnWithAttachments(engine.WithToolOutputSession(m.appContext(), op.sessionID), m.live, prompt, llm.CloneContentParts(attachments))
 	var historyStore *db.Store
-	if m.durableDispatch() {
+	if m.durableDispatch() && m.exactResume {
 		historyStore = m.settings.Store
 		live, ctx := m.live, engine.WithToolOutputSession(m.appContext(), op.sessionID)
 		parts := llm.CloneContentParts(attachments)
@@ -175,7 +175,7 @@ func (m *UI) persistSettledLiveTurn() tea.Cmd {
 	return m.enqueueSessionPersist(sessionPersistOp{
 		kind: sessionPersistFull, generation: m.transcriptGeneration,
 		snapshot: snapshot, settledGeneration: op.generation,
-		sourceObserved: source, guarded: snapshot.exact,
+		sourceObserved: source, guarded: snapshot.exact || m.durableDispatch(),
 	})
 }
 
