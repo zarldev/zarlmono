@@ -176,10 +176,14 @@ tools to the same flat tool list once connected.
 ### Keep large tasks manageable
 
 Sub-agents run focused child tasks in fresh context. `agent_spawn` returns a task
-receipt immediately so the parent can continue independent work; `agent_status`
-inspects progress, `agent_await` explicitly joins and returns the summary, and
-`agent_stop` cancels. All children are owned by the current turn and are cancelled
-and joined during shutdown. Workspace leases allow concurrent read-only children
+receipt immediately so the parent can continue independent work. On supported receiving
+providers, completed child results arrive directly as input to the parent model at safe
+history boundaries; no `agent_await` call is needed merely to receive them. The result is
+evidence from the child's assignment, not a new user instruction. `agent_status` provides
+intentional inspection, `agent_await` supports explicit waits/rereads and fallback routes,
+and `agent_stop` cancels. See the [sub-agent guide](https://zarldev.github.io/zarlmono/spawn/)
+for receiving-provider coverage. All children are owned by the current turn and are
+cancelled and joined during shutdown. Workspace leases allow concurrent read-only children
 while preventing conflicting shared-tree writes. Long sessions compact provider-facing
 model context when it gets tight without rewriting the canonical transcript. Skills and
 agent profiles let a workspace carry its own operating notes without baking them into

@@ -156,10 +156,16 @@ When a turn delegates with [`agent_spawn`](/zarlmono/spawn/), launch returns a
 receipt immediately and the parent can continue independent work. Each child run
 appears as a **collapsible sub-agent item** in the timeline, nested under the turn
 that spawned it — its own prompt, tool calls, and final summary remain independently
-foldable in browse mode. Use `agent_status` for a non-blocking snapshot and
-`agent_await` to join when the parent needs the result. A coordinator fanning out to
-read-only `explore` workers reads as a tidy tree rather than a wall of interleaved
-output; overlapping workspace operations are serialized rather than racing.
+foldable in browse mode. On supported receiving providers, a child's completion is
+delivered directly as input to the parent model at a safe history boundary; no
+`agent_await` call is needed just to receive the result. The parent continues with
+that evidence from the child's original assignment, not a new user instruction.
+Use `agent_status` for an intentional non-blocking snapshot and `agent_await` for
+an explicit wait or reread; other receiving providers retain explicit collection.
+See [Sub-agent tasks](/zarlmono/spawn/) for the receiving-provider scope.
+A coordinator fanning out to read-only `explore` workers reads as a tidy tree
+rather than a wall of interleaved output; overlapping workspace operations are
+serialized rather than racing.
 
 ![Sub-agents in the timeline](/zarlmono/zarlcode-subagents.gif)
 
