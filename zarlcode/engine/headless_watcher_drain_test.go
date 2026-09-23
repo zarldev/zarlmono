@@ -129,7 +129,9 @@ func TestHeadlessWatcherRecoversAttemptPanic(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		live := engine.NewLiveRunner(&watchedPanicProvider{}, ws, "local")
-		live.SetEarlyStopCommand([]string{"true"})
+		// Keep the watched-attempt path without racing successful early-stop
+		// cancellation against entry into the provider's panic path.
+		live.SetEarlyStopCommand([]string{"false"})
 		t.Cleanup(func() { _ = live.Close(context.WithoutCancel(t.Context())) })
 
 		result := live.RunHeadless(t.Context(), "panic", 1)
