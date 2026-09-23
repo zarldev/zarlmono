@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import AxeBuilder from '@axe-core/playwright';
 
-const base = process.env.V2_URL || 'http://127.0.0.1:4322/zarlmono/';
+const base = 'http://127.0.0.1:4322/zarlmono/';
 const screenshots = new URL('../.playwright/', import.meta.url);
 const palettes = ['green', 'amber', 'cyan', 'rust'];
 const control = (page) => page.locator('palette-select select:visible');
@@ -41,7 +41,7 @@ async function checkControlContrast(page) {
   assert.ok(ratios[2] >= 3, `selector focus contrast: ${ratios[2]}`);
 }
 
-test('colour palettes switch immediately, persist across layouts, and remain accessible', { timeout: 240_000 }, async () => {
+test('colour palettes switch immediately, persist across layouts, and remain accessible', async () => {
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ reducedMotion: 'reduce' });

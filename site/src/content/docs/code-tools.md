@@ -7,8 +7,8 @@ description: The workspace-scoped toolset a coding agent actually needs, includi
 is workspace-rooted — paths resolve inside the workspace, not the
 host filesystem — and each one is shaped by watching agents work,
 not by API symmetry. Two more tools live in sibling packages:
-[`web_fetch`](#web-fetch-and-web-search) (`zkit/ai/tools/fetch`) and
-[`web_search`](#web-fetch-and-web-search) (`zkit/ai/tools/search`).
+[`web_fetch`](#web_fetch-and-web_search) (`zkit/ai/tools/fetch`) and
+[`web_search`](#web_fetch-and-web_search) (`zkit/ai/tools/search`).
 | Tool | Notes |
 |---|---|
 | `read` | File reads with offset/limit + stable line hashes for anchored edits. Pure → cached by MemoSource. |

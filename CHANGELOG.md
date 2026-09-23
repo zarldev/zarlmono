@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [zarlcode/v0.20.0] — 2026-09-22
+## [zarlcode/v0.20.0] — 2026-09-23
 
 ### Added
 
@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Separated provider-attempt usage, live activity, event settlement, and durable session commits so cancellation, queued work, and save status remain distinguishable.
 - Made Plan/Build transitions and provider/model changes coordinated runtime operations, preserving active-child and session ownership.
 - Promoted the deterministic PTY onboarding, encrypted-credential, restart, unlock, resize, and shutdown walkthrough to a required CI golden workflow.
+- Adopted the redesigned project website with a single documentation/deployment root, corrected usage and safety guides, and required whole-site browser, link, and accessibility checks.
+- Refreshed compatible dependencies while preserving the validated Anthropic SDK/JSON Schema pair.
 
 ### Fixed
 
@@ -33,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Back up `~/.zarlcode/state.db` together with its credential-vault files before first launch if rollback may be required. Opening the database applies migrations `00029`–`00034`, including the Go-based `00031` tool-history schema repair; rollback to an older binary requires restoring the backup.
 - Conversation rewind branches recorded history; it is not a rollback of external tool side effects or workspace files.
 
-## [zkit/v0.20.0] — 2026-09-22
+## [zkit/v0.20.0] — 2026-09-23
 
 ### Added
 
@@ -47,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Independent read-only tools now run concurrently by default, while writes and other non-read calls remain ordered barriers; settled results retain original call order.
 - Simplified controlled provider construction to concrete return values and moved required-key validation to the provider registry boundary.
 - Separated SQLite writer and reader ownership and strengthened transactional session/history persistence.
+- Refreshed compatible dependencies while preserving the validated Anthropic SDK/JSON Schema pair.
 
 ### Fixed
 

@@ -118,6 +118,7 @@ startup code opens a descriptor the policy would forbid.
 policy — Landlock ABI below 1, or any non-Linux host. It never
 silently degrades, because a sandbox that quietly does nothing is worse
 than none: it lets a "confined" run lie about its safety. The caller
-decides what to do with the error — zarlcode logs a warning and runs
-`bash` unconfined (the shell policy still applies); an eval harness
-might refuse to start. The choice is explicit, at the call site.
+decides what to do with the error. zarlcode refuses startup if requested
+shell sandboxing cannot be established. Running unconfined requires explicitly
+turning off `shell_sandbox` or setting `ZARLCODE_SANDBOX=0`; shell policy checks
+still apply. Other callers of `sandbox.New` choose their own fallback policy.

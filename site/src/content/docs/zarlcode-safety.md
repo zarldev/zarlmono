@@ -40,8 +40,9 @@ workspace according to their own configuration and credentials. Confirm which MC
 and tools are enabled before giving a task authority over sensitive systems.
 
 Sub-agents are separate runs owned by the parent task. They make focused research or
-verification easier to inspect, but they share the same trust boundary; conflicting
-workspace writes are refused rather than raced.
+verification easier to inspect, but they share the same trust boundary. Overlapping
+workspace operations wait in fair arrival order rather than racing; disjoint paths
+can proceed concurrently.
 
 For the implementation detail behind these controls, see [The tool system](/zarlmono/tools/),
 [Guardrails](/zarlmono/guardrails/), and [Sandboxing](/zarlmono/sandboxing/).

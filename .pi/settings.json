@@ -1,6 +1,0 @@
-{
-  "enableSkillCommands": true,
-  "skills": [
-    "../.zarlcode/skills"
-  ]
-}

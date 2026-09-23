@@ -79,6 +79,7 @@ func siteTargetExists(root, rel string) bool {
 	candidates := []string{
 		filepath.Join(root, "site", "src", "content", "docs", filepath.FromSlash(rel)+".md"),
 		filepath.Join(root, "site", "src", "content", "docs", filepath.FromSlash(rel)+".mdx"),
+		filepath.Join(root, "site", "src", "pages", filepath.FromSlash(rel)+".astro"),
 		filepath.Join(root, "site", "public", filepath.FromSlash(rel)),
 	}
 	for _, candidate := range candidates {

@@ -120,3 +120,6 @@
 .arch-cell:hover { border-color: var(--sl-color-accent-high); }
 .arch-cell-ghost { flex: 1; border-style: dashed; }
 .arch-flow { text-align: center; padding-block: .4rem; font: .65rem/1.5 var(--sl-font-mono); color: var(--sl-color-gray-3); }
+.interface-table { overflow-x: auto; }
+.sl-markdown-content .interface-table table { display: table; }
+.interface-table:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }

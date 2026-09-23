@@ -141,10 +141,17 @@ tasks:
       - go test -C swebench-eval -race -count=1 ./...
 
   site-check:
-    desc: Install, build, and audit the documentation site
+    desc: Install, build, browser-test, and audit the documentation site
     cmds:
       - npm --prefix site ci
       - npm --prefix site run build
+      - |
+        if [ -n "${CI:-}" ]; then
+          npm --prefix site run test:install:ci
+        else
+          npm --prefix site run test:install
+        fi
+      - npm --prefix site test
       - npm --prefix site audit --audit-level=high
 
   docs:check:

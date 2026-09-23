@@ -5,10 +5,17 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview --host 127.0.0.1 --port 4322",
+    "test": "playwright test",
+    "test:install": "playwright install chromium",
+    "test:install:ci": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.1",
     "astro": "7.3.2"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0"
   }
 }

@@ -5,9 +5,6 @@ description: Guides and reference for zarlcode, the zkit Go toolkit, and the app
 
 Use **zarlcode** to work on a codebase from your terminal, or use **zkit** to build an agent into your own Go application. These docs cover setup, daily workflows, customization, runtime behavior, and the boundaries of agent execution.
 
-:::note[V2 preview]
-This is the documentation entry point for the isolated V2 preview, not a live-site switchover. Existing guides remain available at their original URLs.
-:::
 
 ## Choose a starting point
 

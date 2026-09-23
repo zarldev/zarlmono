@@ -159,7 +159,7 @@ that spawned it — its own prompt, tool calls, and final summary remain indepen
 foldable in browse mode. Use `agent_status` for a non-blocking snapshot and
 `agent_await` to join when the parent needs the result. A coordinator fanning out to
 read-only `explore` workers reads as a tidy tree rather than a wall of interleaved
-output; conflicting workspace writes are refused instead of racing.
+output; overlapping workspace operations are serialized rather than racing.
 
 ![Sub-agents in the timeline](/zarlmono/zarlcode-subagents.gif)
 

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import AxeBuilder from '@axe-core/playwright';
 
 // Run against `npm run preview` after building; dev mode has no Pagefind index.
-const base = process.env.V2_URL || 'http://127.0.0.1:4322/zarlmono/';
+const base = 'http://127.0.0.1:4322/zarlmono/';
 const screenshots = new URL('../.playwright/', import.meta.url);
 
-test('V2 responsive pages, accessibility, links, recording, clipboard and docs search', { timeout: 180_000 }, async () => {
+test('responsive pages, accessibility, links, recording, clipboard and docs search', async () => {
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'], reducedMotion: 'reduce' });
@@ -41,12 +41,7 @@ test('V2 responsive pages, accessibility, links, recording, clipboard and docs s
         }
         if (width === 1280 || width === 390) {
           const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
-          // Shared V1 architecture markup has an image-role wrapper around links and
-          // a non-focusable scrolling table. Record those inherited findings only;
-          // this presentation prototype deliberately does not modify V1 content.
-          const inherited = route === 'architecture/' ? { 'nested-interactive': '.arch-stack', 'scrollable-region-focusable': 'table' } : {};
-          const violations = accessibility.violations.filter((violation) => !violation.nodes.every((node) => node.target.join() === inherited[violation.id]));
-          assert.deepEqual(violations.map(({ id, nodes }) => ({ id, elements: nodes.map((n) => n.target) })), [], `accessibility: ${route} ${width}`);
+          assert.deepEqual(accessibility.violations.map(({ id, nodes }) => ({ id, elements: nodes.map((n) => n.target) })), [], `accessibility: ${route} ${width}`);
         }
       }
       if (route === 'getting-started/') {

@@ -2,96 +2,73 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
-// Deployed to GitHub Pages at zarldev.github.io/zarlmono.
 export default defineConfig({
-	site: 'https://zarldev.github.io',
-	base: '/zarlmono',
-	integrations: [
-		starlight({
-			title: 'zarlmono',
-			description:
-				'A Go-native agent toolkit and local terminal coding agent: runner, tools, guardrails, compaction, durable SQLite sessions, and canonical transcripts.',
-			social: [
-				{ icon: 'github', label: 'GitHub', href: 'https://github.com/zarldev/zarlmono' },
-			],
-			head: [
-				{
-					tag: 'link',
-					attrs: {
-						rel: 'preconnect',
-						href: 'https://fonts.googleapis.com',
-					},
-				},
-				{
-					tag: 'link',
-					attrs: {
-						rel: 'preconnect',
-						href: 'https://fonts.gstatic.com',
-						crossorigin: true,
-					},
-				},
-				{
-					tag: 'link',
-					attrs: {
-						rel: 'stylesheet',
-						href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap',
-					},
-				},
-			],
-			customCss: ['./src/styles/custom.css'],
-			sidebar: [
-				{
-					label: 'Use zarlcode',
-					items: [
-						{ label: 'Overview', slug: 'zarlcode' },
-						{ label: 'First run and onboarding', slug: 'zarlcode-onboarding' },
-						{ label: 'Your first workflow', slug: 'zarlcode-workflow' },
-						{ label: 'Interface guide', slug: 'zarlcode-interface' },
-						{ label: 'Providers and credentials', slug: 'zarlcode-providers' },
-						{ label: 'Sessions and transcripts', slug: 'sessions-transcripts' },
-						{ label: 'Safety and workspace access', slug: 'zarlcode-safety' },
-						{ label: 'Automation and CLI', slug: 'zarlcode-automation' },
-					],
-				},
-				{
-					label: 'Build with zkit',
-					items: [
-						{ label: 'Getting started', slug: 'getting-started' },
-						{ label: 'Architecture', slug: 'architecture' },
-					],
-				},
-				{
-					label: 'The agent loop',
-					items: [
-						{ label: 'Runner', slug: 'runner' },
-						{ label: 'Turn lifecycle', slug: 'turn-lifecycle' },
-						{ label: 'Verified completion', slug: 'pursue' },
-						{ label: 'Shared infrastructure', slug: 'shared-infra' },
-						{ label: 'Sub-agent tasks', slug: 'spawn' },
-					],
-				},
-				{
-					label: 'Tools and guardrails',
-					items: [
-						{ label: 'The tool system', slug: 'tools' },
-						{ label: 'Code tools', slug: 'code-tools' },
-						{ label: 'Guardrails', slug: 'guardrails' },
-						{ label: 'Compaction', slug: 'compaction' },
-						{ label: 'Sandboxing', slug: 'sandboxing' },
-					],
-				},
-				{
-					label: 'Providers and foundations',
-					items: [
-						{ label: 'LLM providers', slug: 'providers' },
-						{ label: 'Tool ecosystem', slug: 'tool-ecosystem' },
-						{ label: 'Foundation packages', slug: 'foundation' },
-					],
-				},
-				{ label: 'Examples', slug: 'examples' },
-				{ label: 'Feature coverage', slug: 'feature-coverage' },
-				{ label: 'swebench-eval', slug: 'swebench-eval' },
-			],
-		}),
-	],
+  site: 'https://zarldev.github.io',
+  base: '/zarlmono',
+  trailingSlash: 'always',
+  integrations: [
+    starlight({
+      title: 'zarlcode / docs',
+      description: 'An open-source coding harness and Go agent toolkit: usage, architecture, and reference.',
+      customCss: ['./src/styles/docs.css'],
+      components: {
+        Head: './src/components/DocsHead.astro',
+        ThemeSelect: './src/components/DocsThemeSelect.astro',
+      },
+      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/zarldev/zarlmono' }],
+      sidebar: [
+        { label: '← Project overview', link: '/' },
+        {
+          label: 'Use zarlcode',
+          items: [
+            { label: 'Overview', slug: 'zarlcode' },
+            { label: 'Install & first run', slug: 'zarlcode-onboarding' },
+            { label: 'Your first workflow', slug: 'zarlcode-workflow' },
+            { label: 'Interface guide', slug: 'zarlcode-interface' },
+            { label: 'Providers & credentials', slug: 'zarlcode-providers' },
+            { label: 'Sessions & transcripts', slug: 'sessions-transcripts' },
+            { label: 'Safety & workspace access', slug: 'zarlcode-safety' },
+            { label: 'Automation & CLI', slug: 'zarlcode-automation' },
+            { label: 'Troubleshooting', slug: 'troubleshooting' },
+          ],
+        },
+        {
+          label: 'Build with zkit',
+          items: [
+            { label: 'Toolkit & runtime design', link: '/toolkit/' },
+            { label: 'Quickstart', slug: 'getting-started' },
+            { label: 'Architecture', slug: 'architecture' },
+            { label: 'Examples', slug: 'examples' },
+          ],
+        },
+        {
+          label: 'Reference',
+          collapsed: true,
+          items: [
+            { label: 'Runner', slug: 'runner' },
+            { label: 'Turn lifecycle', slug: 'turn-lifecycle' },
+            { label: 'Verified completion', slug: 'pursue' },
+            { label: 'Shared infrastructure', slug: 'shared-infra' },
+            { label: 'Sub-agent tasks', slug: 'spawn' },
+            { label: 'Tool system', slug: 'tools' },
+            { label: 'Code tools', slug: 'code-tools' },
+            { label: 'Guardrails', slug: 'guardrails' },
+            { label: 'Compaction', slug: 'compaction' },
+            { label: 'Sandboxing', slug: 'sandboxing' },
+            { label: 'LLM providers', slug: 'providers' },
+            { label: 'Tool ecosystem', slug: 'tool-ecosystem' },
+            { label: 'Foundation packages', slug: 'foundation' },
+          ],
+        },
+        {
+          label: 'Project',
+          collapsed: true,
+          items: [
+            { label: 'Feature coverage', slug: 'feature-coverage' },
+            { label: 'SWE-bench evaluation', slug: 'swebench-eval' },
+          ],
+        },
+      ],
+    }),
+  ],
 });

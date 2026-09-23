@@ -1,7 +1,7 @@
 # Turn lifecycle and settlement
 
 The maintained guide lives in the [shared site documentation](../../site/src/content/docs/turn-lifecycle.md).
-Both the production site and the Site V2 preview render that source.
+The project website renders that canonical source.
 
 It connects submission, runtime admission, child drain, event application, durable
 saving, recovery, rewind, and shutdown, with links to the owning code and tests.

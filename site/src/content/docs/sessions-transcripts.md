@@ -47,7 +47,7 @@ including save failures, queued input, rewind, and shutdown.
 
 ## Resume and interruption recovery
 
-`zarlcode -continue` selects the latest session for the current workspace. The intro screen can resume any listed session.
+`zarlcode --continue` selects the latest session for the current workspace. The intro screen can resume any listed session.
 
 On resume, zarlcode:
 
