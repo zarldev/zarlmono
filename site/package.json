@@ -11,11 +11,11 @@
     "test:install:ci": "playwright install --with-deps chromium"
   },
   "dependencies": {
-    "@astrojs/starlight": "0.42.1",
-    "astro": "7.3.2"
+    "@astrojs/starlight": "0.42.6",
+    "astro": "7.3.8"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@playwright/test": "1.63.0"
+    "@playwright/test": "1.64.0"
   }
 }
