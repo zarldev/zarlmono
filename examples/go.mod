@@ -3,7 +3,7 @@ module github.com/zarldev/zarlmono/examples
 go 1.27.0
 
 require (
-	github.com/chromedp/chromedp v0.16.0
+	github.com/chromedp/chromedp v0.21.0
 	github.com/joho/godotenv v1.5.1
 	github.com/zarldev/zarlmono/zarlcode v0.20.1
 	github.com/zarldev/zarlmono/zkit v0.20.0
@@ -18,18 +18,13 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.1 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/chromedp/cdproto v0.0.0-20260804232424-e85f50dbfd32 // indirect
-	github.com/chromedp/sysutil v1.1.0 // indirect
+	github.com/chromedp/cdproto v0.157.8 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/gobwas/httphead v0.1.0 // indirect
-	github.com/gobwas/pool v0.2.1 // indirect
-	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -43,7 +38,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/openai/openai-go/v3 v3.78.0 // indirect
+	github.com/openai/openai-go/v2 v2.7.1 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pressly/goose/v3 v3.28.0 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
