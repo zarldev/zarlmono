@@ -17,7 +17,7 @@ func TestPanesRenderLiveRunState(t *testing.T) {
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	model, _ = model.Update(teasink.ConversationStartedMsg{TaskID: "task-1", Depth: 0})
 	out := ansi.Strip(model.View().Content)
-	if !strings.Contains(out, "working") || !strings.Contains(out, "build mode") {
+	if !strings.Contains(out, "working") {
 		t.Fatalf("live run state missing from panes:\n%s", out)
 	}
 	if strings.Contains(out, "ctrl+c quit") {
@@ -26,7 +26,7 @@ func TestPanesRenderLiveRunState(t *testing.T) {
 
 	model, _ = model.Update(teasink.ConversationEndedMsg{TaskID: "task-1", Depth: 0, Reason: runner.TerminalCompleted})
 	out = ansi.Strip(model.View().Content)
-	if !strings.Contains(out, "idle") {
+	if containsBraille(out) {
 		t.Fatalf("terminal event left stale live state:\n%s", out)
 	}
 }

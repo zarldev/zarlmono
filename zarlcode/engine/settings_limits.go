@@ -24,12 +24,12 @@ type Limits struct {
 // Limits resolves the run-budget settings (effective scope).
 func (s *Settings) Limits(ctx context.Context) Limits {
 	return Limits{
-		ReserveTokens:        s.intSetting(ctx, prefs.KeyReserveTokens, 0),
-		MaxIterations:        s.intSetting(ctx, prefs.KeyMaxIterations, 0),
-		SpawnMaxIterations:   s.intSetting(ctx, prefs.KeySpawnMaxIterations, 0),
+		ReserveTokens:        s.intSetting(ctx, prefs.KeyReserveTokens, prefs.DefaultReserveTokens),
+		MaxIterations:        s.intSetting(ctx, prefs.KeyMaxIterations, prefs.DefaultMaxIterations),
+		SpawnMaxIterations:   s.intSetting(ctx, prefs.KeySpawnMaxIterations, prefs.DefaultSpawnMaxIterations),
 		SpawnMaxDepth:        s.intSetting(ctx, prefs.KeySpawnMaxDepth, 1),
-		SpawnAwaitTimeout:    s.intSetting(ctx, prefs.KeySpawnAwaitTimeout, 30),
-		SpawnAwaitMaxTimeout: s.intSetting(ctx, prefs.KeySpawnAwaitMaxTimeout, 300),
+		SpawnAwaitTimeout:    s.intSetting(ctx, prefs.KeySpawnAwaitTimeout, prefs.DefaultSpawnAwaitTimeout),
+		SpawnAwaitMaxTimeout: s.intSetting(ctx, prefs.KeySpawnAwaitMaxTimeout, prefs.DefaultSpawnAwaitMaxTimeout),
 	}
 }
 
@@ -54,35 +54,26 @@ type SpawnModesConfig struct {
 func (s *Settings) SpawnModes(ctx context.Context) SpawnModesConfig {
 	return SpawnModesConfig{
 		Explore: SpawnModeConfig{
-			DefaultAgent: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultExploreAgent, "")),
-			DefaultTarget: ProviderSpec{
-				Name:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultExploreProvider, "")),
-				Model: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultExploreModel, "")),
-			},
-			MaxIterations: s.intSetting(ctx, prefs.KeySpawnExploreMaxIterations, 0),
+			DefaultAgent:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultExploreAgent, "")),
+			DefaultTarget: s.ModelTarget(ctx, prefs.KeySpawnDefaultExploreProvider),
+			MaxIterations: s.intSetting(ctx, prefs.KeySpawnExploreMaxIterations, prefs.DefaultSpawnExploreMaxIterations),
 		},
 		Verify: SpawnModeConfig{
-			DefaultAgent: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultVerifyAgent, "")),
-			DefaultTarget: ProviderSpec{
-				Name:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultVerifyProvider, "")),
-				Model: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultVerifyModel, "")),
-			},
-			MaxIterations: s.intSetting(ctx, prefs.KeySpawnVerifyMaxIterations, 0),
+			DefaultAgent:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultVerifyAgent, "")),
+			DefaultTarget: s.ModelTarget(ctx, prefs.KeySpawnDefaultVerifyProvider),
+			MaxIterations: s.intSetting(ctx, prefs.KeySpawnVerifyMaxIterations, prefs.DefaultSpawnVerifyMaxIterations),
 		},
 		Implement: SpawnModeConfig{
-			DefaultAgent: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultImplementAgent, "")),
-			DefaultTarget: ProviderSpec{
-				Name:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultImplementProvider, "")),
-				Model: strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultImplementModel, "")),
-			},
-			MaxIterations: s.intSetting(ctx, prefs.KeySpawnImplementMaxIterations, 0),
+			DefaultAgent:  strings.TrimSpace(s.setting(ctx, prefs.KeySpawnDefaultImplementAgent, "")),
+			DefaultTarget: s.ModelTarget(ctx, prefs.KeySpawnDefaultImplementProvider),
+			MaxIterations: s.intSetting(ctx, prefs.KeySpawnImplementMaxIterations, prefs.DefaultSpawnImplementMaxIterations),
 		},
 	}
 }
 
 // SpawnMaxConcurrent resolves the simultaneous child cap. Zero is unbounded.
 func (s *Settings) SpawnMaxConcurrent(ctx context.Context) int {
-	return s.intSetting(ctx, prefs.KeySpawnMaxConcurrent, 0)
+	return s.intSetting(ctx, prefs.KeySpawnMaxConcurrent, prefs.DefaultSpawnMaxConcurrent)
 }
 
 // SpawnFallback resolves unresolved agent routing: planner, parent, or error.
@@ -98,7 +89,7 @@ func (s *Settings) SpawnFallback(ctx context.Context) string {
 // SpawnMaxRuntime resolves the maximum lifetime of each child task. Zero leaves
 // child runtime unbounded; Group.Close remains the owner shutdown path.
 func (s *Settings) SpawnMaxRuntime(ctx context.Context) time.Duration {
-	seconds := s.intSetting(ctx, prefs.KeySpawnMaxRuntime, 0)
+	seconds := s.intSetting(ctx, prefs.KeySpawnMaxRuntime, prefs.DefaultSpawnMaxRuntime)
 	if seconds <= 0 {
 		return 0
 	}
@@ -142,6 +133,9 @@ func (s *Settings) intSetting(ctx context.Context, key string, def int) int {
 // default model. An empty model means the provider supplies its own runtime
 // model and the workspace model override must be absent.
 func (s *Settings) DefaultModelSelection(provider string) prefs.ModelSelection {
+	if provider == prefs.DefaultProvider {
+		return prefs.ModelSelection{Provider: provider, Model: prefs.DefaultModel}
+	}
 	model := ""
 	if s != nil && s.Registry != nil {
 		if def, err := s.Registry.Parse(provider); err == nil {

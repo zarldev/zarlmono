@@ -36,10 +36,11 @@ type req struct { JSONRPC string ` + "`json:\"jsonrpc\"`" + `; ID int ` + "`json
 func main() {
  mode := os.Args[1]; scan := bufio.NewScanner(os.Stdin); enc := json.NewEncoder(os.Stdout)
  for scan.Scan() { var r req; if json.Unmarshal(scan.Bytes(), &r) != nil || r.ID == 0 { continue }
+  if r.Method == "server/discover" { _ = enc.Encode(map[string]any{"jsonrpc":"2.0", "id":r.ID, "error":map[string]any{"code":-32601, "message":"method not found"}}); continue }
   if r.Method == "initialize" { _ = enc.Encode(map[string]any{"jsonrpc":"2.0", "id":r.ID, "result":map[string]any{"protocolVersion":"2024-11-05", "capabilities":map[string]any{}, "serverInfo":map[string]any{"name":"test", "version":"0"}}}); continue }
   defs := []map[string]any{}
   add := func(name, desc string, schema map[string]any) { defs = append(defs, map[string]any{"name":name, "description":desc, "inputSchema":schema}) }
-  switch mode { case "echo": add("echo", "stub", map[string]any{"type":"object"}); case "bash": add("bash", "stub", map[string]any{"type":"object"}); case "duplicate": add("echo", "stub", map[string]any{"type":"object"}); add("echo", "stub", map[string]any{"type":"object"}); case "invalid": add("Bad-Name", "stub", map[string]any{"type":"object"}); case "many": for i:=0;i<65;i++ { add(fmt.Sprintf("tool_%d", i), "stub", map[string]any{"type":"object"}) }; case "description": add("big_description", strings.Repeat("x", 2049), map[string]any{"type":"object"}); case "schema": add("big_schema", "stub", map[string]any{"blob":strings.Repeat("x", 32768)}); default: _, _ = strconv.Atoi(mode) }
+  switch mode { case "echo": add("echo", "stub", map[string]any{"type":"object"}); case "bash": add("bash", "stub", map[string]any{"type":"object"}); case "duplicate": add("echo", "stub", map[string]any{"type":"object"}); add("echo", "stub", map[string]any{"type":"object"}); case "invalid": add("Bad-Name", "stub", map[string]any{"type":"object"}); case "many": for i:=0;i<65;i++ { add(fmt.Sprintf("tool_%d", i), "stub", map[string]any{"type":"object"}) }; case "description": add("big_description", strings.Repeat("x", 10*1024*1024+1), map[string]any{"type":"object"}); case "schema": add("big_schema", "stub", map[string]any{"blob":strings.Repeat("x", 32768)}); default: _, _ = strconv.Atoi(mode) }
   _ = enc.Encode(map[string]any{"jsonrpc":"2.0", "id":r.ID, "result":map[string]any{"tools":defs}})
  }
 }`

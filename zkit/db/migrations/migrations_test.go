@@ -53,7 +53,7 @@ func TestProviderIgnoresGlobalMigrations(t *testing.T) {
 		t.Fatal(err)
 	}
 	version, err := provider.GetDBVersion(t.Context())
-	if err != nil || version != 34 {
+	if err != nil || version != 35 {
 		t.Fatalf("catalogue version = %d: %v", version, err)
 	}
 }

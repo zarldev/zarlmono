@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
 	"sync"
@@ -69,6 +70,40 @@ func (q *queueState) Append(text string) (int, int) {
 	return len(q.messages), id
 }
 
+const (
+	maxMCPQueueMessages = 32
+	maxMCPQueueBytes    = 32 * 1024
+)
+
+// appendNotification is a distinct remote-data admission boundary. Its budget
+// never drops or charges user-authored steering, even while the runner is idle.
+func (q *queueState) appendNotification(text string) int {
+	if !q.admission.enter() {
+		return 0
+	}
+	defer q.admission.leave()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	count, bytes := 0, 0
+	for _, queued := range q.messages {
+		if strings.HasPrefix(queued.Message.Observation.ID, "mcp-notification:") {
+			count++
+			bytes += len(queued.Message.Content)
+		}
+	}
+	if count >= maxMCPQueueMessages || bytes+len(text) > maxMCPQueueBytes {
+		return len(q.messages)
+	}
+	q.nextID++
+	q.messages = append(q.messages, QueuedMessage{ID: q.nextID, Message: llm.Message{
+		Role: llm.RoleUser, Content: text,
+		Observation: llm.ObservationProvenance{Version: 1, ID: fmt.Sprintf("mcp-notification:%d", q.nextID)},
+	}})
+	close(q.changed)
+	q.changed = make(chan struct{})
+	return len(q.messages)
+}
+
 // Drain satisfies runner.Steerer. It atomically takes the ready messages and
 // yields them without blocking; an empty queue returns an empty sequence.
 //
@@ -123,8 +158,7 @@ func (q *queueState) Pop() (llm.Message, bool) {
 // AppendForInjector forwards to Append but returns only the depth, satisfying
 // the mcp.Injector interface that expects Append(string) int.
 func (q *queueState) AppendForInjector(text string) int {
-	n, _ := q.Append(text)
-	return n
+	return q.appendNotification(text)
 }
 
 // QueueInjectorAdapter wraps a *queueState to satisfy the mcp.Injector
@@ -133,8 +167,7 @@ func (q *queueState) AppendForInjector(text string) int {
 type QueueInjectorAdapter struct{ queue *queueState }
 
 func (a QueueInjectorAdapter) Append(text string) int {
-	n, _ := a.queue.Append(text)
-	return n
+	return a.queue.appendNotification(text)
 }
 
 func (q *queueState) Len() int {

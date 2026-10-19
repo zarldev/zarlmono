@@ -1,9 +1,9 @@
 -- name: GetSession :one
-SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual
+SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual, mcp_activations_json
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByWorkspace :many
-SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual
+SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual, mcp_activations_json
 FROM sessions
 WHERE workspace = ?
 ORDER BY updated_at DESC;
@@ -21,11 +21,12 @@ ORDER BY pinned DESC, pinned_at DESC, updated_at DESC;
 INSERT INTO sessions (
     id, workspace, label, label_manual, agent_name, provider, model,
     context_json, pending_json, last_usage_json, diff_bodies_json, plan_json, message_count,
-    created_at, updated_at, changed_file_count, plan_completed_count, plan_total_count
+    created_at, updated_at, changed_file_count, plan_completed_count, plan_total_count,
+    mcp_activations_json
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (id) DO UPDATE SET
     label            = excluded.label,
@@ -42,7 +43,8 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at           = excluded.updated_at,
     changed_file_count   = excluded.changed_file_count,
     plan_completed_count = excluded.plan_completed_count,
-    plan_total_count     = excluded.plan_total_count;
+    plan_total_count     = excluded.plan_total_count,
+    mcp_activations_json = excluded.mcp_activations_json;
 -- name: SaveSessionDraft :exec
 INSERT INTO sessions (
     id, workspace, label, label_manual, agent_name, provider, model,
@@ -78,6 +80,7 @@ DELETE FROM sessions WHERE id = ?;
 -- whose composer content was cleared before any canonical turn was persisted.
 DELETE FROM sessions
 WHERE id = ? AND context_json = '[]' AND pending_json = '[]'
+  AND mcp_activations_json = ''
   AND NOT EXISTS (SELECT 1 FROM session_transcripts WHERE session_id = sessions.id)
   AND NOT EXISTS (SELECT 1 FROM session_checkpoints WHERE session_id = sessions.id)
   AND NOT EXISTS (SELECT 1 FROM session_branches WHERE session_id = sessions.id);

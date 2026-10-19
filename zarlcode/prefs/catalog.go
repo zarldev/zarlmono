@@ -25,6 +25,9 @@ type Scope = shared.Scope
 // SettingValue includes a resolved value and its source scope.
 type SettingValue = shared.SettingValue
 
+// SettingChange is one preference set or deletion in an atomic ApplySettings call.
+type SettingChange = shared.SettingChange
+
 // ModelSelection is the application provider/model pair persisted together.
 type ModelSelection struct {
 	Provider string
@@ -124,6 +127,10 @@ const (
 	KeyCompactEngine                 = "compact_engine"
 	KeyCompactProvider               = "compact_provider"
 	KeyCompactModel                  = "compact_model"
+	KeyMainPlanProvider              = "main_plan_provider"
+	KeyMainPlanModel                 = "main_plan_model"
+	KeyMainBuildProvider             = "main_build_provider"
+	KeyMainBuildModel                = "main_build_model"
 	KeySpawnEnabled                  = "spawn_enabled"
 	KeySpawnMaxIterations            = "spawn_max_iterations"
 	KeySpawnAwaitTimeout             = "spawn_await_timeout"
@@ -164,6 +171,7 @@ const (
 	KeyEnableWeb                     = "enable_web"
 	KeyProgrammaticTools             = "programmatic_tools"
 	KeyEnableMCP                     = "enable_mcp"
+	KeyMCPToolExposure               = "mcp_tool_exposure"
 	KeyEnableBackground              = "enable_background"
 	KeySearchProvider                = "search_provider"
 	KeySearxngURL                    = "search_searxng_url"
@@ -178,8 +186,10 @@ const (
 	KeyPprofAddr                     = "pprof_addr"
 	KeyTraceFile                     = "trace_file"
 	KeyCodexEffort                   = "codex_reasoning_effort"
-	KeyUpgradeSource                 = "upgrade_source"
-	KeyUpgradeRestart                = "upgrade_restart"
-	KeyUpgradeDryRun                 = "upgrade_dry_run"
-	KeyUpgradeBinPath                = "upgrade_bin_path"
+	// KeyServiceTier stores the main agent's speed choice, independently of reasoning.
+	KeyServiceTier    = "service_tier"
+	KeyUpgradeSource  = "upgrade_source"
+	KeyUpgradeRestart = "upgrade_restart"
+	KeyUpgradeDryRun  = "upgrade_dry_run"
+	KeyUpgradeBinPath = "upgrade_bin_path"
 )

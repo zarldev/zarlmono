@@ -249,13 +249,13 @@ func (sa *subAgentItem) appendThinking(delta string) {
 	sa.bump()
 }
 
-func (sa *subAgentItem) startTool(toolID, name, arg string) {
+func (sa *subAgentItem) startTool(toolID, name, arg, input string) {
 	if ot := sa.turn; ot != nil && ot.resp.content == "" {
 		ot.resp.status = "running " + name
 		ot.resp.bump()
 	}
 	g := sa.ensureToolGroup()
-	t := &toolItem{name: name, arg: arg, state: toolRunning, notify: g.bump}
+	t := &toolItem{name: name, arg: arg, input: input, state: toolRunning, notify: g.bump}
 	g.add(t)
 	sa.toolIdx[toolID] = toolRef{group: g, tool: t}
 	sa.bump()
@@ -283,7 +283,9 @@ func (sa *subAgentItem) endTurn() {
 func (sa *subAgentItem) closeGroups() {
 	for _, g := range []*groupItem{sa.curTools, sa.curEdits} {
 		if g != nil {
-			g.expanded = false
+			if g.kind != groupTools {
+				g.expanded = false
+			}
 			g.closed = true
 			g.bump()
 		}

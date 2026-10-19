@@ -160,7 +160,7 @@ func TestRenderContentBlock_ToolResultLoadSkillRendersMarkdown(t *testing.T) {
 	}
 }
 
-func TestRenderContentBlock_ToolResultJSONRendersPrettyCode(t *testing.T) {
+func TestRenderContentBlock_ToolResultJSONRendersReadableFields(t *testing.T) {
 	out := tui.RenderContent(80, tui.Content{
 		Kind:     tui.ContentToolResult,
 		Text:     `{"z":1,"items":[true,false]}`,
@@ -169,11 +169,11 @@ func TestRenderContentBlock_ToolResultJSONRendersPrettyCode(t *testing.T) {
 
 	plain := ansi.Strip(strings.Join(out, "\n"))
 	if strings.Contains(plain, "```") {
-		t.Fatalf("json tool result should render as code, not raw fences:\n%s", plain)
+		t.Fatalf("JSON tool result should be readable fields, not raw fences:\n%s", plain)
 	}
-	for _, want := range []string{`"z": 1`, `"items": [`, `true`, `false`} {
+	for _, want := range []string{`z: 1`, `items:`, `true`, `false`} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("pretty json output missing %q:\n%s", want, plain)
+			t.Fatalf("readable JSON result missing %q:\n%s", want, plain)
 		}
 	}
 }

@@ -68,7 +68,7 @@ func (r *Runner) drainStream(
 			if contentOutputIndex == nil && chunk.ContentOutputIndex != nil {
 				contentOutputIndex = llm.OutputPosition(*chunk.ContentOutputIndex)
 			}
-			r.publishContentChunk(streamCtx, spec, chunk.Content)
+			r.publishContentChunk(streamCtx, spec, chunk.Content, chunk.ContentOutputIndex)
 		}
 		if chunk.Thinking != "" {
 			thinkingBuilder.WriteString(chunk.Thinking)

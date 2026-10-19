@@ -3,6 +3,7 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -213,5 +214,69 @@ func TestCanonicalRequestCancellationPreservesReason(t *testing.T) {
 	result := runner.New(client, runner.WithHistorySink(sink)).Run(ctx, runner.TaskSpec{Prompt: "input"})
 	if result.Reason != runner.TerminalCancelled || !errors.Is(result.Err, runner.ErrReplayHistory) || !errors.Is(result.Err, context.Canceled) || client.CallCount() != 0 {
 		t.Fatalf("capture cancellation: %+v", result)
+	}
+}
+
+func TestCanonicalHistoryKeepsTieredHostExcerptsRequestOnly(t *testing.T) {
+	first := strings.Repeat("original assistant narrative ", 100)
+	second := strings.Repeat("another original narrative ", 100)
+	const quoted = "The literal [reasoning trimmed — 69 chars elided; operational tail retained] is an example, not missing output."
+	const followup = "complete next answer"
+	text, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := []byte(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":` + string(text) + `}]}`)
+	client := runnertest.NewClient([][]llm.CompletionChunk{
+		{{Content: first, ContentOutputIndex: llm.OutputPosition(0), CompletedItems: []llm.ContinuationItem{{Provider: "openai-codex", Format: "responses.reasoning.v1", Kind: "message", Data: native}}}, runnertest.ChunkToolCall("one", "echo", "{}")},
+		{runnertest.ChunkText(second), runnertest.ChunkToolCall("two", "echo", "{}")},
+		{runnertest.ChunkText(quoted)},
+		{runnertest.ChunkText(followup)},
+	})
+	registry := tools.NewRegistry()
+	registry.Register(runnertest.Tool{Name: "echo", Result: strings.Repeat("original tool output ", 100)})
+	sink := &canonicalSink{}
+	r := runner.New(captureClient{client: client, sink: sink, t: t}, runner.WithHistorySink(sink), runner.WithTools(registry),
+		runner.WithCompactor(&compact.Tiered{TargetBytes: 1000}), runner.WithCompactKeepRecent(1))
+	result := r.Run(t.Context(), runner.TaskSpec{Prompt: "first question"})
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	result = r.Run(t.Context(), runner.TaskSpec{Prompt: "next question", Context: result.Messages})
+	if result.Err != nil || result.FinalContent != followup {
+		t.Fatalf("next run: %q, %v", result.FinalContent, result.Err)
+	}
+	var responses []string
+	for _, record := range sink.records {
+		if record.Message.Observation.Version != 0 || strings.Contains(record.Message.Content, "Host-generated historical excerpts") {
+			t.Fatal("compaction-generated input was recorded as a canonical observation")
+		}
+		if record.Message.Role == llm.RoleAssistant {
+			responses = append(responses, record.Message.Content)
+		}
+	}
+	if strings.Join(responses, "") != first+second+quoted+followup {
+		t.Fatal("canonical assistant bytes changed or genuine quoted output was filtered")
+	}
+	if len(sink.records[1].Message.ContinuationItems) != 1 || !bytes.Equal(sink.records[1].Message.ContinuationItems[0].Data, native) {
+		t.Fatal("canonical native response was replaced by a compacted projection")
+	}
+	var observedRequests int
+	for _, data := range sink.requests {
+		request, err := runner.UnmarshalHistoryRequest(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, message := range request.Messages {
+			if strings.Contains(message.Content, "Host-generated historical excerpts") {
+				observedRequests++
+				if message.Role != llm.RoleUser || message.Observation.Version != 1 {
+					t.Fatal("prepared excerpt was presented as assistant output or lost provenance")
+				}
+			}
+		}
+	}
+	if observedRequests == 0 {
+		t.Fatal("fixture did not prepare compacted host input")
 	}
 }

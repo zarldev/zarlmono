@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/toolparse"
@@ -69,13 +69,14 @@ type Provider struct {
 }
 
 const (
-	roleUser       = "user"
-	roleAssistant  = "assistant"
-	roleTool       = "tool"
-	modelGPT4oMini = "gpt-4o-mini"
-	typeFunction   = "function"
-	jsonKeyType    = "type"
-	defaultBaseURL = "https://api.openai.com/v1"
+	roleUser                 = "user"
+	roleAssistant            = "assistant"
+	roleTool                 = "tool"
+	modelGPT4oMini           = "gpt-4o-mini"
+	typeFunction             = "function"
+	jsonKeyType              = "type"
+	responseFormatJSONSchema = "json_schema"
+	defaultBaseURL           = "https://api.openai.com/v1"
 )
 
 // NewProvider assembles an OpenAI provider using an already-resolved API key.
@@ -126,6 +127,15 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 		if err != nil {
 			yield(llm.CompletionChunk{}, err)
 			return
+		}
+		_, responses := plan.(responsesPlan)
+		for _, message := range req.Messages {
+			for _, part := range message.Parts {
+				if part.Type == llm.ContentTypeVideo || (responses && part.Type == llm.ContentTypeAudio) {
+					yield(llm.CompletionChunk{}, fmt.Errorf("openai: %w: %s input is not supported by this route", llm.ErrModelNotSupported, part.Type))
+					return
+				}
+			}
 		}
 		switch plan := plan.(type) {
 		case chatCompletionPlan:
@@ -224,6 +234,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	// Providers that don't recognise the key ignore it.
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params,
 		p.extraJSONOptions(req)...)
+	defer stream.Close()
 
 	// OpenAI streams tool calls as deltas keyed by Index — the first
 	// delta for an index carries the ID + Name; subsequent deltas are
@@ -333,7 +344,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		// whichever shape arrives. Any non-zero token field counts as
 		// "real usage data" — zero across all three means the server
 		// either didn't honour include_usage or hasn't emitted it yet.
-		if strings.Contains(evt.RawJSON(), `"usage"`) {
+		if reportedJSONUsage(evt.RawJSON()) {
 			finalUsage = evt.Usage
 			usageSeen = true
 		}
@@ -612,7 +623,7 @@ func (p *Provider) nonStreamCompletion(
 		return
 	}
 
-	usageReported := strings.Contains(completion.RawJSON(), `"usage"`)
+	usageReported := reportedJSONUsage(completion.RawJSON())
 	if len(completion.Choices) > 0 {
 		choice := completion.Choices[0]
 
@@ -719,6 +730,9 @@ func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestO
 	if rf, ok := buildResponseFormat(req.ResponseFormat); ok {
 		opts = append(opts, option.WithJSONSet("response_format", rf))
 	}
+	if tier := requestServiceTier(req.Options); tier != "" {
+		opts = append(opts, option.WithJSONSet("service_tier", tier))
+	}
 	return opts
 }
 
@@ -756,8 +770,8 @@ func buildResponseFormat(rf llm.ResponseFormat) (map[string]any, bool) {
 			inner["strict"] = true
 		}
 		return map[string]any{
-			"type":        "json_schema",
-			"json_schema": inner,
+			jsonKeyType:              responseFormatJSONSchema,
+			responseFormatJSONSchema: inner,
 		}, true
 	default:
 		return nil, false

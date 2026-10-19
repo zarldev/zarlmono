@@ -7,7 +7,11 @@ import (
 	"strings"
 )
 
-const keyEnter = "Enter"
+const (
+	keyEnter       = "Enter"
+	keyEscape      = "Escape"
+	composerPrompt = "\n› " // Match the unframed main composer, not the intro input.
+)
 
 func (h *harness) walkthrough(ctx context.Context) error {
 	if runtime.GOOS == "darwin" {
@@ -42,15 +46,22 @@ func (h *harness) walkthrough(ctx context.Context) error {
 		text string
 		keys []string
 	}{
-		{"build mode", []string{keyEnter}},
+		{composerPrompt, []string{keyEnter}},
 		{"[settings]", []string{"C-s"}},
 		{"key/sign-in", []string{"Down", keyEnter}},
 		{"vault unlock", []string{keyEnter, "smoke-secret", keyEnter}},
 		{"confirm", []string{passphrase, keyEnter}},
 		{"openai key saved (global)", []string{passphrase, keyEnter}},
 		// Wait between Escapes; a burst can decode as Alt+Escape.
-		{"esc done", []string{"Escape"}},
-		{"build mode", []string{"Escape"}},
+		{"esc done", []string{keyEscape}},
+		{composerPrompt, []string{keyEscape}},
+		{"session  overview", []string{"C-l"}},
+		// The dashboard retains the composer; wait for the main header to return.
+		{"New session", []string{keyEscape}},
+		{"no structured plan yet", []string{"C-p"}},
+		{"no saved plans", []string{"Tab"}},
+		{"no structured plan yet", []string{"Tab"}},
+		{composerPrompt, []string{keyEscape}},
 	}
 	for _, step := range steps {
 		if err := h.step(ctx, step.text, step.keys...); err != nil {
@@ -66,7 +77,7 @@ func (h *harness) walkthrough(ctx context.Context) error {
 	if _, err := h.wait(ctx, "contextual shortcuts"); err != nil {
 		return err
 	}
-	if err := h.step(ctx, "build mode", "Escape"); err != nil {
+	if err := h.step(ctx, composerPrompt, keyEscape); err != nil {
 		return err
 	}
 	if err := h.quit(ctx); err != nil {
@@ -124,7 +135,7 @@ func (h *harness) walkthrough(ctx context.Context) error {
 	if strings.Contains(screen, "skip vault") {
 		return errors.New("startup vault prompt still advertises skipping locked credentials")
 	}
-	if err := h.keys(ctx, "Escape"); err != nil {
+	if err := h.keys(ctx, keyEscape); err != nil {
 		return err
 	}
 	return h.waitForShutdown(ctx)

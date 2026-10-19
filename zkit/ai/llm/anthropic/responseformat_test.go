@@ -92,7 +92,7 @@ func captureAnthropicRequest(t *testing.T, req llm.CompletionRequest) map[string
 	}))
 	t.Cleanup(server.Close)
 
-	provider := anthropic.NewProvider("test-key", anthropic.WithBaseURL(server.URL))
+	provider := anthropic.NewProvider("test-key", anthropic.WithBaseURL(server.URL), anthropic.WithModel("claude-sonnet-4-5"))
 
 	req.Messages = []llm.Message{{Role: llm.RoleUser, Content: "hi"}}
 	for _, completeErr := range provider.Complete(t.Context(), req) {

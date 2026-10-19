@@ -73,8 +73,5 @@ func (s *skillsItem) render(width int) []string {
 			})...)
 		}
 	}
-	if s.nested {
-		lines = prefixLines(lines, nestPad)
-	}
 	return lines
 }

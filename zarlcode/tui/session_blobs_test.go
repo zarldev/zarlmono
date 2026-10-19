@@ -53,7 +53,12 @@ func TestRunStateUsageSnapshotRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(blob, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(decoded, snap) {
-		t.Fatalf("usage round trip=%+v want %+v", decoded, snap)
+	want := snap
+	want.CostAccountingVersion = 1
+	want.CostUSD, want.CostParentUSD, want.CacheSavedUSD = 0, 0, 0
+	want.LegacyCostUSD, want.LegacyCostParentUSD, want.LegacyCacheSavedUSD = 1.23, 1, .45
+	want.CacheDiagnosticsVersion, want.CacheDiagnosticsLegacy = 1, true
+	if !reflect.DeepEqual(decoded, want) {
+		t.Fatalf("usage round trip=%+v want %+v", decoded, want)
 	}
 }

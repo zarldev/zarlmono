@@ -124,7 +124,11 @@ func glueRenders(prefix, trail string) string {
 	}
 }
 
-func trimGlamourMargins(s string) string { return strings.Trim(s, " \t\n") }
+// Trim only whole blank edge rows. Horizontal document margins must survive
+// cached fragment composition so the transcript can remove its known inset once.
+func trimGlamourMargins(s string) string {
+	return strings.Join(trimBlankEdges(strings.Split(s, "\n")), "\n")
+}
 
 // findSafeMarkdownBoundary returns the byte offset of the end of the
 // latest safe boundary in content — content[:boundary] is a valid

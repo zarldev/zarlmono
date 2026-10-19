@@ -27,6 +27,11 @@ application by the UI. See [runtime admission](https://github.com/zarldev/zarlmo
 [context transitions](https://github.com/zarldev/zarlmono/blob/main/zarlcode/engine/context_cache.go), and
 [event barriers](https://github.com/zarldev/zarlmono/blob/main/zarlcode/tui/teasink/applied_barrier.go).
 
+Turn-dispatch reservations allow process-manager-owned background commands to
+continue. They still exclude active turns and cancellation cleanup, and cannot
+restore context or targets. Rewind and session activation use the stricter
+whole-runtime reservation, which also requires background processes to stop.
+
 ## Normal interactive path
 
 The following steps describe a storage-backed turn with exact checkpoint
@@ -71,7 +76,9 @@ below.
    afterward could accidentally adopt another writer's changes. The UI releases
    operation ownership when it applies the successful acknowledgment. Automatic
    queue promotion occurs only on the eligible success path, not after a failed
-   turn or a save recovery. See [save ordering](https://github.com/zarldev/zarlmono/blob/main/zarlcode/tui/draft_persist.go),
+   turn, cancellation, or save recovery. After an interruption, queued input stays
+   queued until explicit Enter; an unsent composer draft is not consumed when
+   sending that queued input. See [save ordering](https://github.com/zarldev/zarlmono/blob/main/zarlcode/tui/draft_persist.go),
    [snapshot construction](https://github.com/zarldev/zarlmono/blob/main/zarlcode/tui/session_persist.go), and
    [transaction receipts](https://github.com/zarldev/zarlmono/blob/main/zarlcode/tui/local_write_receipt.go).
 

@@ -40,7 +40,7 @@ func TestHTTPResponseRejectsTrailingOrOversizeBody(t *testing.T) {
 		body string
 	}{
 		{name: "trailing JSON", body: `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}} {}`},
-		{name: "over limit", body: `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}` + strings.Repeat(" ", 4*1024*1024)},
+		{name: "over limit", body: `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}` + strings.Repeat(" ", 16*1024*1024)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -81,7 +81,10 @@ type sseCompleted struct {
 }
 
 type sseResponse struct {
-	Status string          `json:"status"`
+	Status            string `json:"status"`
+	IncompleteDetails struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
 	Usage  *sseUsage       `json:"usage"`
 	Output []sseOutputItem `json:"output"`
 }
@@ -99,6 +102,8 @@ type sseUsageInputTokenDetails struct {
 
 type sseFailed struct {
 	Type     string `json:"type"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
 	Response struct {
 		Error struct {
 			Message string `json:"message"`
@@ -421,6 +426,9 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		}
 		if ev.Type == "response.incomplete" || ev.Response.Status == "incomplete" {
 			finish = llm.FinishReasons.LENGTH
+			if ev.Response.IncompleteDetails.Reason == "content_filter" {
+				finish = llm.FinishReasons.CONTENTFILTER
+			}
 		}
 		chunk := llm.CompletionChunk{FinishReason: finish}
 		for index, output := range ev.Response.Output {
@@ -441,11 +449,14 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 			s.stopped = true
 		}
 		return true
-	case "response.failed":
+	case "response.failed", "error":
 		var ev sseFailed
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			s.err = fmt.Errorf("sse failed: %w", err)
 			return true
+		}
+		if env.Type == "error" {
+			ev.Response.Error.Code, ev.Response.Error.Message = ev.Code, ev.Message
 		}
 		msg := ev.Response.Error.Message
 		if msg == "" {
@@ -455,7 +466,7 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 		// *llm.RateLimitError so the runner's retry ladder backs off and
 		// retries instead of terminating the turn. Quota/permanent codes
 		// deliberately fall through to the plain terminal error below.
-		if ev.Response.Error.Code == "rate_limited" {
+		if ev.Response.Error.Code == "rate_limited" || ev.Response.Error.Code == "rate_limit_exceeded" {
 			s.err = &llm.RateLimitError{Message: "codex response failed: " + msg, Retryable: true}
 			return true
 		}

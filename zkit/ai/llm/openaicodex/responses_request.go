@@ -46,6 +46,7 @@ type responsesRequest struct {
 	Store             bool             `json:"store"`
 	ParallelToolCalls bool             `json:"parallel_tool_calls,omitempty"`
 	PromptCacheKey    string           `json:"prompt_cache_key,omitempty"`
+	ServiceTier       string           `json:"service_tier,omitempty"`
 }
 
 // inputItem is one entry in the responsesRequest.Input array. The
@@ -151,7 +152,7 @@ func responseFormatToText(rf llm.ResponseFormat) *textFormat {
 // tool-call events. Reasoning effort, text verbosity, and tool_choice
 // can be overridden via req.Options (keys: "reasoning_effort",
 // "text_verbosity", "tool_choice", "parallel_tool_calls",
-// "prompt_cache_key").
+// "prompt_cache_key", "service_tier"). Fast uses Codex's priority wire tier.
 func buildRequest(req llm.CompletionRequest, model, instructions string, suppressDefaultEffort ...bool) responsesRequest {
 	rr := responsesRequest{
 		Model:        model,
@@ -206,8 +207,17 @@ func buildRequest(req llm.CompletionRequest, model, instructions string, suppres
 	if tc := optionString(req.Options, "tool_choice"); tc != "" {
 		rr.ToolChoice = tc
 	}
+	if parallel, ok := req.Options["parallel_tool_calls"].(bool); ok {
+		rr.ParallelToolCalls = parallel
+	}
 	if cacheKey := optionString(req.Options, "prompt_cache_key"); cacheKey != "" {
 		rr.PromptCacheKey = cacheKey
+	}
+	switch tier := strings.TrimSpace(optionString(req.Options, "service_tier")); tier {
+	case "fast":
+		rr.ServiceTier = "priority"
+	case "default", "priority", "ultrafast":
+		rr.ServiceTier = tier
 	}
 	return rr
 }

@@ -6,6 +6,7 @@ import (
 	"iter"
 
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
+	boardtools "github.com/zarldev/zarlmono/zkit/agent/tools/board"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -16,47 +17,64 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/search"
 )
 
-// PlanAllows reports whether a tool is callable in PLAN mode — pure read /
-// explore / research, plus the path-locked save_plan carve-out so plan mode can
-// still produce a markdown artifact. Everything else (bash, write,
-// write_append, edit) is blocked: failing closed is the right
-// default for a mode whose whole purpose is "don't change anything".
-func PlanAllows(name tools.ToolName) bool {
-	switch name {
-	case code.ToolNameRead,
-		code.ToolNameGrep,
-		code.ToolNameLs,
-		code.ToolNameGlob,
-		code.ToolNameFileMap,
-		code.ToolNameRetrieveCode,
-		code.ToolNameSavePlan,
-		code.ToolNameSavePlanAppend,
-		// update_plan mutates only the structured plan store, not the workspace,
-		// and the tool's own contract is to seed the step list at PLAN-mode end —
-		// so it's callable here even though everything file-mutating is blocked.
-		code.ToolNameUpdatePlan,
-		search.ToolName,
-		fetch.ToolName,
-		ToolNameLoadSkill,
-		ToolNameListSkills,
-		ToolNameListAgents,
-		ToolNameListInstructions,
-		ToolNameLoadInstruction,
-		programtools.ToolName,
-		computertools.ToolNameComputerObserve,
-		dynamic.ToolNameMCPList,
-		code.ToolNameBashOutput,
-		code.ToolNameListProcesses,
-		spawn.ToolNameAgentSpawn,
-		spawn.ToolNameAgentStatus,
-		spawn.ToolNameAgentAwait,
-		spawn.ToolNameAgentStop,
-		ToolNameSetMode,
-		spawn.ToolNameListAgentTasks:
-		return true
-	default:
-		return false
+var planAllowedToolNames = [...]tools.ToolName{
+	code.ToolNameRead,
+	code.ToolNameGrep,
+	code.ToolNameLs,
+	code.ToolNameGlob,
+	code.ToolNameFileMap,
+	code.ToolNameRetrieveCode,
+	code.ToolNameSavePlan,
+	code.ToolNameSavePlanAppend,
+	// update_plan mutates only the structured plan store, not the workspace,
+	// and the tool's own contract is to seed the step list at PLAN-mode end.
+	code.ToolNameUpdatePlan,
+	search.ToolName,
+	fetch.ToolName,
+	ToolNameLoadSkill,
+	ToolNameListSkills,
+	ToolNameListAgents,
+	ToolNameListInstructions,
+	ToolNameLoadInstruction,
+	programtools.ToolName,
+	computertools.ToolNameComputerObserve,
+	dynamic.ToolNameMCPList,
+	code.ToolNameBashOutput,
+	code.ToolNameListProcesses,
+	spawn.ToolNameAgentSpawn,
+	spawn.ToolNameAgentStatus,
+	spawn.ToolNameAgentAwait,
+	spawn.ToolNameAgentStop,
+	ToolNameSetMode,
+	spawn.ToolNameListAgentTasks,
+	// Host-bound board tools share bounded in-process findings and can wake
+	// existing peers; they grant no workspace, process, or network authority.
+	boardtools.PostName,
+	boardtools.ListName,
+	boardtools.ReadName,
+}
+
+var planAllowedTools = func() map[tools.ToolName]struct{} {
+	allowed := make(map[tools.ToolName]struct{}, len(planAllowedToolNames))
+	for _, name := range planAllowedToolNames {
+		allowed[name] = struct{}{}
 	}
+	return allowed
+}()
+
+// PlanAllows reports whether a tool is callable in PLAN mode: inspection,
+// research, bounded host collaboration, and the explicit planning-artifact
+// exceptions. Workspace mutation and shell execution remain blocked. Host names
+// are also reserved against remote impersonation, even when locally inactive.
+func PlanAllows(name tools.ToolName) bool {
+	_, ok := planAllowedTools[name]
+	return ok
+}
+
+// semanticHostToolNames returns the stable host names that must remain reserved
+// even when their optional local implementation is disabled for this turn.
+func semanticHostToolNames() []tools.ToolName {
+	return planAllowedToolNames[:]
 }
 
 // modeFilteredSource wraps a tools.Source and, when plan() reports PLAN mode,
@@ -105,6 +123,42 @@ func (s *modeFilteredSource) Execute(ctx context.Context, c tools.ToolCall) (*to
 
 // ForgetTask forwards task lifecycle cleanup through the mode filter.
 func (s *modeFilteredSource) ForgetTask(id taskscope.ID) {
+	if forgetter, ok := s.inner.(interface{ ForgetTask(taskscope.ID) }); ok {
+		forgetter.ForgetTask(id)
+	}
+}
+
+// reservedRemoteSource prevents an external source from claiming stable host
+// names. Local tools are composed separately and are never filtered here.
+type reservedRemoteSource struct {
+	inner tools.Source
+}
+
+func newReservedRemoteSource(inner tools.Source) tools.Source {
+	return &reservedRemoteSource{inner: inner}
+}
+
+func (s *reservedRemoteSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
+	return func(yield func(tools.Tool) bool) {
+		for tool := range s.inner.Tools(ctx) {
+			if PlanAllows(tool.Definition().Name) {
+				continue
+			}
+			if !yield(tool) {
+				return
+			}
+		}
+	}
+}
+
+func (s *reservedRemoteSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	if PlanAllows(call.ToolName) {
+		return nil, tools.Permission(call.ToolName.String(), "tool name is reserved by the host")
+	}
+	return s.inner.Execute(ctx, call)
+}
+
+func (s *reservedRemoteSource) ForgetTask(id taskscope.ID) {
 	if forgetter, ok := s.inner.(interface{ ForgetTask(taskscope.ID) }); ok {
 		forgetter.ForgetTask(id)
 	}

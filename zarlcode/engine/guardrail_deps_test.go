@@ -9,7 +9,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
-	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -79,9 +78,9 @@ func TestImprovementAndSkillHintsDisableViaSettings(t *testing.T) {
 	s := newGuardrailSettings(t)
 	live := engine.NewLiveRunner(nil, ws, "local", engine.WithSettings(s))
 
-	// On by default: nothing disabled.
-	if d := live.GuardrailDeps(t.Context(), false).Disabled; len(d) != 0 {
-		t.Fatalf("default Disabled = %v, want empty", d)
+	// Improvement and skill hints stay enabled; only shell policy defaults off.
+	if d := live.GuardrailDeps(t.Context(), false).Disabled; !slices.Equal(d, []string{guardrails.NameShellPolicy}) {
+		t.Fatalf("default Disabled = %v, want only shell_policy", d)
 	}
 
 	for _, kv := range []struct{ key, name string }{
@@ -123,6 +122,7 @@ func TestShellGuardLenientModes(t *testing.T) {
 	}
 
 	// auto: lenient only when the sandbox is off.
+	setGuard("auto")
 	setSandbox("on")
 	if live.GuardrailDeps(t.Context(), false).ShellLenient {
 		t.Fatal("auto + sandbox on → want strict (ShellLenient false)")
@@ -171,7 +171,7 @@ func TestZarlcodeGuardrailDepsDoNotDefaultLoadGoVerifier(t *testing.T) {
 	}
 }
 
-// agent_spawn carries a per-task fanout cap (default 8) so a task can't fan out
+// agent_spawn carries a per-task fanout cap (default 80) so a task can't fan out
 // sub-agents unbounded; a 0 setting removes it.
 func TestSpawnFanoutCapApplied(t *testing.T) {
 	ws, err := code.NewWorkspace(t.TempDir())
@@ -181,9 +181,9 @@ func TestSpawnFanoutCapApplied(t *testing.T) {
 	s := newGuardrailSettings(t)
 	live := engine.NewLiveRunner(nil, ws, "local", engine.WithSettings(s))
 
-	// Default: capped at the standard 8.
-	if got := live.GuardrailDeps(t.Context(), false).FanoutLimits[spawn.ToolNameAgentSpawn]; got != coderunner.StandardSpawnFanoutCap {
-		t.Fatalf("default spawn cap = %d, want %d", got, coderunner.StandardSpawnFanoutCap)
+	// Default: capped at the application budget of 80.
+	if got := live.GuardrailDeps(t.Context(), false).FanoutLimits[spawn.ToolNameAgentSpawn]; got != 80 {
+		t.Fatalf("default spawn cap = %d, want 80", got)
 	}
 
 	// Override to a custom cap.

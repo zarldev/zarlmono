@@ -5,13 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
@@ -34,7 +32,7 @@ type planEntry struct {
 
 // planDialog is the read-only plan overlay (ctrl+p). It has two tabs:
 //
-//	live  — the structured plan from update_plan (centered dialog)
+//	live  — progress, a selectable step outline, and focused step review
 //	saved — a full-screen split-pane browser for .zarlcode/plans/ files
 //
 // Tab switches between views; in saved view ↑↓ picks a plan and previews its
@@ -54,20 +52,16 @@ type planDialog struct {
 	height         int
 	liveScroll     int // live-plan body scroll offset
 	liveViewport   int
+	liveWidth      int // actual step wrapping used by both painting and navigation
+	liveCursor     int
+	liveSteps      []code.PlanStep // owned text snapshot detects replacement, not status changes
 }
 
 func newPlanDialog(plan *code.Plan, workspace string) *planDialog {
-	d := &planDialog{plan: plan, workspace: workspace, view: planViewLive}
+	d := &planDialog{plan: plan, workspace: workspace, view: planViewLive, liveWidth: planWrapWidth}
 	d.loadEntries()
+	d.syncLivePlan()
 	return d
-}
-
-func (d *planDialog) planSummary() string {
-	if d.plan == nil || d.plan.IsEmpty() {
-		return "no active plan"
-	}
-	done, doing, pending := planCounts(*d.plan)
-	return fmt.Sprintf("%d steps · %d done · %d active · %d pending", len(d.plan.Steps), done, doing, pending)
 }
 
 func (d *planDialog) savedSummary() string {
@@ -108,7 +102,7 @@ func (d *planDialog) loadEntries() {
 	}
 }
 
-func (d *planDialog) fullScreen() bool { return d.view == planViewSaved }
+func (d *planDialog) fullScreen() bool { return true }
 
 func (d *planDialog) handleKey(msg tea.KeyPressMsg) action {
 	switch msg.String() {
@@ -126,22 +120,7 @@ func (d *planDialog) handleKey(msg tea.KeyPressMsg) action {
 	}
 
 	if d.view == planViewLive {
-		lines := d.liveLines(planWrapWidth)
-		maxScroll := max(0, len(lines)-max(1, d.liveViewport))
-		switch msg.String() {
-		case "up", "k":
-			d.liveScroll = max(0, d.liveScroll-1)
-		case "down", "j":
-			d.liveScroll = min(maxScroll, d.liveScroll+1)
-		case "pgup":
-			d.liveScroll = max(0, d.liveScroll-max(1, d.liveViewport-1))
-		case "pgdown":
-			d.liveScroll = min(maxScroll, d.liveScroll+max(1, d.liveViewport-1))
-		case "home", "g":
-			d.liveScroll = 0
-		case "end", "G":
-			d.liveScroll = maxScroll
-		}
+		d.handleLiveKey(msg.String())
 		return actionNone{}
 	}
 
@@ -158,12 +137,12 @@ func (d *planDialog) handleKey(msg tea.KeyPressMsg) action {
 				d.tryPreview()
 			}
 		case "pgup":
-			d.scroll -= max(1, d.height-4)
+			d.scroll -= max(1, d.height-1)
 			if d.scroll < 0 {
 				d.scroll = 0
 			}
 		case "pgdown":
-			d.scroll += max(1, d.height-4)
+			d.scroll += max(1, d.height-1)
 		case "home", "g":
 			d.scroll = 0
 		}
@@ -178,44 +157,6 @@ func (d *planDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	case planViewSaved:
 		d.drawSaved(scr, area)
 	}
-}
-
-// ─── live tab ───────────────────────────────────────────────────────────
-
-func (d *planDialog) drawLive(scr uv.Screen, area uv.Rectangle) {
-	wrap := planWrapForArea(area)
-	lines := d.liveLines(wrap)
-	width := min(planWrapWidth+8, max(planMinBodyWidth+4, area.Dx()))
-	height := min(max(8, len(lines)+4), area.Dy())
-	lay, ok := drawDialogPane(scr, area, "planning pane", width, height, palette.PlanMode, palette.PlanMode)
-	if !ok {
-		return
-	}
-	d.liveViewport = lay.Body.Dy()
-	maxScroll := max(0, len(lines)-d.liveViewport)
-	d.liveScroll = min(max(d.liveScroll, 0), maxScroll)
-	summary := d.planSummary()
-	if maxScroll > 0 {
-		stepCount := 0
-		if d.plan != nil {
-			stepCount = len(d.plan.Steps)
-		}
-		summary = fmt.Sprintf("%d steps · %s", stepCount, helpScrollPosition(d.liveScroll, d.liveViewport, len(lines)))
-	}
-	context := overlayTopBar("plan", []string{"live", "saved"}, int(planViewLive), summary, lay.Context.Dx())
-	drawLine(scr, lay.Context, context)
-	for i, line := range lines[d.liveScroll:min(len(lines), d.liveScroll+d.liveViewport)] {
-		drawLine(scr, uv.Rect(lay.Body.Min.X, lay.Body.Min.Y+i, lay.Body.Dx(), 1), ansi.Truncate(line, lay.Body.Dx(), "…"))
-	}
-	drawLine(scr, lay.Footer, palette.Muted.On(planFooterLine()))
-}
-
-func (d *planDialog) liveLines(width int) []string {
-	var p code.Plan
-	if d.plan != nil {
-		p = *d.plan
-	}
-	return planLines(p, width)
 }
 
 // ─── saved tab (full-screen split pane) ─────────────────────────────────
@@ -241,58 +182,71 @@ func (d *planDialog) tryPreview() {
 }
 
 func (d *planDialog) drawSaved(scr uv.Screen, area uv.Rectangle) {
-	l, ok := drawUtilitySplitPane(scr, area, fileViewerNavW)
-	if !ok {
+	l := drawDetailView(scr, area, "plan", []string{"live", "saved"}, int(d.view))
+	if l.Body.Empty() {
 		return
 	}
-	d.height = l.Body.Dy()
-	left := overlayTopBar("plan", []string{"live", "saved"}, int(d.view), d.savedSummary(), l.Context.Dx())
-	drawOverlayContext(scr, l, left, palette.Border)
-	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y, l.Nav.Dx(), 1), palette.Muted.On(" saved plans · newest first"))
-	drawLine(scr, uv.Rect(l.Nav.Min.X, l.Nav.Min.Y+1, l.Nav.Dx(), 1), palette.Border.On(strings.Repeat("─", l.Nav.Dx())))
-	navY := l.Nav.Min.Y + 2
-	navH := max(0, l.Nav.Dy()-2)
+	nav, detail := l.Body, l.Body
+	if l.Body.Dx() >= 72 {
+		navW := min(fileViewerNavW, l.Body.Dx()/3)
+		nav.Max.X = nav.Min.X + navW - 1
+		detail.Min.X += navW + 3
+		for y := l.Body.Min.Y; y < l.Body.Max.Y; y++ {
+			drawLine(scr, uv.Rect(l.Body.Min.X+navW, y, 1, 1), palette.Border.On("│"))
+		}
+	} else {
+		// Stack a small, cursor-following list above the preview on narrow screens.
+		nav.Max.Y = nav.Min.Y + min(l.Body.Dy(), max(2, min(4, l.Body.Dy()/3)))
+		detail.Min.Y = min(l.Body.Max.Y, nav.Max.Y+1)
+	}
+	drawLine(scr, uv.Rect(nav.Min.X, nav.Min.Y, nav.Dx(), 1), sidebarHeading("saved plans")+palette.Subtle.On(" · newest first"))
+	navY, navH := nav.Min.Y+1, max(0, nav.Dy()-1)
 	if len(d.entries) == 0 {
-		drawLine(scr, uv.Rect(l.Nav.Min.X, navY, l.Nav.Dx(), 1), palette.Muted.On("  no saved plans"))
+		drawLine(scr, uv.Rect(nav.Min.X, navY, nav.Dx(), min(1, navH)), palette.Muted.On("no saved plans"))
 	} else {
 		start, end := windowAroundCursor(d.cursor, len(d.entries), navH)
 		for i := start; i < end; i++ {
-			screenY := navY + (i - start)
-			label := d.entries[i].name + palette.Subtle.On(" · "+d.entries[i].modTime.Format("2006-01-02 15:04"))
-			drawListRow(scr, uv.Rect(l.Nav.Min.X, screenY, l.Nav.Dx(), 1), label, i == d.cursor, true)
+			label := d.entries[i].name
+			if i == d.cursor {
+				label = sidebarHeading(label)
+			} else {
+				label = palette.Muted.On(label)
+			}
+			drawListRow(scr, uv.Rect(nav.Min.X, navY+i-start, nav.Dx(), 1), label, i == d.cursor, true)
 		}
 	}
-	if d.previewContent != "" {
-		d.drawPlanContent(scr, l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), l.Body.Max.Y)
-	} else {
-		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y, l.Detail.Dx(), 1), headerLine("saved plan preview", l.Detail.Dx(), palette.Primary.On))
-		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+1, l.Detail.Dx(), 1), palette.Muted.On(" status: unavailable"))
-		drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+2, l.Detail.Dx(), 1), palette.Subtle.On(" choose a saved plan to preview its markdown"))
+	d.height = max(0, detail.Dy()-2)
+	if !detail.Empty() {
+		if d.previewContent != "" {
+			d.drawPlanContent(scr, detail.Min.X, detail.Min.Y, detail.Dx(), detail.Max.Y)
+		} else {
+			drawLine(scr, uv.Rect(detail.Min.X, detail.Min.Y, detail.Dx(), 1), sidebarHeading("saved plan preview"))
+			if detail.Dy() > 1 {
+				drawLine(scr, uv.Rect(detail.Min.X, detail.Min.Y+1, detail.Dx(), 1), palette.Muted.On("choose a saved plan to preview"))
+			}
+		}
 	}
-	if l.Footer.Dx() < 60 {
-		footer := keyLegend(keyHint{"↑↓", "move"}, keyHint{"tab", "live"}, keyHint{"esc", "close"})
-		drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
-		return
+	hints := "esc close · tab live · ↑↓ plans"
+	if l.Footer.Dx() >= 64 {
+		hints = "ctrl+p / esc close · tab live · ↑↓ plans · pgup/pgdn scroll"
 	}
-	footer := compactFooterHints(
-		keyHint{"↑↓/jk", "navigate"},
-		keyHint{"pgup/pgdn", "scroll"},
-		keyHint{"tab", "switch view"},
-		keyHint{"esc", "close"},
-	)
-	drawPaneRow(scr, l.Footer, palette.Subtle.On(" "+footer), "")
+	drawDetailFooter(scr, l.Footer, hints, d.savedSummary())
 }
 
 func (d *planDialog) drawPlanContent(scr uv.Screen, x, y, w int, footerY int) {
 	cw := w - scrollbarWidth
-	bodyW := min(cw-4, maxContentWidth)
+	// The standalone saved-plan preview retains its own reading measure.
+	const planPreviewWidth = 90
+	bodyW := max(1, min(cw, planPreviewWidth))
 	bodyLines := renderMarkdownBlock(bodyW, d.previewContent,
 		withCacheKey("plan-preview:"+d.previewName),
 	)
 	relPath, _ := filepath.Rel(d.workspace, d.previewName)
 	relPath = strings.TrimPrefix(relPath, code.PlansDir+"/")
-	drawLine(scr, uv.Rect(x, y, cw, 1), headerLine(relPath, cw, palette.Primary.On))
-	drawLine(scr, uv.Rect(x, y+1, cw, 1), palette.Subtle.On(" status: loaded · source: saved plan markdown"))
+	drawLine(scr, uv.Rect(x, y, cw, 1), sidebarHeading(relPath))
+	if footerY-y > 1 {
+		drawLine(scr, uv.Rect(x, y+1, cw, 1), palette.Subtle.On("source: saved plan markdown"))
+	}
 	y += 2
 	contentH := footerY - y
 	if contentH <= 0 {
@@ -301,64 +255,13 @@ func (d *planDialog) drawPlanContent(scr uv.Screen, x, y, w int, footerY int) {
 	d.scroll = clampScrollOffset(d.scroll, len(bodyLines), contentH)
 	for i := d.scroll; i < len(bodyLines) && (i-d.scroll) < contentH; i++ {
 		screenY := y + (i - d.scroll)
-		drawLine(scr, uv.Rect(x, screenY, cw, 1), "  "+bodyLines[i])
+		drawLine(scr, uv.Rect(x, screenY, cw, 1), bodyLines[i])
 	}
 	drawPaneScrollbar(scr, x+w-1, y, contentH, len(bodyLines), d.scroll)
 }
 
-// planWrapWidth caps step-text wrapping so a long step doesn't stretch the
-// centered box across an ultrawide terminal.
-const (
-	planWrapWidth    = 64
-	planMinBodyWidth = 42
-)
-
-func planWrapForArea(area uv.Rectangle) int {
-	if area.Dx() <= 0 {
-		return planWrapWidth
-	}
-	return min(planWrapWidth, max(24, area.Dx()-8))
-}
-
-// planLines renders the plan as status-coloured step rows (wrapped to width),
-// a counts line, and the optional change explanation. Empty plan → a dim hint.
-func planLines(p code.Plan, width int) []string {
-	if p.IsEmpty() {
-		return []string{
-			palette.PlanMode.On("no structured plan yet"),
-			palette.Subtle.On("switch to PLAN with shift+tab, then ask for a plan"),
-			palette.Muted.On("the agent fills this pane via update_plan"),
-		}
-	}
-	var out []string
-	done, doing, pending := planCounts(p)
-	out = append(out,
-		palette.PlanMode.On("current plan"),
-		planProgressLine(done, len(p.Steps), width),
-		palette.Muted.On(fmt.Sprintf(
-			"%d steps · %d done · %d in progress · %d pending", len(p.Steps), done, doing, pending)),
-		"",
-	)
-
-	numW := len(strconv.Itoa(len(p.Steps)))
-	for i, s := range p.Steps {
-		glyph, style := planStepDecor(s.Status)
-		prefix := fmt.Sprintf("%*d. %s ", numW, i+1, glyph)
-		out = append(out, renderPlain(width, s.Text,
-			withFirstPrefix(prefix, strings.Repeat(" ", ansi.StringWidth(prefix))),
-			withStyle(style),
-		)...)
-	}
-	if p.Explanation != "" {
-		out = append(out, "")
-		out = append(out, renderContentBlock(width, contentBlock{
-			kind:  contentPlain,
-			text:  "latest update: " + p.Explanation,
-			style: palette.Subtle.On,
-		})...)
-	}
-	return out
-}
+// planWrapWidth retains a readable step measure on wide terminals.
+const planWrapWidth = 90
 
 func planCounts(p code.Plan) (int, int, int) {
 	done, doing, pending := 0, 0, 0
@@ -381,12 +284,8 @@ func planProgressLine(done, total, width int) string {
 	}
 	barW := min(20, max(8, width-18))
 	filled := done * barW / total
-	bar := palette.PlanMode.On(strings.Repeat("█", filled)) + palette.Muted.On(strings.Repeat("░", barW-filled))
+	bar := palette.Fg.On(strings.Repeat("━", filled)) + palette.Border.On(strings.Repeat("─", barW-filled))
 	return fmt.Sprintf("%s %s", bar, palette.Subtle.On(fmt.Sprintf("%d/%d done", done, total)))
-}
-
-func planFooterLine() string {
-	return keyLegend(keyHint{"ctrl+p", "close"}, keyHint{"esc", "close"}, keyHint{"q", "close"}, keyHint{"tab", "saved plans"}, keyHint{label: "updates live"})
 }
 
 // planStepDecor maps a step status to its marker glyph + colour styler.

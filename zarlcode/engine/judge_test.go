@@ -45,7 +45,12 @@ func TestDecomposeJudgeProvider(t *testing.T) {
 		}
 	}
 
-	// Off (default) → nil: the guardrail keeps its deterministic path.
+	// The default judge is enabled, falling back to active without credentials.
+	if got := s.DecomposeJudgeProvider(ctx, active, spec); got != llm.Provider(active) {
+		t.Fatalf("default judge: got %T, want active-provider fallback", got)
+	}
+	// Explicit off keeps the deterministic path.
+	set(prefs.KeyDecomposeJudge, "off")
 	if got := s.DecomposeJudgeProvider(ctx, active, spec); got != nil {
 		t.Fatalf("judge off: got %T, want nil", got)
 	}
@@ -87,8 +92,11 @@ func TestGuardrailDepsDecomposeJudge(t *testing.T) {
 		t.Fatal("no settings handle: judge armed, want nil")
 	}
 
-	// Settings present but decompose_judge off (default) → still nil.
+	// Settings present with an explicit decompose_judge off → still nil.
 	s := newJudgeTestSettings(t)
+	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyDecomposeJudge, "off"); err != nil {
+		t.Fatal(err)
+	}
 	live = engine.NewLiveRunner(fakeJudgeProvider{}, ws, "local", engine.WithSettings(s))
 	if live.Inspect(t.Context()).Guardrails.DecomposeJudge != nil {
 		t.Fatal("judge off: judge armed, want nil")

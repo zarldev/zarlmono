@@ -39,6 +39,7 @@ type entryKindsContainer struct {
 	ENTRYNOTICE           EntryKind
 	ENTRYINPUTADMISSION   EntryKind
 	ENTRYINPUTWAIT        EntryKind
+	ENTRYCONTROLCHANGE    EntryKind
 }
 
 // EntryKinds is a main entry point using the EntryKind type.
@@ -81,6 +82,9 @@ var EntryKinds = entryKindsContainer{
 	ENTRYINPUTWAIT: EntryKind{
 		entryKind: entryInputWait,
 	},
+	ENTRYCONTROLCHANGE: EntryKind{
+		entryKind: entryControlChange,
+	},
 }
 
 // invalidEntryKind is an invalid sentinel value for EntryKind
@@ -104,6 +108,7 @@ func (e entryKindsContainer) allSlice() []EntryKind {
 		EntryKinds.ENTRYNOTICE,
 		EntryKinds.ENTRYINPUTADMISSION,
 		EntryKinds.ENTRYINPUTWAIT,
+		EntryKinds.ENTRYCONTROLCHANGE,
 	}
 }
 
@@ -210,6 +215,7 @@ var entryKindsNameMap = map[string]EntryKind{
 	"notice":            EntryKinds.ENTRYNOTICE,
 	"input_admission":   EntryKinds.ENTRYINPUTADMISSION,
 	"input_wait":        EntryKinds.ENTRYINPUTWAIT,
+	"control_change":    EntryKinds.ENTRYCONTROLCHANGE,
 }
 
 // stringToEntryKind converts a string representation of an enum value into its EntryKind representation
@@ -263,6 +269,7 @@ var validEntryKinds = map[EntryKind]bool{
 	EntryKinds.ENTRYNOTICE:           true,
 	EntryKinds.ENTRYINPUTADMISSION:   true,
 	EntryKinds.ENTRYINPUTWAIT:        true,
+	EntryKinds.ENTRYCONTROLCHANGE:    true,
 }
 
 // IsValid checks whether the EntryKinds value is valid.
@@ -363,7 +370,7 @@ func (e *EntryKind) UnmarshalYAML(by []byte) error {
 }
 
 // entrykindNames is a constant string slice containing all enum values cononical absolute names
-const entrykindNames = "user_messagequeued_userassistant_messagereasoningtool_calldiffplanskillssubagentnoticeinput_admissioninput_wait"
+const entrykindNames = "user_messagequeued_userassistant_messagereasoningtool_calldiffplanskillssubagentnoticeinput_admissioninput_waitcontrol_change"
 
 // entrykindNamesMap is a map of enum values to their canonical absolute
 // name positions within the entrykindNames string slice
@@ -380,6 +387,7 @@ var entrykindNamesMap = map[EntryKind]string{
 	EntryKinds.ENTRYNOTICE:           entrykindNames[80:86],
 	EntryKinds.ENTRYINPUTADMISSION:   entrykindNames[86:101],
 	EntryKinds.ENTRYINPUTWAIT:        entrykindNames[101:111],
+	EntryKinds.ENTRYCONTROLCHANGE:    entrykindNames[111:125],
 }
 
 // String implements the Stringer interface.
@@ -398,7 +406,7 @@ func _() {
 	// An "invalid array index" compiler error signifies that the constant values have changed.
 	// Re-run the goenums command to generate them again.
 	// Does not identify newly added constant values unless order changes
-	var x [12]struct{}
+	var x [13]struct{}
 	_ = x[entryUserMessage]
 	_ = x[entryQueuedUser-1]
 	_ = x[entryAssistantMessage-2]
@@ -411,4 +419,5 @@ func _() {
 	_ = x[entryNotice-9]
 	_ = x[entryInputAdmission-10]
 	_ = x[entryInputWait-11]
+	_ = x[entryControlChange-12]
 }

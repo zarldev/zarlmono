@@ -54,12 +54,6 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 		openai.WithModel(p.model),
 		openai.WithReasoningHistory(reasoning),
 	}
-	// V4's Field-mode trim: keep reasoning_content only on assistant
-	// turns inside a tool-call window, drop it elsewhere to save input
-	// tokens. R1 is on Strip globally so the mask is moot.
-	if reasoning == llm.ReasoningHistories.FIELD {
-		optsInner = append(optsInner, openai.WithReasoningKeepMask(keepReasoningMask))
-	}
 	if p.timeout > 0 {
 		optsInner = append(optsInner, openai.WithTimeout(p.timeout))
 	}
@@ -80,7 +74,19 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 			yield(llm.CompletionChunk{}, cause)
 			return
 		}
-		p.inner.Complete(ctx, adaptResponseFormat(req))(yield)
+		adapted := adaptResponseFormat(req)
+		// Tool-enabled thinking requests must retain every prior reasoning turn,
+		// including plain-answer turns that did not actually invoke a tool.
+		if !IsReasonerModel(p.model) && len(req.Tools) == 0 {
+			keep := keepReasoningMask(adapted.Messages)
+			adapted.Messages = llm.CloneMessages(adapted.Messages)
+			for i := range adapted.Messages {
+				if !keep[i] {
+					adapted.Messages[i].ReasoningContent = ""
+				}
+			}
+		}
+		p.inner.Complete(ctx, adapted)(yield)
 	}
 }
 

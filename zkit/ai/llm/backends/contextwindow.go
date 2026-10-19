@@ -121,7 +121,7 @@ func contextWindowForAdapter(at AdapterType, model string) int {
 		return deepseek.ContextWindowFor(model)
 	case AdapterTypes.ANTHROPICCOMPATIBLE:
 		return anthropic.ContextWindowFor(model)
-	case AdapterTypes.GOOGLECOMPATIBLE:
+	case AdapterTypes.GOOGLECOMPATIBLE, AdapterTypes.GOOGLEVERTEX:
 		return geminiContextWindow
 	case AdapterTypes.OAUTHOPENAICODEX:
 		return openaicodex.ContextWindowFor(model)

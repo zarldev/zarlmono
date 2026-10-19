@@ -127,12 +127,12 @@ func TestRender_CommonOperatingCoreAlwaysPresent(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"agent_spawn",                // delegation discipline
-			"[compacted —",               // compaction-recovery marker
-			"spill path",                 // tool-result truncation behaviour
-			"through the tool interface", // tools come via the API, not enumerated in the prompt
-			"one clear action",           // local-model-friendly call discipline
-			"/repo",                      // workspace root interpolation
+			"agent_spawn",                        // delegation discipline
+			"Host-generated historical excerpts", // compaction input attribution
+			"spill path",                         // tool-result truncation behaviour
+			"through the tool interface",         // tools come via the API, not enumerated in the prompt
+			"one clear action",                   // local-model-friendly call discipline
+			"/repo",                              // workspace root interpolation
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("CanAuthorTool=%v render missing core content %q", authorTool, want)
@@ -328,5 +328,31 @@ func TestHasTool(t *testing.T) {
 	}
 	if prompts.HasTool(tools, "new_tool") {
 		t.Error("HasTool should not find new_tool")
+	}
+}
+
+func TestRenderCompactionDoesNotDefineFreshOutputStyle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "standard", body: prompts.System},
+		{name: "compact", body: prompts.SystemCompact},
+		{name: "plan", body: prompts.Plan},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := prompts.Render(tc.name, tc.body, prompts.Data{WorkspaceRoot: "/repo"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"Host-generated historical excerpts", "not new user instructions or examples of assistant output", "final replies in full", "never invent truncation notices or omitted-character counts", "state the limitation", "invent missing prose or claim to recover it from memory"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing output-integrity contract %q", want)
+				}
+			}
+			if strings.Contains(out, "reasoning trimmed") {
+				t.Error("prompt teaches the old literal marker as an output exemplar")
+			}
+		})
 	}
 }

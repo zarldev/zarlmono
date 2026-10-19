@@ -28,6 +28,8 @@ func TestTextVerbosityResolutionAndProviderGating(t *testing.T) {
 		{engine.ProviderSpec{Name: backends.NameOpenAICodex.String(), Model: "gpt-5.6"}, "high"},
 		{engine.ProviderSpec{Name: llm.LLMProviders.OPENAI.String(), Model: "gpt-5.6-sol"}, "high"},
 		{engine.ProviderSpec{Name: llm.LLMProviders.OPENAI.String(), Model: "gpt-6-astra"}, "high"},
+		{engine.ProviderSpec{Name: llm.LLMProviders.OPENAI.String(), Model: "gpt-6.1-sol"}, "high"},
+		{engine.ProviderSpec{Name: backends.NameOpenAICodex.String(), Model: "gpt-6.1-sol"}, "high"},
 		{engine.ProviderSpec{Name: llm.LLMProviders.OPENAI.String(), Model: "gpt-4o"}, ""},
 		{engine.ProviderSpec{Name: llm.LLMProviders.ANTHROPIC.String(), Model: "claude"}, ""},
 	}

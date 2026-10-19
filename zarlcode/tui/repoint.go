@@ -20,16 +20,21 @@ const repointTimeout = 8 * time.Second
 // providerRepointedMsg carries the result of an async provider rebuild back
 // to the Update loop, where the live runner + cockpit are updated.
 type providerRepointedMsg struct {
-	prov      llm.Provider
-	spec      engine.ProviderSpec
-	window    int                  // resolved window applied to the session/compactor
-	reasoning llm.ReasoningHistory // applied reasoning policy
-	defWindow int                  // the def's declared window (change-detection baseline)
-	selection prefs.ModelSelection
-	persist   bool
-	done      func(error)
-	seq       uint64
-	err       error
+	prov            llm.Provider
+	spec            engine.ProviderSpec
+	window          int                  // resolved window applied to the session/compactor
+	reasoning       llm.ReasoningHistory // applied reasoning policy
+	defWindow       int                  // the def's declared window (change-detection baseline)
+	selection       prefs.ModelSelection
+	persist         bool
+	done            func(error)
+	seq             uint64
+	err             error
+	route           bool
+	routeGeneration uint64
+	modeGeneration  uint64
+	sessionID       string
+	plan            bool
 }
 
 // activeProviderPolicy resolves the build-affecting definition fields that
@@ -64,15 +69,39 @@ func (m *UI) maybeRepoint() tea.Cmd {
 	// provider price edit takes effect on close without a provider rebuild.
 	m.session.ApplyProviderCostBasis(m.session.ActiveProviderSpec())
 
-	fb, prev := m.session.ProviderContext()
+	fallback, active := m.session.ProviderContext()
 	providerMissing := m.live.RunTarget().Provider == nil
 	settings := m.settings
 	ctx := m.appContext()
-	spec := settings.ActiveProvider(ctx, fb)
-	reasoning, defWindow := activeProviderPolicy(settings, spec.Name)
-	if !providerMissing && spec == prev && reasoning == m.appliedReasoning && defWindow == m.appliedWindow {
-		return nil
+	if snapshot := m.takeSettingsTargetSnapshot(); snapshot != nil {
+		primary := settings.ActiveProvider(ctx, fallback)
+		if primary != snapshot.primary {
+			m.markManualTargetOverride()
+			reasoning, defWindow := activeProviderPolicy(settings, primary.Name)
+			seq := atomic.AddUint64(&m.repointSeq, 1)
+			return m.buildProviderTargetCmd(seq, primary, reasoning, defWindow, prefs.ModelSelection{}, false, nil)
+		}
+
+		mode := m.live.AppliedMode()
+		route := settings.MainModeTarget(ctx, mode.Plan, active)
+		if mode.Plan == snapshot.plan && route != snapshot.route {
+			return m.requestModeTarget(mode.Plan, mode.Generation)
+		}
+
+		reasoning, defWindow := activeProviderPolicy(settings, active.Name)
+		if !providerMissing && reasoning == m.appliedReasoning && defWindow == m.appliedWindow {
+			return nil
+		}
+		seq := atomic.AddUint64(&m.repointSeq, 1)
+		return m.buildProviderTargetCmd(seq, active, reasoning, defWindow, prefs.ModelSelection{}, false, nil)
 	}
+
+	spec := settings.ActiveProvider(ctx, fallback)
+	reasoning, defWindow := activeProviderPolicy(settings, spec.Name)
+	if !providerMissing && spec == active && reasoning == m.appliedReasoning && defWindow == m.appliedWindow {
+		return m.maybeModeTarget()
+	}
+	m.markManualTargetOverride()
 	seq := atomic.AddUint64(&m.repointSeq, 1)
 	return m.buildProviderTargetCmd(seq, spec, reasoning, defWindow, prefs.ModelSelection{}, false, nil)
 }
@@ -89,8 +118,15 @@ func (m *UI) switchTarget(selection prefs.ModelSelection, done func(error)) tea.
 		m.session.SetErrorToast(err.Error())
 		return nil
 	}
+	m.markManualTargetOverride()
 	fb, _ := m.session.ProviderContext()
 	spec := engine.ProviderSpec{Name: selection.Provider, Model: selection.Model}
+	if spec.Model == "" {
+		spec.Model = m.settings.DefaultModelSelection(spec.Name).Model
+		if global, err := m.settings.Svc.GetSetting(m.appContext(), prefs.ScopeGlobal, prefs.KeyModel); err == nil && global.Value != "" {
+			spec.Model = global.Value
+		}
+	}
 	if spec.Name == fb.Name {
 		spec.BaseURL = fb.BaseURL
 		spec.APIKey = fb.APIKey
@@ -153,6 +189,10 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 	if !ok {
 		return false
 	}
+	if rp.route {
+		m.handleModeTargetRepoint(rp)
+		return true
+	}
 	if m.liveOperation != nil || m.sessionRetry != nil {
 		if rp.done != nil {
 			rp.done(engine.ErrRuntimeBusy)
@@ -170,14 +210,6 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 		m.session.SetErrorToast("provider switch failed: " + rp.err.Error())
 		return true
 	}
-	if rp.prov == nil || m.live == nil {
-		err := errors.New("provider switch returned no live provider")
-		if rp.done != nil {
-			rp.done(err)
-		}
-		m.session.SetErrorToast(err.Error())
-		return true
-	}
 	if m.exactResume && !m.live.SupportsExactTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}) {
 		err := errors.New("this conversation has exact checkpoints: start a new conversation to use a provider without exact replay support")
 		if rp.done != nil {
@@ -186,6 +218,15 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 		m.session.SetErrorToast("provider switch rejected: " + err.Error())
 		return true
 	}
+	reservation, err := m.live.ReserveRuntime()
+	if err != nil {
+		if rp.done != nil {
+			rp.done(err)
+		}
+		m.session.SetErrorToast("provider switch deferred: " + err.Error())
+		return true
+	}
+	defer reservation.Release()
 	if rp.persist {
 		if m.settings == nil || m.settings.Svc == nil {
 			err := errors.New("provider switch persistence unavailable")
@@ -206,7 +247,13 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 			m.settings.Registry.SetActiveName(rp.spec.Name)
 		}
 	}
-	m.live.ApplyTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window})
+	if err := reservation.ApplyTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}); err != nil {
+		if rp.done != nil {
+			rp.done(err)
+		}
+		m.session.SetErrorToast("provider switch apply: " + err.Error())
+		return true
+	}
 	m.appliedReasoning = rp.reasoning
 	m.appliedWindow = rp.defWindow
 	m.session.SetActiveProviderSpec(rp.spec)

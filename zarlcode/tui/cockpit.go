@@ -13,13 +13,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
-// cacheReadRate is the fraction of the normal input price that a
-// prompt-cache *read* costs. Anthropic and OpenAI both bill cache hits at
-// roughly a tenth of fresh input, so a cached token is ~90% saved. Used by
-// both the per-turn cost and the "cache saved" figure; kept conservative so
-// the savings number never overstates.
-const cacheReadRate = 0.10
-
 // historyCap bounds the per-turn sample ring. ~120 turns is far more than a
 // sparkline ever shows; the cap just stops an all-day session from growing
 // the slice without bound.
@@ -101,38 +94,48 @@ type RunState struct {
 	pressureReserve int
 
 	// --- last completed turn ---
-	lastIn, lastOut, lastTotal, lastCached int
-	lastDuration                           time.Duration
-	lastIter                               int
-	lastTurnAt                             time.Time
+	lastIn, lastOut, lastTotal, lastCached                      int
+	lastCacheCreation, lastCacheCreation5m, lastCacheCreation1h int
+	lastDuration                                                time.Duration
+	lastIter                                                    int
+	lastTurnAt                                                  time.Time
 
 	// --- session rollup (since reset / launch) ---
-	startedAt           time.Time
-	sessionTurns        int
-	sessionIn           int
-	sessionOut          int
-	sessionCached       int
-	sessionInParent     int // parent-only prompt tokens (excludes sub-agent delegation)
-	sessionOutParent    int // parent-only completion tokens
-	sessionCachedParent int
-	sessionToolCalls    int
-	nestedRunning       int
-	nestedCompleted     int
-	nestedFailed        int
-	nestedDuration      time.Duration
-	nestedTools         map[string]int
-	nestedActive        map[string]bool
+	startedAt                    time.Time
+	sessionTurns                 int
+	sessionIn                    int
+	sessionOut                   int
+	sessionCached                int
+	sessionCacheCreation         int
+	sessionCacheCreation5m       int
+	sessionCacheCreation1h       int
+	sessionInParent              int // parent-only prompt tokens (excludes sub-agent delegation)
+	sessionOutParent             int // parent-only completion tokens
+	sessionCachedParent          int
+	sessionCacheCreationParent   int
+	sessionCacheCreation5mParent int
+	sessionCacheCreation1hParent int
+	cacheDetailsLegacy           bool
+	sessionToolCalls             int
+	nestedRunning                int
+	nestedCompleted              int
+	nestedFailed                 int
+	nestedDuration               time.Duration
+	nestedTools                  map[string]int
+	nestedActive                 map[string]bool
 
 	// --- session cost rollup ---
 	// These USD estimates are folded at the rate active when each usage event
 	// completes. They intentionally do not reprice historical tokens when the
 	// active provider/model changes mid-session.
-	lastCostUSD          float64
-	lastCacheSavedUSD    float64
-	sessionCostUSD       float64 // all completed usage, including delegated sub-agents
-	sessionCostParentUSD float64 // top-level parent turns only
-	sessionCacheSavedUSD float64
-	unpricedTasks        int // settled tasks whose reported usage has no known rate
+	lastCostUSD             float64
+	sessionCostUSD          float64 // versioned current accounting, including delegated sub-agents
+	sessionCostParentUSD    float64 // versioned current accounting for top-level turns only
+	legacyCostUSD           float64 // persisted pre-versioning amount; display only
+	legacyCostParentUSD     float64 // persisted pre-versioning amount; display only
+	legacyCacheSavedUSD     float64 // persisted historical estimate; display only
+	unpricedTasks           int     // settled tasks whose reported usage has no known rate
+	unpricedCacheWriteTasks int     // metered tasks with writes but no cache-write rate
 
 	// --- per-tool cumulative stats ---
 	toolStats map[string]toolStat
@@ -146,10 +149,12 @@ type RunState struct {
 	compactions   int
 
 	// --- per-turn history (ring; newest last) ---
-	history        []turnSample
-	pendingCompact bool // flag the next recorded sample as a compaction dip
-	revision       uint64
-	derived        cockpitDerived
+	history                []turnSample
+	pendingCompact         bool // flag the next recorded sample as a compaction dip
+	cacheTargets           map[cacheTargetKey]CacheTargetDiagnostics
+	cacheDiagnosticsLegacy bool
+	revision               uint64
+	derived                cockpitDerived
 }
 
 // SessionUsageSnapshot is the persistable rollup of a session's token
@@ -167,43 +172,84 @@ type cockpitDerived struct {
 func (s *RunState) bumpRevision() { s.revision++ }
 
 type SessionUsageSnapshot struct {
-	Turns           int            `json:"turns"`
-	ToolCalls       int            `json:"tool_calls"`
-	In              int            `json:"in"`
-	Out             int            `json:"out"`
-	Cached          int            `json:"cached"`
-	InParent        int            `json:"in_parent"`
-	OutParent       int            `json:"out_parent"`
-	CachedParent    int            `json:"cached_parent"`
-	CostUSD         float64        `json:"cost_usd,omitempty"`
-	CostParentUSD   float64        `json:"cost_parent_usd,omitempty"`
-	CacheSavedUSD   float64        `json:"cache_saved_usd,omitempty"`
-	NestedCompleted int            `json:"nested_completed,omitempty"`
-	NestedFailed    int            `json:"nested_failed,omitempty"`
-	NestedDuration  time.Duration  `json:"nested_duration,omitempty"`
-	NestedTools     map[string]int `json:"nested_tools,omitempty"`
-	UnpricedTasks   int            `json:"unpriced_tasks,omitempty"`
+	Turns                       int `json:"turns"`
+	ToolCalls                   int `json:"tool_calls"`
+	In                          int `json:"in"`
+	Out                         int `json:"out"`
+	Cached                      int `json:"cached"`
+	CacheCreationTokens         int `json:"cache_creation_tokens,omitempty"`
+	CacheCreation5mTokens       int `json:"cache_creation_5m_tokens,omitempty"`
+	CacheCreation1hTokens       int `json:"cache_creation_1h_tokens,omitempty"`
+	InParent                    int `json:"in_parent"`
+	OutParent                   int `json:"out_parent"`
+	CachedParent                int `json:"cached_parent"`
+	CacheCreationTokensParent   int `json:"cache_creation_tokens_parent,omitempty"`
+	CacheCreation5mTokensParent int `json:"cache_creation_5m_tokens_parent,omitempty"`
+	CacheCreation1hTokensParent int `json:"cache_creation_1h_tokens_parent,omitempty"`
+	// CacheDetailsVersion is 1 when creation/TTL counters cover all historical
+	// usage in this snapshot. Zero identifies legacy or mixed restored history.
+	CacheDetailsVersion int `json:"cache_details_version,omitempty"`
+	// CostAccountingVersion is 1 when CostUSD and CostParentUSD use the current
+	// base-rate estimate. Zero identifies legacy unversioned amounts.
+	CostAccountingVersion int     `json:"cost_accounting_version,omitempty"`
+	CostUSD               float64 `json:"cost_usd,omitempty"`
+	CostParentUSD         float64 `json:"cost_parent_usd,omitempty"`
+	// CacheSavedUSD is retained only for decoding old snapshots. New snapshots
+	// preserve historical amounts in the explicitly labelled legacy fields.
+	CacheSavedUSD           float64        `json:"cache_saved_usd,omitempty"`
+	LegacyCostUSD           float64        `json:"legacy_cost_usd,omitempty"`
+	LegacyCostParentUSD     float64        `json:"legacy_cost_parent_usd,omitempty"`
+	LegacyCacheSavedUSD     float64        `json:"legacy_cache_saved_usd,omitempty"`
+	NestedCompleted         int            `json:"nested_completed,omitempty"`
+	NestedFailed            int            `json:"nested_failed,omitempty"`
+	NestedDuration          time.Duration  `json:"nested_duration,omitempty"`
+	NestedTools             map[string]int `json:"nested_tools,omitempty"`
+	UnpricedTasks           int            `json:"unpriced_tasks,omitempty"`
+	UnpricedCacheWriteTasks int            `json:"unpriced_cache_write_tasks,omitempty"`
+	// CacheDiagnosticsVersion is 1 when CacheTargets covers all terminal task
+	// usage. CacheDiagnosticsLegacy marks restored unattributed or mixed history.
+	CacheDiagnosticsVersion int                      `json:"cache_diagnostics_version,omitempty"`
+	CacheDiagnosticsLegacy  bool                     `json:"cache_diagnostics_legacy,omitempty"`
+	CacheTargets            []CacheTargetDiagnostics `json:"cache_targets,omitempty"`
 }
 
 // UsageSnapshot captures the session rollup for persistence.
 func (s *RunState) UsageSnapshot() SessionUsageSnapshot {
+	version := 1
+	if s.cacheDetailsLegacy {
+		version = 0
+	}
 	return SessionUsageSnapshot{
-		Turns:           s.sessionTurns,
-		ToolCalls:       s.sessionToolCalls,
-		In:              s.sessionIn,
-		Out:             s.sessionOut,
-		Cached:          s.sessionCached,
-		InParent:        s.sessionInParent,
-		OutParent:       s.sessionOutParent,
-		CachedParent:    s.sessionCachedParent,
-		CostUSD:         s.sessionCostUSD,
-		CostParentUSD:   s.sessionCostParentUSD,
-		CacheSavedUSD:   s.sessionCacheSavedUSD,
-		NestedCompleted: s.nestedCompleted,
-		NestedFailed:    s.nestedFailed,
-		NestedDuration:  s.nestedDuration,
-		NestedTools:     cloneStringIntMap(s.nestedTools),
-		UnpricedTasks:   s.unpricedTasks,
+		Turns:                       s.sessionTurns,
+		ToolCalls:                   s.sessionToolCalls,
+		In:                          s.sessionIn,
+		Out:                         s.sessionOut,
+		Cached:                      s.sessionCached,
+		CacheCreationTokens:         s.sessionCacheCreation,
+		CacheCreation5mTokens:       s.sessionCacheCreation5m,
+		CacheCreation1hTokens:       s.sessionCacheCreation1h,
+		InParent:                    s.sessionInParent,
+		OutParent:                   s.sessionOutParent,
+		CachedParent:                s.sessionCachedParent,
+		CacheCreationTokensParent:   s.sessionCacheCreationParent,
+		CacheCreation5mTokensParent: s.sessionCacheCreation5mParent,
+		CacheCreation1hTokensParent: s.sessionCacheCreation1hParent,
+		CacheDetailsVersion:         version,
+		CostAccountingVersion:       costAccountingVersion,
+		CostUSD:                     s.sessionCostUSD,
+		CostParentUSD:               s.sessionCostParentUSD,
+		LegacyCostUSD:               s.legacyCostUSD,
+		LegacyCostParentUSD:         s.legacyCostParentUSD,
+		LegacyCacheSavedUSD:         s.legacyCacheSavedUSD,
+		NestedCompleted:             s.nestedCompleted,
+		NestedFailed:                s.nestedFailed,
+		NestedDuration:              s.nestedDuration,
+		NestedTools:                 cloneStringIntMap(s.nestedTools),
+		UnpricedTasks:               s.unpricedTasks,
+		UnpricedCacheWriteTasks:     s.unpricedCacheWriteTasks,
+		CacheDiagnosticsVersion:     cacheDiagnosticsVersion,
+		CacheDiagnosticsLegacy:      s.cacheDiagnosticsLegacy,
+		CacheTargets:                sortedCacheTargets(s.cacheTargets),
 	}
 }
 
@@ -217,17 +263,43 @@ func (s *RunState) RestoreUsage(snap SessionUsageSnapshot) {
 	s.sessionIn = snap.In
 	s.sessionOut = snap.Out
 	s.sessionCached = snap.Cached
+	s.sessionCacheCreation = snap.CacheCreationTokens
+	s.sessionCacheCreation5m = snap.CacheCreation5mTokens
+	s.sessionCacheCreation1h = snap.CacheCreation1hTokens
 	s.sessionInParent = snap.InParent
 	s.sessionOutParent = snap.OutParent
 	s.sessionCachedParent = snap.CachedParent
-	s.sessionCostUSD = snap.CostUSD
-	s.sessionCostParentUSD = snap.CostParentUSD
-	s.sessionCacheSavedUSD = snap.CacheSavedUSD
+	s.sessionCacheCreationParent = snap.CacheCreationTokensParent
+	s.sessionCacheCreation5mParent = snap.CacheCreation5mTokensParent
+	s.sessionCacheCreation1hParent = snap.CacheCreation1hTokensParent
+	s.cacheDetailsLegacy = snap.CacheDetailsVersion != 1 && snapshotHasHistoricalUsage(snap)
+	if snap.CostAccountingVersion == costAccountingVersion {
+		s.sessionCostUSD = snap.CostUSD
+		s.sessionCostParentUSD = snap.CostParentUSD
+		s.legacyCostUSD = snap.LegacyCostUSD
+		s.legacyCostParentUSD = snap.LegacyCostParentUSD
+		s.legacyCacheSavedUSD = snap.LegacyCacheSavedUSD
+	} else {
+		s.sessionCostUSD = 0
+		s.sessionCostParentUSD = 0
+		s.legacyCostUSD = snap.LegacyCostUSD + snap.CostUSD
+		s.legacyCostParentUSD = snap.LegacyCostParentUSD + snap.CostParentUSD
+		s.legacyCacheSavedUSD = snap.LegacyCacheSavedUSD + snap.CacheSavedUSD
+	}
 	s.nestedCompleted = snap.NestedCompleted
 	s.nestedFailed = snap.NestedFailed
 	s.nestedDuration = snap.NestedDuration
 	s.nestedTools = cloneStringIntMap(snap.NestedTools)
 	s.unpricedTasks = snap.UnpricedTasks
+	s.unpricedCacheWriteTasks = snap.UnpricedCacheWriteTasks
+	s.cacheTargets = cacheTargetMap(cloneCacheTargets(snap.CacheTargets))
+	s.cacheDiagnosticsLegacy = snap.CacheDiagnosticsLegacy ||
+		(snap.CacheDiagnosticsVersion != cacheDiagnosticsVersion && snapshotHasHistoricalUsage(snap))
+}
+
+func snapshotHasHistoricalUsage(snap SessionUsageSnapshot) bool {
+	return snap.Turns > 0 || snap.In > 0 || snap.Out > 0 || snap.Cached > 0 ||
+		snap.CacheCreationTokens > 0
 }
 
 // clearSession resets live and cumulative conversation accounting while
@@ -417,28 +489,35 @@ func (s *RunState) foldTurnComplete(u *llm.Usage, dur time.Duration, iters int, 
 	} else {
 		s.lastIter = s.iterations
 	}
+	s.foldCacheTarget(price, u, true)
 	if u != nil {
 		// Session totals use the cumulative TotalUsage — added once per turn,
 		// this correctly reflects the full spend of the Run (including every
 		// iteration's tokens). Cost is folded at the turn-time rate so later
 		// model/provider changes do not reprice historical usage.
-		turnCost := price.cost(u.PromptTokens, u.CachedTokens, u.CompletionTokens)
-		turnSaved := price.saved(u.CachedTokens)
-		if !price.known {
+		turnCost := price.cost(u.PromptTokens, u.CachedTokens, u.CacheCreationTokens, u.CompletionTokens)
+		if price.missingBaseRate(u) {
 			s.unpricedTasks++
 		}
 		s.lastCostUSD = turnCost
-		s.lastCacheSavedUSD = turnSaved
 		s.sessionCostUSD += turnCost
 		s.sessionCostParentUSD += turnCost
-		s.sessionCacheSavedUSD += turnSaved
 
 		s.sessionIn += u.PromptTokens
 		s.sessionOut += u.CompletionTokens
 		s.sessionCached += u.CachedTokens
+		s.sessionCacheCreation += u.CacheCreationTokens
+		s.sessionCacheCreation5m += u.CacheCreation5mTokens
+		s.sessionCacheCreation1h += u.CacheCreation1hTokens
 		s.sessionInParent += u.PromptTokens
 		s.sessionOutParent += u.CompletionTokens
 		s.sessionCachedParent += u.CachedTokens
+		s.sessionCacheCreationParent += u.CacheCreationTokens
+		s.sessionCacheCreation5mParent += u.CacheCreation5mTokens
+		s.sessionCacheCreation1hParent += u.CacheCreation1hTokens
+		if price.metered && u.CacheCreationTokens > 0 {
+			s.unpricedCacheWriteTasks++
+		}
 	}
 	s.sessionTurns++
 	s.recordSample()
@@ -448,18 +527,24 @@ func (s *RunState) foldTurnComplete(u *llm.Usage, dur time.Duration, iters int, 
 // session totals so cost reflects delegated work, without disturbing the
 // top-level context gauge or last-turn figures.
 func (s *RunState) foldSubAgentUsage(u *llm.Usage, price usagePrice) {
+	defer s.bumpRevision()
+	s.foldCacheTarget(price, u, false)
 	if u == nil {
 		return
 	}
-	defer s.bumpRevision()
-	s.sessionCostUSD += price.cost(u.PromptTokens, u.CachedTokens, u.CompletionTokens)
-	s.sessionCacheSavedUSD += price.saved(u.CachedTokens)
-	if !price.known {
+	s.sessionCostUSD += price.cost(u.PromptTokens, u.CachedTokens, u.CacheCreationTokens, u.CompletionTokens)
+	if price.missingBaseRate(u) {
 		s.unpricedTasks++
 	}
 	s.sessionIn += u.PromptTokens
 	s.sessionOut += u.CompletionTokens
 	s.sessionCached += u.CachedTokens
+	s.sessionCacheCreation += u.CacheCreationTokens
+	s.sessionCacheCreation5m += u.CacheCreation5mTokens
+	s.sessionCacheCreation1h += u.CacheCreation1hTokens
+	if price.metered && u.CacheCreationTokens > 0 {
+		s.unpricedCacheWriteTasks++
+	}
 }
 
 // foldCompaction folds a compaction-applied event: stamps the last-compaction
@@ -599,19 +684,17 @@ func (s *RunState) sessionCostParent() float64 {
 }
 
 func (s *RunState) hasSessionCost() bool {
-	return s.sessionCostUSD > 0 || s.sessionCacheSavedUSD > 0
+	return s.sessionCostUSD > 0
+}
+
+func (s *RunState) hasLegacyCost() bool {
+	return s.legacyCostUSD > 0 || s.legacyCostParentUSD > 0
 }
 
 // hasSubAgentUsage reports whether sub-agent delegation contributed to
 // this session's totals.
 func (s *RunState) hasSubAgentUsage() bool {
 	return s.sessionIn > s.sessionInParent || s.sessionOut > s.sessionOutParent
-}
-
-// cacheSaved is the USD not paid this session because input tokens were
-// served from the prompt cache (the discount on cached input).
-func (s *RunState) cacheSaved() float64 {
-	return s.sessionCacheSavedUSD
 }
 
 // burnRate is the session's average spend per hour. Returns 0 until enough

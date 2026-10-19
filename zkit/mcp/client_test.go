@@ -12,7 +12,7 @@ import (
 
 func fakeMCPServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Errorf("authorization = %q, want Bearer test-token", r.Header.Get("Authorization"))
 		}
@@ -29,7 +29,7 @@ func fakeMCPServer(t *testing.T) *httptest.Server {
 		case "tools/list":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      1,
+				"id":      req["id"],
 				"result": map[string]any{
 					"tools": []map[string]any{
 						{
@@ -54,7 +54,7 @@ func fakeMCPServer(t *testing.T) *httptest.Server {
 			msg, _ := args["message"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      1,
+				"id":      req["id"],
 				"result": map[string]any{
 					"content": []map[string]any{
 						{"type": "text", "text": msg},
@@ -65,7 +65,7 @@ func fakeMCPServer(t *testing.T) *httptest.Server {
 			t.Errorf("unknown method: %s", method)
 			w.WriteHeader(http.StatusBadRequest)
 		}
-	}))
+	})))
 }
 
 func TestDiscover(t *testing.T) {
@@ -142,7 +142,7 @@ func TestCall(t *testing.T) {
 func TestCallMultimodalContent(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": 1,
 			"result": map[string]any{
@@ -153,7 +153,7 @@ func TestCallMultimodalContent(t *testing.T) {
 				},
 			},
 		})
-	}))
+	})))
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
@@ -190,7 +190,7 @@ func TestCallMultimodalContent(t *testing.T) {
 func TestCallIsError(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": 1,
 			"result": map[string]any{
@@ -200,7 +200,7 @@ func TestCallIsError(t *testing.T) {
 				},
 			},
 		})
-	}))
+	})))
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
@@ -220,7 +220,7 @@ func TestCallIsError(t *testing.T) {
 func TestReadResource(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req["method"] != "resources/read" {
@@ -238,7 +238,7 @@ func TestReadResource(t *testing.T) {
 				},
 			},
 		})
-	}))
+	})))
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
@@ -261,7 +261,7 @@ func TestReadResource(t *testing.T) {
 func TestReadResource_Multimodal(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": 1,
 			"result": map[string]any{
@@ -270,7 +270,7 @@ func TestReadResource_Multimodal(t *testing.T) {
 				},
 			},
 		})
-	}))
+	})))
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
@@ -306,9 +306,9 @@ func TestReadResource_MalformedTypedContentIncludesContext(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"contents":[` + tt.content + `]}}`))
-			}))
+			})))
 			t.Cleanup(srv.Close)
 
 			_, err := mcp.NewClient(srv.URL, "").ReadResource(t.Context(), "file:///malformed")
@@ -322,7 +322,7 @@ func TestReadResource_MalformedTypedContentIncludesContext(t *testing.T) {
 func TestCallSkipsUnknownContentType(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": 1,
 			"result": map[string]any{
@@ -332,7 +332,7 @@ func TestCallSkipsUnknownContentType(t *testing.T) {
 				},
 			},
 		})
-	}))
+	})))
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")
@@ -348,7 +348,7 @@ func TestCallSkipsUnknownContentType(t *testing.T) {
 func TestDiscoverDefaultsEmptyInputSchema(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
@@ -358,7 +358,7 @@ func TestDiscoverDefaultsEmptyInputSchema(t *testing.T) {
 				},
 			},
 		})
-	}))
+	})))
 	t.Cleanup(srv.Close)
 
 	c := mcp.NewClient(srv.URL, "")

@@ -22,6 +22,7 @@ type AskpassServer struct {
 	ln     net.Listener
 	sock   string
 	script string
+	runDir string
 
 	mu   sync.RWMutex
 	send func(tea.Msg)
@@ -39,13 +40,20 @@ type askpassPromptMsg struct {
 	Reply  chan askpass.Response
 }
 
+// NewAskpassServer starts an instance-owned askpass listener outside root.
+// Close must be called to join handlers and remove its private runtime directory.
 func NewAskpassServer(ctx context.Context, root string) (*AskpassServer, error) {
-	runDir := filepath.Join(root, ".zarlcode", "run")
-	if err := os.MkdirAll(runDir, filesystem.ModePrivateDir); err != nil {
-		return nil, fmt.Errorf("askpass run dir: %w", err)
+	runDir, err := askpassRuntimeDir(root)
+	if err != nil {
+		return nil, err
 	}
+	owned := false
+	defer func() {
+		if !owned {
+			_ = os.RemoveAll(runDir)
+		}
+	}()
 	sock := filepath.Join(runDir, "askpass.sock")
-	_ = os.Remove(sock)
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "unix", sock)
 	if err != nil {
@@ -69,12 +77,45 @@ func NewAskpassServer(ctx context.Context, root string) (*AskpassServer, error) 
 	}
 	childCtx, cancel := context.WithCancel(ctx)
 	s := &AskpassServer{
-		ctx: childCtx, cancel: cancel, ln: ln, sock: sock, script: script,
+		ctx: childCtx, cancel: cancel, ln: ln, sock: sock, script: script, runDir: runDir,
 		serveDone: make(chan struct{}),
 		conns:     make(map[net.Conn]struct{}),
 	}
+	owned = true
 	go s.serve()
 	return s, nil
+}
+
+// askpassRuntimeDir treats TMPDIR as external input, not checkout-owned state.
+func askpassRuntimeDir(root string) (string, error) {
+	workspace, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("askpass workspace path: %w", err)
+	}
+	workspace, err = filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return "", fmt.Errorf("askpass workspace resolution: %w", err)
+	}
+	parent, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return "", fmt.Errorf("askpass temporary path: %w", err)
+	}
+	parent, err = filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", fmt.Errorf("askpass temporary directory resolution: %w", err)
+	}
+	rel, err := filepath.Rel(workspace, parent)
+	if err != nil {
+		return "", fmt.Errorf("askpass temporary directory containment: %w", err)
+	}
+	if filepath.IsLocal(rel) {
+		return "", errors.New("askpass temporary directory must be outside the workspace")
+	}
+	dir, err := os.MkdirTemp(parent, "zarlcode-askpass-")
+	if err != nil {
+		return "", fmt.Errorf("askpass runtime directory: %w", err)
+	}
+	return dir, nil
 }
 
 func (s *AskpassServer) SetSend(send func(tea.Msg)) {
@@ -105,10 +146,7 @@ func (s *AskpassServer) Close() error {
 		<-s.serveDone
 		s.closeConnections()
 		s.handlers.Wait()
-		if err := os.Remove(s.sock); err != nil && !errors.Is(err, os.ErrNotExist) && s.closeErr == nil {
-			s.closeErr = err
-		}
-		if err := os.Remove(s.script); err != nil && !errors.Is(err, os.ErrNotExist) && s.closeErr == nil {
+		if err := os.RemoveAll(s.runDir); err != nil && s.closeErr == nil {
 			s.closeErr = err
 		}
 	})

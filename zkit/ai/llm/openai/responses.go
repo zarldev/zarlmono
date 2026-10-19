@@ -44,6 +44,8 @@ const (
 	responseEventFunctionCallArgsDone      responseEventType = "response.function_call_arguments.done"
 	responseEventCompleted                 responseEventType = "response.completed"
 	responseEventFailed                    responseEventType = "response.failed"
+	responseEventIncomplete                responseEventType = "response.incomplete"
+	responseEventError                     responseEventType = "error"
 )
 
 type responsesRequest struct {
@@ -60,10 +62,27 @@ type responsesRequest struct {
 	ParallelToolCalls    bool                 `json:"parallel_tool_calls,omitempty"`
 	PromptCacheKey       string               `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention string               `json:"prompt_cache_retention,omitempty"`
+	ServiceTier          string               `json:"service_tier,omitempty"`
 }
 
 type responsesText struct {
-	Verbosity string `json:"verbosity,omitempty"`
+	Verbosity string         `json:"verbosity,omitempty"`
+	Format    map[string]any `json:"format,omitempty"`
+}
+
+func responsesOutputFormat(rf llm.ResponseFormat) map[string]any {
+	switch rf.Type {
+	case llm.ResponseFormatJSONObject:
+		return map[string]any{jsonKeyType: "json_object"}
+	case llm.ResponseFormatJSONSchema:
+		name := rf.Name
+		if name == "" {
+			name = "response"
+		}
+		return map[string]any{jsonKeyType: responseFormatJSONSchema, "name": name, "schema": rf.Schema.Map(), "strict": rf.Strict}
+	default:
+		return nil
+	}
 }
 
 type responsesInputItem struct {
@@ -154,17 +173,22 @@ type responseArgsDone struct {
 	Arguments   string `json:"arguments"`
 }
 
+type responseUsage struct {
+	InputTokens        int `json:"input_tokens"`
+	OutputTokens       int `json:"output_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	InputTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+}
+
 type responseCompleted struct {
 	Response struct {
-		Output []responseOutputItem `json:"output"`
-		Usage  struct {
-			InputTokens        int `json:"input_tokens"`
-			OutputTokens       int `json:"output_tokens"`
-			TotalTokens        int `json:"total_tokens"`
-			InputTokensDetails struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
-		} `json:"usage"`
+		Output            []responseOutputItem `json:"output"`
+		Usage             *responseUsage       `json:"usage"`
+		IncompleteDetails struct {
+			Reason string `json:"reason"`
+		} `json:"incomplete_details"`
 	} `json:"response"`
 }
 
@@ -198,6 +222,8 @@ func hasResponsesOutputText(parts []responsesContentPart) bool {
 }
 
 type responseFailed struct {
+	Code     string `json:"code"`
+	Message  string `json:"message"`
 	Response struct {
 		Error struct {
 			Message string `json:"message"`
@@ -222,9 +248,11 @@ func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRe
 		ParallelToolCalls:    plan.parallelToolCalls,
 		PromptCacheKey:       plan.promptCacheKey,
 		PromptCacheRetention: plan.promptCacheRetention,
+		ServiceTier:          requestServiceTier(req.Options),
 	}
-	if plan.textVerbosity != "" {
-		body.Text = &responsesText{Verbosity: plan.textVerbosity}
+	format := responsesOutputFormat(req.ResponseFormat)
+	if plan.textVerbosity != "" || format != nil {
+		body.Text = &responsesText{Verbosity: plan.textVerbosity, Format: format}
 	}
 	if len(body.Tools) > 0 {
 		body.ToolChoice = "auto"
@@ -520,7 +548,7 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			call.arguments.Reset()
 			call.arguments.WriteString(ev.Arguments)
 		}
-	case responseEventCompleted:
+	case responseEventCompleted, responseEventIncomplete:
 		var ev responseCompleted
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			yield(llm.CompletionChunk{}, err)
@@ -548,27 +576,33 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			}
 			toolCalls = append(toolCalls, llm.ToolCall{ID: call.id, Type: typeFunction, OutputIndex: llm.OutputPosition(idx), Function: llm.ToolCallFunction{Name: call.name, Arguments: call.arguments.String()}})
 		}
-		chunk := llm.CompletionChunk{
-			FinishReason:   llm.FinishReasons.STOP,
-			ToolCalls:      toolCalls,
-			CompletedItems: nativeItems,
-			Usage: llm.Usage{
-				PromptTokens:     ev.Response.Usage.InputTokens,
-				CompletionTokens: ev.Response.Usage.OutputTokens,
-				TotalTokens:      ev.Response.Usage.TotalTokens,
-				CachedTokens:     ev.Response.Usage.InputTokensDetails.CachedTokens,
-			},
-			UsageReported: strings.Contains(payload, `"usage"`),
+		chunk := llm.CompletionChunk{FinishReason: llm.FinishReasons.STOP, ToolCalls: toolCalls, CompletedItems: nativeItems}
+		if ev.Response.Usage != nil {
+			chunk.UsageReported = true
+			chunk.Usage = llm.Usage{
+				PromptTokens: ev.Response.Usage.InputTokens, CompletionTokens: ev.Response.Usage.OutputTokens,
+				TotalTokens: ev.Response.Usage.TotalTokens, CachedTokens: ev.Response.Usage.InputTokensDetails.CachedTokens,
+			}
 		}
 		if len(toolCalls) > 0 {
 			chunk.FinishReason = llm.FinishReasons.TOOLCALLS
 		}
-		return !yield(chunk, nil)
-	case responseEventFailed:
+		if env.Type == responseEventIncomplete {
+			chunk.FinishReason = llm.FinishReasons.LENGTH
+			if ev.Response.IncompleteDetails.Reason == "content_filter" {
+				chunk.FinishReason = llm.FinishReasons.CONTENTFILTER
+			}
+		}
+		yield(chunk, nil)
+		return true // A protocol terminal event ends reading even when accepted.
+	case responseEventFailed, responseEventError:
 		var ev responseFailed
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			yield(llm.CompletionChunk{}, err)
 			return true
+		}
+		if env.Type == responseEventError {
+			ev.Response.Error.Code, ev.Response.Error.Message = ev.Code, ev.Message
 		}
 		msg := ev.Response.Error.Message
 		if msg == "" {

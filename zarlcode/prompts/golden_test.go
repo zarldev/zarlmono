@@ -18,6 +18,11 @@ func TestRenderGoldenPrompts(t *testing.T) {
 		data prompts.Data
 	}{
 		{
+			name: "build_compact",
+			body: prompts.SystemCompact,
+			data: prompts.Data{WorkspaceRoot: "/repo"},
+		},
+		{
 			name: "build_lean",
 			body: prompts.System,
 			data: prompts.Data{WorkspaceRoot: "/repo"},

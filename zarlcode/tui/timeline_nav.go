@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"sort"
-
-	lg "charm.land/lipgloss/v2"
-)
+import "sort"
 
 // collapsible is an item whose render state can be toggled (e.g. an
 // assistant item's thinking block, or a tool/edit group). toggleSelected
@@ -115,7 +111,11 @@ func absInt(n int) int {
 // layoutIndex returns the owned geometry snapshot shared by navigation,
 // selection, scrollbar, and browse rendering.
 func (tl *timeline) layoutIndex(width int) ([]int, []int, int) {
-	return tl.geometryIndex(width)
+	starts, ends, total := tl.geometryIndex(width)
+	if total > 0 {
+		total++ // The final entry owns a trailing blank row, not the input pane.
+	}
+	return starts, ends, total
 }
 
 func (tl *timeline) pageStep() int {
@@ -369,6 +369,35 @@ func (tl *timeline) toggleSelected() {
 	}
 }
 
+func (tl *timeline) controlSelectedTool(key string) bool {
+	if tl.sel < 0 || tl.sel >= len(tl.items) {
+		return false
+	}
+	hit, ok := tl.items[tl.sel].(hitToggler)
+	if !ok {
+		return false
+	}
+	control, ok := hit.togglerAt(tl.lwidth(), tl.selLocal).(toolViewController)
+	if !ok || !control.applyToolViewKey(key) {
+		return false
+	}
+	tl.geometry.invalidateFrom(tl.sel)
+	tl.clampSelLocal(tl.lwidth())
+	return true
+}
+
+// selectAtViewportLine uses the rendered ownership map without dispatching any
+// disclosure action. The reserved gutter never toggles a neighboring tool.
+func (tl *timeline) selectAtViewportLine(vi int) bool {
+	if vi < 0 || vi >= len(tl.visItem) || tl.visItem[vi] < 0 {
+		return false
+	}
+	index, local := tl.visItem[vi], tl.visLocal[vi]
+	tl.enterBrowse()
+	tl.sel, tl.selLocal = index, local
+	return true
+}
+
 // toggleAtViewportLine flips the [+]/[-] header on displayed viewport line vi
 // (0-based from the top of the transcript pane), if that line bears one. It
 // reads the line→item map recorded by the last render, so a click resolves
@@ -390,13 +419,47 @@ func (tl *timeline) toggleAtViewportLine(vi int) bool {
 	if tg == nil {
 		return false
 	}
+	// Section/view toggles change body height but not the ordered disclosure
+	// headers. Preserve the selected header's ordinal rather than its old row.
+	selection := tl.captureDisclosureSelection()
 	tg.toggle()
 	tl.geometry.invalidateFrom(i)
+	tl.restoreDisclosureSelection(selection)
 	return true
 }
 
-// renderBrowse windows the timeline at scrollTop and rails the selected
-// item. It emits only the lines inside [scrollTop, scrollTop+height) —
+// disclosureSelection anchors a header while asynchronous body content grows.
+// Its ordered identity remains stable when only section/body heights change.
+type disclosureSelection struct{ item, ordinal, count int }
+
+func (tl *timeline) captureDisclosureSelection() disclosureSelection {
+	selection := disclosureSelection{item: tl.sel, ordinal: -1}
+	if !tl.browsing {
+		return selection
+	}
+	locals := tl.selectableLocals(tl.sel, tl.lwidth())
+	selection.count = len(locals)
+	index := sort.SearchInts(locals, tl.selLocal)
+	if index < len(locals) && locals[index] == tl.selLocal {
+		selection.ordinal = index
+	}
+	return selection
+}
+
+func (tl *timeline) restoreDisclosureSelection(selection disclosureSelection) {
+	if selection.item != tl.sel || !tl.browsing {
+		return
+	}
+	locals := tl.selectableLocals(tl.sel, tl.lwidth())
+	if selection.ordinal >= 0 && len(locals) == selection.count {
+		tl.selLocal = locals[selection.ordinal]
+	} else {
+		tl.clampSelLocal(tl.lwidth())
+	}
+}
+
+// renderBrowse windows the timeline at scrollTop. It emits only the lines
+// inside [scrollTop, scrollTop+height) —
 // walking just the items that intersect the window — so cost is
 // O(viewport) string work instead of flattening the whole transcript.
 // The line→item map for click hit-testing is recorded inline as lines
@@ -456,25 +519,11 @@ func (tl *timeline) renderBrowse(width, height int) []string {
 			}
 		}
 	}
+	if end == total {
+		emit("", -1, 0) // trailing conversation padding has no item hit target
+	}
 	tl.visItem, tl.visLocal = vItem, vLocal
 
-	if tl.selectionActive() {
-		lo, hi := tl.selectionRange()
-		style := lg.NewStyle().Background(lgColor(palette.Highlight))
-		for abs := max(lo, top); abs <= min(hi, end-1); abs++ {
-			vi := abs - top
-			if vi >= 0 && vi < len(view) {
-				view[vi] = style.Render(padStyled(view[vi], width))
-			}
-		}
-		return view
-	}
-
 	tl.clampSelLocal(width)
-	rail := palette.Primary.On("▎")
-	ln := starts[tl.sel] + tl.selLocal
-	if vi := ln - top; vi >= 0 && vi < len(view) {
-		view[vi] = rail + view[vi]
-	}
 	return view
 }

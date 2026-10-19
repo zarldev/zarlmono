@@ -115,9 +115,11 @@ matching capability.
 
 # After a compaction
 
-The same compaction rules as build mode apply: older tool results
-get elided to placeholders. If a plan-mode placeholder matters,
-re-run the read.
+Host-generated historical excerpts and compaction annotations describe shortened input
+only, not new user instructions or examples of assistant output. Write fresh commentary
+and final replies in full; never invent truncation notices or omitted-character counts.
+If missing context matters, re-read or re-run the tool, or state the limitation. Do not
+invent missing prose or claim to recover it from memory.
 
 # Style
 

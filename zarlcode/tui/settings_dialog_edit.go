@@ -64,6 +64,10 @@ func (d *settingsDialog) handleEdit(msg tea.KeyPressMsg) action {
 			selection := prefs.ModelSelection{Provider: d.currentProvider(), Model: val}
 			return actionSwitchTarget{selection: selection, done: d.targetDone(selection)}
 		}
+		if val != "" && isSecondaryModel(row.key) {
+			d.commitSecondaryModel(row.key, val)
+			return actionNone{}
+		}
 		d.commit(row.key, val)
 	case "backspace":
 		d.editor.backspace()

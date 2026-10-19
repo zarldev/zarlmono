@@ -111,14 +111,23 @@ func TestProviderGatesResponsesControls(t *testing.T) {
 	defer server.Close()
 	provider := openai.NewProvider("test-key", openai.WithBaseURL(server.URL), openai.WithResponsesAPI(true), openai.WithModel("gpt-5.6"))
 
-	req := llm.CompletionRequest{Stream: true, Options: llm.ModelOptions{
-		"reasoning_effort":       "max",
-		"text_verbosity":         "low",
-		"prompt_cache_key":       "session-1",
-		"prompt_cache_retention": "24h",
-		"pro_mode":               true,
-		"previous_response_id":   "resp_ignored",
-	}}
+	req := llm.CompletionRequest{
+		Stream: true,
+		ResponseFormat: llm.ResponseFormat{
+			Type:   llm.ResponseFormatJSONSchema,
+			Name:   "verdict",
+			Strict: true,
+			Schema: llm.SchemaFromMap(map[string]any{"type": "object", "required": []any{"ok"}, "properties": map[string]any{"ok": map[string]any{"type": "boolean"}}}),
+		},
+		Options: llm.ModelOptions{
+			"reasoning_effort":       "max",
+			"text_verbosity":         "low",
+			"prompt_cache_key":       "session-1",
+			"prompt_cache_retention": "24h",
+			"pro_mode":               true,
+			"previous_response_id":   "resp_ignored",
+		},
+	}
 	for _, streamErr := range provider.Complete(t.Context(), req) {
 		if streamErr != nil {
 			t.Fatalf("Complete: %v", streamErr)
@@ -126,6 +135,14 @@ func TestProviderGatesResponsesControls(t *testing.T) {
 	}
 	if body["reasoning"].(map[string]any)["effort"] != "max" || body["text"].(map[string]any)["verbosity"] != "low" || body["prompt_cache_key"] != "session-1" || body["prompt_cache_retention"] != "24h" {
 		t.Fatalf("supported controls = %#v", body)
+	}
+	text := body["text"].(map[string]any)
+	format := text["format"].(map[string]any)
+	if format["type"] != "json_schema" || format["name"] != "verdict" || format["strict"] != true {
+		t.Fatalf("structured text format = %#v", format)
+	}
+	if schema, ok := format["schema"].(map[string]any); !ok || schema["type"] != "object" {
+		t.Fatalf("structured schema = %#v", format["schema"])
 	}
 	for _, key := range []string{"pro_mode", "previous_response_id"} {
 		if _, ok := body[key]; ok {

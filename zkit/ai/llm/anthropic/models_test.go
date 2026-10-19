@@ -12,18 +12,20 @@ func TestContextWindowFor(t *testing.T) {
 		model string
 		want  int
 	}{
-		// Claude 4.x: 200k standard
-		{"claude-opus-4-7", 200_000},
-		{"claude-opus-4-6", 200_000},
+		// Explicit contemporary native windows, not family-wide guesses.
+		{"claude-opus-4-7", 1_000_000},
+		{"claude-opus-4-6", 1_000_000},
 		{"claude-opus-4-5", 200_000},
-		{"claude-sonnet-4-6", 200_000},
+		{"claude-sonnet-4-6", 1_000_000},
 		{"claude-sonnet-4-5", 200_000},
 		{"claude-haiku-4-5", 200_000},
 
-		// Claude 4.x 1M variants — opt-in via "[1m]" or "-1m" suffix
+		// Known picker aliases normalize to native 1M API identifiers.
 		{"claude-opus-4-7[1m]", 1_000_000},
 		{"claude-sonnet-4-6[1m]", 1_000_000},
 		{"claude-opus-4-7-1m", 1_000_000},
+		{"not-a-model[1m]", 0},
+		{"claude-sonnet-4-5-1m", 0},
 
 		// Claude 3.x: 200k
 		{"claude-3-7-sonnet-latest", 200_000},

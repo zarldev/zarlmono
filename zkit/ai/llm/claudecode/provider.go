@@ -120,6 +120,14 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 			yield(llm.CompletionChunk{}, cause)
 			return
 		}
+		for _, message := range req.Messages {
+			for _, part := range message.Parts {
+				if part.Type != llm.ContentTypeText {
+					yield(llm.CompletionChunk{}, fmt.Errorf("claudecode: %w: this CLI route accepts text input only", llm.ErrModelNotSupported))
+					return
+				}
+			}
+		}
 		stopped, err := p.run(ctx, req, yield)
 		if err != nil && !stopped {
 			yield(llm.CompletionChunk{}, err)
@@ -136,7 +144,14 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 		return false, errors.New("claudecode: empty OAuth token")
 	}
 
-	prompt := buildPrompt(req)
+	schemaArg, nativeStructured := nativeJSONSchema(req)
+	promptReq := req
+	if nativeStructured {
+		// --json-schema is the constraint; duplicating the schema in the prompt
+		// wastes context and can make the model echo it instead of its value.
+		promptReq.ResponseFormat = llm.ResponseFormat{}
+	}
+	prompt := buildPrompt(promptReq)
 	if strings.TrimSpace(prompt) == "" {
 		return false, errors.New("claudecode: empty prompt")
 	}
@@ -160,6 +175,9 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	}
 	if p.model != "" {
 		args = append(args, "--model", p.model)
+	}
+	if nativeStructured {
+		args = append(args, "--json-schema", schemaArg)
 	}
 	cmd := exec.CommandContext(runCtx, p.binaryPath, args...)
 	// The prompt grows with conversation length (rendered history, tool
@@ -185,17 +203,21 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 		return false, fmt.Errorf("claudecode: start %q: %w", p.binaryPath, err)
 	}
 	toolCallState := newToolCallState()
-	usage, ok, parseErr := parseStream(stdout, yield, toolCallState, len(req.Tools) > 0)
+	usage, ok, parseErr := parseStream(stdout, yield, toolCallState, len(req.Tools) > 0, nativeStructured)
 	if !ok || parseErr != nil {
 		cancel()
 	}
 	waitErr := cmd.Wait()
 	stderrText := strings.TrimSpace(stderr.String())
+	runCause := context.Cause(ctx)
+	if runCause == nil && parseErr == nil && ok {
+		runCause = context.Cause(runCtx)
+	}
 	if !ok {
 		return true, nil
 	}
-	if cause := context.Cause(runCtx); cause != nil {
-		return false, cause
+	if runCause != nil {
+		return false, runCause
 	}
 	if parseErr != nil {
 		return false, parseErr
@@ -305,11 +327,10 @@ func renderToolCalls(calls []llm.ToolCall) string {
 	return string(raw)
 }
 
-// responseFormatDirective is claudecode's best-effort honoring of
-// ResponseFormat. The claude CLI can't grammar-constrain output the way the
-// API providers do (no schema flag), but Claude reliably follows an explicit
-// JSON directive, so we append one. JSON-schema mode embeds the schema
-// verbatim. Empty for the unconstrained text default.
+// responseFormatDirective is the prompt-level fallback for JSON object mode and
+// for schema requests that cannot use the CLI's native --json-schema contract
+// (notably host-tool turns). Native schema-only turns clear ResponseFormat before
+// prompt rendering and consume the result event's structured_output field.
 func responseFormatDirective(rf llm.ResponseFormat) string {
 	switch rf.Type {
 	case llm.ResponseFormatJSONObject:
@@ -324,6 +345,20 @@ func responseFormatDirective(rf llm.ResponseFormat) string {
 	default:
 		return ""
 	}
+}
+
+// nativeJSONSchema returns the Claude CLI --json-schema value only for turns
+// without host tools. Host tools use a text protocol whose tool-call envelope
+// intentionally does not conform to the caller's answer schema.
+func nativeJSONSchema(req llm.CompletionRequest) (string, bool) {
+	if len(req.Tools) != 0 || req.ResponseFormat.Type != llm.ResponseFormatJSONSchema || req.ResponseFormat.Schema.IsZero() {
+		return "", false
+	}
+	raw, err := json.Marshal(req.ResponseFormat.Schema)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 func messageText(m llm.Message) string {
@@ -349,13 +384,14 @@ func messageText(m llm.Message) string {
 // returned bool is false when yield returned false (consumer broke /
 // cancelled), so the caller skips the terminal chunk rather than yielding
 // past a false return.
-func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools *toolCallState, toolProtocol bool) (*llm.Usage, bool, error) {
+func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools *toolCallState, toolProtocol, nativeStructured bool) (*llm.Usage, bool, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var lastText string
 	var lastThinking string
 	var buffered strings.Builder
 	var usage *llm.Usage
+	structuredReceived := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -364,17 +400,50 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 		// The terminal "result" event (and per-turn assistant events) carry
 		// token usage; capture the latest so the result event's final totals
 		// win. Lines without usage leave it unchanged.
-		if u := usageFromLine(line); u != nil {
-			usage = u
+		var resultStatus struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			IsError bool   `json:"is_error"`
+		}
+		if json.Unmarshal([]byte(line), &resultStatus) == nil && resultStatus.Type == "result" &&
+			(resultStatus.IsError || strings.HasPrefix(resultStatus.Subtype, "error")) {
+			return usage, true, errors.New("claudecode: CLI result reported an unsuccessful completion")
+		}
+		u, reported, err := usageFromLine(line)
+		if err != nil {
+			return usage, true, err
+		}
+		if reported {
+			usage = &u
 		}
 		if calls := tools.toolCallsFromLine(line); len(calls) > 0 {
 			if !yield(llm.CompletionChunk{ToolCalls: calls}, nil) {
 				return usage, false, nil
 			}
 		}
+		if nativeStructured {
+			structured, present, err := structuredOutputFromLine(line)
+			if err != nil {
+				return usage, true, err
+			}
+			if present {
+				if structuredReceived {
+					return usage, true, errors.New("claudecode: duplicate structured result")
+				}
+				structuredReceived = true
+			}
+			if present && !yield(llm.CompletionChunk{Content: structured}, nil) {
+				return usage, false, nil
+			}
+		}
+		var envelope struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal([]byte(line), &envelope)
+		incremental := envelope.Type == eventTypeStreamEvent
 		if thinking := thinkingDeltaFromLine(line); thinking != "" {
 			delta := thinking
-			if strings.HasPrefix(thinking, lastThinking) {
+			if !incremental && strings.HasPrefix(thinking, lastThinking) {
 				delta = thinking[len(lastThinking):]
 				lastThinking = thinking
 			} else {
@@ -390,8 +459,13 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 		if text == "" {
 			continue
 		}
+		if nativeStructured {
+			// Native structured output is authoritative in the terminal result's
+			// structured_output field. Assistant snapshots may repeat its JSON.
+			continue
+		}
 		if toolProtocol {
-			if strings.HasPrefix(text, lastText) && len(text) >= len(lastText) {
+			if !incremental && strings.HasPrefix(text, lastText) {
 				buffered.WriteString(text[len(lastText):])
 				lastText = text
 			} else {
@@ -407,7 +481,7 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 		// `assistant` event that merely repeats the full text the deltas
 		// already produced. Emitting that empty suffix (rather than falling
 		// through) is what stops the whole message being duplicated.
-		if strings.HasPrefix(text, lastText) {
+		if !incremental && strings.HasPrefix(text, lastText) {
 			delta := text[len(lastText):]
 			lastText = text
 			if delta == "" {
@@ -425,6 +499,9 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 	}
 	if err := scanner.Err(); err != nil {
 		return usage, true, fmt.Errorf("claudecode: read stream: %w", err)
+	}
+	if nativeStructured && !structuredReceived {
+		return usage, true, errors.New("claudecode: completion ended without structured_output")
 	}
 	if toolProtocol {
 		if calls := parseToolProtocol(buffered.String()); len(calls) > 0 {
@@ -445,46 +522,123 @@ func parseStream(r io.Reader, yield func(llm.CompletionChunk, error) bool, tools
 	return usage, true, nil
 }
 
+func structuredOutputFromLine(line string) (string, bool, error) {
+	var result struct {
+		Type             string          `json:"type"`
+		StructuredOutput json.RawMessage `json:"structured_output"`
+	}
+	if decoded := json.Unmarshal([]byte(line), &result) == nil; !decoded {
+		return "", false, nil
+	}
+	if result.Type != "result" || len(result.StructuredOutput) == 0 || string(result.StructuredOutput) == jsonNull {
+		return "", false, nil
+	}
+	if !json.Valid(result.StructuredOutput) {
+		return "", false, errors.New("claudecode: invalid structured_output")
+	}
+	return string(result.StructuredOutput), true, nil
+}
+
 // usageFromLine extracts token usage from a Claude Code stream-json line.
 // The terminal "result" event carries the authoritative totals under
 // "usage"; assistant message events carry a per-turn "usage" we fall back
 // to. Field names follow the Anthropic usage shape (input_tokens,
-// output_tokens, cache_{creation,read}_input_tokens); a line without a
-// recognizable usage object yields nil, so a CLI version that diverges just
-// leaves usage unreported rather than wrong. PromptTokens sums base +
-// cache-creation + cache-read to match the anthropic provider.
-func usageFromLine(line string) *llm.Usage {
-	var m map[string]any
-	if json.Unmarshal([]byte(line), &m) != nil {
-		return nil
+// recognizable usage object reports false. Malformed or invalid aggregate counters
+// fail the stream; malformed or inconsistent optional TTL detail is discarded
+// while retaining the aggregate. PromptTokens sums base + cache-creation +
+// cache-read to match the anthropic provider.
+func usageFromLine(line string) (llm.Usage, bool, error) {
+	topLevel, message, valid := usageEnvelopeFromLine(line)
+	if !valid {
+		return llm.Usage{}, false, nil
 	}
-	raw, _ := m["usage"].(map[string]any)
-	if raw == nil {
-		if msg, _ := m["message"].(map[string]any); msg != nil {
-			raw, _ = msg["usage"].(map[string]any)
+	raw := topLevel
+	if len(raw) == 0 {
+		raw = message
+	}
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return llm.Usage{}, false, nil
+	}
+
+	var reported struct {
+		InputTokens              int64           `json:"input_tokens"`
+		OutputTokens             int64           `json:"output_tokens"`
+		CacheCreationInputTokens int64           `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int64           `json:"cache_read_input_tokens"`
+		CacheCreation            json.RawMessage `json:"cache_creation"`
+	}
+	if err := json.Unmarshal(raw, &reported); err != nil {
+		return llm.Usage{}, false, fmt.Errorf("claudecode: decode usage: %w", err)
+	}
+	counts := []struct {
+		name  string
+		value int64
+	}{
+		{name: "input_tokens", value: reported.InputTokens},
+		{name: "output_tokens", value: reported.OutputTokens},
+		{name: "cache_creation_input_tokens", value: reported.CacheCreationInputTokens},
+		{name: "cache_read_input_tokens", value: reported.CacheReadInputTokens},
+	}
+	maxInt := int64(^uint(0) >> 1)
+	for _, count := range counts {
+		if count.value < 0 || count.value > maxInt {
+			return llm.Usage{}, false, fmt.Errorf("claudecode: invalid usage %s %d", count.name, count.value)
 		}
 	}
-	if raw == nil {
-		return nil
+	if reported.InputTokens > maxInt-reported.CacheCreationInputTokens ||
+		reported.InputTokens+reported.CacheCreationInputTokens > maxInt-reported.CacheReadInputTokens {
+		return llm.Usage{}, false, errors.New("claudecode: prompt token total overflows int")
 	}
-	intf := func(k string) int {
-		if v, ok := raw[k].(float64); ok {
-			return int(v)
-		}
-		return 0
+	prompt := reported.InputTokens + reported.CacheCreationInputTokens + reported.CacheReadInputTokens
+	if prompt > maxInt-reported.OutputTokens {
+		return llm.Usage{}, false, errors.New("claudecode: total token count overflows int")
 	}
-	cacheRead := intf("cache_read_input_tokens")
-	prompt := intf("input_tokens") + intf("cache_creation_input_tokens") + cacheRead
-	out := intf("output_tokens")
-	if prompt == 0 && out == 0 {
-		return nil
+
+	usage := llm.Usage{
+		PromptTokens:        int(prompt),
+		CompletionTokens:    int(reported.OutputTokens),
+		TotalTokens:         int(prompt + reported.OutputTokens),
+		CachedTokens:        int(reported.CacheReadInputTokens),
+		CacheCreationTokens: int(reported.CacheCreationInputTokens),
 	}
-	return &llm.Usage{
-		PromptTokens:     prompt,
-		CompletionTokens: out,
-		TotalTokens:      prompt + out,
-		CachedTokens:     cacheRead,
+	creation5m, creation1h, valid := cacheCreationDetail(reported.CacheCreation, reported.CacheCreationInputTokens)
+	if valid {
+		usage.CacheCreation5mTokens = int(creation5m)
+		usage.CacheCreation1hTokens = int(creation1h)
 	}
+	return usage, true, nil
+}
+
+func cacheCreationDetail(raw json.RawMessage, total int64) (int64, int64, bool) {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return 0, 0, false
+	}
+	var detail struct {
+		Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
+	}
+	if json.Unmarshal(raw, &detail) != nil {
+		return 0, 0, false
+	}
+	creation5m := detail.Ephemeral5mInputTokens
+	creation1h := detail.Ephemeral1hInputTokens
+	if creation5m < 0 || creation1h < 0 || creation5m > total || creation1h > total-creation5m {
+		return 0, 0, false
+	}
+	return creation5m, creation1h, true
+}
+
+func usageEnvelopeFromLine(line string) (json.RawMessage, json.RawMessage, bool) {
+	var envelope struct {
+		Usage   json.RawMessage `json:"usage"`
+		Message struct {
+			Usage json.RawMessage `json:"usage"`
+		} `json:"message"`
+	}
+	if json.Unmarshal([]byte(line), &envelope) != nil {
+		return nil, nil, false
+	}
+	return envelope.Usage, envelope.Message.Usage, true
 }
 
 func parseToolProtocol(text string) []llm.ToolCall {

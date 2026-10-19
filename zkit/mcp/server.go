@@ -1,14 +1,17 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
+	"github.com/zarldev/zarlmono/zkit/options"
 	"github.com/zarldev/zarlmono/zkit/zhttp"
 )
 
@@ -38,14 +41,15 @@ type ToolHandler func(ctx context.Context, args json.RawMessage) (CallResult, er
 // Concurrency: tool registration, notification, and request dispatch
 // are all safe for concurrent use.
 type Server struct {
-	info ServerInfo
+	info           ServerInfo
+	allowedOrigins map[string]bool
 
 	mu        sync.RWMutex
 	tools     map[string]registeredTool
 	toolOrder []string
 
 	subM sync.Mutex
-	subs []chan rpcNotification
+	subs []serverSubscription
 }
 
 type registeredTool struct {
@@ -55,10 +59,26 @@ type registeredTool struct {
 
 // NewServer returns an empty server identifying itself with name +
 // version during the MCP initialize handshake.
-func NewServer(name, version string) *Server {
-	return &Server{
+func NewServer(name, version string, opts ...options.Option[Server]) *Server {
+	server := &Server{
 		info:  ServerInfo{Name: name, Version: version},
 		tools: map[string]registeredTool{},
+	}
+	for _, opt := range opts {
+		opt(server)
+	}
+	return server
+}
+
+// WithAllowedOrigins permits the exact browser origins listed by the operator.
+// Without this option, requests with an Origin header are rejected; native MCP
+// clients without that header remain supported. Host headers are not authority.
+func WithAllowedOrigins(origins ...string) options.Option[Server] {
+	return func(server *Server) {
+		server.allowedOrigins = make(map[string]bool, len(origins))
+		for _, origin := range origins {
+			server.allowedOrigins[origin] = true
+		}
 	}
 }
 
@@ -119,9 +139,12 @@ func (s *Server) Notify(method string, params any) {
 		Params:  params,
 	}
 	s.subM.Lock()
-	subs := append([]chan rpcNotification(nil), s.subs...)
-	s.subM.Unlock()
-	for _, ch := range subs {
+	defer s.subM.Unlock()
+	for _, subscription := range s.subs {
+		if !subscription.accepts(method, params) {
+			continue
+		}
+		ch := subscription.channel
 		select {
 		case ch <- n:
 		default:
@@ -154,6 +177,19 @@ func (s *Server) ListenAndServe(addr, path string) error {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if origins, present := r.Header["Origin"]; present {
+		if len(origins) != 1 || origins[0] == "" {
+			http.Error(w, "origin is not allowed", http.StatusForbidden)
+			return
+		}
+		origin := origins[0]
+		parsed, err := url.Parse(origin)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+			parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || !s.allowedOrigins[origin] {
+			http.Error(w, "origin is not allowed", http.StatusForbidden)
+			return
+		}
+	}
 	switch r.Method {
 	case http.MethodPost:
 		s.servePOST(w, r)
@@ -188,17 +224,32 @@ func (s *Server) servePOST(w http.ResponseWriter, r *http.Request) {
 		writeRPCError(w, json.RawMessage("null"), -32700, "parse error: "+err.Error())
 		return
 	}
-	if req.JSONRPC == "" {
-		req.JSONRPC = jsonrpcVersion
+	if req.JSONRPC != jsonrpcVersion || req.Method == "" {
+		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request")
+		return
+	}
+	if failure := s.modernRequestError(r, req); failure != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: jsonrpcVersion, ID: req.ID, Error: failure})
+		return
+	}
+	if req.Method == methodSubscriptionsListen && requestProtocol(req.Params) == protocolVersion20260728 {
+		s.serveSubscription(w, r, req)
+		return
 	}
 	resp, ok := s.dispatch(r.Context(), req)
 	if !ok {
 		// Notification — JSON-RPC 2.0 §4.1: the Server MUST NOT reply.
-		// 204 No Content makes the contract visible to callers that
-		// inspect status; a bare 200 with empty body would work but
-		// hides the "this was a notification" signal.
-		w.WriteHeader(http.StatusNoContent)
+		// Accepted notifications have no JSON-RPC response body.
+		w.WriteHeader(http.StatusAccepted)
 		return
+	}
+	if requestProtocol(req.Params) == protocolVersion20260728 {
+		resp = completeResponse(resp)
+		if resp.Error != nil && resp.Error.Code == -32601 {
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -251,7 +302,7 @@ func (s *Server) serveSSE(w http.ResponseWriter, r *http.Request) {
 func (s *Server) subscribe() chan rpcNotification {
 	ch := make(chan rpcNotification, 16)
 	s.subM.Lock()
-	s.subs = append(s.subs, ch)
+	s.subs = append(s.subs, serverSubscription{channel: ch})
 	s.subM.Unlock()
 	return ch
 }
@@ -259,7 +310,8 @@ func (s *Server) subscribe() chan rpcNotification {
 func (s *Server) unsubscribe(target chan rpcNotification) {
 	s.subM.Lock()
 	defer s.subM.Unlock()
-	for i, ch := range s.subs {
+	for i, subscription := range s.subs {
+		ch := subscription.channel
 		if ch == target {
 			s.subs = append(s.subs[:i], s.subs[i+1:]...)
 			close(ch)
@@ -290,11 +342,13 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (rpcResponse, boo
 		return rpcResponse{}, false
 	}
 	switch req.Method {
-	case "initialize":
+	case "server/discover":
+		return s.handleServerDiscovery(req), true
+	case methodInitialize:
 		return s.handleInitialize(req), true
 	case "tools/list":
 		return s.handleToolsList(req), true
-	case "tools/call":
+	case methodToolsCall:
 		return s.handleToolsCall(ctx, req), true
 	}
 	return rpcErrorResponse(req.ID, -32601, "method not found: "+req.Method), true
@@ -310,7 +364,7 @@ type initializeResult struct {
 
 func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 	result := initializeResult{
-		ProtocolVersion: "2024-11-05",
+		ProtocolVersion: protocolVersion20251125,
 		Capabilities: map[string]any{
 			"tools": map[string]any{},
 		},
@@ -344,7 +398,10 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) rpcRespons
 		return rpcErrorResponse(req.ID, -32602, "unknown tool: "+params.Name)
 	}
 
-	args, _ := json.Marshal(params.Arguments)
+	args, err := json.Marshal(params.Arguments)
+	if err != nil {
+		return rpcErrorResponse(req.ID, -32602, "encode arguments: "+err.Error())
+	}
 	result, err := tool.handler(ctx, args)
 	if err != nil {
 		// Tool-handler errors flow back to the client as a JSON-RPC
@@ -371,7 +428,9 @@ func decodeCallParams(raw any) (callParams, error) {
 		return callParams{}, fmt.Errorf("marshal call params: %w", err)
 	}
 	var p callParams
-	if err := json.Unmarshal(b, &p); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	decoder.UseNumber()
+	if err := decoder.Decode(&p); err != nil {
 		return callParams{}, fmt.Errorf("decode call params: %w", err)
 	}
 	if p.Name == "" {

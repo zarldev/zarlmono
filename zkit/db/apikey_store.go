@@ -204,6 +204,7 @@ func toSessionRecord(r gen.GetSessionRow) SessionRecord {
 		LastUsageJSON:      []byte(r.LastUsageJson),
 		DiffBodiesJSON:     []byte(r.DiffBodiesJson),
 		PlanJSON:           []byte(r.PlanJson),
+		MCPActivationsJSON: []byte(r.McpActivationsJson),
 		MessageCount:       int(r.MessageCount),
 		CreatedAt:          time.Unix(r.CreatedAt, 0),
 		UpdatedAt:          time.Unix(r.UpdatedAt, 0),

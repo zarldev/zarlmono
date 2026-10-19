@@ -34,7 +34,7 @@ func (t *thinkingItem) togglerAt(width, ln int) toggler {
 	if !t.expanded || len(t.children) == 0 {
 		return nil
 	}
-	childWidth := width - 4
+	childWidth := width - len(childIndent)
 	bodyLines := len(t.bodyLines(width))
 	return t.layout.render(t.children, childWidth, t.version()).togglerForLine(ln-bodyLines, childWidth, t.children, t.bump)
 }
@@ -43,7 +43,7 @@ func (t *thinkingItem) toggleLocals(width int) []int {
 	if !t.expanded || len(t.children) == 0 {
 		return []int{0}
 	}
-	childWidth := width - 4
+	childWidth := width - len(childIndent)
 	block := t.layout.render(t.children, childWidth, t.version())
 	locals := append([]int{0}, block.toggleLocals(childWidth, t.children)...)
 	bodyLines := len(t.bodyLines(width))
@@ -80,10 +80,7 @@ func (t *thinkingItem) render(width int) []string {
 	} else {
 		lines = append(lines, palette.Subtle.On("[")+palette.Primary.On("-")+palette.Subtle.On("]")+palette.Muted.On(t.heading()))
 		lines = append(lines, t.bodyLines(width)...)
-		lines = append(lines, t.layout.render(t.children, width-4, t.version()).lines...)
-	}
-	if t.nested {
-		lines = prefixLines(lines, nestPad)
+		lines = append(lines, t.layout.render(t.children, width-len(childIndent), t.version()).lines...)
 	}
 	return indentLines(lines, t.depth)
 }
@@ -101,7 +98,9 @@ func normalizeThinkingMarkdown(text string) string {
 // are tracked separately (curTools/curEdits) but also render after the
 // response.
 type openTurn struct {
-	resp   *assistantItem
-	think  *thinkingItem
-	skills *skillsItem
+	resp           *assistantItem
+	think          *thinkingItem
+	skills         *skillsItem
+	outputIndex    int // provider-local visible item identity within this iteration
+	hasOutputIndex bool
 }

@@ -50,7 +50,7 @@ func TestRestoredInputEventsDoNotReviveWaiting(t *testing.T) {
 	ui.RestoreCanonicalTranscript(r.Thread())
 	ui.Update(tea.WindowSizeMsg{Width: 240, Height: 60})
 	out := ansi.Strip(ui.View().Content)
-	if !strings.Contains(out, "Historical result admitted.") || !strings.Contains(out, "○ idle") || strings.Contains(out, "⠋ waiting") {
+	if !strings.Contains(out, "Historical result admitted.") || containsBraille(out) {
 		t.Fatalf("historical input projection revived activity:\n%s", out)
 	}
 }
@@ -101,7 +101,7 @@ func assertAdmissionUnderAgent(t *testing.T, ui *tui.UI, want string) {
 	t.Helper()
 	ui.Update(tea.WindowSizeMsg{Width: 240, Height: 60})
 	out := ansi.Strip(ui.View().Content)
-	if strings.Contains(out, want) || !strings.Contains(out, "○ idle") {
+	if strings.Contains(out, want) || containsBraille(out) {
 		t.Fatalf("admission leaked into conversation or revived activity:\n%s", out)
 	}
 	ui.Update(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'a'})

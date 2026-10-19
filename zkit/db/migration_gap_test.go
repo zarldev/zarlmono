@@ -37,7 +37,7 @@ func TestMigrationGapFrom22ToLatestAndBack(t *testing.T) {
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("migrate across gap to latest: %v", err)
 	}
-	assertMigrationVersion(t, provider, 34)
+	assertMigrationVersion(t, provider, 35)
 	assertToolHistoryColumns(t, d)
 	assertTableExists(t, d, "tool_output_history", true)
 	assertTableExists(t, d, "session_checkpoints", true)
@@ -46,9 +46,10 @@ func TestMigrationGapFrom22ToLatestAndBack(t *testing.T) {
 	assertTableExists(t, d, "session_transcript_entries", true)
 	assertSessionColumnExists(t, d, "context_json", true)
 	assertSessionColumnExists(t, d, "history_json", false)
+	assertSessionColumnExists(t, d, "mcp_activations_json", true)
 
-	// Versions 23 and 24 were never shipped: 34 through 25.
-	for i := range 10 {
+	// Versions 23 and 24 were never shipped: 35 through 25.
+	for i := range 11 {
 		if _, err := provider.Down(ctx); err != nil {
 			t.Fatalf("down migration %d: %v", i+1, err)
 		}
@@ -60,6 +61,7 @@ func TestMigrationGapFrom22ToLatestAndBack(t *testing.T) {
 	assertTableExists(t, d, "session_transcript_entries", false)
 	assertSessionColumnExists(t, d, "context_json", false)
 	assertSessionColumnExists(t, d, "history_json", true)
+	assertSessionColumnExists(t, d, "mcp_activations_json", false)
 
 	var restored string
 	if err := d.QueryRowContext(ctx, "SELECT history_json FROM sessions WHERE id = 'gap'").Scan(&restored); err != nil {

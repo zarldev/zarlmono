@@ -25,7 +25,6 @@ import (
 	agentmcp "github.com/zarldev/zarlmono/zkit/agent/mcp"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
-	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
@@ -202,7 +201,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	}))
 
 	// Database settings override application defaults, never ambient credentials.
-	fallback := engine.ProviderSpec{Name: backends.DefaultBuiltinName.String(), Model: "local"}
+	fallback := engine.ProviderSpec{Name: prefs.DefaultProvider, Model: prefs.DefaultModel}
 	_, providerPreferenceErr := settings.Svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyProvider)
 	unconfigured := errors.Is(providerPreferenceErr, prefs.ErrNotFound)
 	if providerPreferenceErr != nil && !unconfigured {
@@ -285,7 +284,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	// turn already in flight keeps its snapshot and the update applies next turn.
 	m.startupReady = true
 	if !p.Headless {
-		m.startupCmd = finishStartupMetadataCmd(ctx, settings, spec)
+		m.startupCmd = finishStartupMetadataCmd(ctx, settings, spec, m.repointSeq)
 		m.startupMCPCmd = connectConfiguredMCPServersCmd(ctx, settings, mcpReg)
 	}
 
@@ -437,9 +436,11 @@ type startupReadyMsg struct {
 	provider     llm.Provider
 	spec         engine.ProviderSpec
 	modelChanged bool
+	origin       engine.ProviderSpec
+	sequence     uint64
 }
 
-func finishStartupMetadataCmd(ctx context.Context, settings *engine.Settings, spec engine.ProviderSpec) tea.Cmd {
+func finishStartupMetadataCmd(ctx context.Context, settings *engine.Settings, spec engine.ProviderSpec, sequence uint64) tea.Cmd {
 	return func() tea.Msg {
 		// Startup metadata is advisory and must never hold the first submitted
 		// turn behind a slow model catalogue or local-provider probe. The static
@@ -462,6 +463,7 @@ func finishStartupMetadataCmd(ctx context.Context, settings *engine.Settings, sp
 		return startupReadyMsg{
 			window: settings.ContextWindow(metadataCtx, validated), provider: provider,
 			spec: validated, modelChanged: changed,
+			origin: spec, sequence: sequence,
 		}
 	}
 }
@@ -652,13 +654,15 @@ func setupLaunchLogging() (string, io.Closer) {
 	_ = os.MkdirAll(dir, filesystem.ModePrivateDir)
 
 	path := filepath.Join(dir, "zarlcode.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, filesystem.ModePrivateFile)
+	// Multiple application instances share this path. Append keeps a new launch
+	// from erasing another session's failure or leaving sparse holes at its offset.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, filesystem.ModePrivateFile)
 	if err != nil {
 		slog.SetDefault(slog.New(slog.DiscardHandler))
 		zlog.SetStdlibOutput(io.Discard)
 		return "", closerFunc(func() error { return nil })
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo})).With("pid", os.Getpid()))
 	zlog.SetStdlibOutput(f)
 	return path, f
 }

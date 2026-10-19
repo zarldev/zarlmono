@@ -26,7 +26,7 @@ func TestProvider_Conformance(t *testing.T) {
 			// Pick a model that exists in the SDK's accepted list;
 			// the test server ignores it but the SDK validates the
 			// URL it constructs.
-			google.WithModel("gemini-2.0-flash"),
+			google.WithModel("gemini-3.8-flash"),
 		)
 		if err != nil {
 			t.Fatalf("NewProvider: %v", err)

@@ -84,7 +84,7 @@ func googleStreamServer(t *testing.T, response string) *httptest.Server {
 
 func completeGoogle(t *testing.T, baseURL string, req llm.CompletionRequest) []llm.CompletionChunk {
 	t.Helper()
-	p, err := google.NewProvider("test-key", google.WithBaseURL(baseURL), google.WithModel("gemini-2.0-flash"))
+	p, err := google.NewProvider("test-key", google.WithBaseURL(baseURL), google.WithModel("gemini-3.8-flash"))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

@@ -87,6 +87,26 @@ var (
 	ErrContextLengthExceeded = errors.New("context length exceeded")
 )
 
+// ImageGenerationRequest asks an optional provider capability to create an image.
+type ImageGenerationRequest struct {
+	Prompt string
+	// ReferenceImages are optional images to edit or use as visual guidance.
+	ReferenceImages []ContentPart
+}
+
+// GeneratedImage is the generated image returned by an ImageGenerator.
+type GeneratedImage struct {
+	Data          []byte
+	MIMEType      string
+	RevisedPrompt string
+}
+
+// ImageGenerator is an optional provider capability for image generation.
+// Providers without it continue to satisfy Provider and remain unchanged.
+type ImageGenerator interface {
+	GenerateImage(ctx context.Context, req ImageGenerationRequest) (GeneratedImage, error)
+}
+
 // Provider is the minimum contract a backend has to satisfy. It is
 // deliberately narrow: a single streaming completion entry-point plus
 // a name for identification. Anything richer (model discovery, image
@@ -679,13 +699,18 @@ type CompletionChunk struct {
 // `cache_read_input_tokens`, OpenAI as
 // `prompt_tokens_details.cached_tokens`, and llama.cpp's
 // openai-compat endpoint approximates it from the KV-cache reuse.
-// Adapters that can't distinguish cached vs uncached leave this
-// at 0.
+// CacheCreationTokens is the subset used to create cache entries;
+// CacheCreation5mTokens and CacheCreation1hTokens are known-TTL subsets of
+// that aggregate. Any creation residual has an unknown TTL. Adapters that
+// cannot distinguish these observations leave the corresponding fields at 0.
 type Usage struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	CachedTokens     int
+	PromptTokens          int
+	CompletionTokens      int
+	TotalTokens           int
+	CachedTokens          int
+	CacheCreationTokens   int
+	CacheCreation5mTokens int
+	CacheCreation1hTokens int
 }
 
 // Model represents an available LLM model.

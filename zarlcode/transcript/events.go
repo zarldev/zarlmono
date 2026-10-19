@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -75,10 +76,19 @@ type AssistantDelta struct {
 	Delta  string
 }
 
+// AssistantSegmentFinished records a presentation boundary in assistant text.
+type AssistantSegmentFinished struct{ TurnID string }
+
 // ReasoningDelta appends streamed reasoning content.
 type ReasoningDelta struct {
 	TurnID string
 	Delta  string
+}
+
+// ControlRecorded appends one immutable prepared-request control observation.
+type ControlRecorded struct {
+	TurnID  string
+	Control runner.ReplayControl
 }
 
 // TurnFinished closes streamed entries for a turn.
@@ -99,6 +109,7 @@ type ToolStarted struct {
 	ParentExecutionID string
 	Name              string
 	Argument          string
+	Input             string
 	Sequence          int
 }
 
@@ -110,6 +121,13 @@ type ToolFinished struct {
 	FailureKind string
 	DurationMS  int64
 	Failed      bool
+}
+
+// ToolOutputUpdated replaces the bounded live output snapshot for one invocation.
+type ToolOutputUpdated struct {
+	ExecutionID string
+	ToolID      string
+	Output      string
 }
 
 // DiffAdded records a visible file mutation.
@@ -198,23 +216,33 @@ func (r *Reducer) Apply(event any) (Change, error) {
 		r.builder.StartTurn(event.TurnID, r.builder.SubagentEntryID(event.TurnID))
 	case AssistantDelta:
 		r.builder.AppendAssistant(event.TurnID, r.builder.SubagentEntryID(event.TurnID), event.Delta)
+	case AssistantSegmentFinished:
+		r.builder.FinishAssistantSegment(event.TurnID)
 	case ReasoningDelta:
 		r.builder.AppendReasoning(event.TurnID, r.builder.SubagentEntryID(event.TurnID), event.Delta)
 	case TurnFinished:
 		r.builder.FinishTurn(event.TurnID)
 	case SkillLoaded:
 		r.builder.AddSkill(event.TurnID, r.builder.SubagentEntryID(event.TurnID), event.Name)
+	case ControlRecorded:
+		id, err := r.builder.recordControl(event.TurnID, event.Control)
+		if err != nil {
+			return change, fmt.Errorf("%w: %w", ErrInvalidEvent, err)
+		}
+		change.PrimaryEntryID = id
 	case ToolStarted:
 		parentID := r.builder.SubagentEntryID(event.TurnID)
 		if event.ParentToolID != "" || event.ParentExecutionID != "" {
 			parentID = r.builder.ToolExecutionEntryID(event.ParentExecutionID, event.ParentToolID)
 		}
-		change.PrimaryEntryID = r.builder.StartToolExecution(
+		change.PrimaryEntryID = r.builder.startToolExecution(
 			event.TurnID, parentID, event.ExecutionID, event.ToolID, event.ParentExecutionID, event.ParentToolID,
-			event.Name, event.Argument, event.Sequence,
+			event.Name, event.Argument, event.Input, event.Sequence,
 		)
 	case ToolFinished:
 		r.builder.FinishToolExecution(event.ExecutionID, event.ToolID, event.Effect, event.FailureKind, event.DurationMS, event.Failed)
+	case ToolOutputUpdated:
+		r.builder.UpdateToolOutputPreview(event.ExecutionID, event.ToolID, event.Output)
 	case DiffAdded:
 		r.builder.AddDiff(event.TurnID, r.builder.SubagentEntryID(event.TurnID), event.Path, event.Diff)
 	case PlanUpdated:
@@ -254,10 +282,12 @@ func persistenceForEvent(event any) Persistence {
 	switch event.(type) {
 	case AssistantDelta, ReasoningDelta:
 		return Persistences.PERSISTENCEDEBOUNCED
+	case ToolOutputUpdated:
+		return Persistences.PERSISTENCEDEBOUNCED
 	case UserSubmitted, QueuedUserAdded, QueuedUserInjected, NoticeAdded, InputAdmitted, InputWaitChanged,
-		TurnStarted, TurnFinished, SkillLoaded, ToolStarted, ToolFinished,
+		TurnStarted, TurnFinished, AssistantSegmentFinished, SkillLoaded, ToolStarted, ToolFinished,
 		DiffAdded, PlanUpdated, SubagentReserved, SubagentStarted,
-		SubagentFinished, SubagentSpawnFailed:
+		SubagentFinished, SubagentSpawnFailed, ControlRecorded:
 		return Persistences.PERSISTENCEIMMEDIATE
 	case Clear:
 		return Persistences.PERSISTENCENONE
@@ -275,13 +305,8 @@ func validateEvent(event any) error {
 		if event.Text == "" && len(event.Attachments) == 0 {
 			return invalid("user text and attachments are empty")
 		}
-		for _, attachment := range event.Attachments {
-			if attachment.Name == "" {
-				return invalid("attachment name is empty")
-			}
-			if attachment.Size < 0 {
-				return invalid("attachment size is negative")
-			}
+		if err := validateAttachments(event.Attachments); err != nil {
+			return invalid(err.Error())
 		}
 	case QueuedUserAdded:
 		if event.Text == "" {
@@ -299,6 +324,13 @@ func validateEvent(event any) error {
 		if event.Text == "" {
 			return invalid("notice text is empty")
 		}
+	case ControlRecorded:
+		if event.TurnID == "" {
+			return invalid("control turn ID is empty")
+		}
+		if _, err := encodeControl(event.Control); err != nil {
+			return invalid("control payload is invalid")
+		}
 	case TurnStarted:
 		if event.TurnID == "" {
 			return invalid("turn ID is empty")
@@ -311,6 +343,10 @@ func validateEvent(event any) error {
 		if event.TurnID == "" {
 			return invalid("assistant turn ID is empty")
 		}
+	case AssistantSegmentFinished:
+		if event.TurnID == "" {
+			return invalid("assistant segment turn ID is empty")
+		}
 	case ReasoningDelta:
 		if event.TurnID == "" {
 			return invalid("reasoning turn ID is empty")
@@ -320,9 +356,9 @@ func validateEvent(event any) error {
 			return invalid("skill turn ID or name is empty")
 		}
 	case ToolStarted:
-		if event.TurnID == "" || event.ToolID == "" || event.Name == "" {
-			return invalid("tool turn ID, call ID, or name is empty")
-		}
+		return event.validate()
+	case ToolOutputUpdated:
+		return event.validate()
 	case ToolFinished:
 		if event.ToolID == "" || event.DurationMS < 0 {
 			return invalid("tool call ID is empty or duration is negative")
@@ -353,6 +389,23 @@ func validateEvent(event any) error {
 		}
 	default:
 		return fmt.Errorf("%w: %T", ErrUnsupportedEvent, event)
+	}
+	return nil
+}
+
+func (event ToolOutputUpdated) validate() error {
+	if event.ExecutionID == "" || event.ToolID == "" {
+		return fmt.Errorf("%w: tool execution ID or call ID is empty", ErrInvalidEvent)
+	}
+	if err := validateToolOutputPreview(event.Output); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidEvent, err.Error())
+	}
+	return nil
+}
+
+func (event ToolStarted) validate() error {
+	if event.TurnID == "" || event.ToolID == "" || event.Name == "" {
+		return fmt.Errorf("%w: tool turn ID, call ID, or name is empty", ErrInvalidEvent)
 	}
 	return nil
 }

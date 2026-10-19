@@ -14,8 +14,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
-// Feed real public messages and check both the transcript and cockpit, not
-// private activity fields or a second test-only implementation of the resolver.
+// Feed real public messages and check the single composer activity indicator,
+// not private activity fields or a test-only implementation of the resolver.
 func newActivityUI() *tui.UI {
 	ui := tui.New()
 	ui.Update(tea.WindowSizeMsg{Width: 240, Height: 60})
@@ -26,8 +26,8 @@ func newActivityUI() *tui.UI {
 func assertLiveActivity(t *testing.T, ui *tui.UI, want string) {
 	t.Helper()
 	out := ansi.Strip(ui.View().Content)
-	if n := strings.Count(out, "⠋ "+want); n != 2 {
-		t.Fatalf("activity %q appeared on %d surfaces, want transcript and cockpit:\n%s", want, n, out)
+	if n := strings.Count(out, "⠋ "+want); n != 1 {
+		t.Fatalf("activity %q appeared %d times, want one composer indicator:\n%s", want, n, out)
 	}
 }
 
@@ -165,7 +165,7 @@ func TestActivityTerminalAndNewTurnReset(t *testing.T) {
 			ui.Update(teasink.WorkspaceWaitStartedMsg{TaskID: "turn", ExecutionID: "old"})
 			ui.Update(teasink.ConversationEndedMsg{TaskID: "turn", Reason: reason, Error: "test error"})
 			out := ansi.Strip(ui.View().Content)
-			if !strings.Contains(out, "○ idle") || strings.Contains(out, "⠋ ") {
+			if containsBraille(out) {
 				t.Fatalf("terminal activity not idle:\n%s", out)
 			}
 			ui.Update(teasink.ConversationStartedMsg{TaskID: "next"})
@@ -189,10 +189,7 @@ func TestActivityIndependentOfWorkflowMode(t *testing.T) {
 	ui := newActivityUI()
 	ui.Update(teasink.ThinkingMsg{TaskID: "turn", Delta: "reason"})
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	out := ansi.Strip(ui.View().Content)
-	if !strings.Contains(out, "plan mode") {
-		t.Fatalf("expected plan mode:\n%s", out)
-	}
+	assertComposerMode(t, ui, true)
 	assertLiveActivity(t, ui, "thinking")
 	ui.Update(teasink.ToolStartedMsg{TaskID: "turn", ToolID: "read", ToolName: "read"})
 	assertLiveActivity(t, ui, "running read")
@@ -205,8 +202,8 @@ func TestActivityLongNamesPreserveViewport(t *testing.T) {
 			ui.Update(teasink.ToolStartedMsg{TaskID: "turn", ToolID: "long", ToolName: strings.Repeat("LONG工具", 20)})
 			ui.Update(tea.WindowSizeMsg{Width: width, Height: 60})
 			out := ansi.Strip(ui.View().Content)
-			if width >= 104 && strings.Count(out, "⠋ running long") != 2 {
-				t.Fatalf("expected lowercase activity in transcript and narrow sidebar:\n%s", out)
+			if width >= 104 && strings.Count(out, "⠋ running long") != 1 {
+				t.Fatalf("expected one lowercase composer activity indicator:\n%s", out)
 			}
 			for line := range strings.SplitSeq(out, "\n") {
 				if ansi.StringWidth(line) > width {
@@ -220,8 +217,8 @@ func TestActivityLongNamesPreserveViewport(t *testing.T) {
 					break
 				}
 			}
-			if !strings.Contains(header, "follow 100%") || ansi.StringWidth(header) > width {
-				t.Fatalf("viewport not preserved at width %d:\n%s", width, out)
+			if strings.Contains(header, "follow") || ansi.StringWidth(header) > width {
+				t.Fatalf("quiet header not preserved at width %d:\n%s", width, out)
 			}
 			if strings.Contains(header, "LONG") || strings.Contains(header, strings.Repeat("long工具", 4)) {
 				t.Fatalf("activity name not lowercase and bounded: %s", header)

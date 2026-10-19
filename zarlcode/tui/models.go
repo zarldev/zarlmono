@@ -33,6 +33,7 @@ func (m *UI) openSettings() tea.Cmd {
 	if m.settings == nil {
 		return nil
 	}
+	m.captureSettingsTargetSnapshot()
 	d := newSettingsDialog(m.appContext(), m.settings)
 	m.overlay.push(d)
 	cmds := []tea.Cmd{settingsTick()} // toast heartbeat

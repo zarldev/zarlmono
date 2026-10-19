@@ -86,6 +86,12 @@ type response struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Result  any             `json:"result,omitempty"`
+	Error   *responseError  `json:"error,omitempty"`
+}
+
+type responseError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 type echoArgs struct {
@@ -136,6 +142,13 @@ func serveStdio() error {
 
 		var result any
 		switch req.Method {
+		case "server/discover":
+			// This fixture implements the initialization-based 2024-11-05
+			// revision. Unknown discovery must return an RPC error, not exit.
+			if err := encoder.Encode(response{JSONRPC: "2.0", ID: req.ID, Error: &responseError{Code: -32601, Message: "method not found"}}); err != nil {
+				return fmt.Errorf("encode unsupported method: %w", err)
+			}
+			continue
 		case "initialize":
 			initialized = true
 			result = initializeResult{

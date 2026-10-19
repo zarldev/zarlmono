@@ -25,14 +25,32 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
+// SetupLaunchLogging exposes the launch logger lifecycle for external tests.
+func SetupLaunchLogging() (string, io.Closer) { return setupLaunchLogging() }
+
 // RenderCockpitLines renders the cockpit body at the requested content width.
 func (m *UI) RenderCockpitLines(width int) []string {
 	return m.cockpitLines(width)
 }
 
-// SetPlanMode selects the durable workflow mode shown by the UI.
+// RefreshProviderPricing applies the current registry-backed billing classification.
+func (m *UI) RefreshProviderPricing() {
+	m.session.ApplyProviderCostBasis(m.session.ActiveProviderSpec())
+}
+
+// SetPlanMode selects the durable workflow mode and schedules its configured target.
 func (m *UI) SetPlanMode(enabled bool) {
+	before := m.session.PlanMode
 	m.session.PlanMode = enabled
+	if m.live == nil {
+		return
+	}
+	m.live.SetPlanMode(enabled)
+	applied := m.live.AppliedMode()
+	m.session.PlanMode = applied.Plan
+	if applied.Plan != before {
+		m.scheduledModeTargetCmd = m.requestModeTarget(applied.Plan, applied.Generation)
+	}
 }
 
 // SetPlan replaces the structured plan rendered by the planning pane.
@@ -115,6 +133,9 @@ func (m *UI) ResumeSavedSessionTarget(ctx context.Context, id string) (tea.Cmd, 
 
 // ActiveProviderSpec returns the provider target currently shown by the session.
 func (m *UI) ActiveProviderSpec() engine.ProviderSpec { return m.session.ActiveProviderSpec() }
+
+// LaunchQueuedTurnForTest promotes the current queue head through the production path.
+func (m *UI) LaunchQueuedTurnForTest() tea.Cmd { return m.launchQueuedTurn() }
 
 // AddTranscriptMessages appends semantic messages through the live transcript path.
 func (m *UI) AddTranscriptMessages(messages []llm.Message) {
@@ -575,10 +596,14 @@ func (m *UI) ReplayTranscriptEvents(events ...any) {
 			m.timeline.startTurn(event.TurnID, 0)
 		case transcript.AssistantDelta:
 			m.timeline.appendContent(event.TurnID, 0, event.Delta)
+		case transcript.AssistantSegmentFinished:
+			m.timeline.finishAssistantSegment(event.TurnID)
 		case transcript.ReasoningDelta:
 			m.timeline.appendThinking(event.TurnID, 0, event.Delta)
 		case transcript.ToolStarted:
-			m.timeline.startToolWithParent(event.TurnID, 0, event.ExecutionID, event.ToolID, event.Name, event.Argument, event.ParentExecutionID, event.ParentToolID, event.Sequence)
+			m.timeline.startToolWithInput(event.TurnID, 0, event.ExecutionID, event.ToolID, event.Name, event.Argument, event.ParentExecutionID, event.ParentToolID, event.Sequence, event.Input)
+		case transcript.ToolOutputUpdated:
+			m.timeline.updateToolOutput(event.ExecutionID, event.ToolID, event.Output)
 		case transcript.ToolFinished:
 			m.timeline.finishTool(event.ExecutionID, event.ToolID, "", nil, time.Duration(event.DurationMS)*time.Millisecond, event.Failed, tools.Kinds.UNKNOWN, event.Effect)
 		case transcript.DiffAdded:

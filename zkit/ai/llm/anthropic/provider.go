@@ -13,6 +13,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/options"
@@ -20,6 +21,10 @@ import (
 
 const (
 	defaultModel = anthropic.ModelClaudeSonnet4_6
+
+	modelClaudeOpus46   = "claude-opus-4-6"
+	modelClaudeOpus47   = "claude-opus-4-7"
+	modelClaudeSonnet46 = "claude-sonnet-4-6"
 
 	continuationProvider = "anthropic"
 	continuationFormat   = "content_block.v1"
@@ -32,10 +37,11 @@ const (
 
 // Provider implements the Anthropic Claude LLM provider using the official SDK.
 type Provider struct {
-	client  *anthropic.Client
-	model   anthropic.Model
-	apiKey  string
-	baseURL string // optional override; empty → SDK default
+	client     *anthropic.Client
+	model      anthropic.Model
+	apiKey     string
+	baseURL    string       // optional override; empty → SDK default
+	httpClient *http.Client // optional, borrowed transport policy
 }
 
 // NewProvider assembles an Anthropic provider using an already-resolved API key.
@@ -57,6 +63,9 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 	}
 	if provider.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(provider.baseURL))
+	}
+	if provider.httpClient != nil {
+		clientOpts = append(clientOpts, option.WithHTTPClient(provider.httpClient))
 	}
 	client := anthropic.NewClient(clientOpts...)
 	provider.client = &client
@@ -88,47 +97,11 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 // as the second value). It stops early if yield returns false (the consumer
 // broke / the attempt was cancelled).
 func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
-	messages := convertMessagesToSDK(req.Messages)
-	setLastMessageCacheBreakpoint(messages)
-
-	// Build request parameters
-	params := anthropic.MessageNewParams{
-		Model:     p.model,
-		Messages:  messages,
-		MaxTokens: int64(getMaxTokens(req.MaxTokens)),
+	params, err := p.messageParams(req)
+	if err != nil {
+		yield(llm.CompletionChunk{}, err)
+		return
 	}
-
-	// Set temperature if not zero
-	// Extended thinking forbids a custom temperature (the API requires the
-	// default), so only forward it when thinking is off.
-	if req.Temperature > 0 && !req.Thinking.Enabled {
-		params.Temperature = anthropic.Float(float64(req.Temperature))
-	}
-
-	// Add system prompt if present. Mark with cache_control:ephemeral so
-	// Anthropic serves the (typically multi-kilobyte) system prompt — and the
-	// tools that precede it in the cache prefix — from its KV cache on
-	// subsequent turns. The static prefix uses the 1-hour TTL (see
-	// staticCacheControl): a cache read is ~90% off, and the extra write cost
-	// buys survival across the multi-minute idle gaps between turns that would
-	// otherwise evict the default 5-minute cache and force a full re-warm.
-	systemPrompt := extractSystemPrompt(req.Messages)
-	if systemPrompt != "" {
-		params.System = []anthropic.TextBlockParam{
-			{
-				Text:         systemPrompt,
-				CacheControl: staticCacheControl(),
-			},
-		}
-	}
-
-	// Add tools if present
-	if len(req.Tools) > 0 {
-		params.Tools = convertToolsToSDK(req.Tools)
-	}
-
-	applyResponseFormat(&params, req.ResponseFormat)
-	applyThinking(&params, req.Thinking, req.Options)
 
 	// Acquire the SDK stream only after iteration starts and always close it,
 	// including cancellation and downstream early-stop paths.
@@ -217,17 +190,14 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 
 	// Anthropic reports usage on every completed message, including a legitimate
 	// all-zero report. Preserve that presence with an owned value.
-	prompt := int(message.Usage.InputTokens +
-		message.Usage.CacheCreationInputTokens +
-		message.Usage.CacheReadInputTokens)
+	usage, err := usageFromAnthropic(message.Usage)
+	if err != nil {
+		yield(llm.CompletionChunk{}, fmt.Errorf("anthropic usage: %w", err))
+		return
+	}
 	chunk := llm.CompletionChunk{
-		FinishReason: normalizeFinishReason(message.StopReason),
-		Usage: llm.Usage{
-			PromptTokens:     prompt,
-			CompletionTokens: int(message.Usage.OutputTokens),
-			TotalTokens:      prompt + int(message.Usage.OutputTokens),
-			CachedTokens:     int(message.Usage.CacheReadInputTokens),
-		},
+		FinishReason:  normalizeFinishReason(message.StopReason),
+		Usage:         usage,
 		UsageReported: true,
 	}
 	yield(chunk, nil)
@@ -235,42 +205,11 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 
 // nonStreamCompletion handles non-streaming responses.
 func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
-	messages := convertMessagesToSDK(req.Messages)
-	setLastMessageCacheBreakpoint(messages)
-
-	// Build request parameters
-	params := anthropic.MessageNewParams{
-		Model:     p.model,
-		Messages:  messages,
-		MaxTokens: int64(getMaxTokens(req.MaxTokens)),
+	params, err := p.messageParams(req)
+	if err != nil {
+		yield(llm.CompletionChunk{}, err)
+		return
 	}
-
-	// Set temperature if not zero
-	// Extended thinking forbids a custom temperature (the API requires the
-	// default), so only forward it when thinking is off.
-	if req.Temperature > 0 && !req.Thinking.Enabled {
-		params.Temperature = anthropic.Float(float64(req.Temperature))
-	}
-
-	// Add system prompt if present, marked for 1-hour ephemeral caching
-	// (see streaming path + staticCacheControl for rationale).
-	systemPrompt := extractSystemPrompt(req.Messages)
-	if systemPrompt != "" {
-		params.System = []anthropic.TextBlockParam{
-			{
-				Text:         systemPrompt,
-				CacheControl: staticCacheControl(),
-			},
-		}
-	}
-
-	// Add tools if present
-	if len(req.Tools) > 0 {
-		params.Tools = convertToolsToSDK(req.Tools)
-	}
-
-	applyResponseFormat(&params, req.ResponseFormat)
-	applyThinking(&params, req.Thinking, req.Options)
 
 	// Make the request
 	response, err := p.client.Messages.New(ctx, params)
@@ -339,15 +278,59 @@ func (p *Provider) nonStreamCompletion(ctx context.Context, req llm.CompletionRe
 		return
 	}
 
-	usage := llm.Usage{
-		PromptTokens: int(response.Usage.InputTokens +
-			response.Usage.CacheCreationInputTokens +
-			response.Usage.CacheReadInputTokens),
-		CompletionTokens: int(response.Usage.OutputTokens),
-		CachedTokens:     int(response.Usage.CacheReadInputTokens),
+	usage, err := usageFromAnthropic(response.Usage)
+	if err != nil {
+		yield(llm.CompletionChunk{}, fmt.Errorf("anthropic usage: %w", err))
+		return
 	}
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	yield(llm.CompletionChunk{Usage: usage, UsageReported: true}, nil)
+}
+
+func usageFromAnthropic(usage anthropic.Usage) (llm.Usage, error) {
+	counts := []struct {
+		name  string
+		value int64
+	}{
+		{name: "input_tokens", value: usage.InputTokens},
+		{name: "output_tokens", value: usage.OutputTokens},
+		{name: "cache_creation_input_tokens", value: usage.CacheCreationInputTokens},
+		{name: "cache_read_input_tokens", value: usage.CacheReadInputTokens},
+	}
+	maxInt := int64(^uint(0) >> 1)
+	for _, count := range counts {
+		if count.value < 0 || count.value > maxInt {
+			return llm.Usage{}, fmt.Errorf("invalid %s %d", count.name, count.value)
+		}
+	}
+	if usage.InputTokens > maxInt-usage.CacheCreationInputTokens ||
+		usage.InputTokens+usage.CacheCreationInputTokens > maxInt-usage.CacheReadInputTokens {
+		return llm.Usage{}, errors.New("prompt token total overflows int")
+	}
+	prompt := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+	if prompt > maxInt-usage.OutputTokens {
+		return llm.Usage{}, errors.New("total token count overflows int")
+	}
+
+	mapped := llm.Usage{
+		PromptTokens:        int(prompt),
+		CompletionTokens:    int(usage.OutputTokens),
+		TotalTokens:         int(prompt + usage.OutputTokens),
+		CachedTokens:        int(usage.CacheReadInputTokens),
+		CacheCreationTokens: int(usage.CacheCreationInputTokens),
+	}
+	if !usage.JSON.CacheCreation.Valid() {
+		return mapped, nil
+	}
+	creation5m := usage.CacheCreation.Ephemeral5mInputTokens
+	creation1h := usage.CacheCreation.Ephemeral1hInputTokens
+	if creation5m < 0 || creation1h < 0 ||
+		creation5m > usage.CacheCreationInputTokens ||
+		creation1h > usage.CacheCreationInputTokens-creation5m {
+		return mapped, nil
+	}
+	mapped.CacheCreation5mTokens = int(creation5m)
+	mapped.CacheCreation1hTokens = int(creation1h)
+	return mapped, nil
 }
 
 func cancellationCause(ctx context.Context) error {
@@ -516,6 +499,7 @@ func mergeAnthropicContinuation(projected []anthropic.ContentBlockParamUnion, it
 	occupied := make(map[int]bool, len(items))
 	hasNativeText := false
 	order := 0
+	nextNativeIndex := 0
 	for _, item := range items {
 		if item.Provider != continuationProvider || item.Format != continuationFormat {
 			continue
@@ -524,29 +508,21 @@ func mergeAnthropicContinuation(projected []anthropic.ContentBlockParamUnion, it
 		if err := json.Unmarshal(item.Data, &block); err != nil {
 			continue
 		}
-		if block.Type == continuationText && (item.Kind != continuationText || item.OutputIndex == nil) {
+		if item.Kind != "" && item.Kind != block.Type {
 			continue
 		}
-		var native anthropic.ContentBlockParamUnion
-		switch {
-		case item.Kind == continuationText && block.Type == continuationText:
-			text := anthropic.NewTextBlock(block.Text)
-			if len(block.Citations) > 0 {
-				_ = json.Unmarshal(block.Citations, &text.OfText.Citations)
-			}
-			native = text
+		if block.Type != continuationText && block.Type != continuationThinking && block.Type != continuationRedacted {
+			continue
+		}
+		native := param.Override[anthropic.ContentBlockParamUnion](json.RawMessage(item.Data))
+		if block.Type == continuationText {
 			hasNativeText = true
-		case item.Kind == continuationThinking && block.Type == continuationThinking:
-			native = anthropic.NewThinkingBlock(block.Signature, block.Thinking)
-		case item.Kind == continuationRedacted && block.Type == continuationRedacted:
-			native = anthropic.NewRedactedThinkingBlock(block.Data)
-		default:
-			continue
 		}
-		index := 0
+		index := nextNativeIndex
 		if item.OutputIndex != nil {
 			index = *item.OutputIndex
 		}
+		nextNativeIndex = max(nextNativeIndex, index+1)
 		indexed = append(indexed, indexedBlock{index: index, order: order, block: native})
 		occupied[index] = true
 		order++
@@ -625,23 +601,32 @@ func staticCacheControl() anthropic.CacheControlEphemeralParam {
 }
 
 func setLastMessageCacheBreakpoint(messages []anthropic.MessageParam) {
-	if len(messages) == 0 {
+	if len(messages) == 0 || len(messages[len(messages)-1].Content) == 0 {
 		return
 	}
-	last := messages[len(messages)-1]
-	if len(last.Content) == 0 {
+	blocks := messages[len(messages)-1].Content
+	index := len(blocks) - 1
+	raw, err := json.Marshal(blocks[index])
+	if err != nil {
 		return
 	}
-	// GetCacheControl returns a pointer into the block's shared underlying
-	// param struct (the union holds pointer fields), so assigning through it
-	// mutates the block in the slice.
-	if cc := last.Content[len(last.Content)-1].GetCacheControl(); cc != nil {
-		*cc = anthropic.NewCacheControlEphemeralParam()
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) != nil {
+		return
 	}
+	var kind string
+	if json.Unmarshal(object["type"], &kind) != nil || kind == continuationThinking || kind == continuationRedacted {
+		return
+	}
+	if _, exists := object["cache_control"]; exists {
+		return
+	}
+	object["cache_control"] = json.RawMessage(`{"type":"ephemeral"}`)
+	blocks[index] = param.Override[anthropic.ContentBlockParamUnion](object)
 }
 
 func appendUserContent(blocks *[]anthropic.ContentBlockParamUnion, msg llm.Message) {
-	if msg.Content != "" {
+	if msg.Parts == nil && msg.Content != "" {
 		*blocks = append(*blocks, anthropic.NewTextBlock(msg.Content))
 	}
 	for _, part := range msg.Parts {
@@ -698,9 +683,7 @@ func applyResponseFormat(params *anthropic.MessageNewParams, rf llm.ResponseForm
 	if rf.Type != llm.ResponseFormatJSONSchema || rf.Schema.IsZero() {
 		return
 	}
-	params.OutputConfig = anthropic.OutputConfigParam{
-		Format: anthropic.JSONOutputFormatParam{Schema: rf.Schema.Map()},
-	}
+	params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: rf.Schema.Map()}
 }
 
 // applyThinking enables Anthropic extended thinking when the request asks
@@ -713,17 +696,22 @@ func applyThinking(params *anthropic.MessageNewParams, tc llm.ThinkingConfig, mo
 	if !tc.Enabled {
 		return
 	}
+	display, _ := modelOptions[thinkingDisplayOption].(string)
+	validDisplay := display == "summarized" || display == "omitted"
+	if adaptiveThinkingModel(params.Model) {
+		params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+		if validDisplay {
+			params.Thinking.OfAdaptive.Display = anthropic.ThinkingConfigAdaptiveDisplay(display)
+		}
+		return
+	}
 	budget := max(int64(tc.BudgetTokens), 1024)
 	if params.MaxTokens <= budget {
 		params.MaxTokens = budget + 4096
 	}
 	params.Thinking = anthropic.ThinkingConfigParamOfEnabled(budget)
-	if display, ok := modelOptions[thinkingDisplayOption].(string); ok {
-		switch display {
-		case string(anthropic.ThinkingConfigEnabledDisplaySummarized),
-			string(anthropic.ThinkingConfigEnabledDisplayOmitted):
-			params.Thinking.OfEnabled.Display = anthropic.ThinkingConfigEnabledDisplay(display)
-		}
+	if validDisplay {
+		params.Thinking.OfEnabled.Display = anthropic.ThinkingConfigEnabledDisplay(display)
 	}
 }
 
@@ -740,14 +728,7 @@ func convertToolsToSDK(tools []llm.Tool) []anthropic.ToolUnionParam {
 
 		// Set up the input schema from the typed parameters.
 		if !tool.Function.Parameters.IsZero() {
-			inputSchema := anthropic.ToolInputSchemaParam{
-				Required: tool.Function.Parameters.Required,
-			}
-			// Properties marshals via Schema.MarshalJSON; the SDK accepts any.
-			if props := tool.Function.Parameters.Properties; props != nil {
-				inputSchema.Properties = props
-			}
-			toolParam.InputSchema = inputSchema
+			toolParam.InputSchema = param.Override[anthropic.ToolInputSchemaParam](tool.Function.Parameters)
 		}
 
 		// Wrap in the union type
@@ -800,11 +781,17 @@ func anthropicRateLimitError(err error, fallback error) error {
 		return fallback
 	}
 	rle := &llm.RateLimitError{
-		Message: fmt.Sprintf("anthropic: %s", http.StatusText(apiErr.StatusCode)),
+		Message:   fmt.Sprintf("anthropic: %s", http.StatusText(apiErr.StatusCode)),
+		Retryable: true,
 	}
 	if resp := apiErr.Response; resp != nil {
 		rle.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
 		rle.ResetAt = parseRateLimitReset(resp.Header.Get("X-Ratelimit-Reset"))
+		for _, header := range []string{"Anthropic-Ratelimit-Requests-Reset", "Anthropic-Ratelimit-Tokens-Reset", "Anthropic-Ratelimit-Input-Tokens-Reset", "Anthropic-Ratelimit-Output-Tokens-Reset"} {
+			if reset := parseRateLimitReset(resp.Header.Get(header)); reset.After(rle.ResetAt) {
+				rle.ResetAt = reset
+			}
+		}
 	}
 	return rle
 }
@@ -826,11 +813,13 @@ func parseRetryAfter(v string) time.Duration {
 	return 0
 }
 
-// parseRateLimitReset parses the X-RateLimit-Reset header as a Unix
-// timestamp (integer seconds).
+// parseRateLimitReset accepts Anthropic RFC3339 timestamps and proxy Unix resets.
 func parseRateLimitReset(v string) time.Time {
 	if v == "" {
 		return time.Time{}
+	}
+	if instant, err := time.Parse(time.RFC3339Nano, v); err == nil {
+		return instant
 	}
 	sec, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {

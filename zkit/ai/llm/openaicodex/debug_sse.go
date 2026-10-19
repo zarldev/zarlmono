@@ -16,6 +16,8 @@ import (
 // are appended (one JSON-per-line, with a leading timestamp) so
 // successive runs against the same file accumulate into a session
 // log.
+// These private files contain complete, sensitive conversation payloads. Do not
+// share them as ordinary logs; opting in does not redact their contents.
 //
 // Empty / unset env var → no-op sink (zero allocation, zero I/O).
 type sseDebugSink struct {
@@ -31,9 +33,14 @@ func openSSEDebugSink() *sseDebugSink {
 	if path == "" {
 		return &sseDebugSink{}
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filesystem.ModePublicFile)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filesystem.ModePrivateFile)
 	if err != nil {
 		// Silently degrade — debug aid shouldn't crash the stream.
+		return &sseDebugSink{}
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || f.Chmod(filesystem.ModePrivateFile) != nil {
+		_ = f.Close()
 		return &sseDebugSink{}
 	}
 	s := &sseDebugSink{f: f}
@@ -47,21 +54,27 @@ func openSSEDebugSink() *sseDebugSink {
 // safe — multiple concurrent runs against one CODEX_DEBUG_SSE file
 // interleave cleanly.
 func (s *sseDebugSink) WriteEvent(payload string) {
-	if s == nil || s.f == nil {
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.f == nil {
+		return
+	}
 	_, _ = fmt.Fprintln(s.f, payload)
 }
 
 // Close flushes and releases the file handle. Safe on a no-op sink.
 func (s *sseDebugSink) Close() {
-	if s == nil || s.f == nil {
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.f == nil {
+		return
+	}
 	_ = s.f.Close()
 	s.f = nil
 }

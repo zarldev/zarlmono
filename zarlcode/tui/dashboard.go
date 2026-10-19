@@ -21,23 +21,15 @@ const (
 	dashColGap       = 3
 )
 
-// drawDashboard paints the full-width context dashboard: the same cockpit
-// signals as the sidebar, spread across two or three columns with room for
-// the extra sparkline grid and per-turn history table that don't fit the
-// 48-col sidebar. Degrades to a single column on narrower terminals.
+// drawDashboard paints the detailed session views on the same quiet surface as
+// the main screen. The overview uses up to three columns as space permits.
 func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
-	innerW, innerH := r.Dx()-2, r.Dy()-1
-	if innerW < cockpitMinWidth || innerH < 4 {
+	innerW, contentH := dashboardContentSize(r)
+	if innerW < cockpitMinWidth || contentH < 1 {
 		return
 	}
-	x0, y0 := r.Min.X+1, r.Min.Y
-
-	tabRow := m.contextViewTabBar(innerW)
-	drawLine(scr, uv.Rect(x0, y0, innerW, 1), tabRow)
-	drawLine(scr, uv.Rect(x0, y0+1, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
-
-	contentY := y0 + 2
-	contentH := max(innerH-2, 1)
+	l := drawDetailView(scr, r, "session", contextViewTabNames, int(m.contextView.tab))
+	x0, contentY := l.Body.Min.X, l.Body.Min.Y
 	cw := innerW
 	contentLines := m.activeContextViewLines(cw)
 	maxScroll := max(len(contentLines)-contentH, 0)
@@ -48,16 +40,16 @@ func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
 		m.contextView.setActiveScroll(0)
 	}
 	scroll := m.contextView.activeScroll()
-	if maxScroll > 0 {
-		indicator := palette.Subtle.On(" ↑↓ scroll ") + palette.Fg.On(itoa(scroll+1)) + palette.Subtle.On("/") + palette.Fg.On(itoa(maxScroll+1))
-		indicatorW := ansi.StringWidth(indicator)
-		drawLine(scr, uv.Rect(max(r.Min.X+1, r.Max.X-indicatorW-2), r.Min.Y, indicatorW, 1), indicator)
+	hints := "esc close · ←→ tabs"
+	if innerW >= 64 {
+		hints = "Ctrl+L / esc close · ←→ / tab views · ↑↓ scroll"
 	}
+	position := ""
+	if maxScroll > 0 {
+		position = helpScrollPosition(scroll, contentH, len(contentLines))
+	}
+	drawDetailFooter(scr, l.Footer, hints, position)
 	for i := scroll; i < len(contentLines) && i-scroll < contentH; i++ {
-		if strings.HasPrefix(ansi.Strip(contentLines[i]), "├") {
-			drawLine(scr, uv.Rect(r.Min.X, contentY+i-scroll, r.Dx(), 1), paneSectionRule(contentLines[i], r.Dx()))
-			continue
-		}
 		drawLine(scr, uv.Rect(x0, contentY+i-scroll, cw, 1), ansi.Truncate(contentLines[i], cw, ""))
 	}
 	drawPaneScrollbar(scr, r.Max.X-2, contentY, contentH, len(contentLines), scroll)
@@ -75,14 +67,13 @@ func dashboardColumnCount(innerW int) int {
 }
 
 func (m *UI) dashboardGeometry() (int, int) {
-	r := m.dashboardRect()
-	innerW, innerH := r.Dx()-4, r.Dy()-2
-	if innerW < cockpitMinWidth || innerH < 1 {
-		return cockpitMinWidth, 0
-	}
-	cols := dashboardColumnCount(innerW)
-	colW := (innerW - (cols-1)*dashColGap) / cols
-	return colW, innerH
+	return dashboardContentSize(m.dashboardRect())
+}
+
+// Drawing, scroll limits and paging must measure the same full-width content.
+func dashboardContentSize(r uv.Rectangle) (int, int) {
+	l := detailViewGeometry(r)
+	return max(l.Body.Dx(), 1), l.Body.Dy()
 }
 
 func (m *UI) dashboardMaxScroll() int {
@@ -118,18 +109,36 @@ func (m *UI) dashboardPageStep() int {
 func (m *UI) activeContextViewLines(width int) []string {
 	switch m.contextView.tab {
 	case contextViewTabContext:
-		return m.contextPaneLines(width, 0)
+		return wrapDashboardLines(m.contextPaneLines(width, 0), width)
 	case contextViewTabPrompt:
-		return m.contextPromptLines(width)
+		return wrapDashboardLines(m.contextPromptLines(width), width)
 	case contextViewTabTools:
-		return m.contextToolsLines(width)
+		return wrapDashboardLines(m.contextToolsLines(width), width)
 	case contextViewTabEvents:
-		return m.contextEventsLines(width)
+		return wrapDashboardLines(m.contextEventsLines(width), width)
 	default:
 		cols := dashboardColumnCount(width)
 		colW := (width - (cols-1)*dashColGap) / cols
-		return flattenDashboardColumns(m.dashboardColumns(cols, colW), colW)
+		columns := m.dashboardColumns(cols, colW)
+		for i, lines := range columns {
+			columns[i] = wrapDashboardLines(lines, colW)
+		}
+		out := flattenDashboardColumns(columns, colW)
+		if cols > 1 {
+			out = append(out, "", sidebarHeading("session"))
+			out = append(out, wrapDashboardLines(m.llmStateLines(), width)...)
+		}
+		return out
 	}
+}
+
+// Retain complete metadata and cost qualifiers instead of clipping column rows.
+func wrapDashboardLines(lines []string, width int) []string {
+	var out []string
+	for _, line := range lines {
+		out = append(out, strings.Split(ansi.Hardwrap(line, width, true), "\n")...)
+	}
+	return out
 }
 
 func flattenDashboardColumns(columns [][]string, colW int) []string {
@@ -154,21 +163,9 @@ func flattenDashboardColumns(columns [][]string, colW int) []string {
 	return out
 }
 
-func (m *UI) contextViewTabBar(width int) string {
-	parts := make([]string, len(contextViewTabNames))
-	for i, name := range contextViewTabNames {
-		if contextViewTab(i) == m.contextView.tab {
-			parts[i] = palette.Primary.On("[ " + name + " ]")
-		} else {
-			parts[i] = palette.Subtle.On(name)
-		}
-	}
-	return ansi.Truncate(strings.Join(parts, "  "), width, "")
-}
-
 // dashboardColumns lays the cockpit sections into cols columns of width colW.
 // Three columns: context | flow+signals | tools+history. Two: context+flow |
-// signals+tools. One: the sidebar body verbatim.
+// signals+tools. One: the detailed session overview stacked vertically.
 func (m *UI) dashboardColumns(cols, colW int) [][]string {
 	switch cols {
 	case 3:
@@ -194,20 +191,20 @@ func (m *UI) ctxColumn(width int) []string {
 	out := []string{m.cockpitStatusLine()}
 	// Context section only once there's real usage — no empty gauges.
 	if s.window > 0 && s.liveCtx > 0 {
-		out = append(out, "", bracketed(palette.Primary.On("context")), s.contextSummary())
+		out = append(out, "", sidebarHeading("context"), s.contextSummary())
 		// A single composition bar fills with role colours (used) + ░ free.
 		// Role graph when a breakdown is in, plus a dedicated CACHE split bar
 		// (the dashboard has the room); otherwise the split stands in.
 		if s.hasBreakdown() {
 			out = append(out, contextRoleBar(s, width), "")
 			out = append(out, contextRoleLegend(s)...)
-			out = append(out, "", bracketed(palette.Primary.On("cache")), contextSplitBar(s, width), "", contextSplitLegend(s))
+			out = append(out, "", sidebarHeading("cache"), contextSplitBar(s, width), "", contextSplitLegend(s))
 		} else {
 			out = append(out, contextSplitBar(s, width), "", contextSplitLegend(s))
 		}
 	}
 	if s.compactions > 0 {
-		out = append(out, "", bracketed(palette.Primary.On("compaction")), s.compactionSummary())
+		out = append(out, "", sidebarHeading("compaction"), s.compactionSummary())
 	}
 	return out
 }
@@ -218,25 +215,31 @@ func (m *UI) flowColumn(width int) []string {
 	var out []string
 	// Last-turn section only when a turn has completed — no placeholder.
 	if s.lastTotal > 0 || s.lastIn > 0 {
-		out = append(out, bracketed(palette.Primary.On("last turn")), s.lastTurnSummary())
+		out = append(out, sidebarHeading("last turn"), s.lastTurnSummary())
 		if tp := s.throughputLine(width); tp != "" {
 			out = append(out, tp)
 		}
 		out = append(out, "")
 	}
-	out = append(out, bracketed(palette.Primary.On("cost")))
+	out = append(out, sidebarHeading("cost"))
 	switch {
-	case s.hasPricing():
+	case s.hasPricing() || s.hasSessionCost():
 		out = append(out, s.costSummary())
-		if s.sessionCached > 0 {
-			out = append(out, s.cacheSavedLine())
-		}
 	case s.subscription:
 		out = append(out, palette.Muted.On("subscription — no metered cost"))
 	case s.local:
 		out = append(out, palette.Muted.On("local — no metered cost"))
 	default:
 		out = append(out, palette.Muted.On("metered · rate unknown"))
+	}
+	if s.hasLegacyCost() {
+		out = append(out, s.legacyCostLine())
+	}
+	if s.legacyCacheSavedUSD > 0 {
+		out = append(out, s.legacyCacheSavingsLine())
+	}
+	if s.hasCacheReporting() {
+		out = append(out, s.cacheUsageLines(width)...)
 	}
 	return out
 }
@@ -246,7 +249,7 @@ func (m *UI) flowColumn(width int) []string {
 // repeated here): throughput, cache-hit rate, and per-turn cost.
 func (m *UI) signalsColumn(width int) []string {
 	s := &m.session.Run
-	out := []string{bracketed(palette.Primary.On("signals"))}
+	out := []string{sidebarHeading("signals")}
 	if len(s.history) < 2 {
 		return append(out, palette.Muted.On("(collecting — needs 2+ turns)"))
 	}
@@ -262,11 +265,11 @@ func (m *UI) toolsColumn(width int) []string {
 	s := &m.session.Run
 	var out []string
 	if tools := s.topTools(); len(tools) > 0 {
-		out = append(out, bracketed(palette.Primary.On("tools")))
+		out = append(out, sidebarHeading("tools"))
 		out = append(out, toolHistogram(tools, width, 12)...)
 	}
 	if len(s.history) > 0 {
-		out = append(out, "", bracketed(palette.Primary.On("history")))
+		out = append(out, "", sidebarHeading("history"))
 		out = append(out, s.historyTable(12)...)
 	}
 	return out

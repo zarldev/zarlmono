@@ -322,8 +322,14 @@ func (r *runner) executeNested(nc nestedCall, rejected *tools.Error) nestedResul
 	observedCall := call
 	observedCall.Arguments = tools.CloneParameters(call.Arguments)
 	startedEvent := tools.NestedToolCall{ParentID: r.callID, ChildID: call.ID, Sequence: nc.Sequence, Call: observedCall, Started: started}
-	if obs := tools.NestedToolObserverFromContext(r.ctx); obs != nil {
+	obs := tools.NestedToolObserverFromContext(r.ctx)
+	if obs != nil {
 		obs.OnNestedToolStarted(r.ctx, startedEvent)
+		if binder, ok := obs.(tools.NestedToolCallBinder); ok {
+			call = binder.BindNestedToolCall(r.ctx, startedEvent)
+			startedEvent.Call = call
+			startedEvent.Call.Arguments = tools.CloneParameters(call.Arguments)
+		}
 	}
 	var out nestedResult
 	var result *tools.ToolResult

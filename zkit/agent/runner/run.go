@@ -456,6 +456,9 @@ func addUsage(base, add *llm.Usage) *llm.Usage {
 	acc.CompletionTokens += add.CompletionTokens
 	acc.TotalTokens += add.TotalTokens
 	acc.CachedTokens += add.CachedTokens
+	acc.CacheCreationTokens += add.CacheCreationTokens
+	acc.CacheCreation5mTokens += add.CacheCreation5mTokens
+	acc.CacheCreation1hTokens += add.CacheCreation1hTokens
 	return &acc
 }
 

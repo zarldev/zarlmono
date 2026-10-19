@@ -496,6 +496,9 @@ func TestProvider_ToolCallStream(t *testing.T) {
 	if tool["type"] != "function" || tool["name"] != "search" {
 		t.Errorf("tool wire shape wrong: %v", tool)
 	}
+	if cb.lastBody["parallel_tool_calls"] != true {
+		t.Fatalf("parallel_tool_calls = %#v, want true with tools", cb.lastBody["parallel_tool_calls"])
+	}
 }
 
 func TestProvider_HTTPErrorSurfacesAsChunkError(t *testing.T) {

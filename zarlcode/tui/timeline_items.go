@@ -3,6 +3,9 @@ package tui
 import (
 	"fmt"
 	"time"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -53,7 +56,7 @@ func (u *userItem) render(width int) []string {
 		}
 		lines = append(lines, renderPlain(width, detail, withFirstPrefix(rail, rail))...)
 	}
-	return append(lines, palette.User.On("└─"))
+	return append(lines, "")
 }
 func (u *userItem) finished() bool { return true }
 
@@ -70,10 +73,7 @@ func (q *queuedUserItem) render(width int) []string {
 	}
 	lines := []string{anchor}
 	lines = append(lines, renderPlain(width, q.text, withFirstPrefix(rail, rail))...)
-	if q.injected {
-		lines = append(lines, palette.User.On("└─"))
-	}
-	return lines
+	return append(lines, "")
 }
 func (q *queuedUserItem) finished() bool { return q.injected }
 
@@ -84,6 +84,7 @@ type assistantItem struct {
 	status      string // live placeholder shown while content == "" (e.g. "working…")
 	done        bool
 	interrupted bool
+	textBreaks  []int // byte offsets between independent Markdown documents
 	md          streamingMarkdown
 	hasActivity bool // supporting activity follows the response body
 }
@@ -97,25 +98,52 @@ func (a *assistantItem) render(width int) []string {
 		if status == "" {
 			status = "working…"
 		}
-		anchor, rail := turnOwnerPrefixes("zarl", palette.Assistant.On)
+		anchor, _ := turnOwnerPrefixes("agent", agentHeading)
 		anchor += palette.Muted.On("  " + status)
-		return []string{anchor, rail}
+		return []string{anchor}
 	}
-	anchor, rail := turnOwnerPrefixes("zarl", palette.Assistant.On)
+	anchor, rail := turnOwnerPrefixes("agent", agentHeading)
 	lines := []string{anchor}
-	lines = append(lines, renderContentBlock(width, contentBlock{
-		kind: contentMarkdown, text: a.content, depth: a.depth, markdown: &a.md,
-		firstPrefix: rail, continuationPrefix: rail,
-	})...)
+	segments := (transcript.Payload{Text: a.content, TextBreaks: a.textBreaks}).TextSegments()
+	for i, segment := range segments {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		var active *streamingMarkdown
+		closed := a.done || i < len(a.textBreaks)
+		if !closed {
+			active = &a.md
+		}
+		body := renderContentBlock(width, contentBlock{
+			kind: contentMarkdown, text: segment, depth: a.depth, markdown: active,
+			firstPrefix: rail, continuationPrefix: rail,
+		})
+		// The pane owns the common inset. Remove only Glamour's fixed document
+		// margin, never authored indentation or quote/table/code characters.
+		for _, line := range body {
+			lines = append(lines, ansi.Cut(line, markdownDocumentMargin, ansi.StringWidth(line)))
+		}
+	}
 	if a.interrupted {
 		lines = append(lines, rail+palette.Warning.On("[interrupted]"))
-	}
-	if a.hasActivity {
-		lines = append(lines, palette.Assistant.On("├─"))
 	}
 	return lines
 }
 func (a *assistantItem) finished() bool { return a.done }
+
+func (a *assistantItem) finishSegment() bool {
+	if !utf8.ValidString(a.content) {
+		return false
+	}
+	end := len(a.content)
+	if end == 0 || (len(a.textBreaks) > 0 && a.textBreaks[len(a.textBreaks)-1] == end) {
+		return false
+	}
+	a.textBreaks = append(a.textBreaks, end)
+	a.md.reset()
+	a.bump()
+	return true
+}
 
 type toolState int
 
@@ -128,25 +156,30 @@ const (
 
 type toolItem struct {
 	versioned
-	depth          int
-	name           string
-	arg            string // compact tool-specific argument hint
-	effect         string // compact post-action effect summary
-	state          toolState
-	failKind       tools.Kind // failure classification; only meaningful when state == toolFailed
-	waiting        bool
-	waitAccess     tools.WorkspaceAccess
-	waitPaths      []string
-	waitDuration   time.Duration
-	result         string // full formatted output (or error); shown when expanded
-	data           any    // typed structured result (code.GrepResult, …); nil = render from result string
-	dur            time.Duration
-	sequence       int
-	expanded       bool // result shown ([-]) vs hidden ([+])
-	children       []*toolItem
-	layout         childBlockCache
-	layoutChildren []item
-	notify         func()
+	depth              int
+	name               string
+	arg                string // compact tool-specific argument hint
+	input              string // complete redacted argument snapshot, available at call start
+	effect             string // compact post-action effect summary
+	state              toolState
+	failKind           tools.Kind // failure classification; only meaningful when state == toolFailed
+	waiting            bool
+	waitAccess         tools.WorkspaceAccess
+	waitPaths          []string
+	waitDuration       time.Duration
+	result             string // full formatted output (or error); shown when expanded
+	liveOutput         string // bounded safe cumulative preview; final result takes precedence
+	data               any    // typed structured result (code.GrepResult, …); nil = render from result string
+	dur                time.Duration
+	sequence           int
+	expanded           bool // input/result/children shown ([-]) versus collapsed ([+])
+	argumentsCollapsed bool
+	resultCollapsed    bool
+	jsonView           bool // sanitized presentation only; never raw private execution data
+	children           []*toolItem
+	layout             childBlockCache
+	layoutChildren     []item
+	notify             func()
 }
 
 func (t *toolItem) bump() {
@@ -202,7 +235,7 @@ func (t *toolItem) render(width int) []string {
 	case toolInterrupted:
 		icon = palette.Warning.On("■")
 	}
-	head := icon + " " + t.name
+	head := icon + " " + palette.Tool.On(t.name)
 	if t.state == toolInterrupted {
 		head += " " + palette.Warning.On("interrupted")
 	}
@@ -229,12 +262,12 @@ func (t *toolItem) render(width int) []string {
 		head += "  " + palette.Muted.On("· "+t.effect)
 	}
 	if t.dur > 0 {
-		head += "  (" + t.dur.Round(time.Millisecond).String() + ")"
+		head += "  " + palette.Muted.On("("+t.dur.Round(time.Millisecond).String()+")")
 	}
-	// Prefix a clickable disclosure when the tool has output or nested calls. For
-	// program, the disclosure hides/shows the nested call list; each child row can
+	// Submitted input, output and nested calls are available behind the disclosure.
+	// For program, it also hides/shows the nested call list; each child row can
 	// then open its own result independently.
-	hasDisclosure := t.hasResult() || len(t.children) > 0
+	hasDisclosure := t.input != "" || t.hasResult() || len(t.children) > 0
 	if hasDisclosure {
 		glyph := palette.Subtle.On("[") + palette.Primary.On("-") + palette.Subtle.On("] ")
 		if !t.expanded {
@@ -242,7 +275,7 @@ func (t *toolItem) render(width int) []string {
 		}
 		head = glyph + head
 	}
-	bodyLines := t.resultBodyLines(width)
+	bodyLines := t.expandedBodyLines(width)
 	lines := []string{head}
 	if len(bodyLines) > 0 {
 		lines = append(lines, bodyLines...)
@@ -257,7 +290,7 @@ func (t *toolItem) render(width int) []string {
 // header and any nested child calls. Hit-testing uses the same rows so deeply
 // nested disclosure coordinates cannot drift from rendering.
 func (t *toolItem) resultBodyLines(width int) []string {
-	if !t.hasResult() || !t.expanded {
+	if !t.hasResult() || !t.expanded || t.resultCollapsed {
 		return nil
 	}
 	if t.suppressesResultBody() {
@@ -266,11 +299,27 @@ func (t *toolItem) resultBodyLines(width int) []string {
 		// keyboard navigation, and mouse hit-testing share contiguous rows.
 		return nil
 	}
+	if t.showsLivePreview() {
+		return renderLiveToolPreview(width-t.depth*2, t.liveOutput)
+	}
+	if t.jsonView {
+		if text, ok := t.resultJSON(); ok {
+			return renderPlain(width-t.depth*2, text, withBodyPrefix("    "), withMaxLines(toolResultMaxLines))
+		}
+	}
 	return renderToolResult(width-t.depth*2, t.name, t.arg, t.result,
-		withBodyPrefix("    "),
-		withMaxLines(toolResultMaxLines),
-		withData(t.data),
-	)
+		withBodyPrefix("    "), withMaxLines(toolResultMaxLines), withData(t.data))
+}
+
+// resultPrefixLines is shared with image placement: request rows and the result
+// label precede the existing result's own local row coordinates.
+func (t *toolItem) resultPrefixLines(width int) []string {
+	return t.drawerPrefix(width).lines
+}
+
+// expandedBodyLines owns all rows before nested calls, including live inputs.
+func (t *toolItem) expandedBodyLines(width int) []string {
+	return append(t.resultPrefixLines(width), t.resultBodyLines(width)...)
 }
 
 func (t *toolItem) suppressesResultBody() bool {
@@ -279,18 +328,33 @@ func (t *toolItem) suppressesResultBody() bool {
 
 func (t *toolItem) hasResult() bool {
 	_, hasImages := t.data.(toolResultPresentation)
-	return t.result != "" || hasImages
+	return t.result != "" || t.liveOutput != "" || hasImages
 }
 
 func (t *toolItem) togglerAt(width, ln int) toggler {
 	if ln == 0 {
 		return t
 	}
+	if t.expanded {
+		prefix := t.drawerPrefix(width)
+		key := ""
+		switch ln {
+		case prefix.argumentsRow:
+			key = "a"
+		case prefix.resultRow:
+			key = "r"
+		case prefix.viewRow:
+			key = "j"
+		}
+		if key != "" {
+			return togglerFunc(func() { t.applyToolViewKey(key) })
+		}
+	}
 	if !t.expanded || len(t.children) == 0 {
 		return nil
 	}
 	children := t.childItems()
-	bodyLines := len(t.resultBodyLines(width))
+	bodyLines := len(t.expandedBodyLines(width))
 	return t.layout.render(children, width, t.version()).togglerForLine(ln-bodyLines, width, children, t.bump)
 }
 
@@ -301,7 +365,7 @@ func (t *toolItem) toggleLocals(width int) []int {
 	children := t.childItems()
 	block := t.layout.render(children, width, t.version())
 	locals := append([]int{0}, block.toggleLocals(width, children)...)
-	bodyLines := len(t.resultBodyLines(width))
+	bodyLines := len(t.expandedBodyLines(width))
 	for i := 1; i < len(locals); i++ {
 		locals[i] += bodyLines
 	}
@@ -324,7 +388,7 @@ func kindBadge(k tools.Kind) string {
 	return col.On("[" + k.String() + "]")
 }
 
-// toggle flips the tool row's result drawer. Clicked through its parent group,
+// toggle flips the tool row's input/result drawer. Clicked through its parent group,
 // which bumps so the inline re-render picks up the new state.
 func (t *toolItem) toggle() { t.expanded = !t.expanded; t.bump() }
 

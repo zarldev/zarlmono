@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"time"
 
 	"google.golang.org/genai"
@@ -14,16 +15,20 @@ import (
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
-// defaultModel is the model both constructors fall back to when
-// WithModel is not supplied.
-const defaultModel = "gemini-2.0-flash"
+const defaultModel = "gemini-3.8-flash"
+
+const (
+	continuationProvider = "google"
+	continuationFormat   = "generate_content.part.v1"
+)
 
 // Provider implements the Google Gemini LLM provider using the official Go SDK.
 type Provider struct {
-	apiKey  string
-	client  *genai.Client
-	model   string
-	baseURL string // optional override for HTTPOptions.BaseURL (tests / private proxy)
+	apiKey     string
+	client     *genai.Client
+	model      string
+	baseURL    string       // optional override for HTTPOptions.BaseURL (tests / private proxy)
+	httpClient *http.Client // optional, borrowed SDK transport policy
 }
 
 // NewProvider creates a Generative Language API (AI Studio) provider
@@ -60,8 +65,9 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) (*Provider, er
 	}
 
 	cfg := &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		APIKey:     apiKey,
+		Backend:    genai.BackendGeminiAPI,
+		HTTPClient: provider.httpClient,
 	}
 	if provider.baseURL != "" {
 		cfg.HTTPOptions.BaseURL = provider.baseURL
@@ -90,6 +96,9 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) (*Provider, er
 // credentials, transports, or endpoints beyond what this covers, build
 // the genai client yourself and inject it with [WithClient].
 func NewVertexProvider(ctx context.Context, project, location string, opts ...options.Option[Provider]) (*Provider, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 	provider := &Provider{
 		model: defaultModel,
 	}
@@ -101,9 +110,10 @@ func NewVertexProvider(ctx context.Context, project, location string, opts ...op
 	}
 
 	cfg := &genai.ClientConfig{
-		Backend:  genai.BackendVertexAI,
-		Project:  project,
-		Location: location,
+		Backend:    genai.BackendVertexAI,
+		Project:    project,
+		Location:   location,
+		HTTPClient: provider.httpClient,
 	}
 	if provider.baseURL != "" {
 		cfg.HTTPOptions.BaseURL = provider.baseURL
@@ -211,7 +221,9 @@ func (p *Provider) runStream(
 	var usageReported bool
 	finishReason := llm.FinishReasons.UNKNOWN
 	callsByID := make(map[string]llm.ToolCall)
+	capturedByID := make(map[string]bool)
 	var order []string
+	partIndex := 0
 	accepted := false
 
 	for resp, err := range p.client.Models.GenerateContentStream(ctx, p.model, contents, config) {
@@ -221,7 +233,7 @@ func (p *Provider) runStream(
 		if resp.UsageMetadata != nil {
 			usage = llm.Usage{
 				PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
-				CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount),
+				CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount) + int(resp.UsageMetadata.ThoughtsTokenCount),
 				TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
 				CachedTokens:     int(resp.UsageMetadata.CachedContentTokenCount),
 			}
@@ -238,12 +250,10 @@ func (p *Provider) runStream(
 			continue
 		}
 		for _, part := range candidate.Content.Parts {
-			if !emitPart(part, callsByID, &order, yield) {
+			if !emitPart(part, partIndex, callsByID, capturedByID, &order, &accepted, yield) {
 				return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, nil, false
 			}
-			if part.Text != "" {
-				accepted = true
-			}
+			partIndex++
 		}
 	}
 	return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, nil, true
@@ -251,8 +261,11 @@ func (p *Provider) runStream(
 
 func emitPart(
 	part *genai.Part,
+	outputIndex int,
 	callsByID map[string]llm.ToolCall,
+	capturedByID map[string]bool,
 	order *[]string,
+	accepted *bool,
 	yield func(llm.CompletionChunk, error) bool,
 ) bool {
 	if part.Text != "" {
@@ -264,6 +277,7 @@ func emitPart(
 		if !yield(chunk, nil) {
 			return false
 		}
+		*accepted = true
 	}
 	if part.FunctionCall != nil {
 		id := part.FunctionCall.ID
@@ -274,13 +288,32 @@ func emitPart(
 		if _, exists := callsByID[id]; !exists {
 			*order = append(*order, id)
 		}
-		callsByID[id] = llm.ToolCall{
-			ID:   id,
-			Type: "function",
+		call := llm.ToolCall{
+			ID:          id,
+			Type:        "function",
+			OutputIndex: llm.OutputPosition(outputIndex),
 			Function: llm.ToolCallFunction{
 				Name:      part.FunctionCall.Name,
 				Arguments: string(argBytes),
 			},
+		}
+		callsByID[id] = call
+		if len(part.ThoughtSignature) != 0 && !capturedByID[id] {
+			data, err := json.Marshal(part)
+			if err == nil {
+				capturedByID[id] = true
+				if !yield(llm.CompletionChunk{CompletedItems: []llm.ContinuationItem{{
+					OutputIndex: llm.OutputPosition(outputIndex),
+					Provider:    continuationProvider,
+					Format:      continuationFormat,
+					Kind:        "function_call",
+					ID:          id,
+					Data:        data,
+				}}}, nil) {
+					return false
+				}
+				*accepted = true
+			}
 		}
 	}
 	return true
@@ -322,10 +355,23 @@ func normalizeFinishReason(reason genai.FinishReason) llm.FinishReason {
 	}
 }
 
+func thinkingBudget(tokens int) *int32 {
+	if tokens <= 0 {
+		return nil
+	}
+	if tokens > math.MaxInt32 {
+		return new(int32(math.MaxInt32))
+	}
+	return new(int32(tokens))
+}
+
 // buildConfig produces the GenerateContentConfig for one request.
 func (p *Provider) buildConfig(req llm.CompletionRequest) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{
-		ThinkingConfig: &genai.ThinkingConfig{IncludeThoughts: true},
+		ThinkingConfig: &genai.ThinkingConfig{
+			IncludeThoughts: true,
+			ThinkingBudget:  thinkingBudget(req.Thinking.BudgetTokens),
+		},
 	}
 	if req.Temperature > 0 {
 		cfg.Temperature = new(req.Temperature)

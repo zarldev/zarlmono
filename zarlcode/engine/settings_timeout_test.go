@@ -7,21 +7,20 @@ import (
 	. "github.com/zarldev/zarlmono/zarlcode/engine"
 
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
-	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
-// ResponseTimeout defaults to 90s, honours a positive override, and floors a
+// ResponseTimeout defaults to 600s, honours a positive override, and floors a
 // non-positive value back to the default so a stray 0 can't disable the
 // stall watchdog and wedge a run forever.
 func TestResponseTimeout(t *testing.T) {
 	s := newJudgeTestSettings(t)
 	ctx := t.Context()
 
-	if got := s.ResponseTimeout(ctx); got != 90*time.Second {
-		t.Fatalf("default = %s, want 90s", got)
+	if got := s.ResponseTimeout(ctx); got != 600*time.Second {
+		t.Fatalf("default = %s, want 600s", got)
 	}
 
 	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyResponseTimeout, "300"); err != nil {
@@ -34,7 +33,7 @@ func TestResponseTimeout(t *testing.T) {
 	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeyResponseTimeout, "0"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if got := s.ResponseTimeout(ctx); got != 90*time.Second {
+	if got := s.ResponseTimeout(ctx); got != 600*time.Second {
 		t.Fatalf("zero should floor to default, got %s", got)
 	}
 }
@@ -62,8 +61,8 @@ func TestSpawnFanoutCap(t *testing.T) {
 	s := newJudgeTestSettings(t)
 	ctx := t.Context()
 
-	if got := s.SpawnFanoutCap(ctx); got != coderunner.StandardSpawnFanoutCap {
-		t.Fatalf("default = %d, want %d", got, coderunner.StandardSpawnFanoutCap)
+	if got := s.SpawnFanoutCap(ctx); got != 80 {
+		t.Fatalf("default = %d, want 80", got)
 	}
 	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeySpawnFanoutCap, "4"); err != nil {
 		t.Fatalf("set: %v", err)
@@ -104,14 +103,14 @@ func TestAutoCompact(t *testing.T) {
 func TestSpawnEnabled(t *testing.T) {
 	s := newJudgeTestSettings(t)
 	ctx := t.Context()
-	if s.SpawnEnabled(ctx) {
-		t.Fatal("sub-agents should be disabled by default")
+	if !s.SpawnEnabled(ctx) {
+		t.Fatal("sub-agents should be enabled by default")
 	}
-	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeySpawnEnabled, "on"); err != nil {
+	if err := s.Svc.SetSetting(ctx, prefs.ScopeGlobal, prefs.KeySpawnEnabled, "off"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if !s.SpawnEnabled(ctx) {
-		t.Fatal("sub-agents should be enabled after setting on")
+	if s.SpawnEnabled(ctx) {
+		t.Fatal("sub-agents should be disabled after setting off")
 	}
 	if got := s.Limits(ctx).SpawnMaxDepth; got != 1 {
 		t.Fatalf("default spawn depth = %d, want 1 when enabled", got)
@@ -145,7 +144,7 @@ func TestSpawnModes(t *testing.T) {
 	if got.Verify.DefaultTarget != (ProviderSpec{Model: "judge-small"}) {
 		t.Fatalf("verify config = %+v", got.Verify)
 	}
-	if got.Implement != (SpawnModeConfig{}) {
-		t.Fatalf("implement config = %+v, want inherited", got.Implement)
+	if got.Implement != (SpawnModeConfig{DefaultTarget: ProviderSpec{Name: "openai-codex", Model: "gpt-6-sol"}, MaxIterations: 300}) {
+		t.Fatalf("implement config = %+v, want built-in implementation route", got.Implement)
 	}
 }

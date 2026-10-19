@@ -130,6 +130,7 @@ type Session struct {
 	PlanCompletedCount int64
 	PlanTotalCount     int64
 	LabelManual        int64
+	McpActivationsJson string
 }
 
 type SessionBranch struct {

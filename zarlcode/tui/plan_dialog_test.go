@@ -24,7 +24,7 @@ func TestPlanDialogRendersStatusCountsAndCloses(t *testing.T) {
 	stepUI(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
 	stepUI(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'p'})
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"[planning pane]", "[ live ]", "18 steps", "✓ read the failing test", "▶ patch the handler", "1 done", "tab saved plans", "updates live"} {
+	for _, want := range []string{"plan  live  saved", "current plan", "18 steps", "✓ read the failing test", "▶ patch the handler", "1 done", "tab saved plans", "↑↓ steps", "step 2 of 18"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("live plan missing %q:\n%s", want, out)
 		}
@@ -34,7 +34,7 @@ func TestPlanDialogRendersStatusCountsAndCloses(t *testing.T) {
 		t.Fatalf("end did not reveal final step:\n%s", out)
 	}
 	stepUI(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
-	if strings.Contains(ansi.Strip(m.View().Content), "[planning pane]") {
+	if strings.Contains(ansi.Strip(m.View().Content), "plan  live  saved") {
 		t.Fatal("escape did not close plan pane")
 	}
 }
@@ -58,7 +58,7 @@ func TestPlanDialogEmptyAndSavedPlans(t *testing.T) {
 	}
 	stepUI(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	out := ansi.Strip(m.View().Content)
-	for _, want := range []string{"[ saved ]", "saved plans · newest first", "alpha", "source: saved plan markdown", "esc close"} {
+	for _, want := range []string{"plan  live  saved", "saved plans · newest first", "alpha", "source: saved plan markdown", "esc close"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("saved plan missing %q:\n%s", want, out)
 		}

@@ -67,6 +67,7 @@ type savedSession struct {
 	DiffBodies         map[string]string
 	Usage              SessionUsageSnapshot
 	Context            []llm.Message
+	MCPActivations     engine.MCPActivations
 	Transcript         transcript.Thread
 	DraftText          string
 	DraftAttachments   []llm.ContentPart
@@ -299,24 +300,31 @@ func loadSavedSessionSnapshot(ctx context.Context, store *db.Store, id, workspac
 		return nil, errors.New("session transcript is empty")
 	}
 	recovered, _ := thread.RecoverInterrupted()
-	if recovered.Revision() > storedTranscript.Revision {
-		update, updateErr := transcriptRecoveryUpdate(rec, storedTranscript.Revision, recovered)
-		if updateErr != nil {
-			return nil, updateErr
-		}
-		saved.contentVersion, updateErr = store.UpdateActiveTranscriptVersioned(ctx, update, saved.contentVersion)
-		if updateErr != nil {
+	controls, err := engine.ReadRequestControls(ctx, store, id)
+	if err != nil {
+		return nil, err
+	}
+	thread, err = reconcileControls(recovered, controls)
+	if err != nil {
+		return nil, err
+	}
+	if thread.Revision() > storedTranscript.Revision {
+		saved.contentVersion, err = persistTranscriptRecovery(ctx, store, rec, storedTranscript.Revision, thread, saved.exactHead, saved.contentVersion)
+		if err != nil {
 			// A competing write invalidates the entire read snapshot, including
 			// context. Never combine it with a newer transcript; retry resume.
-			return nil, fmt.Errorf("persist interrupted transcript recovery: %w", updateErr)
+			return nil, fmt.Errorf("persist interrupted transcript recovery: %w", err)
 		}
-		thread = recovered
 	}
 	saved.Transcript = thread
 	return saved, nil
 }
 
 func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
+	activations, err := engine.DecodeMCPActivations(rec.MCPActivationsJSON)
+	if err != nil {
+		return nil, err
+	}
 	var contextCache []llm.Message
 	var exactHead *rewind.ResumeState
 	if strings.HasPrefix(strings.TrimSpace(string(rec.ContextJSON)), "{") {
@@ -340,6 +348,7 @@ func decodeSavedSession(rec db.SessionRecord) (*savedSession, error) {
 	s := &savedSession{
 		sessionSummary: savedSessionSummary(rec),
 		Context:        contextCache,
+		MCPActivations: activations,
 		exactHead:      exactHead,
 	}
 	if !decodeSessionBlob(rec.PlanJSON, &s.Plan) {
@@ -431,6 +440,11 @@ func (m *UI) observeInitialActive() {
 }
 
 func (m *UI) dismissIntroFresh(prompt string) tea.Cmd {
+	release, err := m.reserveEmptySession()
+	if err != nil {
+		m.session.SetErrorToast("start fresh session: " + err.Error())
+		return m.toastExpiryCmd()
+	}
 	m.observeInitialActive()
 	m.intro = nil
 	m.session.resetSession()
@@ -440,11 +454,14 @@ func (m *UI) dismissIntroFresh(prompt string) tea.Cmd {
 	m.rejectedDraftJSON = nil
 	m.transcriptGeneration++
 	m.resetTranscriptPersistence()
-	if m.live != nil {
-		m.live.RestoreContext(nil)
-	}
 	m.timeline.Clear()
+	m.resetSessionModeTarget(false)
+	release()
 	prompt = strings.TrimSpace(prompt)
+	if route := m.initialModeTarget(); route != nil {
+		m.startupPrompt = prompt
+		return route
+	}
 	if prompt == "" {
 		return nil
 	}
@@ -506,7 +523,21 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	if s == nil {
 		return nil
 	}
+	if m.live != nil {
+		reservation, err := m.live.ReserveRuntime()
+		if err != nil {
+			m.session.SetErrorToast("resume session: " + err.Error())
+			return m.toastExpiryCmd()
+		}
+		if err := reservation.RestoreSessionContext(s.Context, s.MCPActivations); err != nil {
+			reservation.Release()
+			m.session.SetErrorToast("resume session: " + err.Error())
+			return m.toastExpiryCmd()
+		}
+		defer reservation.Release()
+	}
 	m.intro = nil
+	m.resetSessionModeTarget(true)
 	m.session.resetSession()
 	m.draftGeneration++
 	m.transcriptGeneration++
@@ -518,9 +549,6 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	}
 	m.session.SetIdentity(s.ID, s.Label, s.LabelManual, s.CreatedAt)
 	m.initialActive, m.initialActiveErr = s.ID, nil
-	if m.live != nil {
-		m.live.RestoreContext(s.Context)
-	}
 	m.timeline.restoreThread(s.Transcript)
 	m.transcriptPersisted = s.Transcript.Revision()
 	m.transcriptPersistedSessionID = s.ID
@@ -617,6 +645,10 @@ func (m *UI) sessionSnapshotForBoundary(contextCache []llm.Message, turnID strin
 	if err != nil {
 		return nil, fmt.Errorf("encode context cache: %w", err)
 	}
+	activationsJSON, err := m.live.MCPActivations().Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode MCP selections: %w", err)
+	}
 	usageJSON, err := encodeSessionJSON(m.session.Run.UsageSnapshot(), "null")
 	if err != nil {
 		return nil, fmt.Errorf("encode usage: %w", err)
@@ -663,6 +695,7 @@ func (m *UI) sessionSnapshotForBoundary(contextCache []llm.Message, turnID strin
 		ContextJSON:        contextJSON,
 		PendingJSON:        pendingJSON,
 		LastUsageJSON:      usageJSON,
+		MCPActivationsJSON: activationsJSON,
 		DiffBodiesJSON:     diffBodiesJSON,
 		PlanJSON:           planJSON,
 		ChangedFileCount:   changedFileCount,
@@ -876,6 +909,10 @@ func (m *UI) saveSessionCmd() tea.Cmd {
 }
 
 func (m *UI) clearContextAndTimeline() tea.Cmd {
+	if m.sessionPersistRunning || len(m.sessionPersistQueue) != 0 {
+		m.session.SetErrorToast("wait for session persistence before clearing")
+		return m.toastExpiryCmd()
+	}
 	if m.session.Run.Running || m.liveOperation != nil || m.sessionRetry != nil {
 		m.session.SetErrorToast("stop current turn before clearing")
 		return m.toastExpiryCmd()
@@ -884,6 +921,12 @@ func (m *UI) clearContextAndTimeline() tea.Cmd {
 		m.session.SetErrorToast(sourceConflictNotice)
 		return nil // never delete the competing source as conflict recovery
 	}
+	release, err := m.reserveEmptySession()
+	if err != nil {
+		m.session.SetErrorToast("clear session: " + err.Error())
+		return m.toastExpiryCmd()
+	}
+	defer release()
 	oldID := m.session.ID
 	ctx, cancel := context.WithTimeout(m.appContext(), sessionSaveCommandTTL)
 	defer cancel()
@@ -904,11 +947,10 @@ func (m *UI) clearContextAndTimeline() tea.Cmd {
 	m.rejectedDraftJSON = nil
 	m.transcriptGeneration++
 	m.resetTranscriptPersistence()
-	if m.live != nil {
-		m.live.ClearContext()
-	}
 	m.timeline.Clear()
+	m.resetSessionModeTarget(false)
 	m.session.resetSession()
+	m.scheduledModeTargetCmd = m.initialModeTarget()
 	m.session.SetSuccessToast("conversation cleared")
 	return tea.Batch(m.toastExpiryCmd(), m.enqueueSessionPersist(sessionPersistOp{kind: sessionPersistDelete,
 		generation: m.transcriptGeneration, oldID: oldID, sourceObserved: source, sourceErr: sourceErr, guarded: true}))

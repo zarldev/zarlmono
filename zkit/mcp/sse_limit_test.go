@@ -29,7 +29,7 @@ func TestSSEAggregateLimit(t *testing.T) {
 			var once sync.Once
 			var requests atomic.Int32
 			reconnected := make(chan struct{}, 1)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if requests.Add(1) > 1 {
 					select {
 					case reconnected <- struct{}{}:
@@ -41,7 +41,11 @@ func TestSSEAggregateLimit(t *testing.T) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				// Every line is below the scanner limit; the event is not.
 				line := "data: " + strings.Repeat(" ", 64*1024) + "\n"
-				for range 65 {
+				lines := 257 // 16 MiB response limit, plus one line.
+				if notifications {
+					lines = 65 // Notifications retain the 4 MiB limit.
+				}
+				for range lines {
 					if _, err := io.WriteString(w, line); err != nil {
 						once.Do(func() { close(disconnected) })
 						return
@@ -54,7 +58,7 @@ func TestSSEAggregateLimit(t *testing.T) {
 				// No event terminator or EOF: the size bound must stop the read.
 				<-r.Context().Done()
 				once.Do(func() { close(disconnected) })
-			}))
+			})))
 			t.Cleanup(server.Close)
 			client := mcp.NewClient(server.URL, "")
 			t.Cleanup(func() { _ = client.Close() })
@@ -89,11 +93,11 @@ func TestSSEAggregateLimit(t *testing.T) {
 
 func TestSSEMultilineWithinLimit(t *testing.T) {
 	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"jsonrpc\":\"2.0\",\n"+
 			"data: \"id\":1,\"result\":{\"tools\":[]}}\n\n")
-	}))
+	})))
 	t.Cleanup(server.Close)
 	client := mcp.NewClient(server.URL, "")
 	t.Cleanup(func() { _ = client.Close() })
@@ -113,11 +117,11 @@ func TestSSESingleLineLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			payload := `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`
-			payload += strings.Repeat(" ", 4*1024*1024+tc.extra-len(payload))
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			payload += strings.Repeat(" ", 16*1024*1024+tc.extra-len(payload))
+			server := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				_, _ = io.WriteString(w, "data: "+payload+"\r\n\r\n")
-			}))
+			})))
 			t.Cleanup(server.Close)
 			client := mcp.NewClient(server.URL, "")
 			t.Cleanup(func() { _ = client.Close() })

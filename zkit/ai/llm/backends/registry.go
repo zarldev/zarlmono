@@ -244,7 +244,8 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		// the llama.cpp built-in — hosted OpenAI, Ollama, and custom
 		// DB-backed providers (e.g. a LiteLLM proxy) reject the unknown
 		// field with HTTP 400.
-		cachePrompt: def.Builtin && def.Name == DefaultBuiltinName.String(),
+		cachePrompt:    def.Builtin && def.Name == DefaultBuiltinName.String(),
+		templateKwargs: def.Builtin && (def.Name == DefaultBuiltinName.String() || def.Name == NameOllama.String()),
 	}
 
 	// Route through the adapter layer.
@@ -254,7 +255,7 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		if !ok {
 			return nil, fmt.Errorf("%w: adapter %s in switch but absent from adapter table", ErrRegistryInternal, def.AdapterType)
 		}
-		prov, err := ad.build(p)
+		prov, err := ad.build(ctx, p)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +270,7 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		if !ok {
 			return nil, fmt.Errorf("%w: adapter %s in switch but absent from adapter table", ErrRegistryInternal, def.AdapterType)
 		}
-		prov, err := ad.build(p)
+		prov, err := ad.build(ctx, p)
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +284,7 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		if !ok {
 			return nil, fmt.Errorf("%w: adapter %s in switch but absent from adapter table", ErrRegistryInternal, def.AdapterType)
 		}
-		prov, err := ad.build(p)
+		prov, err := ad.build(ctx, p)
 		if err != nil {
 			return nil, err
 		}
@@ -297,7 +298,7 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		if !ok {
 			return nil, fmt.Errorf("%w: adapter %s in switch but absent from adapter table", ErrRegistryInternal, def.AdapterType)
 		}
-		prov, err := ad.build(p)
+		prov, err := ad.build(ctx, p)
 		if err != nil {
 			return nil, err
 		}

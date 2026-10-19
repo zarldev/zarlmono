@@ -29,31 +29,25 @@ func itemToolImages(it item, width int) []toolImagePlacement {
 			return nil
 		}
 		dx = v.depth * 2
-		if result, ok := v.data.(toolResultPresentation); ok && !v.suppressesResultBody() {
+		if result, ok := v.data.(toolResultPresentation); ok && !v.suppressesResultBody() && !v.resultCollapsed {
 			_, images := layoutToolImagePreviews(max(1, width-dx-4), result.images)
 			for _, p := range images {
 				// The body renderer retains at most toolResultMaxLines rows,
 				// followed by a textual truncation notice.
 				if p.y+p.rows <= toolResultMaxLines {
 					p.x += dx + 4
-					p.y++ // tool header
+					p.y += 1 + len(v.resultPrefixLines(width)) // header, inputs and result label
 					out = append(out, p)
 				}
 			}
 		}
 		children, childWidth = v.childItems(), width
 		block = v.layout.render(children, childWidth, v.version())
-		dy = len(v.resultBodyLines(width))
+		dy = len(v.expandedBodyLines(width))
 	case *groupItem:
-		if !v.expanded {
-			return nil
-		}
-		children, childWidth = v.children, v.childWidth(width)
+		children, childWidth = v.visibleChildren(), v.childWidth(width)
 		block = v.layout.render(children, childWidth, v.version())
 		dx = v.depth*2 + len(childIndent)
-		if v.nested {
-			dx += 2
-		}
 	case *subAgentItem:
 		if !v.expanded {
 			return nil

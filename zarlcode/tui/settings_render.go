@@ -143,7 +143,11 @@ func (d *settingsDialog) helpLines(width int) []string {
 	}
 	out := []string{sectionHead(r.label, width)}
 	out = append(out, renderPlain(width, r.desc, withStyle(palette.Muted.On))...)
-	out = append(out, palette.Subtle.On("built-in default ")+palette.Muted.On(r.def)+
+	builtin := r.def
+	if r.builtin != "" {
+		builtin = r.builtin
+	}
+	out = append(out, palette.Subtle.On("built-in default ")+palette.Muted.On(builtin)+
 		palette.Subtle.On("  ·  effective source ")+d.rowSourceLabel(r))
 	return out
 }
@@ -152,6 +156,9 @@ func (d *settingsDialog) helpLines(width int) []string {
 func (d *settingsDialog) rowSourceLabel(r *settingsRow) string {
 	if r.isSet {
 		return scopeBadge(r.scope)
+	}
+	if r.builtin != "" && r.def == compactActiveSentinel {
+		return palette.Subtle.On("active target")
 	}
 	return palette.Subtle.On("built-in default")
 }

@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/zexec"
@@ -21,9 +23,16 @@ import (
 // reader goroutine pumps server responses into per-request reply channels
 // keyed by request ID.
 type stdioTransport struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	writeM sync.Mutex
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	writeGate chan struct{}
+	lifeM     sync.Mutex
+	closing   bool
+	version   string
+	workers   sync.WaitGroup
+	subCancel context.CancelFunc
+	subDone   chan struct{}
+	subID     json.RawMessage
 
 	pendingM sync.Mutex
 	// pending is keyed by the raw bytes of the request ID (rendered
@@ -36,6 +45,7 @@ type stdioTransport struct {
 	notifM   sync.Mutex
 	notifier func(method string, params json.RawMessage)
 
+	controlID atomic.Uint64
 	closeOnce sync.Once
 	closeErr  error
 	done      chan struct{}
@@ -46,8 +56,14 @@ type stdioTransport struct {
 // Called at most once per Client — *Client multiplexes by method.
 func (t *stdioTransport) OnNotification(handler func(method string, params json.RawMessage)) {
 	t.notifM.Lock()
-	defer t.notifM.Unlock()
 	t.notifier = handler
+	t.notifM.Unlock()
+
+	t.lifeM.Lock()
+	defer t.lifeM.Unlock()
+	if handler != nil {
+		t.startSubscriptionLocked()
+	}
 }
 
 func (t *stdioTransport) dispatchNotification(method string, params json.RawMessage) {
@@ -85,16 +101,59 @@ func newStdioTransport(command string, args []string, env map[string]string) (*s
 	}
 
 	t := &stdioTransport{
-		cmd:     cmd,
-		stdin:   stdin,
-		pending: make(map[string]chan rpcResponse),
-		done:    make(chan struct{}),
+		cmd:       cmd,
+		stdin:     stdin,
+		writeGate: make(chan struct{}, 1),
+		pending:   make(map[string]chan rpcResponse),
+		done:      make(chan struct{}),
 	}
 
-	go t.readLoop(stdout)
-	go t.drainStderr(stderr, command)
+	t.workers.Go(func() { t.readLoop(stdout) })
+	t.workers.Go(func() { t.drainStderr(stderr, command) })
 
 	return t, nil
+}
+
+func (t *stdioTransport) setProtocol(version string) {
+	t.lifeM.Lock()
+	defer t.lifeM.Unlock()
+	t.version = version
+	t.startSubscriptionLocked()
+}
+
+func (t *stdioTransport) startSubscriptionLocked() {
+	if t.closing || t.version != protocolVersion20260728 || t.subDone != nil {
+		return
+	}
+	t.notifM.Lock()
+	subscribed := t.notifier != nil
+	t.notifM.Unlock()
+	if !subscribed {
+		return
+	}
+	params, err := modernSubscriptionParams()
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	id := json.RawMessage(`"subscription"`)
+	t.subCancel, t.subDone, t.subID = cancel, done, slices.Clone(id)
+	t.workers.Go(func() {
+		defer close(done)
+		_, _ = t.call(ctx, rpcRequest{
+			JSONRPC: jsonrpcVersion,
+			ID:      id,
+			Method:  "subscriptions/listen",
+			Params:  params,
+		}, true)
+	})
+}
+
+func (t *stdioTransport) subscriptionID() json.RawMessage {
+	t.lifeM.Lock()
+	defer t.lifeM.Unlock()
+	return slices.Clone(t.subID)
 }
 
 func (t *stdioTransport) readLoop(stdout io.Reader) {
@@ -109,7 +168,7 @@ func (t *stdioTransport) readLoop(stdout io.Reader) {
 		}
 		var resp rpcResponse
 		if err := json.Unmarshal(line, &resp); err != nil {
-			slog.Debug("mcp stdio: non-JSON line", "line", string(line))
+			slog.Debug("mcp stdio: malformed non-JSON record discarded", "bytes", len(line))
 			continue
 		}
 		if len(resp.ID) == 0 {
@@ -123,7 +182,12 @@ func (t *stdioTransport) readLoop(stdout io.Reader) {
 			// the distinction structural.
 			var note rpcNotificationIn
 			if err := json.Unmarshal(line, &note); err == nil && note.Method != "" {
-				t.dispatchNotification(note.Method, note.Params)
+				subscriptionID := t.subscriptionID()
+				if len(subscriptionID) == 0 {
+					t.dispatchNotification(note.Method, note.Params)
+				} else if note.Method != "notifications/subscriptions/acknowledged" && validSubscriptionNotification(note.Params, subscriptionID) {
+					t.dispatchNotification(note.Method, note.Params)
+				}
 			}
 			continue
 		}
@@ -166,12 +230,22 @@ func (t *stdioTransport) readLoop(stdout io.Reader) {
 // server can run with LOG_LEVEL=debug. This matches the rest of
 // the package's "log signal, not noise" convention.
 func (t *stdioTransport) drainStderr(r io.Reader, command string) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), maxStderrLineBytes)
-	for scanner.Scan() {
-		slog.Debug("mcp stdio stderr",
-			"command", command,
-			"line", redactSecrets(truncateLine(scanner.Text(), maxStderrLineBytes)))
+	reader := bufio.NewReaderSize(r, maxStderrLineBytes)
+	for {
+		fragment, prefix, err := reader.ReadLine()
+		if len(fragment) > 0 {
+			line := redactSecrets(truncateLine(string(fragment), maxStderrLineBytes))
+			if prefix {
+				line += "…[truncated]"
+			}
+			slog.Debug("mcp stdio stderr", "command", command, "line", line)
+		}
+		for prefix && err == nil {
+			_, prefix, err = reader.ReadLine() // Discard remainder, but keep draining.
+		}
+		if err != nil {
+			return
+		}
 	}
 }
 
@@ -257,51 +331,66 @@ func (t *stdioTransport) unregisterPending(id json.RawMessage) {
 	t.pendingM.Unlock()
 }
 
-func (t *stdioTransport) writeFrame(ctx context.Context, payload any) error {
+func (t *stdioTransport) writeFrame(ctx context.Context, payload any, closingOK bool) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal frame: %w", err)
 	}
 	b = append(b, '\n')
 
-	t.writeM.Lock()
-	defer t.writeM.Unlock()
+	select {
+	case t.writeGate <- struct{}{}:
+		defer func() { <-t.writeGate }()
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-t.done:
+		return errors.New("stdio transport closed")
+	}
 
 	// os.exec pipes have no write deadline, so do the (possibly blocking) write
 	// on a goroutine and select on the caller's ctx / transport shutdown. A
 	// server that stops draining its stdin would otherwise wedge this call
-	// forever and, because writeM is held, every other Call/Notify with it.
+	// forever and, because writeGate is held, every other Call/Notify with it.
 	werr := make(chan error, 1)
-	go func() {
-		_, e := t.stdin.Write(b)
-		werr <- e
-	}()
+	t.lifeM.Lock()
+	if t.closing && !closingOK {
+		t.lifeM.Unlock()
+		return errors.New("stdio transport closed")
+	}
+	t.workers.Go(func() { _, err := t.stdin.Write(b); werr <- err })
+	t.lifeM.Unlock()
 	select {
 	case e := <-werr:
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+			return context.Cause(ctx)
 		}
 		return e
 	case <-t.done:
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+			return context.Cause(ctx)
 		}
 		return errors.New("stdio transport closed")
 	case <-ctx.Done():
 		// The write is stuck (server not draining stdin): the frame is only
 		// partially on the wire and the stream is desynced. Tear the transport
-		// down — synchronously, still under writeM, so no other writer can
+		// down — synchronously, still under writeGate, so no other writer can
 		// interleave a corrupt frame; closing stdin unblocks the orphaned
 		// write goroutine.
-		_ = t.Close()
-		return ctx.Err()
+		if !closingOK {
+			_ = t.Close()
+		}
+		return context.Cause(ctx)
 	}
 }
 
 func (t *stdioTransport) Call(ctx context.Context, req rpcRequest) (rpcResponse, error) {
+	return t.call(ctx, req, false)
+}
+
+func (t *stdioTransport) call(ctx context.Context, req rpcRequest, ownerCleanup bool) (rpcResponse, error) {
 	ch := t.registerPending(req.ID)
 
-	if err := t.writeFrame(ctx, req); err != nil {
+	if err := t.writeFrame(ctx, req, ownerCleanup); err != nil {
 		t.unregisterPending(req.ID)
 		return rpcResponse{}, fmt.Errorf("write request: %w", err)
 	}
@@ -314,23 +403,76 @@ func (t *stdioTransport) Call(ctx context.Context, req rpcRequest) (rpcResponse,
 		return resp, nil
 	case <-ctx.Done():
 		t.unregisterPending(req.ID)
-		return rpcResponse{}, ctx.Err()
+		t.cancelAcceptedRequest(req, ownerCleanup)
+		return rpcResponse{}, context.Cause(ctx)
 	case <-t.done:
 		return rpcResponse{}, errors.New("stdio transport closed before response")
 	}
 }
 
+func (t *stdioTransport) cancelAcceptedRequest(req rpcRequest, ownerCleanup bool) {
+	cleanup, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if t.protocolVersion() != protocolVersion20260728 {
+		_ = t.Notify(cleanup, rpcNotification{JSONRPC: jsonrpcVersion, Method: "notifications/cancelled", Params: map[string]any{"requestId": req.ID, "reason": "caller cancelled"}})
+		return
+	}
+	if req.Method == "requests/cancel" {
+		return
+	}
+	params, err := paramsFor20260728(map[string]any{"requestId": req.ID, "reason": "caller cancelled"})
+	if err != nil {
+		return
+	}
+	id, err := json.Marshal(fmt.Sprintf("stdio-cancel-%d", t.controlID.Add(1)))
+	if err != nil {
+		return
+	}
+	cancelRequest := rpcRequest{JSONRPC: jsonrpcVersion, ID: id, Method: "requests/cancel", Params: params}
+	ch := t.registerPending(id)
+	defer t.unregisterPending(id)
+	if err := t.writeFrame(cleanup, cancelRequest, ownerCleanup); err != nil {
+		return
+	}
+	select {
+	case <-ch:
+	case <-cleanup.Done():
+	case <-t.done:
+	}
+}
+
+func (t *stdioTransport) protocolVersion() string {
+	t.lifeM.Lock()
+	defer t.lifeM.Unlock()
+	return t.version
+}
+
 // Notify sends a JSON-RPC notification (no response expected).
 func (t *stdioTransport) Notify(ctx context.Context, n rpcNotification) error {
-	return t.writeFrame(ctx, n)
+	return t.writeFrame(ctx, n, false)
 }
 
 func (t *stdioTransport) Close() error {
 	t.closeOnce.Do(func() {
+		t.lifeM.Lock()
+		t.closing = true
+		subCancel, subDone := t.subCancel, t.subDone
+		if subCancel != nil {
+			subCancel()
+		}
+		t.lifeM.Unlock()
+		// The modern subscription owns its cancellation exchange. Join it before
+		// closing stdin so its bounded requests/cancel request can reach the peer.
+		if subDone != nil {
+			<-subDone
+		}
+
+		t.lifeM.Lock()
 		// Closing stdin signals the server to exit cleanly.
 		if err := t.stdin.Close(); err != nil {
 			t.closeErr = err
 		}
+		t.lifeM.Unlock()
 		// Give the process a chance to exit on its own. If it doesn't
 		// exit within a short window we kill it.
 		exited := make(chan error, 1)
@@ -341,6 +483,7 @@ func (t *stdioTransport) Close() error {
 			_ = t.cmd.Process.Kill()
 			<-exited
 		}
+		t.workers.Wait()
 	})
 	return t.closeErr
 }

@@ -29,6 +29,7 @@ type ReplayOccurrenceKind struct {
 type replayOccurrenceKindsContainer struct {
 	MESSAGE       ReplayOccurrenceKind
 	TOOLEXECUTION ReplayOccurrenceKind
+	CONTROL       ReplayOccurrenceKind
 }
 
 // ReplayOccurrenceKinds is a main entry point using the ReplayOccurrenceKind type.
@@ -40,6 +41,9 @@ var ReplayOccurrenceKinds = replayOccurrenceKindsContainer{
 	},
 	TOOLEXECUTION: ReplayOccurrenceKind{
 		replayOccurrenceKind: toolExecution,
+	},
+	CONTROL: ReplayOccurrenceKind{
+		replayOccurrenceKind: control,
 	},
 }
 
@@ -54,6 +58,7 @@ func (r replayOccurrenceKindsContainer) allSlice() []ReplayOccurrenceKind {
 	return []ReplayOccurrenceKind{
 		ReplayOccurrenceKinds.MESSAGE,
 		ReplayOccurrenceKinds.TOOLEXECUTION,
+		ReplayOccurrenceKinds.CONTROL,
 	}
 }
 
@@ -150,6 +155,7 @@ func ParseReplayOccurrenceKind(input any) (ReplayOccurrenceKind, error) {
 var replayOccurrenceKindsNameMap = map[string]ReplayOccurrenceKind{
 	"message":        ReplayOccurrenceKinds.MESSAGE,
 	"tool_execution": ReplayOccurrenceKinds.TOOLEXECUTION,
+	"control":        ReplayOccurrenceKinds.CONTROL,
 }
 
 // stringToReplayOccurrenceKind converts a string representation of an enum value into its ReplayOccurrenceKind representation
@@ -193,6 +199,7 @@ func ExhaustiveReplayOccurrenceKinds(f func(ReplayOccurrenceKind)) {
 var validReplayOccurrenceKinds = map[ReplayOccurrenceKind]bool{
 	ReplayOccurrenceKinds.MESSAGE:       true,
 	ReplayOccurrenceKinds.TOOLEXECUTION: true,
+	ReplayOccurrenceKinds.CONTROL:       true,
 }
 
 // IsValid checks whether the ReplayOccurrenceKinds value is valid.
@@ -293,13 +300,14 @@ func (r *ReplayOccurrenceKind) UnmarshalYAML(by []byte) error {
 }
 
 // replayoccurrencekindNames is a constant string slice containing all enum values cononical absolute names
-const replayoccurrencekindNames = "messagetool_execution"
+const replayoccurrencekindNames = "messagetool_executioncontrol"
 
 // replayoccurrencekindNamesMap is a map of enum values to their canonical absolute
 // name positions within the replayoccurrencekindNames string slice
 var replayoccurrencekindNamesMap = map[ReplayOccurrenceKind]string{
 	ReplayOccurrenceKinds.MESSAGE:       replayoccurrencekindNames[0:7],
 	ReplayOccurrenceKinds.TOOLEXECUTION: replayoccurrencekindNames[7:21],
+	ReplayOccurrenceKinds.CONTROL:       replayoccurrencekindNames[21:28],
 }
 
 // String implements the Stringer interface.
@@ -318,7 +326,8 @@ func _() {
 	// An "invalid array index" compiler error signifies that the constant values have changed.
 	// Re-run the goenums command to generate them again.
 	// Does not identify newly added constant values unless order changes
-	var x [2]struct{}
+	var x [3]struct{}
 	_ = x[message]
 	_ = x[toolExecution-1]
+	_ = x[control-2]
 }

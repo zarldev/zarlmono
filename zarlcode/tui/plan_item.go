@@ -45,9 +45,6 @@ func (p *planItem) render(width int) []string {
 	if p.expanded {
 		lines = append(lines, renderContentBlock(width, contentBlock{kind: contentPlan, plan: p.plan, depth: p.depth})...)
 	}
-	if p.nested {
-		lines = prefixLines(lines, nestPad)
-	}
 	return indentLines(lines, p.depth)
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -25,6 +26,7 @@ type liveTurnOperation struct {
 	queuedID       int
 	ended          bool
 	failed         bool
+	cancelled      bool
 	completed      bool
 	saving         bool
 	promotingExact bool
@@ -50,6 +52,16 @@ func (m *UI) runLiveTurnInput(prompt string, attachments []llm.ContentPart, queu
 	if m.liveOperation != nil {
 		return m.blockUnsettledSubmit()
 	}
+	if err := m.modeTargetSubmitBlocked(); err != nil {
+		m.showModeTargetBlocked(err, "")
+		return nil
+	}
+	if !m.durableDispatch() && queuedID == 0 && m.modeTarget.prepared != nil {
+		if err := m.applyPreparedModeTarget(nil); err != nil {
+			m.session.SetErrorToast("mode target: " + err.Error())
+			return nil
+		}
+	}
 	m.session.EnsureIdentity(uuid.NewString(), time.Now())
 	m.liveGeneration++
 	op := liveTurnOperation{sessionID: m.session.ID, generation: m.liveGeneration, promptID: uuid.NewString(), queuedID: queuedID}
@@ -73,13 +85,14 @@ func (m *UI) runLiveTurnInput(prompt string, attachments []llm.ContentPart, queu
 	if queuedID != 0 {
 		// A prior save failure must not prevent explicit queued input from
 		// running. Admission still atomically owns/removes the queued prompt.
-		live, ctx := m.live, engine.WithToolOutputSession(m.appContext(), op.sessionID)
+		ctx := engine.WithToolOutputSession(m.appContext(), op.sessionID)
+		reservation, reserveErr := m.modeTargetReservation(prompt, queuedID)
 		run = func() tea.Msg {
-			reservation, err := live.ReserveQueuedTurn(queuedID, prompt)
-			if err != nil {
-				return beforeTurnFailedMsg{prompt: prompt, err: err}
+			if reserveErr != nil {
+				return beforeTurnFailedMsg{prompt: prompt, err: reserveErr}
 			}
 			defer reservation.Release()
+			var err error
 			if historyStore != nil {
 				err = reservation.RunRecordedTurn(ctx, prompt, nil, historyStore, op.sessionID)
 			} else {
@@ -118,6 +131,7 @@ func (m *UI) markEndedLiveTurn(e teasink.ConversationEndedMsg, failed bool) {
 	if e.Depth == 0 && m.liveOperation != nil && m.liveOperation.turnID == e.TaskID {
 		m.liveOperation.ended = true
 		m.liveOperation.failed = failed
+		m.liveOperation.cancelled = m.liveOperation.cancelled || e.Reason == runner.TerminalCancelled
 	}
 }
 
@@ -197,12 +211,22 @@ func (m *UI) finishSettledLiveTurn(msg sessionPersistedMsg) tea.Cmd {
 	m.settledTurnID = op.turnID
 	m.settledWatermark = msg.revision
 	m.initialContinuation = rewind.InitialContinuation{}
+	if cmd := m.deferModeTargetQueueLaunch(!recoveredSave && !op.cancelled && !op.failed); cmd != nil {
+		return cmd
+	}
 	if recoveredSave {
 		m.session.SetSuccessToast("turn saved; submit your prompt to continue")
 		if m.hasIdleQueuedTurn() {
-			m.session.SetSuccessToast("turn saved — Enter: send queued input; composer retained")
+			m.session.SetSuccessToast("turn saved — Queued input ready: Enter to send")
 		}
 		// Restored durability must not implicitly dispatch previously queued input.
+		return m.toastExpiryCmd()
+	}
+	if op.cancelled {
+		m.session.SetToast("cancelled")
+		if m.hasIdleQueuedTurn() {
+			m.session.SetToast("Cancelled — Queued input ready: Enter to send")
+		}
 		return m.toastExpiryCmd()
 	}
 	if op.failed {
@@ -226,27 +250,47 @@ func (m *UI) failLiveSettlement(err error) tea.Cmd {
 	return nil // persistent warning; queued input remains explicitly dispatchable
 }
 
-func (m *UI) liveSettlementStatus() string {
+// settlementNotice carries persistent status severity from its state owner.
+// Progress remains informational; actual save/conflict failures remain errors.
+type settlementNotice struct {
+	text string
+	tone toastTone
+}
+
+func (m *UI) liveSettlementStatus() settlementNotice {
 	if m.sourceConflict {
-		return sourceConflictNotice
+		return settlementNotice{sourceConflictNotice, toastError}
 	}
 	if m.unsavedTurnError != nil {
-		return "Not saved — " + m.sessionSaveFailureSummary() + ". Ctrl+q: recovery"
+		return settlementNotice{"Not saved — " + m.sessionSaveFailureSummary() + ". Ctrl+q: recovery", toastError}
+	}
+	if err := m.modeTarget.err; err != nil {
+		return settlementNotice{"mode target: " + err.Error(), toastError}
+	}
+	if m.modeTarget.prepared != nil {
+		return settlementNotice{"mode target ready; waiting for safe runtime admission", toastInfo}
 	}
 	op := m.liveOperation
+	if op != nil && op.cancelled && !op.completed {
+		return settlementNotice{"cancelling — waiting for cleanup; your draft is safe", toastInfo}
+	}
 	if op == nil || !op.ended {
 		if m.hasIdleQueuedTurn() {
-			return "Enter: send queued input; composer retained"
+			return settlementNotice{"Queued input ready: Enter to send", toastInfo}
 		}
-		return ""
+		return settlementNotice{}
 	}
 	if op.saving {
-		return "saving completed turn; input retained"
+		return settlementNotice{"saving completed turn; input retained", toastInfo}
 	}
-	return "waiting for completed turn to settle and save"
+	return settlementNotice{"waiting for completed turn to settle and save", toastInfo}
 }
 
 func (m *UI) blockUnsettledSubmit() tea.Cmd {
-	m.session.SetErrorToast("waiting for the previous turn to settle and save")
+	if m.liveOperation != nil && m.liveOperation.cancelled && !m.liveOperation.completed {
+		m.session.SetToast("cancelling — waiting for cleanup; your draft is safe")
+	} else {
+		m.session.SetToast("waiting for the previous turn to settle and save")
+	}
 	return m.toastExpiryCmd()
 }

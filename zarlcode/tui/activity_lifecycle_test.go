@@ -63,7 +63,7 @@ func TestActivityRunCommandClearsWithoutTerminalEvent(t *testing.T) {
 			// or setup-failure message reaches the UI, not ConversationEnded.
 			ui.Update(tui.RunFn(t.Context(), live, "work")())
 			out := ansi.Strip(ui.View().Content)
-			if !strings.Contains(out, "○ idle") || strings.Contains(out, "⠋ ") {
+			if containsBraille(out) {
 				t.Fatalf("command completion left live activity:\n%s", out)
 			}
 			if strings.Contains(ui.ToastText(), "setup:") != setupFailure {

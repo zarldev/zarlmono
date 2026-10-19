@@ -61,6 +61,8 @@ type themeFile struct {
 	Info        colorDef `json:"info"`
 	User        colorDef `json:"user"`
 	Assistant   colorDef `json:"assistant"`
+	UserBg      colorDef `json:"userBg"`
+	AssistantBg colorDef `json:"assistantBg"`
 	Tool        colorDef `json:"tool"`
 	System      colorDef `json:"system"`
 	Border      colorDef `json:"border"`
@@ -91,6 +93,8 @@ func Decode(data []byte) (Theme, error) {
 		Info:        f.Info.dark(),
 		User:        f.User.dark(),
 		Assistant:   f.Assistant.dark(),
+		UserBg:      f.UserBg.dark(),
+		AssistantBg: f.AssistantBg.dark(),
 		Tool:        f.Tool.dark(),
 		System:      f.System.dark(),
 		Border:      f.Border.dark(),

@@ -49,6 +49,26 @@ func TestProviderKeepsReasoningOnlyInToolCallWindows(t *testing.T) {
 	assertReasoning(t, wireMessages[5], "")
 }
 
+func TestProviderKeepsPriorPlainAnswerReasoningWhenToolsAreEnabled(t *testing.T) {
+	t.Parallel()
+
+	var captured []byte
+	server := newCaptureServer(t, &captured)
+	provider := deepseek.NewProvider("test-key", deepseek.WithBaseURL(server.URL), deepseek.WithModel("deepseek-v4"))
+	consume(t, provider.Complete(t.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "explain"},
+			{Role: llm.RoleAssistant, Content: "plain answer", ReasoningContent: "prior reasoning"},
+			{Role: llm.RoleUser, Content: "now look it up"},
+		},
+		Tools:  []llm.Tool{{Type: "function", Function: llm.ToolFunction{Name: "lookup"}}},
+		Stream: true,
+	}))
+
+	messages := decodeBody(t, captured)["messages"].([]any)
+	assertReasoning(t, messages[1], "prior reasoning")
+}
+
 func assertReasoning(t *testing.T, raw any, want string) {
 	t.Helper()
 	encoded, err := json.Marshal(raw)

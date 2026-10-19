@@ -121,8 +121,17 @@ func (r *Runner) publishIterationCompleted(
 	})
 }
 
-func (r *Runner) publishContentChunk(ctx context.Context, spec TaskSpec, content string) {
-	r.sink.OnContent(ctx, Content{TaskID: spec.ID, Depth: spec.Depth, Delta: content})
+func (r *Runner) publishContentChunk(ctx context.Context, spec TaskSpec, content string, outputIndex *int) {
+	var ownedOutputIndex *int
+	if outputIndex != nil {
+		ownedOutputIndex = new(*outputIndex)
+	}
+	r.sink.OnContent(ctx, Content{
+		TaskID:             spec.ID,
+		Depth:              spec.Depth,
+		Delta:              content,
+		ContentOutputIndex: ownedOutputIndex,
+	})
 }
 
 func (r *Runner) publishThinkingChunk(ctx context.Context, spec TaskSpec, thinking string) {
@@ -146,7 +155,7 @@ type nestedToolPublisher struct {
 	spec              TaskSpec
 	parentExecutionID string
 	mu                sync.Mutex
-	nested            map[nestedExecutionKey][]string
+	nested            map[nestedExecutionKey][]nestedExecution
 	captureErr        error
 	attempt           int
 	capture           func(context.Context, ToolOutput) error
@@ -158,8 +167,13 @@ type nestedExecutionKey struct {
 	sequence int
 }
 
+type nestedExecution struct {
+	executionID string
+	output      *toolOutputPublisher
+}
+
 func newNestedToolPublisher(r *Runner, spec TaskSpec, parentExecutionID string) *nestedToolPublisher {
-	return &nestedToolPublisher{r: r, spec: spec, parentExecutionID: parentExecutionID, nested: make(map[nestedExecutionKey][]string)}
+	return &nestedToolPublisher{r: r, spec: spec, parentExecutionID: parentExecutionID, nested: make(map[nestedExecutionKey][]nestedExecution)}
 }
 
 func nestedKey(e tools.NestedToolCall) nestedExecutionKey {
@@ -169,27 +183,53 @@ func nestedKey(e tools.NestedToolCall) nestedExecutionKey {
 func (p *nestedToolPublisher) OnNestedToolStarted(ctx context.Context, e tools.NestedToolCall) {
 	executionID := allocateExecutionID()
 	key := nestedKey(e)
+	call := e.Call
+	call.Arguments = tools.CloneParameters(call.Arguments)
+	call.ExecutionID = executionID
+	output := newToolOutputPublisher(p.r, p.spec, call, p.parentExecutionID, e.ParentID.String(), e.Sequence)
 	p.mu.Lock()
-	p.nested[key] = append(p.nested[key], executionID)
+	p.nested[key] = append(p.nested[key], nestedExecution{executionID: executionID, output: output})
 	p.mu.Unlock()
 	p.r.publishNestedToolStarted(ctx, p.spec, e, executionID, p.parentExecutionID)
+}
+
+// BindNestedToolCall binds the exact execution allocated by the preceding
+// start notification. Unknown or ambiguous metadata is returned unchanged.
+func (p *nestedToolPublisher) BindNestedToolCall(_ context.Context, e tools.NestedToolCall) tools.ToolCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entries := p.nested[nestedKey(e)]
+	if len(entries) != 1 {
+		call := e.Call
+		call.ExecutionID = ""
+		call.ReportOutput = nil
+		return call
+	}
+	call := e.Call
+	call.Arguments = tools.CloneParameters(call.Arguments)
+	call.ExecutionID = entries[0].executionID
+	call.ReportOutput = entries[0].output.report
+	return call
 }
 
 func (p *nestedToolPublisher) OnNestedToolFinished(ctx context.Context, e tools.NestedToolResult) {
 	key := nestedKey(e.NestedToolCall)
 	p.mu.Lock()
-	ids := p.nested[key]
-	var executionID string
-	if len(ids) != 0 {
-		executionID = ids[0]
-		if len(ids) == 1 {
+	entries := p.nested[key]
+	var entry nestedExecution
+	if len(entries) != 0 {
+		entry = entries[0]
+		if len(entries) == 1 {
 			delete(p.nested, key)
 		} else {
-			p.nested[key] = ids[1:]
+			p.nested[key] = entries[1:]
 		}
 	}
 	p.mu.Unlock()
-	p.r.publishNestedToolFinished(ctx, p.spec, e, executionID, p.parentExecutionID)
+	if entry.output != nil {
+		entry.output.seal()
+	}
+	p.r.publishNestedToolFinished(ctx, p.spec, e, entry.executionID, p.parentExecutionID)
 	output := rawToolResultText(e.Result)
 	success, terminalError, kind, _ := classifyNestedToolOutput(e)
 	if e.Result == nil && e.Err != nil {
@@ -198,7 +238,7 @@ func (p *nestedToolPublisher) OnNestedToolFinished(ctx context.Context, e tools.
 	out := ToolOutput{
 		TaskID: string(p.spec.ID), Attempt: p.attempt,
 		ToolCallID: e.ChildID.String(), ToolName: e.Call.ToolName.String(),
-		ExecutionID: executionID, ParentToolCallID: e.ParentID.String(),
+		ExecutionID: entry.executionID, ParentToolCallID: e.ParentID.String(),
 		ParentExecutionID: p.parentExecutionID, Sequence: e.Sequence,
 		Args: e.Call.RawArguments, Parameters: tools.CloneParameters(e.Call.Arguments),
 		Output: output, Success: success, Error: terminalError, Kind: kind,
@@ -234,7 +274,7 @@ func (p *nestedToolPublisher) executionForWait(call tools.WorkspaceWaitCall) str
 	defer p.mu.Unlock()
 	ids := p.nested[nestedExecutionKey{parentID: call.ParentToolID.String(), childID: call.ToolID.String(), sequence: call.Sequence}]
 	if len(ids) == 1 {
-		return ids[0]
+		return ids[0].executionID
 	}
 	// Unknown/ambiguous observer metadata must not be attributed to the parent.
 	return ""

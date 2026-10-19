@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/hooks"
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
@@ -13,6 +14,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
+	"github.com/zarldev/zarlmono/zkit/agent/swarm"
+	boardtools "github.com/zarldev/zarlmono/zkit/agent/tools/board"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -160,6 +163,10 @@ func (l *LiveRunner) headlessSource(ctx context.Context, webSearch tools.Tool) (
 }
 
 func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, deps guardrails.Deps) (tools.Source, *tools.Registry, error) {
+	return l.sourceWithExposure(ctx, webSearch, deps, l.mcpExposure)
+}
+
+func (l *LiveRunner) sourceWithExposure(ctx context.Context, webSearch tools.Tool, deps guardrails.Deps, exposure *dynamic.MCPExposure) (tools.Source, *tools.Registry, error) {
 	reg := tools.NewRegistry()
 	l.mu.Lock()
 	toolEnv := cloneStringMap(l.toolEnv)
@@ -184,9 +191,14 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, d
 		pmArg = nil
 	}
 	coderunner.RegisterStandardTools(reg, l.ws, pmArg,
+
 		coderunner.WithToolSandbox(l.sandbox),
 		coderunner.WithToolEnv(toolEnv),
 	)
+
+	if generator, ok := l.RunTarget().Provider.(llm.ImageGenerator); ok {
+		_ = reg.Register(NewImageGenerationTool(l.ws, generator))
+	}
 
 	// update_plan isn't in the standard set (it needs a UI-hooked PlanStore);
 	// register it here bound to the live store so the agent's structured plan
@@ -260,9 +272,30 @@ func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, d
 			}),
 		)
 	}
+	deferred := prefs.DefaultMCPToolExposure == "deferred"
+	if enableMCP && l.settings != nil {
+		var err error
+		deferred, err = l.settings.DeferredMCP(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	base := tools.Source(reg)
-	if l.mcpHost != nil {
-		base = ComposeSources(base, l.mcpHost)
+	if enableMCP && deferred && exposure != nil {
+		reserved := append([]tools.ToolName(nil), semanticHostToolNames()...)
+		for tool := range reg.Tools(ctx) {
+			reserved = append(reserved, tool.Definition().Name)
+		}
+		exposure.Reserve(reserved...)
+		for _, tool := range exposure.ControlTools() {
+			if err := reg.Register(tool); err != nil {
+				return nil, nil, fmt.Errorf("register MCP selection tool: %w", err)
+			}
+		}
+		remote := newReservedRemoteSource(exposure.Source())
+		base = &mcpSelectionScope{Source: ComposeSources(base, remote)}
+	} else if enableMCP && l.mcpHost != nil {
+		base = ComposeSources(base, newReservedRemoteSource(l.mcpHost))
 	}
 	base = newGuidanceSource(base, l.instructionNestedSnapshot())
 	// Enforce the live workflow and immutable authority ceiling on nested
@@ -373,20 +406,30 @@ func (l *LiveRunner) resolveTurnPolicy(ctx context.Context) turnPolicy {
 		}
 		policy.modelOptions["reasoning_effort"] = value
 	}
+	if value := settings.ServiceTier(ctx, target.Spec); value != "" {
+		if policy.modelOptions == nil {
+			policy.modelOptions = llm.ModelOptions{}
+		}
+		policy.modelOptions["service_tier"] = value
+	}
 	return policy
 }
 
 // turn owns the root runner and every delegated task for one top-level run.
 // Its close must finish before the LiveRunner marks that turn drained.
 type turn struct {
-	runner      *runner.Runner
-	thinking    bool
-	group       *spawn.Group
-	coordinator *tools.WorkspaceCoordinator
+	runner          *runner.Runner
+	thinking        bool
+	group           *spawn.Group
+	coordinator     *tools.WorkspaceCoordinator
+	ownsCoordinator bool
+	inputs          *swarm.Inputs
 }
 
 func (t *turn) close(ctx context.Context) {
-	t.coordinator.BeginShutdown()
+	if t.ownsCoordinator {
+		t.coordinator.BeginShutdown()
+	}
 	// A cancelled run stops the children, but cannot abandon their join.
 	// LiveRunner.Close bounds its caller's wait separately while keeping
 	// shared dependencies alive until this owner has actually drained.
@@ -394,7 +437,14 @@ func (t *turn) close(ctx context.Context) {
 }
 
 func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*turn, error) {
+	return l.buildTurn(ctx, sourceFn, nil, extraOpts...)
+}
+
+func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), collaboration *swarmTurn, extraOpts ...options.Option[runner.Runner]) (*turn, error) {
 	policy := l.resolveTurnPolicy(ctx)
+	if collaboration != nil && !receivesAutomaticCompletion(policy.target.Provider) {
+		return nil, ErrSwarmReceiver
+	}
 	if l.catalog != nil {
 		l.catalog.Reload(l.ws.Root())
 	}
@@ -436,6 +486,13 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	if err != nil {
 		return nil, err
 	}
+	var boardAccess []boardtools.Board
+	if collaboration != nil {
+		boardAccess = append(boardAccess, collaboration.activation.Member)
+		if err := boardtools.Register(reg, collaboration.activation.Member); err != nil {
+			return nil, err
+		}
+	}
 	src = newOperationalSource(src, l.operational)
 	evidence := NewCompletionEvidence()
 	group := spawn.NewGroup(
@@ -443,7 +500,12 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 		spawn.WithMaxRuntime(policy.spawnRuntime),
 		spawn.WithCompletionBytes(l.truncator.MaxBytes),
 	)
-	coordinator := tools.NewWorkspaceCoordinator()
+	var coordinator *tools.WorkspaceCoordinator
+	if collaboration != nil {
+		coordinator = collaboration.coordinator
+	} else {
+		coordinator = tools.NewWorkspaceCoordinator()
+	}
 	src = coderunner.CoordinateWorkspace(src, coordinator)
 	transition := &modeTransition{live: l, group: group}
 	visible = newModeControlSource(NewModeFilteredSource(WithCompletionEvidence(src, evidence), l.isPlan), transition)
@@ -459,10 +521,16 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 	} else {
 		opts = append(opts, runner.WithTurnQuality(NewAgentAwareTurnQuality(quality, group)))
 	}
+	var inputs *swarm.Inputs
+	if collaboration != nil {
+		inputs = collaboration.activation.Inputs(group)
+		opts = append(opts, runner.WithInputSource(inputs))
+	}
 	opts = append(opts, runner.WithTools(visible))
 	r := runner.New(runner.ClientFromProvider(policy.target.Provider), opts...)
 	// Late-register spawn onto the base registry now that the parent runner exists
 	// (the registry enumerates lazily, so it is visible to this turn's schema).
-	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter)
-	return &turn{runner: r, thinking: policy.thinking, group: group, coordinator: coordinator}, nil
+	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter, boardAccess...)
+	return &turn{runner: r, thinking: policy.thinking, group: group, coordinator: coordinator,
+		ownsCoordinator: collaboration == nil, inputs: inputs}, nil
 }

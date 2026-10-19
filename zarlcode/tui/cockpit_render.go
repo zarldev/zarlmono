@@ -13,17 +13,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
-	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
-// cockpitLines renders the rich cockpit body — gauge, context graph,
-// sparklines, last-turn flow, cost, and the tool histogram — as a slice of
-// ANSI-styled rows sized to width. drawSidebar draws them clipped to the
-// pane; the dashboard reuses the same builders at a larger width.
-//
-// width is the inner content width (box interior). pulse breathes the gauge
-// leading edge while a turn is in flight.
+// cockpitLines renders the detailed single-column dashboard body. The compact
+// session sidebar uses separate, height-aware summaries.
 func (m *UI) cockpitLines(width int) []string {
 	s := &m.session.Run
 
@@ -31,19 +25,16 @@ func (m *UI) cockpitLines(width int) []string {
 	add := func(ss ...string) { out = append(out, ss...) }
 
 	// --- LLM/session overview ---------------------------------------------
+	add(sidebarHeading("session"))
 	add(m.llmStateLines()...)
 
-	// Nothing run and nothing running — show just the LLM/session overview above.
-	if !s.Running && len(s.history) == 0 && s.liveCtx == 0 {
-		return out
-	}
 	add("")
 
 	// --- context -------------------------------------------------------
 	// Keep the context composition graph as the primary visual: it is the fastest
 	// way to understand what is occupying the window. The surrounding text carries
 	// pressure / compaction hints so the graph itself can stay clean.
-	add(sectionHead("context", width))
+	add(sidebarHeading("context"))
 	add(s.contextHeadline())
 	if s.hasBreakdown() {
 		add(contextRoleBar(s, width))
@@ -60,25 +51,22 @@ func (m *UI) cockpitLines(width int) []string {
 
 	// --- COMPACTION ----------------------------------------------------
 	if s.compactions > 0 {
-		add(sectionHead("compaction", width))
+		add("", sidebarHeading("compaction"))
 		add(s.compactionLines()...)
 	}
 
 	// --- LAST TURN -----------------------------------------------------
 	if s.lastTotal > 0 || s.lastIn > 0 {
-		add(sectionHead("last turn", width))
+		add("", sidebarHeading("last turn"))
 		add(s.lastTurnSummary())
 		add(s.throughputLine(width))
 	}
 
 	// --- COST ----------------------------------------------------------
-	add(sectionHead("cost", width))
+	add("", sidebarHeading("cost"))
 	switch {
 	case s.hasPricing() || s.hasSessionCost():
 		add(s.costSummary())
-		if s.sessionCached > 0 {
-			add(s.cacheSavedLine())
-		}
 	case s.subscription:
 		add(palette.Muted.On("subscription — no metered cost"))
 	case s.local:
@@ -86,77 +74,32 @@ func (m *UI) cockpitLines(width int) []string {
 	default:
 		add(palette.Muted.On("metered · rate unknown"))
 	}
+	if s.hasLegacyCost() {
+		add(s.legacyCostLine())
+	}
+	if s.legacyCacheSavedUSD > 0 {
+		add(s.legacyCacheSavingsLine())
+	}
+	if s.hasCacheReporting() {
+		add(s.cacheUsageLines(width)...)
+	}
 
 	// --- TOOLS ---------------------------------------------------------
 	if tools := s.topTools(); len(tools) > 0 {
-		add(sectionHead("tools", width))
+		add("", sidebarHeading("tools"))
 		add(toolHistogram(tools, width, 12)...)
 	}
 
 	return out
 }
 
-func (m *UI) stateSidebarContent(width, height int) []string {
-	s := &m.session.Run
-	out := make([]string, 0, max(16, height))
-	add := func(ss ...string) { out = append(out, ss...) }
-	add(m.llmStateLines()...)
-
-	if !s.Running && len(s.history) == 0 && s.liveCtx == 0 {
-		return out
-	}
-	add("")
-	add(sectionHead("context", width))
-	add(s.stateContextLine())
-	if pressure := s.compactionPressureLine(); pressure != "" {
-		add(pressure)
-	}
-	if !m.session.Plan.IsEmpty() {
-		add("")
-		add(sectionHead("plan", width))
-		add(m.planStateLines(width)...)
-	}
-	if s.Running || s.lastTotal > 0 || s.lastIn > 0 || s.iterations > 0 {
-		add("")
-		add(sectionHead("run", width))
-		add(m.cockpitStatusLine())
-		if s.lastTotal > 0 || s.lastIn > 0 {
-			add(s.lastTurnSummary())
-		}
-	}
-	add("")
-	add(sectionHead("cost", width))
-	switch {
-	case s.hasPricing() || s.hasSessionCost():
-		add(s.costSummary())
-		if s.sessionCached > 0 {
-			add(s.cacheSavedLine())
-		}
-	case s.subscription:
-		add(palette.Muted.On("subscription — no metered cost"))
-	case s.local:
-		add(palette.Muted.On("local — no metered cost"))
-	default:
-		add(palette.Muted.On("metered · rate unknown"))
-	}
-	if tools := s.topTools(); len(tools) > 0 {
-		add("")
-		add(sectionHead("tools", width))
-		add(s.toolsSummaryLine())
-	}
-	if height > 0 && len(out) > height {
-		return out[:height]
-	}
-	return out
-}
-
 func (m *UI) contextPaneLines(width, _ int) []string {
 	s := &m.session.Run
-	out := []string{sectionHead("context", width), s.contextHeadline()}
+	out := []string{sidebarHeading("context"), s.contextHeadline()}
 	if s.hasBreakdown() {
 		out = append(out, contextRoleBar(s, width), "")
 		out = append(out, contextRoleLegend(s)...)
-		out = append(out, "", sectionHead("cache", width), contextSplitBar(s, width), "", contextSplitLegend(s))
+		out = append(out, "", sidebarHeading("cache"), contextSplitBar(s, width), "", contextSplitLegend(s))
 	} else {
 		out = append(out, contextSplitBar(s, width), "", contextSplitLegend(s))
 	}
@@ -164,7 +107,7 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 		out = append(out, pressure)
 	}
 	if s.compactions > 0 {
-		out = append(out, "", sectionHead("compaction", width))
+		out = append(out, "", sidebarHeading("compaction"))
 		out = append(out, s.compactionLines()...)
 	}
 	return out
@@ -172,7 +115,7 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 
 func (m *UI) contextPromptLines(width int) []string {
 	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
-	out := []string{sectionHead("prompt", width)}
+	out := []string{sidebarHeading("prompt")}
 	stackLines := promptStackSummaryLines(snap.PromptStack)
 	if len(stackLines) == 0 {
 		out = append(out, palette.Muted.On("prompt stack unavailable"))
@@ -180,17 +123,17 @@ func (m *UI) contextPromptLines(width int) []string {
 		out = append(out, stackLines...)
 	}
 	if len(snap.Errors) > 0 {
-		out = append(out, "", sectionHead("warnings", width))
+		out = append(out, "", sidebarHeading("warnings"))
 		for _, err := range snap.Errors {
 			out = append(out, "  "+palette.Muted.On(err))
 		}
 	}
 	if snap.PromptSystem == "" {
-		return append(out, "", sectionHead("preview", width), palette.Muted.On("prompt preview not available"))
+		return append(out, "", sidebarHeading("preview"), palette.Muted.On("prompt preview not available"))
 	}
 	preview := promptPreviewLines(snap.PromptSystem, width)
 	if len(preview) > 0 {
-		out = append(out, "", sectionHead("preview", width))
+		out = append(out, "", sidebarHeading("preview"))
 		out = append(out, preview...)
 	}
 	return out
@@ -222,18 +165,18 @@ func promptPreviewLines(prompt string, width int) []string {
 func (m *UI) contextToolsLines(width int) []string {
 	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
 	available, hidden := groupContextTools(snap.Tools, snap.PlanMode)
-	out := []string{sectionHead("tools", width)}
+	out := []string{sidebarHeading("tools")}
 	out = append(out, palette.Muted.On(fmt.Sprintf("%d available now · %d hidden", len(available), len(hidden))))
 	if len(available) > 0 {
-		out = append(out, "", sectionHead("available", width))
+		out = append(out, "", sidebarHeading("available"))
 		out = append(out, renderToolSpecRows(available)...)
 	}
 	if len(hidden) > 0 {
-		out = append(out, "", sectionHead("plan-hidden", width))
+		out = append(out, "", sidebarHeading("plan-hidden"))
 		out = append(out, renderToolSpecRows(hidden)...)
 	}
 	if top := m.session.Run.topTools(); len(top) > 0 {
-		out = append(out, "", sectionHead("recent usage", width))
+		out = append(out, "", sidebarHeading("recent usage"))
 		out = append(out, toolHistogram(top, width, max(12, len(top)))...)
 	}
 	return out
@@ -253,32 +196,6 @@ func groupContextTools(specs []tools.ToolSpec, plan bool) ([]tools.ToolSpec, []t
 	return available, hidden
 }
 
-func (m *UI) planStateLines(width int) []string {
-	plan := m.session.Plan
-	if plan.IsEmpty() {
-		return []string{palette.Muted.On("no structured plan yet")}
-	}
-	steps := plan.Steps
-	out := []string{palette.Muted.On(fmt.Sprintf("%d steps", len(steps)))}
-	for _, status := range []code.StepStatus{code.StepStatuses.INPROGRESS, code.StepStatuses.PENDING, code.StepStatuses.COMPLETED} {
-		for _, step := range steps {
-			if step.Status != status {
-				continue
-			}
-			bullet := "•"
-			switch status {
-			case code.StepStatuses.INPROGRESS:
-				bullet = "▶"
-			case code.StepStatuses.COMPLETED:
-				bullet = "✓"
-			}
-			line := ansi.Truncate(fmt.Sprintf("%s %s", bullet, step.Text), width, "")
-			out = append(out, line)
-		}
-	}
-	return out
-}
-
 func renderToolSpecRows(specs []tools.ToolSpec) []string {
 	out := make([]string, 0, len(specs)*2)
 	for _, spec := range specs {
@@ -288,10 +205,10 @@ func renderToolSpecRows(specs []tools.ToolSpec) []string {
 	return out
 }
 
-func (m *UI) contextEventsLines(width int) []string {
+func (m *UI) contextEventsLines(_ int) []string {
 	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
 	groups := groupContextEvents(snap.EventLog)
-	out := []string{sectionHead("events", width)}
+	out := []string{sidebarHeading("events")}
 	if len(snap.EventLog) == 0 {
 		return append(out, palette.Muted.On("no events recorded yet"))
 	}
@@ -299,7 +216,7 @@ func (m *UI) contextEventsLines(width int) []string {
 		if len(g.events) == 0 {
 			continue
 		}
-		out = append(out, "", sectionHead(g.label, width))
+		out = append(out, "", sidebarHeading(g.label))
 		for _, e := range g.events {
 			out = append(out, formatContextEventRow(e))
 		}
@@ -332,9 +249,8 @@ func formatContextEventRow(e EventRingEntry) string {
 	return fmt.Sprintf("  %s  %s  %s", palette.Subtle.On(e.At.Format("15:04:05")), palette.Primary.On(e.Kind), palette.Muted.On(e.Detail))
 }
 
-// llmStateLines renders the sidebar's top card. This is deliberately not a
-// pile of abbreviations: the sidebar should be a useful at-a-glance overview
-// of the active LLM configuration before the live token/cost/tool gauges begin.
+// llmStateLines retains the complete session identity and accounting metadata
+// in the expanded dashboard at every responsive width.
 func (m *UI) llmStateLines() []string {
 	s := &m.session.Run
 	out := make([]string, 0, 9)
@@ -387,6 +303,9 @@ func (m *UI) llmStateLines() []string {
 	if totals := s.sessionTotalsLine(); totals != "" {
 		add("session", totals)
 	}
+	if s.sessionToolCalls > 0 {
+		add("tools", s.toolsSummaryLine())
+	}
 	if !m.session.StartedAt.IsZero() {
 		started := palette.Fg.On(m.session.StartedAt.Format("15:04")) +
 			palette.Muted.On(" · ") + palette.Subtle.On(fmtAgo(time.Since(m.session.StartedAt)))
@@ -416,14 +335,16 @@ func (m *UI) workspaceChangesLine() string {
 	if m.session == nil || m.session.WorkingSet == nil {
 		return ""
 	}
-	files := m.session.WorkingSet.FilesChangedThisSession()
-	if len(files) == 0 {
+	// Both collections are owned by the UI event loop. Counts need neither the
+	// sorted file snapshot nor a copy of the session's mutation history.
+	files := len(m.session.WorkingSet.files)
+	if files == 0 {
 		return ""
 	}
-	mutations := m.session.WorkingSet.MutationsThisSession()
-	parts := []string{palette.Fg.On(fmtCount(len(files))) + palette.Subtle.On(" files")}
-	if len(mutations) > 0 {
-		parts = append(parts, palette.Fg.On(fmtCount(len(mutations)))+palette.Subtle.On(" edits"))
+	mutations := len(m.session.WorkingSet.mutations)
+	parts := []string{palette.Fg.On(fmtCount(files)) + palette.Subtle.On(" files")}
+	if mutations > 0 {
+		parts = append(parts, palette.Fg.On(fmtCount(mutations))+palette.Subtle.On(" edits"))
 	}
 	return strings.Join(parts, palette.Muted.On(" · "))
 }
@@ -699,6 +620,7 @@ func (s *RunState) throughputLine(_ int) string {
 // costSummary is the headline cost row: this turn · session · burn rate.
 func (s *RunState) costSummary() string {
 	parts := []string{
+		palette.Warning.On("base-rate estimate"),
 		palette.Subtle.On("turn ") + palette.Fg.On(fmtUSD(s.turnCost())),
 		palette.Subtle.On("session ") + palette.Fg.On(fmtUSD(s.sessionCost())),
 	}
@@ -711,16 +633,6 @@ func (s *RunState) costSummary() string {
 		parts = append(parts, palette.Muted.On("~"+fmtUSD(br)+"/hr"))
 	}
 	return strings.Join(parts, palette.Muted.On(" · "))
-}
-
-func (s *RunState) stateContextLine() string {
-	used := s.effectiveUsed()
-	line := palette.Subtle.On("using ") + palette.Fg.On(fmtCount(used))
-	if s.window > 0 {
-		line += palette.Muted.On(" of ") + palette.Fg.On(fmtCount(s.window))
-		line += palette.Muted.On(" · ") + pressureColor(s.fillFrac()).On(itoa(used*100/s.window)+"% full")
-	}
-	return line
 }
 
 func (s *RunState) toolsSummaryLine() string {
@@ -750,7 +662,10 @@ func (s *RunState) sessionTotalsLine() string {
 		parts = append(parts, palette.Fg.On(fmtCount(s.sessionToolCalls))+palette.Subtle.On(" calls"))
 	}
 	if s.hasPricing() || s.hasSessionCost() {
-		parts = append(parts, palette.Fg.On(fmtUSD(s.sessionCost()))+palette.Subtle.On(" spend"))
+		parts = append(parts, palette.Fg.On(fmtUSD(s.sessionCost()))+palette.Subtle.On(" base-rate estimate"))
+	}
+	if s.unpricedCacheWriteTasks > 0 {
+		parts = append(parts, palette.Warning.On(itoa(s.unpricedCacheWriteTasks)+" tasks: cache-write rate unknown (cost estimate incomplete)"))
 	}
 	if s.unpricedTasks > 0 {
 		parts = append(parts, palette.Warning.On(itoa(s.unpricedTasks)+" tasks: rate unknown (cost incomplete)"))
@@ -776,17 +691,78 @@ func (s *RunState) billingLine() string {
 	}
 }
 
-// cacheSavedLine shows the dollars the prompt cache saved this session and
-// that saving as a share of what the session would otherwise have cost.
-func (s *RunState) cacheSavedLine() string {
-	saved := s.cacheSaved()
-	gross := s.sessionCost() + saved
-	pct := 0
-	if gross > 0 {
-		pct = int(saved / gross * 100)
+// legacyCostLine preserves persisted pre-versioning amounts without treating
+// them as current spend or including them in burn-rate calculations.
+func (s *RunState) legacyCostLine() string {
+	line := palette.Warning.On("legacy historical cost ") + palette.Fg.On(fmtUSD(s.legacyCostUSD))
+	if s.legacyCostParentUSD > 0 && s.legacyCostParentUSD != s.legacyCostUSD {
+		line += palette.Muted.On(" · parent ") + palette.Fg.On(fmtUSD(s.legacyCostParentUSD))
 	}
-	return palette.Success.On("cache saved "+fmtUSD(saved)) +
-		palette.Muted.On(" ("+itoa(pct)+"% of spend)")
+	return line
+}
+
+// legacyCacheSavingsLine preserves a persisted historical estimate. New usage
+// never adds to it because cache rates are absent from model metadata.
+func (s *RunState) legacyCacheSavingsLine() string {
+	return palette.Warning.On("legacy cache-savings estimate ") + palette.Fg.On(fmtUSD(s.legacyCacheSavedUSD))
+}
+
+func (s *RunState) hasCacheReporting() bool {
+	return len(s.cacheTargets) > 0 || s.cacheDiagnosticsLegacy
+}
+
+// cacheUsageLines reports target attribution, known base-cost subtotal, and
+// explicit coverage gaps without repeating the aggregate cache token rows.
+func (s *RunState) cacheUsageLines(_ int) []string {
+	targets := sortedCacheTargets(s.cacheTargets)
+	lines := make([]string, 0, len(targets)*2+1)
+	for _, d := range targets {
+		label := d.Provider + "/" + d.Model
+		if d.Provider == "" && d.Model == "" {
+			label = "unknown target"
+		}
+		head := palette.Fg.On(label) + palette.Muted.On(" · "+d.BillingClass+" · ") +
+			palette.Subtle.On(itoa(d.SettledTasks)+" settled")
+		if d.BillingClass == billingClassLocal || d.BillingClass == billingClassSubscription {
+			head += palette.Muted.On(" · unmetered")
+		} else {
+			head += palette.Subtle.On(" · base-rate estimate ") + palette.Fg.On(fmtUSD(d.KnownCostUSD))
+			if d.BaseRateUnknownTasks > 0 {
+				head += palette.Warning.On(" · base rate unknown " + itoa(d.BaseRateUnknownTasks))
+			}
+		}
+		lines = append(lines, head)
+
+		usage := palette.Subtle.On("cache read ") + palette.Fg.On(fmtCount(d.CacheReadTokens))
+		if d.CacheReadShareKnown {
+			usage += palette.Muted.On(" (" + fmt.Sprintf("%.0f", d.CacheReadShare*100) + "%)")
+		}
+		usage += palette.Muted.On(" · create ") + palette.Fg.On(fmtCount(d.CacheCreationTokens))
+		coverage := make([]string, 0, 5)
+		if d.PricingTierUnknownTasks > 0 {
+			coverage = append(coverage, "prompt pricing tier unavailable "+itoa(d.PricingTierUnknownTasks)+" (base-rate estimate incomplete)")
+		}
+		if d.CacheReadRateUnknownTasks > 0 {
+			coverage = append(coverage, "read rate unknown "+itoa(d.CacheReadRateUnknownTasks))
+		}
+		if d.CacheWriteRateUnknownTasks > 0 {
+			coverage = append(coverage, "write rate unknown "+itoa(d.CacheWriteRateUnknownTasks))
+		}
+		if d.MissingUsageTasks > 0 {
+			coverage = append(coverage, "usage absent "+itoa(d.MissingUsageTasks))
+		}
+		if d.ReportedZeroUsageTasks > 0 {
+			coverage = append(coverage, "reported zero "+itoa(d.ReportedZeroUsageTasks))
+		}
+		if len(coverage) > 0 {
+			usage += palette.Warning.On(" · " + strings.Join(coverage, ", "))
+		}
+		lines = append(lines, usage)
+	}
+	if s.cacheDiagnosticsLegacy {
+		lines = append(lines, palette.Warning.On("legacy history: target attribution unavailable"))
+	}
+	return lines
 }
 
 // sectionHead renders a section header rule that joins into the left border:

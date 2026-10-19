@@ -1,6 +1,7 @@
 package compact_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -206,20 +207,25 @@ func TestTiered_Phase3PreservesOperationalStateAndToolPairs(t *testing.T) {
 	if !strings.Contains(res.Warning, "phase 3") {
 		t.Errorf("expected phase 3 trigger, got: %q", res.Warning)
 	}
-	// Phase 3 must retain bounded assistant operational-state capsules.
-	if got := res.History[2].Content; !strings.HasSuffix(got, strings.Repeat("r", 128)) {
-		t.Errorf("phase 3: first assistant operational tail lost: %q", got)
+	// Each excerpt is host input before the preserved assistant/tool pair.
+	if len(res.History) != 9 {
+		t.Fatalf("history length = %d, want system + user + two excerpt/call/result groups + recent", len(res.History))
 	}
-	if got := res.History[4].Content; !strings.HasSuffix(got, strings.Repeat("s", 128)) {
-		t.Errorf("phase 3: second assistant operational tail lost: %q", got)
-	}
-	// Tool messages should be replaced with placeholders, NOT dropped.
-	if got := res.History[3].Content; !strings.Contains(got, "[tool result elided") {
-		t.Errorf("phase 3: tool body not collapsed: %q", got[:min(50, len(got))])
-	}
-	// ToolCallID linkage preserved.
-	if res.History[3].ToolCallID != "t1" || res.History[5].ToolCallID != "t2" {
-		t.Errorf("tool call ids dropped in phase 3")
+	for _, group := range []struct {
+		index    int
+		original int
+		tail     string
+	}{{2, 2, "r"}, {5, 4, "s"}} {
+		excerpt, assistant, tool := res.History[group.index], res.History[group.index+1], res.History[group.index+2]
+		if excerpt.Role != llm.RoleUser || excerpt.Observation.Version != 1 || !strings.HasSuffix(excerpt.Content, strings.Repeat(group.tail, 128)) {
+			t.Errorf("phase 3: operational tail or host attribution lost: %+v", excerpt)
+		}
+		if assistant.Role != llm.RoleAssistant || assistant.Content != "" || !reflect.DeepEqual(assistant.ToolCalls, in[group.original].ToolCalls) {
+			t.Errorf("assistant action shell changed: %+v", assistant)
+		}
+		if tool.Role != llm.RoleTool || tool.ToolCallID != in[group.original+1].ToolCallID || !strings.Contains(tool.Content, "[tool result elided") {
+			t.Errorf("tool result pairing/elision changed: %+v", tool)
+		}
 	}
 	declared := map[string]bool{}
 	for _, msg := range res.History {
@@ -417,16 +423,16 @@ func TestTiered_PreservesToolCallsOnAssistantMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Tool calls on the assistant message must survive every phase
-	// — that's the action trail. Only Content (reasoning) gets cut.
-	if len(res.History[2].ToolCalls) != 1 {
-		t.Fatalf("ToolCalls dropped: %v", res.History[2].ToolCalls)
+	// The inserted host excerpt must not take ownership of assistant tool calls.
+	if len(res.History) != 6 || res.History[2].Observation.Version != 1 {
+		t.Fatalf("missing host excerpt before action shell: %+v", res.History)
 	}
-	if res.History[2].ToolCalls[0].ID != "tc1" {
-		t.Errorf("ToolCall id altered: %q", res.History[2].ToolCalls[0].ID)
+	assistant := res.History[3]
+	if assistant.Role != llm.RoleAssistant || assistant.Content != "" || !reflect.DeepEqual(assistant.ToolCalls, in[2].ToolCalls) {
+		t.Fatalf("assistant tool calls changed: %+v", assistant)
 	}
-	if res.History[2].ToolCalls[0].Function.Arguments != `{"path":"foo.go"}` {
-		t.Errorf("ToolCall arguments altered: %q", res.History[2].ToolCalls[0].Function.Arguments)
+	if res.History[4].Role != llm.RoleTool || res.History[4].ToolCallID != "tc1" {
+		t.Fatal("excerpt interrupted tool-call/result adjacency")
 	}
 }
 

@@ -27,6 +27,7 @@ type SessionRecord struct {
 	LastUsageJSON      []byte
 	DiffBodiesJSON     []byte
 	PlanJSON           []byte
+	MCPActivationsJSON []byte
 	MessageCount       int
 	CreatedAt          time.Time
 	Pinned             bool
@@ -130,6 +131,7 @@ func (s *Store) SaveSession(ctx context.Context, r SessionRecord) error {
 		ChangedFileCount:   int64(r.ChangedFileCount),
 		PlanCompletedCount: int64(r.PlanCompletedCount),
 		PlanTotalCount:     int64(r.PlanTotalCount),
+		McpActivationsJson: string(r.MCPActivationsJSON),
 	})
 	if err != nil {
 		return fmt.Errorf("upsert session %q: %w", r.ID, err)

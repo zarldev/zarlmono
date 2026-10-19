@@ -13,7 +13,6 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
-	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
 	backends "github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
@@ -296,36 +295,36 @@ const (
 )
 
 // NotificationSounds resolves terminal bell notifications. Valid values are
-// "off", "completion", and "all"; unset or invalid values default to completion.
+// "off", "completion", and "all"; unset or invalid values default to all.
 func (s *Settings) NotificationSounds(ctx context.Context) string {
-	value := s.setting(ctx, prefs.KeyNotificationSounds, notificationSoundsCompletion)
+	value := s.setting(ctx, prefs.KeyNotificationSounds, prefs.DefaultNotificationSounds)
 	switch value {
 	case notificationSoundsOff, notificationSoundsCompletion, notificationSoundsAll:
 		return value
 	default:
-		return notificationSoundsCompletion
+		return prefs.DefaultNotificationSounds
 	}
 }
 
 // SudoAskpass resolves whether sudo -A integration should be exposed to bash
-// subprocesses. Off by default: enabling it lets shell commands trigger a TUI
-// password prompt via a private Unix socket.
+// subprocesses. On by default: shell commands can request a TUI password
+// prompt via a private Unix socket; passwords are never granted automatically.
 func (s *Settings) SudoAskpass(ctx context.Context) bool {
-	return s.setting(ctx, prefs.KeySudoAskpass, "off") == "on"
+	return s.setting(ctx, prefs.KeySudoAskpass, prefs.DefaultSudoAskpass) == "on"
 }
 
 // ShellSandbox resolves whether bash subprocesses should run under the
-// kernel-enforced workspace sandbox. On by default; "off" disables
-// confinement entirely (subject to any explicit env override at launch).
+// kernel-enforced workspace sandbox. Off by default; "on" requires confinement
+// (subject to any explicit env override at launch).
 func (s *Settings) ShellSandbox(ctx context.Context) bool {
-	return s.setting(ctx, prefs.KeySandbox, "on") == "on"
+	return s.setting(ctx, prefs.KeySandbox, prefs.DefaultSandbox) == "on"
 }
 
 // PlanFirst resolves whether the plan-first guardrail is armed — the first
 // workspace-changing call in a task is then refused until update_plan has run.
-// Off by default; recommended for weak / local models that skip planning.
+// On by default; an explicit "off" removes the planning prerequisite.
 func (s *Settings) PlanFirst(ctx context.Context) bool {
-	return s.setting(ctx, prefs.KeyPlanFirst, "off") == "on"
+	return s.setting(ctx, prefs.KeyPlanFirst, prefs.DefaultPlanFirst) == "on"
 }
 
 // Guard-mode string values shared by the read-before-write, test-edit, and
@@ -389,24 +388,21 @@ const (
 	shellGuardOff     = "off"
 )
 
-// shellGuardMode returns the normalised KeyShellGuard value: "auto" (default),
-// "strict", "lenient", or "off".
+// shellGuardMode returns the normalised KeyShellGuard value: "off" (default),
+// "auto", "strict", or "lenient".
 func (s *Settings) shellGuardMode(ctx context.Context) string {
-	return strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyShellGuard, "auto")))
+	return strings.ToLower(strings.TrimSpace(s.setting(ctx, prefs.KeyShellGuard, prefs.DefaultShellGuard)))
 }
 
 // ShellGuardOff reports whether the static shell policy is switched off
-// entirely — the guardrail is dropped from the chain, so no bash command is
-// parsed or blocked (the verify-mode write-target blocks included). This is a
-// deliberate high-trust opt-in, distinct from "lenient": lenient keeps the
-// guardrail and only steps aside the ergonomic cd/redirect steers, while off
-// removes the guardrail outright. live.go maps it to Deps.Disabled.
+// entirely. This is the default; other guardrails remain active, and saved
+// "auto", "strict", or "lenient" choices still enable shell policy checks.
 func (s *Settings) ShellGuardOff(ctx context.Context) bool {
 	return s.shellGuardMode(ctx) == shellGuardOff
 }
 
 // ShellGuardLenient resolves the shell policy's leniency for the given sandbox
-// state. "auto" (default) follows the sandbox — lenient only when it is off;
+// state. "auto" follows the sandbox — lenient only when it is off;
 // "strict" and "lenient" pin the choice regardless. "off" is moot here (the
 // guardrail is dropped via ShellGuardOff before this is consulted) and falls to
 // the auto branch. Kept as a resolver (rather than a bare mode) so the
@@ -439,46 +435,45 @@ func (s *Settings) Temperature(ctx context.Context) float32 {
 }
 
 // ToolResultMaxBytes resolves the per-tool-result byte cap before tail
-// truncation + spill, in bytes. Default 50 KB, matching the runner default.
+// truncation + spill, in bytes. Default 512 KiB.
 func (s *Settings) ToolResultMaxBytes(ctx context.Context) int {
-	return s.intSetting(ctx, prefs.KeyToolResultMaxKB, 50) * 1024
+	return s.intSetting(ctx, prefs.KeyToolResultMaxKB, prefs.DefaultToolResultMaxKB) * 1024
 }
 
-// ToolResultMaxLines resolves the per-tool-result line cap. Default 2000.
+// ToolResultMaxLines resolves the per-tool-result line cap. Default 3500.
 func (s *Settings) ToolResultMaxLines(ctx context.Context) int {
-	return s.intSetting(ctx, prefs.KeyToolResultMaxLines, 2000)
+	return s.intSetting(ctx, prefs.KeyToolResultMaxLines, prefs.DefaultToolResultMaxLines)
 }
 
 // SpawnFanoutCap resolves the per-task agent_spawn budget: how many sub-agents
 // a single task may spawn before the fanout guardrail refuses further ones.
-// Default 8; 0 removes the cap. The fanout guardrail treats a non-positive
-// limit as unbounded, so 0 flows through as "uncapped" without special-casing.
+// Default 80; an explicit 0 removes the cap.
 func (s *Settings) SpawnFanoutCap(ctx context.Context) int {
-	return s.intSetting(ctx, prefs.KeySpawnFanoutCap, coderunner.StandardSpawnFanoutCap)
+	return s.intSetting(ctx, prefs.KeySpawnFanoutCap, prefs.DefaultSpawnFanoutCap)
 }
 
 // SpawnEnabled reports whether sub-agent tools may be registered. Delegation is
-// off by default and must be granted independently of the recursion-depth cap.
+// on by default and is controlled independently of the recursion-depth cap.
 func (s *Settings) SpawnEnabled(ctx context.Context) bool {
-	return s.setting(ctx, prefs.KeySpawnEnabled, "off") == "on"
+	return s.setting(ctx, prefs.KeySpawnEnabled, prefs.DefaultSpawnEnabled) == "on"
 }
 
 // ResponseTimeout resolves the stream-idle stall watchdog — how long the
 // runner waits with no chunk from the model before cancelling the iteration.
-// Default 90s. A non-positive setting falls back to the default rather than
+// Default 600s. A non-positive setting falls back to the default rather than
 // disabling stall detection, so a stray 0 can't wedge a run forever.
 func (s *Settings) ResponseTimeout(ctx context.Context) time.Duration {
-	secs := s.intSetting(ctx, prefs.KeyResponseTimeout, 90)
+	secs := s.intSetting(ctx, prefs.KeyResponseTimeout, prefs.DefaultResponseTimeout)
 	if secs <= 0 {
-		secs = 90
+		secs = prefs.DefaultResponseTimeout
 	}
 	return time.Duration(secs) * time.Second
 }
 
-// FanoutCap resolves the per-tool exploration fan-out cap. 0 keeps the built-in
-// per-tool defaults; a positive value caps every exploration tool at that count.
+// FanoutCap resolves the per-tool exploration fan-out cap, defaulting to 80.
+// An explicit 0 keeps the built-in per-tool defaults.
 func (s *Settings) FanoutCap(ctx context.Context) int {
-	return s.intSetting(ctx, prefs.KeyFanoutCap, 0)
+	return s.intSetting(ctx, prefs.KeyFanoutCap, prefs.DefaultFanoutCap)
 }
 
 // EnableMCP / EnableWeb / EnableBackground gate optional tool clusters. All on
@@ -502,7 +497,7 @@ func (s *Settings) ProgrammaticTools(ctx context.Context) bool {
 // ProgrammaticParallelCalls resolves the maximum number of nested program tool
 // calls that call_many may run concurrently. 0 keeps the program package default.
 func (s *Settings) ProgrammaticParallelCalls(ctx context.Context) int {
-	return s.intSetting(ctx, prefs.KeyProgramParallel, 0)
+	return s.intSetting(ctx, prefs.KeyProgramParallel, prefs.DefaultProgramParallelCalls)
 }
 
 // setting reads an effective-scope setting, returning def when unset or on

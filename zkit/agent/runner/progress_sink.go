@@ -9,7 +9,9 @@ import (
 
 // ToolProgressSink writes one terse line per tool event to w. It embeds
 // NopSink so it ignores content, conversation, steer, and compaction
-// events — only tool start/complete/fail are surfaced.
+// events — only tool start/complete/fail are surfaced. Live output snapshots
+// are intentionally ignored: enabling a lifecycle log does not opt into logging
+// command output.
 //
 //	runner.StderrSink                     // pre-built default
 //	runner.ToolProgressSink{W: buf}       // custom writer

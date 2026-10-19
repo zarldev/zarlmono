@@ -12,6 +12,8 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zarlcode/tui"
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/db"
 )
 
 func initialRewindChild(t *testing.T) (*beforeFixture, string, *engine.Settings) {
@@ -55,15 +57,51 @@ func TestExactChildInterruptedBeforeSettlementRetainsPairedHead(t *testing.T) {
 	if err := f.ui.FlushSessionPersistence(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	restarted := tui.New()
-	restarted.SetSettings(settings)
-	restarted.SetLiveRunner(f.live)
-	restarted.SetLiveEventSink(f.sink)
-	if err := restarted.ResumeSavedSession(t.Context(), id); err != nil {
+
+	// Simulate a crash after durable request-control capture but before its
+	// canonical projection reached the UI or transcript save.
+	control := recoveryControl("lost-exact-control", "lost-exact-turn", "build", 'e')
+	saveRecoveryControls(t, f.store, id, []runner.ReplayControl{control})
+
+	first := tui.New()
+	first.SetSettings(settings)
+	first.SetLiveRunner(f.live)
+	first.SetLiveEventSink(f.sink)
+	if err := first.ResumeSavedSession(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(f.live.ContextSnapshot(), before) || restarted.ComposerText() != "edited protected prompt" {
+	if !reflect.DeepEqual(f.live.ContextSnapshot(), before) || first.ComposerText() != "edited protected prompt" {
 		t.Fatal("interrupted exact child lost its paired head or recovery draft")
+	}
+	assertExactTranscriptPair(t, f.store, id)
+
+	// A second restart must accept the recovered pair, and its source version
+	// must still permit the next exact BEFORE/settlement commit.
+	second := tui.New()
+	second.SetSettings(settings)
+	second.SetLiveRunner(f.live)
+	second.SetLiveEventSink(f.sink)
+	if err := second.ResumeSavedSession(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	assertExactTranscriptPair(t, f.store, id)
+	f.ui = second
+	settleRewindTurn(t, f, "turn after recovered control")
+	assertExactTranscriptPair(t, f.store, id)
+}
+
+func assertExactTranscriptPair(t *testing.T, store *db.Store, id string) {
+	t.Helper()
+	state, err := store.GetSessionResumeState(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := rewind.DecodeResume(state.Session.ContextJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Transcript == nil || head.Revision != state.Transcript.Revision {
+		t.Fatalf("exact head revision %d is not paired with transcript %+v", head.Revision, state.Transcript)
 	}
 }
 

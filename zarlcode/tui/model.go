@@ -48,6 +48,9 @@ type UI struct {
 	// per-tab scroll offsets, and any tab-local cursors. It replaces the old
 	// single dashboardScroll field now that the context view is tabbed.
 	contextView contextViewState
+	// sidebarScroll is a wrapped-row offset, independent of transcript browsing.
+	sidebarScroll    int
+	sidebarPlanCache sidebarPlanCache
 	// frame counts animation ticks; ticking guards a single in-flight tick
 	// loop. Both drive the streaming pulse on the cockpit gauge while a run
 	// is live; they idle (no ticks scheduled) when nothing is running.
@@ -113,11 +116,13 @@ type UI struct {
 	// can initialize the shell UI but cannot finish startup (for example an
 	// invalid workspace-scoped provider config). Non-nil disables the normal
 	// cockpit and exits on enter/esc.
-	startupFailure *startupFailurePane
-	repointSeq     uint64
-	pendingTarget  *prefs.ModelSelection
-	oauthSeq       uint64
-	oauthOperation *oauthOperation
+	startupFailure         *startupFailurePane
+	repointSeq             uint64
+	pendingTarget          *prefs.ModelSelection
+	oauthSeq               uint64
+	modeTarget             modeTargetLifecycle
+	scheduledModeTargetCmd tea.Cmd
+	oauthOperation         *oauthOperation
 	// startupCmd holds non-critical initialization that should begin only after
 	// Bubble Tea can render the first frame. The command is owned and cancelled
 	// by the program context.
@@ -271,10 +276,15 @@ func (m *UI) SetProvider(name string) {
 // surface + planning prompt, and the UI repaints in the PlanMode tint. The
 // flag is read live by the runner, so toggling mid-turn gates the next tool.
 func (m *UI) togglePlan() {
+	before := m.session.PlanMode
 	planMode := m.session.TogglePlanMode()
 	if m.live != nil {
 		m.live.SetPlanMode(planMode)
-		m.session.PlanMode = m.live.AppliedMode().Plan
+		applied := m.live.AppliedMode()
+		m.session.PlanMode = applied.Plan
+		if applied.Plan != before {
+			m.scheduledModeTargetCmd = m.requestModeTarget(applied.Plan, applied.Generation)
+		}
 	}
 }
 
@@ -393,7 +403,7 @@ func New() *UI {
 // Init implements tea.Model. Non-critical startup work runs as Bubble Tea
 // commands so the first frame is not blocked by external services.
 func (m *UI) Init() tea.Cmd {
-	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd, m.transcriptPersistenceCmd())
+	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd, m.transcriptPersistenceCmd(), m.initialModeTarget())
 }
 
 // Update implements tea.Model. Resize recomputes the layout rects; esc stops
@@ -411,6 +421,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = tea.Batch(cmd, m.graphics.refreshCmd())
 		}
 	}
+	if routeCmd := m.scheduledModeTargetCmd; routeCmd != nil {
+		m.scheduledModeTargetCmd = nil
+		cmd = tea.Batch(cmd, routeCmd)
+	}
+	cmd = tea.Batch(cmd, m.readyStartupPrompt())
 	return model, cmd
 }
 
@@ -507,26 +522,9 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session.SetErrorToast("export: " + msg.Error)
 		return m, m.toastExpiryCmd()
 	case startupReadyMsg:
-		if msg.modelChanged && msg.provider != nil && m.live != nil {
-			m.live.ApplyTarget(engine.TargetUpdate{Provider: msg.provider, Spec: msg.spec, Window: msg.window})
-			m.session.SetActiveProviderSpec(msg.spec)
-			m.session.ApplyProviderCostBasis(msg.spec)
-			m.session.SetSuccessToast("saved model was unavailable; switched to " + msg.spec.Model)
-		}
-		if msg.window > 0 && m.live != nil {
-			m.live.SetContextWindow(msg.window)
-			m.SetContextWindow(msg.window)
-			m.SetPressureConfig(msg.window, m.session.Run.pressureReserve)
-		}
+		m.applyStartupMetadata(msg)
 		m.startupReady = true
-		if m.startupPrompt != "" && m.live != nil {
-			prompt, attachments := m.startupPrompt, m.startupAttachments
-			m.startupPrompt, m.startupAttachments = "", nil
-			m.session.SetSubmittedAttachments(m.startupAttachmentMetadata)
-			m.startupAttachmentMetadata = nil
-			return m, m.runLiveTurn(prompt, attachments)
-		}
-		return m, nil
+		return m, m.initialModeTarget()
 	}
 	if m.handleOAuthMsg(msg) {
 		return m, nil
@@ -560,7 +558,8 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		oldTimelineWidth := m.timeline.viewWidth
 		m.width, m.height = msg.Width, msg.Height
 		m.recomputeLayout()
-		m.timeline.reflowBrowse(oldTimelineWidth, m.layout.main.Dx()-scrollbarWidth, m.layout.main.Dy()-2)
+		g := transcriptGeometry(m.layout.main)
+		m.timeline.reflowBrowse(oldTimelineWidth, g.content.Dx(), g.content.Dy())
 	case tea.ModeReportMsg:
 		// Mirror bubbletea's renderer: when the terminal reports mode 2027
 		// (Unicode core) support, both it and the renderer use grapheme
@@ -596,7 +595,7 @@ func (m *UI) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
-	v.WindowTitle = appDisplayName
+	v.WindowTitle = m.sessionDisplayName() + " — " + appDisplayName
 	if m.width <= 0 || m.height <= 0 {
 		if m.graphics != nil {
 			m.graphics.publish("", "")

@@ -8,6 +8,12 @@ import (
 	"charm.land/glamour/v2/ansi"
 )
 
+// markdownDocumentMargin is renderer-owned padding, not authored indentation.
+const markdownDocumentMargin = 2
+
+// markdownCodeMargin is the code block's own inset, inside the document margin.
+const markdownCodeMargin = 2
+
 // Glamour renderers are cached per (wrap-width, themeGen): building a
 // TermRenderer (parsing the chroma style, compiling the ANSI templates) is
 // the expensive part, and width + theme are the only inputs that vary
@@ -71,7 +77,7 @@ func themeStyleConfig() ansi.StyleConfig {
 				BlockSuffix: "\n",
 				Color:       s(string(p.Fg)),
 			},
-			Margin: u(2),
+			Margin: u(markdownDocumentMargin),
 		},
 		Paragraph: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
@@ -175,7 +181,7 @@ func themeStyleConfig() ansi.StyleConfig {
 				StylePrimitive: ansi.StylePrimitive{
 					Color: s(string(p.Subtle)),
 				},
-				Margin: u(2),
+				Margin: u(markdownCodeMargin),
 			},
 			Chroma: &ansi.Chroma{
 				Text:                ansi.StylePrimitive{Color: s(string(p.Fg))},

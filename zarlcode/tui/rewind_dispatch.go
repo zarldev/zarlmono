@@ -60,13 +60,7 @@ func (m *UI) durableDispatch() bool {
 }
 
 func (m *UI) enqueueBeforeTurn(op liveTurnOperation, prompt string, attachments []llm.ContentPart, queuedID int) tea.Cmd {
-	var reservation *engine.RuntimeReservation
-	var err error
-	if queuedID != 0 {
-		reservation, err = m.live.ReserveQueuedTurn(queuedID, prompt)
-	} else {
-		reservation, err = m.live.ReserveRuntime()
-	}
+	reservation, err := m.modeTargetReservation(prompt, queuedID)
 	if err != nil {
 		return m.rejectBeforeTurn(op, prompt, attachments, err)
 	}

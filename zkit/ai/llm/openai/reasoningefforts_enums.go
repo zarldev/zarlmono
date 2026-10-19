@@ -32,6 +32,7 @@ type reasoningEffortsContainer struct {
 	REASONINGEFFORTHIGH   ReasoningEffort
 	REASONINGEFFORTXHIGH  ReasoningEffort
 	REASONINGEFFORTMAX    ReasoningEffort
+	REASONINGEFFORTNONE   ReasoningEffort
 }
 
 // ReasoningEfforts is a main entry point using the ReasoningEffort type.
@@ -53,6 +54,9 @@ var ReasoningEfforts = reasoningEffortsContainer{
 	REASONINGEFFORTMAX: ReasoningEffort{
 		reasoningEffort: reasoningEffortMax,
 	},
+	REASONINGEFFORTNONE: ReasoningEffort{
+		reasoningEffort: reasoningEffortNone,
+	},
 }
 
 // invalidReasoningEffort is an invalid sentinel value for ReasoningEffort
@@ -69,6 +73,7 @@ func (r reasoningEffortsContainer) allSlice() []ReasoningEffort {
 		ReasoningEfforts.REASONINGEFFORTHIGH,
 		ReasoningEfforts.REASONINGEFFORTXHIGH,
 		ReasoningEfforts.REASONINGEFFORTMAX,
+		ReasoningEfforts.REASONINGEFFORTNONE,
 	}
 }
 
@@ -168,6 +173,7 @@ var reasoningEffortsNameMap = map[string]ReasoningEffort{
 	"high":   ReasoningEfforts.REASONINGEFFORTHIGH,
 	"xhigh":  ReasoningEfforts.REASONINGEFFORTXHIGH,
 	"max":    ReasoningEfforts.REASONINGEFFORTMAX,
+	"none":   ReasoningEfforts.REASONINGEFFORTNONE,
 }
 
 // stringToReasoningEffort converts a string representation of an enum value into its ReasoningEffort representation
@@ -214,6 +220,7 @@ var validReasoningEfforts = map[ReasoningEffort]bool{
 	ReasoningEfforts.REASONINGEFFORTHIGH:   true,
 	ReasoningEfforts.REASONINGEFFORTXHIGH:  true,
 	ReasoningEfforts.REASONINGEFFORTMAX:    true,
+	ReasoningEfforts.REASONINGEFFORTNONE:   true,
 }
 
 // IsValid checks whether the ReasoningEfforts value is valid.
@@ -314,7 +321,7 @@ func (r *ReasoningEffort) UnmarshalYAML(by []byte) error {
 }
 
 // reasoningeffortNames is a constant string slice containing all enum values cononical absolute names
-const reasoningeffortNames = "lowmediumhighxhighmax"
+const reasoningeffortNames = "lowmediumhighxhighmaxnone"
 
 // reasoningeffortNamesMap is a map of enum values to their canonical absolute
 // name positions within the reasoningeffortNames string slice
@@ -324,6 +331,7 @@ var reasoningeffortNamesMap = map[ReasoningEffort]string{
 	ReasoningEfforts.REASONINGEFFORTHIGH:   reasoningeffortNames[9:13],
 	ReasoningEfforts.REASONINGEFFORTXHIGH:  reasoningeffortNames[13:18],
 	ReasoningEfforts.REASONINGEFFORTMAX:    reasoningeffortNames[18:21],
+	ReasoningEfforts.REASONINGEFFORTNONE:   reasoningeffortNames[21:25],
 }
 
 // String implements the Stringer interface.
@@ -342,10 +350,11 @@ func _() {
 	// An "invalid array index" compiler error signifies that the constant values have changed.
 	// Re-run the goenums command to generate them again.
 	// Does not identify newly added constant values unless order changes
-	var x [5]struct{}
+	var x [6]struct{}
 	_ = x[reasoningEffortLow]
 	_ = x[reasoningEffortMedium-1]
 	_ = x[reasoningEffortHigh-2]
 	_ = x[reasoningEffortXHigh-3]
 	_ = x[reasoningEffortMax-4]
+	_ = x[reasoningEffortNone-5]
 }

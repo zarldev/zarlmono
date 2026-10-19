@@ -12,6 +12,10 @@ import (
 func CostPer1k(model string) (float64, float64, bool) {
 	m := strings.ToLower(model)
 	switch {
+	case m == "gemini-3.8-flash":
+		// Standard paid-tier rates published for September–December 2026;
+		// deployments can override these estimates through registry metadata.
+		return 0.00075, 0.00375, true
 	case strings.Contains(m, "2.5-pro"):
 		return 0.00125, 0.010, true
 	case strings.Contains(m, "2.5-flash"):
@@ -20,8 +24,6 @@ func CostPer1k(model string) (float64, float64, bool) {
 		return 0.00125, 0.005, true
 	case strings.Contains(m, "1.5-flash"):
 		return 0.000075, 0.0003, true
-	case strings.Contains(m, "gemini"):
-		return 0.0003, 0.0025, true
 	}
 	return 0, 0, false
 }
@@ -36,6 +38,6 @@ func Capabilities(model string) llm.ModelCapabilities {
 		SupportsSystem:    true,
 		SupportsVision:    true,
 		SupportsVideo:     true,
-		SupportsThinking:  strings.Contains(m, "2.5") || strings.Contains(m, "thinking"),
+		SupportsThinking:  strings.Contains(m, "2.5") || strings.Contains(m, "thinking") || m == "gemini-3.8-flash",
 	}
 }

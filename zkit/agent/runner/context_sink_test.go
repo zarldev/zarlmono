@@ -32,6 +32,10 @@ func (s callbackContextSink) OnToolStarted(ctx context.Context, e runner.ToolSta
 	s.observe(ctx, "ToolStarted", e.TaskID)
 }
 
+func (s callbackContextSink) OnToolOutput(ctx context.Context, e runner.ToolOutputProgress) {
+	s.observe(ctx, "ToolOutput", e.TaskID)
+}
+
 func (s callbackContextSink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
 	s.observe(ctx, "ToolCompleted", e.TaskID)
 }
@@ -96,6 +100,9 @@ func TestSyncSinkForwardsContextAfterCancellation(t *testing.T) {
 		{"Thinking", func(s runner.EventSink, ctx context.Context) { s.OnThinking(ctx, runner.Thinking{TaskID: "task"}) }},
 		{"ToolStarted", func(s runner.EventSink, ctx context.Context) {
 			s.OnToolStarted(ctx, runner.ToolStarted{TaskID: "task"})
+		}},
+		{"ToolOutput", func(s runner.EventSink, ctx context.Context) {
+			s.OnToolOutput(ctx, runner.ToolOutputProgress{TaskID: "task"})
 		}},
 		{"ToolCompleted", func(s runner.EventSink, ctx context.Context) {
 			s.OnToolCompleted(ctx, runner.ToolCompleted{TaskID: "task"})

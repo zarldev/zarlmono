@@ -21,6 +21,9 @@ package openai
 // the Codex OAuth path uses /codex/models plus a conservative fallback.
 const (
 	modelGPT6Astra  = "gpt-6-astra"
+	modelGPT61Sol   = "gpt-6.1-sol"
+	modelGPT6Sol    = "gpt-6-sol"
+	modelGPT6Luna   = "gpt-6-luna"
 	modelGPT56      = "gpt-5.6"
 	modelGPT56Sol   = "gpt-5.6-sol"
 	modelGPT56Terra = "gpt-5.6-terra"
@@ -37,7 +40,7 @@ func ContextWindowFor(model string) int {
 	}
 	switch model {
 	// --- GPT-6 family ---
-	case modelGPT6Astra:
+	case modelGPT61Sol, modelGPT6Astra, modelGPT6Sol, modelGPT6Luna:
 		return 1_050_000
 
 	// --- GPT-5 family ---

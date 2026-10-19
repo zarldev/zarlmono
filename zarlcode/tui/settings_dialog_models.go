@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
@@ -35,21 +36,19 @@ func (d *settingsDialog) activateEnum(dir int) action {
 		return actionPush{d: newListPicker("compaction engine", compactEngineOpts(), r.value, func(choice string) {
 			d.commit(prefs.KeyCompactEngine, choice)
 		})}
-	case prefs.KeyCompactProvider,
+	case prefs.KeyMainPlanProvider,
+		prefs.KeyMainBuildProvider,
+		prefs.KeyCompactProvider,
 		prefs.KeySpawnDefaultExploreProvider,
 		prefs.KeySpawnDefaultVerifyProvider,
 		prefs.KeySpawnDefaultImplementProvider:
 		items := append([]string{compactActiveSentinel}, providerNames(d.s)...)
-		sel := compactActiveSentinel
+		sel := r.def
 		if r.value != "" {
 			sel = r.value
 		}
-		return actionPush{d: newListPicker("compaction provider", items, sel, func(choice string) {
-			if choice == compactActiveSentinel {
-				d.commit(r.key, "") // reuse the active provider
-			} else {
-				d.commit(r.key, choice)
-			}
+		return actionPush{d: newListPicker(r.label, items, sel, func(choice string) {
+			d.commit(r.key, choice)
 			if p := d.providerForRow(d.modelKeyForProvider(r.key)); p != "" {
 				if _, ok := d.models[p]; !ok && !d.modelsLoading[p] {
 					d.modelsLoading[p] = true
@@ -59,16 +58,12 @@ func (d *settingsDialog) activateEnum(dir int) action {
 		})}
 	case prefs.KeyJudgeProvider:
 		items := append([]string{compactActiveSentinel}, providerNames(d.s)...)
-		sel := compactActiveSentinel
+		sel := r.def
 		if r.value != "" {
 			sel = r.value
 		}
 		return actionPush{d: newListPicker("judge provider", items, sel, func(choice string) {
-			if choice == compactActiveSentinel {
-				d.commit(prefs.KeyJudgeProvider, "") // reuse the active provider
-			} else {
-				d.commit(prefs.KeyJudgeProvider, choice)
-			}
+			d.commit(prefs.KeyJudgeProvider, choice)
 			// Queue a model fetch for the new judge provider so its model
 			// picker is populated (a picker closure can't return a fetch).
 			if p := d.judgeProvider(); p != "" {
@@ -80,16 +75,21 @@ func (d *settingsDialog) activateEnum(dir int) action {
 		})}
 	case prefs.KeyCodexEffort:
 		items := d.codexEffortItems()
-		sel := codexEffortAuto
+		sel := r.def
 		if r.value != "" {
 			sel = r.value
 		}
 		return actionPush{d: newListPicker("reasoning effort", items, sel, func(choice string) {
-			val := choice
-			if choice == codexEffortAuto {
-				val = ""
-			}
-			d.commit(prefs.KeyCodexEffort, val)
+			d.commit(prefs.KeyCodexEffort, choice)
+		})}
+	case prefs.KeyServiceTier:
+		items := append([]string{"(auto)"}, engine.SpeedVariants(engine.ProviderSpec{Name: d.currentProvider(), Model: d.activeModel()})...)
+		sel := r.def
+		if r.value != "" {
+			sel = r.value
+		}
+		return actionPush{d: newListPicker("speed", items, sel, func(choice string) {
+			d.commit(prefs.KeyServiceTier, choice)
 		})}
 	default:
 		d.cycleEnum(dir)
@@ -158,61 +158,43 @@ func (d *settingsDialog) currentProvider() string {
 	return ""
 }
 
-// compactProvider is the provider the compaction model picker fetches for:
-// the compact_provider row's value, else the active provider (the engine
-// reuses the active backend when no override is set).
+// compactProvider resolves the provider displayed by the compaction picker.
 func (d *settingsDialog) compactProvider() string {
-	for _, c := range d.cats {
-		for _, r := range c.rows {
-			if r.key == prefs.KeyCompactProvider && r.isSet && r.value != "" {
-				return r.value
-			}
-		}
-	}
-	return d.currentProvider()
+	return d.spawnProvider(prefs.KeyCompactProvider)
 }
 
-// judgeProvider is the provider the judge model picker fetches for: the
-// judge_provider row's value, else the active provider (the engine reuses the
-// active backend when no override is set).
+// judgeProvider resolves the provider displayed by the judge picker.
 func (d *settingsDialog) judgeProvider() string {
-	for _, c := range d.cats {
-		for _, r := range c.rows {
-			if r.key == prefs.KeyJudgeProvider && r.isSet && r.value != "" {
-				return r.value
-			}
-		}
-	}
-	return d.currentProvider()
+	return d.spawnProvider(prefs.KeyJudgeProvider)
 }
 
 func (d *settingsDialog) modelKeyForProvider(key string) string {
-	switch key {
-	case prefs.KeySpawnDefaultExploreProvider:
-		return prefs.KeySpawnDefaultExploreModel
-	case prefs.KeySpawnDefaultVerifyProvider:
-		return prefs.KeySpawnDefaultVerifyModel
-	case prefs.KeySpawnDefaultImplementProvider:
-		return prefs.KeySpawnDefaultImplementModel
-	default:
-		return prefs.KeyCompactModel
-	}
+	modelKey, _ := prefs.ModelTargetDefault(key)
+	return modelKey
 }
 
 func (d *settingsDialog) spawnProvider(key string) string {
 	for _, c := range d.cats {
 		for _, r := range c.rows {
-			if r.key == key && r.isSet && r.value != "" {
-				return r.value
+			if r.key == key {
+				value := r.def
+				if r.isSet {
+					value = r.value
+				}
+				if value != "" && value != compactActiveSentinel {
+					return value
+				}
 			}
 		}
 	}
 	return d.currentProvider()
 }
 
-func isSpawnDefaultModel(key string) bool {
+func isSecondaryModel(key string) bool {
 	switch key {
-	case prefs.KeySpawnDefaultExploreModel, prefs.KeySpawnDefaultVerifyModel, prefs.KeySpawnDefaultImplementModel:
+	case prefs.KeyMainPlanModel, prefs.KeyMainBuildModel,
+		prefs.KeyCompactModel, prefs.KeyJudgeModel,
+		prefs.KeySpawnDefaultExploreModel, prefs.KeySpawnDefaultVerifyModel, prefs.KeySpawnDefaultImplementModel:
 		return true
 	default:
 		return false
@@ -224,6 +206,10 @@ func isSpawnDefaultModel(key string) bool {
 // model row the active one.
 func (d *settingsDialog) providerForRow(key string) string {
 	switch key {
+	case prefs.KeyMainPlanModel:
+		return d.spawnProvider(prefs.KeyMainPlanProvider)
+	case prefs.KeyMainBuildModel:
+		return d.spawnProvider(prefs.KeyMainBuildProvider)
 	case prefs.KeyCompactModel:
 		return d.compactProvider()
 	case prefs.KeyJudgeModel:
@@ -316,7 +302,7 @@ func (d *settingsDialog) activateModel() action {
 		return d.fetchFor(p) // populate for next time
 	}
 	items := make([]string, 0, len(opts)+2)
-	if key == prefs.KeyCompactModel || key == prefs.KeyJudgeModel || isSpawnDefaultModel(key) {
+	if isSecondaryModel(key) {
 		items = append(items, compactActiveSentinel)
 	}
 	items = append(items, modelCustomSentinel)
@@ -333,12 +319,12 @@ func (d *settingsDialog) activateModel() action {
 		case modelCustomSentinel:
 			d.startEdit()
 		case compactActiveSentinel:
-			d.commit(key, "") // reuse the active model
+			d.commitSecondaryModel(key, compactActiveSentinel)
 		default:
 			if key == prefs.KeyModel {
 				d.stageTarget(prefs.ModelSelection{Provider: p, Model: choice})
 			} else {
-				d.commit(key, choice)
+				d.commitSecondaryModel(key, choice)
 			}
 		}
 	}, right)}
@@ -385,4 +371,34 @@ func (d *settingsDialog) cycleEnum(dir int) {
 			UseTheme(t) // live preview
 		}
 	}
+}
+
+func (d *settingsDialog) commitSecondaryModel(key, value string) {
+	var providerKey string
+	switch key {
+	case prefs.KeyMainPlanModel:
+		providerKey = prefs.KeyMainPlanProvider
+	case prefs.KeyMainBuildModel:
+		providerKey = prefs.KeyMainBuildProvider
+	default:
+		d.commitTargetModel(key, value)
+		return
+	}
+	provider := compactActiveSentinel
+	for _, c := range d.cats {
+		for _, row := range c.rows {
+			if row.key == providerKey && row.isSet && row.value != "" {
+				provider = row.value
+			}
+		}
+	}
+	if err := d.s.Svc.ApplySettings(d.ctx, prefs.ScopeWorkspace,
+		prefs.SettingChange{Key: providerKey, Value: provider},
+		prefs.SettingChange{Key: key, Value: value},
+	); err != nil {
+		d.setStatus("error: " + err.Error())
+	} else {
+		d.setStatus(key + " → " + value + " (workspace)")
+	}
+	d.refresh(d.ctx)
 }

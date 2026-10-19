@@ -11,12 +11,12 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 )
 
-func TestSidebarShowsRunState(t *testing.T) {
+func TestSidebarShowsSessionSummary(t *testing.T) {
 	var model tea.Model = tui.New()
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	model, _ = model.Update(teasink.ConversationStartedMsg{TaskID: "t1", Prompt: "do the thing"})
 	out := ansi.Strip(model.View().Content)
-	for _, want := range []string{"context", "run", "working", "provider", "model"} {
+	for _, want := range []string{"session", "context", "usage", "working", "provider", "model", "ctrl+l more"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("sidebar missing %q:\n%s", want, out)
 		}

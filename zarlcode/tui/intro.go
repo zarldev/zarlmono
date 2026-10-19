@@ -132,7 +132,7 @@ func (p *introPane) handlePromptKey(m *UI, msg tea.KeyPressMsg) tea.Cmd {
 			}
 			selection := prefs.ModelSelection{Provider: p.provider, Model: p.model}
 			if err := m.settings.Svc.SetModelSelection(m.appContext(), prefs.ScopeGlobal, selection); err != nil {
-				p.err = "save local defaults: " + err.Error()
+				p.err = "save defaults: " + err.Error()
 				return nil
 			}
 			p.setupRequired = false
@@ -368,7 +368,7 @@ func (p *introPane) draw(scr uv.Screen, area uv.Rectangle, planMode bool) {
 		} else {
 			infoBlock = append(infoBlock,
 				palette.Primary.On("first-run setup"),
-				palette.Muted.On("Zarlcode is ready to use the local provider with default settings."),
+				palette.Muted.On("Zarlcode is ready to use the selected provider with default settings."),
 				palette.Muted.On("Press enter to accept defaults, or ctrl+s to configure. No model request will be made during setup."),
 			)
 		}

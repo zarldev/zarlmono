@@ -43,6 +43,10 @@ func costForAdapter(at AdapterType, model string) (float64, float64, bool) {
 		return deepseek.CostPer1k(model)
 	case AdapterTypes.ANTHROPICCOMPATIBLE:
 		return anthropic.CostPer1k(model)
+	case AdapterTypes.GOOGLEVERTEX:
+		// Vertex rates depend on cloud billing configuration; configured rates
+		// win above. Do not substitute AI Studio pricing without that context.
+		return 0, 0, false
 	case AdapterTypes.GOOGLECOMPATIBLE:
 		return google.CostPer1k(model)
 	default:
@@ -78,7 +82,7 @@ func capabilitiesForAdapter(at AdapterType, model string) llm.ModelCapabilities 
 		return deepseek.Capabilities(model)
 	case AdapterTypes.ANTHROPICCOMPATIBLE:
 		return anthropic.Capabilities(model)
-	case AdapterTypes.GOOGLECOMPATIBLE:
+	case AdapterTypes.GOOGLECOMPATIBLE, AdapterTypes.GOOGLEVERTEX:
 		return google.Capabilities(model)
 	case AdapterTypes.OAUTHOPENAICODEX:
 		return openaicodex.Capabilities(model)
@@ -257,8 +261,9 @@ func mergeCapabilities(caps *llm.ModelCapabilities, intrinsic modelsdev.Intrinsi
 	}
 }
 
-// CostEstimate is an estimated token cost at listed provider/model rates. It is
-// not an invoice amount: provider-specific cached-token discounts, multimodal
+// CostEstimate is an estimated known token-cost subtotal at listed
+// provider/model rates. Cache reads and writes are excluded when their rates are
+// unavailable; Incomplete and Reason identify those omitted charges. Multimodal
 // charges, tool charges, taxes, and contract pricing are not represented by the
 // rate metadata this package resolves.
 type CostEstimate struct {
@@ -269,24 +274,28 @@ type CostEstimate struct {
 	Reason     string
 }
 
-// EstimateCost estimates the cost for one request using effective provider/model
-// rates, including prompt-length tiers. ok=false means the provider/model has no
-// metered token rate known to the registry (local, subscription, unknown, or
-// unavailable).
+// EstimateCost estimates the known cost subtotal for one request using effective
+// provider/model rates, including prompt-length tiers. Cache reads and writes are
+// excluded when their rates are unavailable and mark the estimate incomplete.
+// ok=false means the provider/model has no metered token rate known to the
+// registry (local, subscription, unknown, or unavailable).
 func (r *ProviderRegistry) EstimateCost(ctx context.Context, provider, model string, usage llm.Usage) (CostEstimate, bool) {
 	inPer1K, outPer1K, ok := r.ResolveCostForPrompt(ctx, provider, model, usage.PromptTokens)
 	if !ok {
 		return CostEstimate{Incomplete: true, Reason: "unknown_or_unmetered"}, false
 	}
-	inputUSD := float64(usage.PromptTokens) / 1000 * inPer1K
+	freshPromptTokens := max(usage.PromptTokens-usage.CachedTokens-usage.CacheCreationTokens, 0)
+	inputUSD := float64(freshPromptTokens) / 1000 * inPer1K
 	outputUSD := float64(usage.CompletionTokens) / 1000 * outPer1K
 	est := CostEstimate{
 		InputUSD:   inputUSD,
 		OutputUSD:  outputUSD,
 		TotalUSD:   inputUSD + outputUSD,
-		Incomplete: usage.CachedTokens > 0,
+		Incomplete: usage.CachedTokens > 0 || usage.CacheCreationTokens > 0,
 	}
-	if est.Incomplete {
+	if usage.CacheCreationTokens > 0 {
+		est.Reason = "cache_write_pricing_unknown"
+	} else if usage.CachedTokens > 0 {
 		est.Reason = "cached_token_discount_unknown"
 	}
 	return est, true

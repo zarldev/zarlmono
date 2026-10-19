@@ -16,18 +16,19 @@ func renderStatus(t *testing.T, m *tui.UI, w int) string {
 	return lines[len(lines)-1]
 }
 
-func TestStatusRowShowsOnlyContextualState(t *testing.T) {
+func TestStatusRowQuietWhenIdleInEitherMode(t *testing.T) {
 	m := tui.New()
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "build mode") || strings.Contains(got, "ctrl+") {
-		t.Fatalf("idle status got %q", got)
-	}
-	m.SetPlanMode(true)
-	if got := renderStatus(t, m, 120); !strings.Contains(got, "plan mode") || strings.Contains(got, "shift+tab") {
-		t.Errorf("plan status got %q", got)
+	for _, plan := range []bool{false, true} {
+		m.SetPlanMode(plan)
+		for _, width := range []int{20, 80, 220} {
+			if got := strings.TrimSpace(renderStatus(t, m, width)); got != "" {
+				t.Fatalf("idle footer plan=%t width=%d: %q", plan, width, got)
+			}
+		}
 	}
 }
 
-func TestStatusToastRightAligned(t *testing.T) {
+func TestStatusToastLeftAligned(t *testing.T) {
 	const w = 120
 	m := tui.New()
 	m.SetToast("saved")
@@ -35,8 +36,8 @@ func TestStatusToastRightAligned(t *testing.T) {
 	if !strings.Contains(plain, "saved") {
 		t.Fatalf("toast missing: %q", plain)
 	}
-	if end := strings.Index(plain, "saved") + len("saved"); end < w-3 {
-		t.Errorf("toast ended at %d: %q", end, plain)
+	if start := strings.Index(plain, "saved"); start != 3 {
+		t.Errorf("toast text starts at %d, want inset 2 plus badge padding: %q", start, plain)
 	}
 }
 
@@ -50,6 +51,7 @@ func TestStatusToastNotDroppedWhenTooWide(t *testing.T) {
 
 func TestStatusToastCollisionHasDeterministicPriority(t *testing.T) {
 	m := tui.New()
+	step(t, m, textKey("/"))
 	m.SetErrorToast("provider unavailable")
 	got := renderStatus(t, m, 20)
 	if !strings.Contains(got, "provider") || strings.Contains(got, "build mode") {

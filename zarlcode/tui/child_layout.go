@@ -106,8 +106,26 @@ func (cb childBlock) toggleLocals(childWidth int, children []item) []int {
 }
 
 func toggleChildAndParent(child toggler, bump func()) toggler {
-	return togglerFunc(func() {
-		child.toggle()
-		bump()
-	})
+	return childToggler{child: child, bump: bump}
+}
+
+// childToggler preserves optional tool-view controls across each container's
+// invalidation boundary, just as the ordinary disclosure action does.
+type childToggler struct {
+	child toggler
+	bump  func()
+}
+
+func (t childToggler) toggle() {
+	t.child.toggle()
+	t.bump()
+}
+
+func (t childToggler) applyToolViewKey(key string) bool {
+	control, ok := t.child.(toolViewController)
+	if !ok || !control.applyToolViewKey(key) {
+		return false
+	}
+	t.bump()
+	return true
 }

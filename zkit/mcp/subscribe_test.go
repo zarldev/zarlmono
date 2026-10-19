@@ -16,7 +16,7 @@ func TestSubscriptionsRouteHTTPNotifications(t *testing.T) {
 
 	connected := make(chan struct{})
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "unexpected request", http.StatusMethodNotAllowed)
 			return
@@ -35,7 +35,7 @@ func TestSubscriptionsRouteHTTPNotifications(t *testing.T) {
 		case <-release:
 		case <-r.Context().Done():
 		}
-	}))
+	})))
 	t.Cleanup(srv.Close)
 
 	client := mcp.NewClient(srv.URL, "")

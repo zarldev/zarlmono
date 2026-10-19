@@ -51,7 +51,7 @@ func TestModeChangesAreExpandableTurnActivity(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					tc.ui.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 					out := ansi.Strip(tc.ui.View().Content)
-					for _, want := range []string{"The answer stays conversational.", "│ [+] thinking", "│ [+] tools (1)"} {
+					for _, want := range []string{"The answer stays conversational.", "  [+] thinking", "  [+] tools (1)"} {
 						if !strings.Contains(out, want) {
 							t.Fatalf("missing %q:\n%s", want, out)
 						}
@@ -68,7 +68,7 @@ func TestModeChangesAreExpandableTurnActivity(t *testing.T) {
 					tc.ui.Update(tea.KeyPressMsg{Code: tea.KeyUp}) // tools -> thinking
 					tc.ui.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 					out = ansi.Strip(tc.ui.View().Content)
-					for _, want := range []string{"[-] thinking", "│   [+] plan mode", "│   [+] build mode"} {
+					for _, want := range []string{"[-] thinking", "    [+] plan mode", "    [+] build mode"} {
 						if !strings.Contains(out, want) {
 							t.Fatalf("missing thinking child %q:\n%s", want, out)
 						}
@@ -121,13 +121,13 @@ func TestLegacyModeNoticesRestoreAsActivity(t *testing.T) {
 	ui.RestoreCanonicalTranscript(reducer.Thread())
 	ui.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	out := ansi.Strip(ui.View().Content)
-	if !strings.Contains(out, "ordinary notice") || !strings.Contains(out, "│ [+] thinking") || strings.Contains(out, "plan mode") || strings.Contains(out, "historical reason") {
+	if !strings.Contains(out, "ordinary notice") || !strings.Contains(out, "  [+] thinking") || strings.Contains(out, "plan mode") || strings.Contains(out, "historical reason") {
 		t.Fatalf("legacy notice projection:\n%s", out)
 	}
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	out = ansi.Strip(ui.View().Content)
-	if !strings.Contains(out, "│   [+] plan mode") || strings.Contains(out, "historical reason") {
+	if !strings.Contains(out, "    [+] plan mode") || strings.Contains(out, "historical reason") {
 		t.Fatalf("legacy thinking child:\n%s", out)
 	}
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyDown})

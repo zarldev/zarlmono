@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
 )
 
 // MarkdownMetadata describes the session header surrounding a thread export.
@@ -59,9 +61,12 @@ func markdownEntry(entry Entry) (string, string) {
 	case EntryKinds.ENTRYUSERMESSAGE, EntryKinds.ENTRYQUEUEDUSER:
 		return "User", markdownUserPayload(payload)
 	case EntryKinds.ENTRYASSISTANTMESSAGE:
-		body := payload.Text
+		body := strings.Join(payload.TextSegments(), "\n\n")
 		if payload.Interrupted {
-			body = strings.TrimSpace(body + "\n\n[interrupted]")
+			if body != "" {
+				body += "\n\n"
+			}
+			body += "[interrupted]"
 		}
 		return "Assistant", body
 	case EntryKinds.ENTRYREASONING:
@@ -74,6 +79,12 @@ func markdownEntry(entry Entry) (string, string) {
 		body := payload.ToolName
 		if payload.Argument != "" {
 			body += " " + payload.Argument
+		}
+		if payload.ToolInput != "" {
+			body += "\n\nArguments:\n\n" + markdownSource(payload.ToolInput, "json")
+		}
+		if payload.ToolOutputPreview != "" {
+			body += "\n\nOutput preview (bounded):\n\n" + markdownSource(payload.ToolOutputPreview, "")
 		}
 		if payload.ToolState == ToolInterrupted {
 			body += "\n\n[interrupted]"
@@ -98,11 +109,44 @@ func markdownEntry(entry Entry) (string, string) {
 		return "Input admitted", payload.Text
 	case EntryKinds.ENTRYINPUTWAIT:
 		return "Input wait", payload.Text
+	case EntryKinds.ENTRYCONTROLCHANGE:
+		return "Control change", markdownControl(payload.Control)
 	case EntryKinds.ENTRYNOTICE:
 		return "Notice", payload.Text
 	default:
 		return "", ""
 	}
+}
+
+func markdownSource(source, language string) string {
+	longest := 0
+	current := 0
+	for _, r := range source {
+		if r == '`' {
+			current++
+			longest = max(longest, current)
+			continue
+		}
+		current = 0
+	}
+	fence := strings.Repeat("`", max(3, longest+1))
+	separator := "\n"
+	if strings.HasSuffix(source, "\n") {
+		separator = ""
+	}
+	return fence + language + "\n" + source + separator + fence
+}
+
+func markdownControl(control runner.ReplayControl) string {
+	var body strings.Builder
+	fmt.Fprintf(&body, "Policy: `%s`\n\nSystem digest: `%s`\n\nSurface digest: `%s`", control.PolicyLabel, control.SystemDigest, control.SurfaceDigest)
+	if len(control.ToolDefinitions) != 0 {
+		body.WriteString("\n\nTools:")
+		for _, definition := range control.ToolDefinitions {
+			fmt.Fprintf(&body, "\n- `%s` — `%s`", definition.Name, definition.DefinitionHash)
+		}
+	}
+	return body.String()
 }
 
 func markdownUserPayload(payload Payload) string {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	boardtools "github.com/zarldev/zarlmono/zkit/agent/tools/board"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 
@@ -57,6 +58,7 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 		programtools.ToolName, engine.ToolNameListInstructions, engine.ToolNameLoadInstruction, "web_search",
 		computertools.ToolNameComputerObserve, dynamic.ToolNameMCPList,
 		code.ToolNameBashOutput, code.ToolNameListProcesses,
+		boardtools.PostName, boardtools.ListName, boardtools.ReadName,
 	}}
 	plan := true // toggled below to prove the filter reads it live
 	src := engine.NewModeFilteredSource(inner, func() bool { return plan })
@@ -78,6 +80,9 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 		dynamic.ToolNameMCPList,
 		code.ToolNameBashOutput,
 		code.ToolNameListProcesses,
+		boardtools.PostName,
+		boardtools.ListName,
+		boardtools.ReadName,
 	} {
 		if !names[planTool] {
 			t.Errorf("plan: read/planning tool %q should be listed: %v", planTool, names)
@@ -86,8 +91,10 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	if names[code.ToolNameWrite] || names[code.ToolNameEdit] || names[code.ToolNameBash] {
 		t.Errorf("plan: mutating tools/bash should be filtered out: %v", names)
 	}
-	if _, err := src.Execute(ctx, tools.ToolCall{ToolName: code.ToolNameWrite}); err == nil {
-		t.Error("plan: dispatching write should error")
+	for _, blocked := range []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash} {
+		if _, err := src.Execute(ctx, tools.ToolCall{ToolName: blocked}); err == nil {
+			t.Errorf("plan: dispatching %q should error", blocked)
+		}
 	}
 	if _, err := src.Execute(ctx, tools.ToolCall{ToolName: code.ToolNameRead}); err != nil {
 		t.Errorf("plan: dispatching read should be allowed: %v", err)
@@ -103,6 +110,9 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 		dynamic.ToolNameMCPList,
 		code.ToolNameBashOutput,
 		code.ToolNameListProcesses,
+		boardtools.PostName,
+		boardtools.ListName,
+		boardtools.ReadName,
 	} {
 		if _, err := src.Execute(ctx, tools.ToolCall{ToolName: planTool}); err != nil {
 			t.Errorf("plan: dispatching read/planning tool %q should be allowed: %v", planTool, err)

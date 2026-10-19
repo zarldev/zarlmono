@@ -2,7 +2,6 @@ package tui_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,23 +31,17 @@ func TestAppliedModeUpdatesUIWithoutApproval(t *testing.T) {
 	applied.TaskID = "turn"
 	applied.Reason = "investigate fixture"
 	ui.Update(teasink.ModeChangedMsg(applied))
-	if got := renderStatus(t, ui, 120); !strings.Contains(got, "plan mode") {
-		t.Fatalf("applied status=%q", got)
-	}
+	assertComposerMode(t, ui, true)
 	// A mode event must not open a modal that consumes subsequent composer input.
 	ui.Update(textKey("continue"))
 	if got := ui.ComposerText(); got != "continue" {
 		t.Fatalf("mode change intercepted input: %q", got)
 	}
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	if got := renderStatus(t, ui, 120); !strings.Contains(got, "build mode") {
-		t.Fatalf("override status=%q", got)
-	}
+	assertComposerMode(t, ui, false)
 	revision := ui.CanonicalThread().Revision()
 	ui.Update(teasink.ModeChangedMsg(applied))
-	if got := renderStatus(t, ui, 120); !strings.Contains(got, "build mode") {
-		t.Fatalf("stale event changed status=%q", got)
-	}
+	assertComposerMode(t, ui, false)
 	if ui.CanonicalThread().Revision() != revision {
 		t.Fatal("stale mode event appended activity")
 	}
@@ -73,7 +66,8 @@ func TestManualModeToggleReflectsReadOnlyCeiling(t *testing.T) {
 	applied.Reason = "inspect-only task"
 	ui.Update(teasink.ModeChangedMsg(applied))
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	if got := renderStatus(t, ui, 120); !strings.Contains(got, "plan mode") || !live.AppliedMode().Plan {
-		t.Fatalf("ceiling status=%q mode=%+v", got, live.AppliedMode())
+	assertComposerMode(t, ui, true)
+	if !live.AppliedMode().Plan {
+		t.Fatalf("read-only ceiling lost: %+v", live.AppliedMode())
 	}
 }

@@ -65,6 +65,13 @@ func (s *SyncSink) OnToolFailed(ctx context.Context, e ToolFailed) {
 	s.sink.OnToolFailed(ctx, e)
 }
 
+// OnToolOutput forwards to the wrapped sink under the mutex.
+func (s *SyncSink) OnToolOutput(ctx context.Context, e ToolOutputProgress) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sink.OnToolOutput(ctx, e)
+}
+
 // OnConversationStarted forwards to the wrapped sink under the mutex.
 func (s *SyncSink) OnConversationStarted(ctx context.Context, e ConversationStarted) {
 	s.mu.Lock()

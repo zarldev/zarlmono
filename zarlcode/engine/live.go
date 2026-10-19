@@ -73,11 +73,12 @@ type LiveRunner struct {
 
 	// mu guards the hot-swappable run target. A turn snapshots target under the
 	// lock at start, so an update takes effect on the next turn.
-	mu             sync.Mutex
-	target         RunTarget
-	promptProfile  PromptProfile
-	readOnly       bool
-	modeGeneration uint64
+	mu              sync.Mutex
+	target          RunTarget
+	promptProfile   PromptProfile
+	readOnly        bool
+	modeGeneration  uint64
+	renderedControl requestControlObservation
 	// historyBuffers retain only uncommitted replay batches until the session FIFO
 	// retries them. Access is under mu; each buffer serializes its own writes.
 	historyBuffers map[string]*sessionHistoryBuffer
@@ -174,8 +175,9 @@ type LiveRunner struct {
 	// It persists across per-turn registries and closes with the LiveRunner.
 	fetchTool *fetch.WebFetchTool
 
-	mcp     *dynamic.MCPRegistry
-	mcpHost *tools.Registry
+	mcp         *dynamic.MCPRegistry
+	mcpHost     *tools.Registry
+	mcpExposure *dynamic.MCPExposure
 }
 
 // WithSettings configures live preference resolution.
@@ -207,7 +209,10 @@ func WithToolEnvironment(env map[string]string) options.Option[LiveRunner] {
 
 // WithMCP configures the persistent MCP registry and discovered-tool host.
 func WithMCP(reg *dynamic.MCPRegistry, host *tools.Registry) options.Option[LiveRunner] {
-	return func(l *LiveRunner) { l.mcp, l.mcpHost = reg, host }
+	return func(l *LiveRunner) {
+		l.mcp, l.mcpHost = reg, host
+		l.mcpExposure = dynamic.NewMCPExposure(reg)
+	}
 }
 
 // WithComputerSessionFactory overrides browser-session construction.
@@ -266,6 +271,7 @@ func (l *LiveRunner) AttachMCP(reg *dynamic.MCPRegistry, host *tools.Registry) {
 	defer l.admission.leave()
 	l.mu.Lock()
 	l.mcp, l.mcpHost = reg, host
+	l.mcpExposure = dynamic.NewMCPExposure(reg)
 	l.mu.Unlock()
 }
 
@@ -428,7 +434,7 @@ func (l *LiveRunner) RestoreContext(contextCache []llm.Message) {
 	l.context.restore(contextCache)
 }
 
-// ClearContext clears the LLM context threaded into the next turn.
+// ClearContext clears the conversation and session-local MCP selection hints.
 func (l *LiveRunner) ClearContext() {
 	if l == nil {
 		return
@@ -438,6 +444,7 @@ func (l *LiveRunner) ClearContext() {
 	}
 	defer l.admission.leave()
 	l.context.restore(nil)
+	_ = l.restoreMCPActivations(MCPActivations{})
 }
 
 // SetPlanMode toggles PLAN mode on the next dispatch / turn. PLAN restricts
