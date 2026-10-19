@@ -45,7 +45,8 @@ func Run(ctx context.Context, root, binary string, timeout time.Duration, output
 	}
 	if binary == "" {
 		binary = filepath.Join(dir, "zarlcode")
-		buildCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		// Cold native builds on hosted macOS runners can exceed two minutes.
+		buildCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		cmd := exec.CommandContext(buildCtx, "go", "build", "-o", binary, "./cmd")
 		cmd.Dir = filepath.Join(root, "zarlcode")
