@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"sync"
@@ -38,12 +39,18 @@ func newRuntimeCatalog(wsRoot string) *RuntimeCatalog { return NewRuntimeCatalog
 // Reload re-reads the skill/agent directories. Individual malformed files are
 // collected and retained, but valid entries still replace the previous snapshot.
 func (c *RuntimeCatalog) Reload(wsRoot string) []error {
+	return c.ReloadContext(context.Background(), wsRoot)
+}
+
+// ReloadContext reloads with cooperative cancellation. Cancellation leaves the
+// previously published snapshot, workspace, and diagnostics unchanged.
+func (c *RuntimeCatalog) ReloadContext(ctx context.Context, wsRoot string) []error {
 	if c == nil {
 		return nil
 	}
-	skills, skillErrs := catalog.LoadSkills(wsRoot)
-	agents, agentErrs := catalog.LoadAgents(wsRoot)
-	hooks, hookErrs := catalog.LoadHooks(wsRoot)
+	skills, skillErrs := catalog.LoadSkillsContext(ctx, wsRoot)
+	agents, agentErrs := catalog.LoadAgentsContext(ctx, wsRoot)
+	hooks, hookErrs := catalog.LoadHooksContext(ctx, wsRoot)
 
 	skillByName := make(map[string]catalog.Skill, len(skills))
 	for _, s := range skills {
@@ -56,6 +63,10 @@ func (c *RuntimeCatalog) Reload(wsRoot string) []error {
 	errs := append(append(append([]error{}, skillErrs...), agentErrs...), hookErrs...)
 
 	c.mu.Lock()
+	if err := context.Cause(ctx); err != nil {
+		c.mu.Unlock()
+		return []error{err}
+	}
 	c.wsRoot = wsRoot
 	c.skills = append([]catalog.Skill(nil), skills...)
 	c.agents = append([]catalog.Agent(nil), agents...)
@@ -69,13 +80,19 @@ func (c *RuntimeCatalog) Reload(wsRoot string) []error {
 
 // ReloadCurrent re-reads the catalogue from its last configured workspace root.
 func (c *RuntimeCatalog) ReloadCurrent() []error {
+	return c.ReloadCurrentContext(context.Background())
+}
+
+// ReloadCurrentContext reloads the current workspace without publishing a
+// cancelled refresh.
+func (c *RuntimeCatalog) ReloadCurrentContext(ctx context.Context) []error {
 	if c == nil {
 		return nil
 	}
 	c.mu.RLock()
 	wsRoot := c.wsRoot
 	c.mu.RUnlock()
-	return c.Reload(wsRoot)
+	return c.ReloadContext(ctx, wsRoot)
 }
 
 func (c *RuntimeCatalog) Errors() []error {

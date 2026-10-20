@@ -11,6 +11,7 @@
 package catalog
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -23,7 +24,12 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zarldev/zarlmono/zarlcode/home"
+	"github.com/zarldev/zarlmono/zarlcode/internal/discoveryfile"
 )
+
+// MaxDefinitionBytes bounds each agent, skill, or hook definition. Oversized
+// definitions are reported as errors rather than parsing or executing a prefix.
+const MaxDefinitionBytes = 1 << 20
 
 // Agent is one named agent profile. The execution fields (provider, model,
 // iterations, thinking, mode, workspace) are optional in the frontmatter; an
@@ -126,10 +132,18 @@ type hookFrontmatter struct {
 // stable discovery order. Errors on individual files are collected, not fatal:
 // one malformed agent shouldn't hide the rest.
 func LoadAgents(workspaceRoot string) ([]Agent, []error) {
+	return LoadAgentsContext(context.Background(), workspaceRoot)
+}
+
+// LoadAgentsContext is LoadAgents with cooperative filesystem cancellation.
+func LoadAgentsContext(ctx context.Context, workspaceRoot string) ([]Agent, []error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, []error{err}
+	}
 	var out []Agent
 	idx := map[string]int{}
 	var errs []error
-	walkMarkdown(agentDirs(workspaceRoot), &errs, func(path string) error {
+	walkMarkdown(ctx, agentDirs(workspaceRoot), &errs, func(path string) error {
 		a, err := loadAgentFile(path)
 		if err != nil {
 			return err
@@ -142,16 +156,27 @@ func LoadAgents(workspaceRoot string) ([]Agent, []error) {
 		out = append(out, a)
 		return nil
 	})
+	if err := context.Cause(ctx); err != nil {
+		return nil, append(errs, err)
+	}
 	return out, errs
 }
 
 // LoadSkills walks the skill directories and returns the discovered skills in
 // stable discovery order, with the same collected-error contract as LoadAgents.
 func LoadSkills(workspaceRoot string) ([]Skill, []error) {
+	return LoadSkillsContext(context.Background(), workspaceRoot)
+}
+
+// LoadSkillsContext is LoadSkills with cooperative filesystem cancellation.
+func LoadSkillsContext(ctx context.Context, workspaceRoot string) ([]Skill, []error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, []error{err}
+	}
 	var out []Skill
 	idx := map[string]int{}
 	var errs []error
-	walkSkills(skillDirs(workspaceRoot), &errs, func(path string) error {
+	walkSkills(ctx, skillDirs(workspaceRoot), &errs, func(path string) error {
 		s, err := loadSkillFile(path)
 		if err != nil {
 			return err
@@ -164,16 +189,27 @@ func LoadSkills(workspaceRoot string) ([]Skill, []error) {
 		out = append(out, s)
 		return nil
 	})
+	if err := context.Cause(ctx); err != nil {
+		return nil, append(errs, err)
+	}
 	return out, errs
 }
 
 // LoadHooks walks the hook directories and returns the discovered hooks in
 // stable discovery order, with the same collected-error contract as LoadAgents.
 func LoadHooks(workspaceRoot string) ([]Hook, []error) {
+	return LoadHooksContext(context.Background(), workspaceRoot)
+}
+
+// LoadHooksContext is LoadHooks with cooperative filesystem cancellation.
+func LoadHooksContext(ctx context.Context, workspaceRoot string) ([]Hook, []error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, []error{err}
+	}
 	var out []Hook
 	idx := map[string]int{}
 	var errs []error
-	walkMarkdown(hookDirs(workspaceRoot), &errs, func(path string) error {
+	walkMarkdown(ctx, hookDirs(workspaceRoot), &errs, func(path string) error {
 		h, err := loadHookFile(path)
 		if err != nil {
 			return err
@@ -186,14 +222,20 @@ func LoadHooks(workspaceRoot string) ([]Hook, []error) {
 		out = append(out, h)
 		return nil
 	})
+	if err := context.Cause(ctx); err != nil {
+		return nil, append(errs, err)
+	}
 	return out, errs
 }
 
 // walkMarkdown reads every *.md file under each dir (skipping absent dirs) and
 // hands the path to load, collecting any returned error against the file.
-func walkMarkdown(dirs []string, errs *[]error, load func(path string) error) {
+func walkMarkdown(ctx context.Context, dirs []string, errs *[]error, load func(path string) error) {
 	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
+		if ctx.Err() != nil {
+			return
+		}
+		entries, err := discoveryfile.ReadDir(ctx, dir)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -202,6 +244,9 @@ func walkMarkdown(dirs []string, errs *[]error, load func(path string) error) {
 			continue
 		}
 		for _, ent := range entries {
+			if ctx.Err() != nil {
+				return
+			}
 			if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".md") {
 				continue
 			}
@@ -215,9 +260,12 @@ func walkMarkdown(dirs []string, errs *[]error, load func(path string) error) {
 
 // walkSkills loads portable Agent Skills from the <name>/SKILL.md package
 // layout. Other files inside a skill package are resources, not skills.
-func walkSkills(dirs []string, errs *[]error, load func(path string) error) {
+func walkSkills(ctx context.Context, dirs []string, errs *[]error, load func(path string) error) {
 	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
+		if ctx.Err() != nil {
+			return
+		}
+		entries, err := discoveryfile.ReadDir(ctx, dir)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -226,6 +274,9 @@ func walkSkills(dirs []string, errs *[]error, load func(path string) error) {
 			continue
 		}
 		for _, ent := range entries {
+			if ctx.Err() != nil {
+				return
+			}
 			if !ent.IsDir() {
 				continue
 			}
@@ -447,7 +498,7 @@ func loadHookFile(path string) (Hook, error) {
 }
 
 func readFrontmatter(path string) ([]byte, string, error) {
-	data, err := os.ReadFile(path)
+	data, err := discoveryfile.Read(path, MaxDefinitionBytes)
 	if err != nil {
 		return nil, "", err
 	}

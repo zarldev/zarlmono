@@ -45,12 +45,12 @@ func TestTranscriptTrailingBufferFollowsContent(t *testing.T) {
 					// new neutral buffer follows that row, without replacing it.
 					assertTranscriptBuffer(t, canvas, last+2, width)
 					if lines > 1 {
-						wantLast := 23
+						wantLast := 24
 						if draft != "" {
 							wantLast -= 2
 						}
 						if last != wantLast {
-							t.Fatalf("last entry row = %d, want %d (one content buffer before existing composer gap)", last, wantLast)
+							t.Fatalf("last entry row = %d, want %d (role closing row and neutral buffer before composer separator)", last, wantLast)
 						}
 						ui.Update(tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelUp})
 						browsing := surfaceCanvas(ui, width, 30)
@@ -84,16 +84,16 @@ func TestTranscriptTrailingBufferAfterTools(t *testing.T) {
 		t.Helper()
 		canvas := surfaceCanvas(ui, 100, 40)
 		last := 2
-		for y := 2; y < 36; y++ {
+		for y := 2; y < 37; y++ {
 			if strings.TrimSpace(screenRegion(canvas, 0, y, 99, y+1)) != "" {
 				last = y
 			}
 		}
 		assertTranscriptBuffer(t, canvas, last+1, 100)
-		before := screenRegion(canvas, 0, 2, 99, 36)
+		before := screenRegion(canvas, 0, 2, 99, 37)
 		ui.Update(tea.MouseClickMsg{X: 3, Y: last + 1, Button: tea.MouseLeft})
 		ui.Update(tea.MouseClickMsg{X: 0, Y: last + 1, Button: tea.MouseLeft})
-		if after := screenRegion(surfaceCanvas(ui, 100, 40), 0, 2, 99, 36); after != before {
+		if after := screenRegion(surfaceCanvas(ui, 100, 40), 0, 2, 99, 37); after != before {
 			t.Fatal("clicking trailing padding selected or toggled an item")
 		}
 	}

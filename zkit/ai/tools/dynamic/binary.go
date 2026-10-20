@@ -150,6 +150,8 @@ func (t *BinaryTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 
 	cmd := exec.CommandContext(runCtx, t.binaryPath, "--call")
 	zexec.StartProcessGroup(cmd)
+	cmd.Cancel = func() error { return zexec.KillProcessGroup(cmd) }
+	cmd.WaitDelay = time.Second
 	cmd.Env = zexec.MinimalEnv(nil)
 	cmd.Stdin = bytes.NewReader(argsJSON)
 	stdout := &cappedWriter{cap: dynamicStdoutCapBytes}
@@ -158,8 +160,11 @@ func (t *BinaryTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
-		if runCtx.Err() != nil {
-			_ = zexec.KillProcessGroup(cmd)
+		// WaitDelay also fires after an early leader exit; its pipe closure
+		// alone does not stop descendants still owned by this invocation.
+		_ = zexec.KillProcessGroup(cmd)
+		if cause := context.Cause(runCtx); cause != nil {
+			err = cause
 		}
 		msg := fmt.Sprintf("dynamic: %s exec failed: %v", t.spec.Name, err)
 		if stderr.Len() > 0 {
@@ -210,14 +215,17 @@ func DescribeBinary(ctx context.Context, binaryPath string, timeout time.Duratio
 
 	cmd := exec.CommandContext(runCtx, binaryPath, "--describe")
 	zexec.StartProcessGroup(cmd)
+	cmd.Cancel = func() error { return zexec.KillProcessGroup(cmd) }
+	cmd.WaitDelay = time.Second
 	cmd.Env = zexec.MinimalEnv(nil)
 	stdout := &cappedWriter{cap: dynamicStdoutCapBytes}
 	stderr := &cappedWriter{cap: dynamicStderrCapBytes}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		if runCtx.Err() != nil {
-			_ = zexec.KillProcessGroup(cmd)
+		_ = zexec.KillProcessGroup(cmd)
+		if cause := context.Cause(runCtx); cause != nil {
+			err = cause
 		}
 		if stderr.Len() > 0 {
 			return tools.ToolSpec{}, fmt.Errorf(

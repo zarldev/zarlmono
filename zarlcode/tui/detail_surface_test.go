@@ -63,12 +63,12 @@ func TestDetailViewsShareMainSurface(t *testing.T) {
 					canvas := surfaceCanvas(ui, width, height)
 					assertDetailChrome(t, canvas, "session", tab)
 					if tab != "overview" {
-						x, y := detailTextPosition(t, canvas, tab, 2, height-5)
+						x, y := detailTextPosition(t, canvas, tab, 2, height-4)
 						if x != 2 || canvas.CellAt(x, y).Style.Attrs&uv.AttrBold == 0 {
 							t.Errorf("%s section heading is not aligned/bold", tab)
 						}
 					}
-					detailTextPosition(t, canvas, "esc close", height-5, height-4)
+					detailTextPosition(t, canvas, "esc close", height-4, height-3)
 					ui.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 				}
 				ui.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

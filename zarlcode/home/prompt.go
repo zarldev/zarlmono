@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zarlcode/internal/discoveryfile"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
@@ -16,6 +16,9 @@ const (
 	PreferencesFile = "preferences.md"
 	// PromptOverrideFile is the explicit advanced full system-prompt override.
 	PromptOverrideFile = "prompt.override.md"
+	// MaxPromptFileBytes bounds each user prompt input. Larger files contribute
+	// diagnostics instead of replacing the embedded prompt with a partial body.
+	MaxPromptFileBytes = 1 << 20
 )
 
 // PromptResolutionMode names the source selected for the BUILD-mode prompt body.
@@ -110,7 +113,7 @@ func ResolveBuildPromptDir(dir, defaultBody string) PromptResolution {
 }
 
 func readPromptFile(path string) ([]byte, bool, string) {
-	data, err := os.ReadFile(path)
+	data, err := discoveryfile.Read(path, MaxPromptFileBytes)
 	switch {
 	case err == nil:
 		return data, true, ""

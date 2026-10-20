@@ -38,9 +38,7 @@ func computeLayoutWithEditorLinesAndSidebar(w, h, editorLines int, showSidebar b
 
 	bottom := editorHeight + statusHeight
 	midTop := headerHeight
-	// Reserve breathing room above the separator, not below the input.
-	// Clamp for tiny terminals without moving the editor or feedback row.
-	midH := max(h-midTop-bottom-1, 0)
+	midH := max(h-midTop-bottom, 0)
 
 	if showSidebar && w >= sidebarMinMainWidth+sidebarMinWidth && midH > 0 {
 		width := sidebarMinWidth

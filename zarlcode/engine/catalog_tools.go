@@ -69,7 +69,10 @@ func (t *createSkillTool) Definition() tools.ToolSpec {
 		})}
 }
 
-func (t *createSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+func (t *createSkillTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
 	args, err := tools.DecodeArgs[createSkillArgs](call.Arguments)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
@@ -79,17 +82,21 @@ func (t *createSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tool
 		return tools.Failure(call.ID, tools.Validation("skill_create", err.Error())), nil
 	}
 	if t.catalog != nil {
-		t.catalog.ReloadCurrent()
+		t.catalog.ReloadCurrentContext(ctx)
+		if err := context.Cause(ctx); err != nil {
+			return nil, fmt.Errorf("created skill %q; catalog refresh cancelled: %w", path, err)
+		}
 	}
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: "created skill: " + path, ExecutedAt: time.Now()}, nil
 }
 
 func NewLoadSkillTool(c *RuntimeCatalog) *loadSkillTool { return &loadSkillTool{catalog: c} }
 
-func (t *loadSkillTool) refresh() {
+func (t *loadSkillTool) refresh(ctx context.Context) error {
 	if t != nil && t.catalog != nil {
-		t.catalog.ReloadCurrent()
+		t.catalog.ReloadCurrentContext(ctx)
 	}
+	return context.Cause(ctx)
 }
 
 func (t *loadSkillTool) Definition() tools.ToolSpec {
@@ -112,7 +119,10 @@ func (t *loadSkillTool) Definition() tools.ToolSpec {
 		})}
 }
 
-func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+func (t *loadSkillTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
 	args, derr := tools.DecodeArgs[loadSkillArgs](call.Arguments)
 	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
@@ -123,7 +133,9 @@ func (t *loadSkillTool) Execute(_ context.Context, call tools.ToolCall) (*tools.
 	}
 	skill, ok := t.catalog.Skill(name)
 	if !ok {
-		t.refresh()
+		if err := t.refresh(ctx); err != nil {
+			return nil, err
+		}
 		skill, ok = t.catalog.Skill(name)
 	}
 	if !ok {
@@ -137,10 +149,11 @@ type listSkillsTool struct{ catalog *RuntimeCatalog }
 
 func NewListSkillsTool(c *RuntimeCatalog) *listSkillsTool { return &listSkillsTool{catalog: c} }
 
-func (t *listSkillsTool) refresh() {
+func (t *listSkillsTool) refresh(ctx context.Context) error {
 	if t != nil && t.catalog != nil {
-		t.catalog.ReloadCurrent()
+		t.catalog.ReloadCurrentContext(ctx)
 	}
+	return context.Cause(ctx)
 }
 
 func (t *listSkillsTool) Definition() tools.ToolSpec {
@@ -153,8 +166,10 @@ func (t *listSkillsTool) Definition() tools.ToolSpec {
 		Parameters: llm.SchemaFromMap(map[string]any{schemaType: schemaTypeObject, schemaProperties: map[string]any{}, schemaAdditional: false})}
 }
 
-func (t *listSkillsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	t.refresh()
+func (t *listSkillsTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	if err := t.refresh(ctx); err != nil {
+		return nil, err
+	}
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: renderSkillsLabeled(t.catalog.Skills()), ExecutedAt: time.Now()}, nil
 }
 
@@ -183,10 +198,11 @@ type listAgentsTool struct{ catalog *RuntimeCatalog }
 
 func NewListAgentsTool(c *RuntimeCatalog) *listAgentsTool { return &listAgentsTool{catalog: c} }
 
-func (t *listAgentsTool) refresh() {
+func (t *listAgentsTool) refresh(ctx context.Context) error {
 	if t != nil && t.catalog != nil {
-		t.catalog.ReloadCurrent()
+		t.catalog.ReloadCurrentContext(ctx)
 	}
+	return context.Cause(ctx)
 }
 
 func (t *listAgentsTool) Definition() tools.ToolSpec {
@@ -199,8 +215,10 @@ func (t *listAgentsTool) Definition() tools.ToolSpec {
 		Parameters: llm.SchemaFromMap(map[string]any{schemaType: schemaTypeObject, schemaProperties: map[string]any{}, schemaAdditional: false})}
 }
 
-func (t *listAgentsTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	t.refresh()
+func (t *listAgentsTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	if err := t.refresh(ctx); err != nil {
+		return nil, err
+	}
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: renderAgentsLabeled(t.catalog.Agents()), ExecutedAt: time.Now()}, nil
 }
 

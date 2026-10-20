@@ -3,18 +3,24 @@ package instructions
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/zarldev/zarlmono/zarlcode/internal/discoveryfile"
 )
 
 const (
 	// DefaultMaxBytes is the total instruction body budget included in prompts.
 	DefaultMaxBytes = 32 * 1024
+
+	// MaxFileBytes bounds each instruction file, including on-demand loads.
+	// Larger files are reported as errors; prompt budgets still apply below it.
+	MaxFileBytes = 1 << 20
 )
 
 var instructionNames = map[string]bool{
@@ -51,6 +57,14 @@ type NestedDoc struct {
 // Individual unreadable or non-text files are reported in the returned error
 // slice without hiding other valid documents.
 func Discover(workspaceRoot string, maxBytes int) ([]Document, []error) {
+	return DiscoverContext(context.Background(), workspaceRoot, maxBytes)
+}
+
+// DiscoverContext is Discover with cooperative filesystem cancellation.
+func DiscoverContext(ctx context.Context, workspaceRoot string, maxBytes int) ([]Document, []error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, []error{err}
+	}
 	if maxBytes < 0 {
 		maxBytes = 0
 	}
@@ -61,7 +75,7 @@ func Discover(workspaceRoot string, maxBytes int) ([]Document, []error) {
 
 	var paths []string
 	var errs []error
-	if err := filepath.WalkDir(root, func(path string, ent fs.DirEntry, err error) error {
+	if err := discoveryfile.WalkDir(ctx, root, func(path string, ent fs.DirEntry, err error) error {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("walk %q: %w", path, err))
 			if ent != nil && ent.IsDir() {
@@ -85,13 +99,22 @@ func Discover(workspaceRoot string, maxBytes int) ([]Document, []error) {
 
 	sortInstructionPaths(root, paths)
 
-	return readDocuments(root, paths, maxBytes)
+	docs, readErrs := readDocuments(ctx, root, paths, maxBytes)
+	return docs, append(errs, readErrs...)
 }
 
 // DiscoverRoot is like Discover but returns only the instruction files directly in the
 // workspace root directory. The maxBytes cap applies to their combined body size.
 // Nested instruction files are discoverable via ListNested and loadable via LoadOne.
 func DiscoverRoot(workspaceRoot string, maxBytes int) ([]Document, []error) {
+	return DiscoverRootContext(context.Background(), workspaceRoot, maxBytes)
+}
+
+// DiscoverRootContext is DiscoverRoot with cooperative filesystem cancellation.
+func DiscoverRootContext(ctx context.Context, workspaceRoot string, maxBytes int) ([]Document, []error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, []error{err}
+	}
 	if maxBytes < 0 {
 		maxBytes = 0
 	}
@@ -100,7 +123,7 @@ func DiscoverRoot(workspaceRoot string, maxBytes int) ([]Document, []error) {
 		return nil, []error{fmt.Errorf("resolve workspace root %q: %w", workspaceRoot, err)}
 	}
 
-	entries, err := os.ReadDir(root)
+	entries, err := discoveryfile.ReadDir(ctx, root)
 	if err != nil {
 		return nil, []error{fmt.Errorf("read workspace root %q: %w", root, err)}
 	}
@@ -116,12 +139,20 @@ func DiscoverRoot(workspaceRoot string, maxBytes int) ([]Document, []error) {
 	}
 	sortInstructionPaths(root, paths)
 
-	return readDocuments(root, paths, maxBytes)
+	return readDocuments(ctx, root, paths, maxBytes)
 }
 
 // ListNested returns an index of instruction files below the workspace root without
 // reading file bodies. Paths are sorted depth-first, root-first within depth.
 func ListNested(workspaceRoot string) ([]NestedDoc, []error) {
+	return ListNestedContext(context.Background(), workspaceRoot)
+}
+
+// ListNestedContext is ListNested with cooperative filesystem cancellation.
+func ListNestedContext(ctx context.Context, workspaceRoot string) ([]NestedDoc, []error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, []error{err}
+	}
 	root, err := filepath.Abs(workspaceRoot)
 	if err != nil {
 		return nil, []error{fmt.Errorf("resolve workspace root %q: %w", workspaceRoot, err)}
@@ -129,7 +160,7 @@ func ListNested(workspaceRoot string) ([]NestedDoc, []error) {
 
 	var paths []string
 	var errs []error
-	if err := filepath.WalkDir(root, func(path string, ent fs.DirEntry, err error) error {
+	if err := discoveryfile.WalkDir(ctx, root, func(path string, ent fs.DirEntry, err error) error {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("walk %q: %w", path, err))
 			if ent != nil && ent.IsDir() {
@@ -160,6 +191,9 @@ func ListNested(workspaceRoot string) ([]NestedDoc, []error) {
 		errs = append(errs, fmt.Errorf("walk nested instructions: %w", err))
 	}
 
+	if err := context.Cause(ctx); err != nil {
+		return nil, append(errs, err)
+	}
 	sortInstructionPaths(root, paths)
 
 	docs := make([]NestedDoc, 0, len(paths))
@@ -178,6 +212,14 @@ func ListNested(workspaceRoot string) ([]NestedDoc, []error) {
 // its full [Document]. relPath must be a path previously returned by [ListNested] or
 // [Discover].
 func LoadOne(workspaceRoot, relPath string) (Document, error) {
+	return LoadOneContext(context.Background(), workspaceRoot, relPath)
+}
+
+// LoadOneContext is LoadOne with cancellation checks before and after reading.
+func LoadOneContext(ctx context.Context, workspaceRoot, relPath string) (Document, error) {
+	if err := context.Cause(ctx); err != nil {
+		return Document{}, err
+	}
 	root, err := filepath.Abs(workspaceRoot)
 	if err != nil {
 		return Document{}, fmt.Errorf("resolve workspace root %q: %w", workspaceRoot, err)
@@ -196,7 +238,10 @@ func LoadOne(workspaceRoot, relPath string) (Document, error) {
 		return Document{}, fmt.Errorf("relPath escapes workspace: %q", relPath)
 	}
 
-	body, err := os.ReadFile(abs)
+	body, err := discoveryfile.Read(abs, MaxFileBytes)
+	if cause := context.Cause(ctx); cause != nil {
+		return Document{}, cause
+	}
 	if err != nil {
 		return Document{}, fmt.Errorf("read instruction %q: %w", abs, err)
 	}
@@ -218,16 +263,25 @@ func LoadOne(workspaceRoot, relPath string) (Document, error) {
 
 // readDocuments reads and validates instruction files at the given absolute paths,
 // applying the byte budget. It is shared by Discover and DiscoverRoot.
-func readDocuments(root string, paths []string, maxBytes int) ([]Document, []error) {
+func readDocuments(ctx context.Context, root string, paths []string, maxBytes int) ([]Document, []error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, []error{err}
+	}
 	var errs []error
 	docs := make([]Document, 0, len(paths))
 	remaining := maxBytes
 	for i, path := range paths {
+		if err := context.Cause(ctx); err != nil {
+			return nil, append(errs, err)
+		}
 		if maxBytes > 0 && remaining <= 0 {
 			markCapReached(docs, len(paths)-i)
 			break
 		}
-		body, err := os.ReadFile(path)
+		body, err := discoveryfile.Read(path, MaxFileBytes)
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, append(errs, cause)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("read instruction %q: %w", path, err))
 			continue

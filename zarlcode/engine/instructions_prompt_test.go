@@ -10,6 +10,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zarlcode/instructions"
 	"github.com/zarldev/zarlmono/zarlcode/prompts"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
@@ -63,13 +64,33 @@ func TestBuildTurnReloadsWorkspaceInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := engine.NewLiveRunner(nil, ws, "local")
+	provider := &requestRecordingProvider{}
+	l := engine.NewLiveRunner(provider, ws, "local")
+	defer l.Close(t.Context())
 	first := l.Inspect(t.Context())
 	assertInstructionSnapshotContains(t, first.PromptSystem, "First version.")
 
 	mustWrite(t, filepath.Join(root, "AGENTS.md"), "Second version.")
 	second := l.Inspect(t.Context())
-	assertInstructionSnapshotContains(t, second.PromptSystem, "Second version.")
+	// UI inspection consumes the last published discovery snapshot. Actual
+	// turn setup, not rendering, refreshes files edited since startup.
+	assertInstructionSnapshotContains(t, second.PromptSystem, "First version.")
+	if strings.Contains(second.PromptSystem, "Second version.") {
+		t.Fatal("inspection reloaded workspace instructions")
+	}
+	if err := l.RunTurn(t.Context(), "Reply done."); err != nil {
+		t.Fatal(err)
+	}
+	assertInstructionSnapshotContains(t, l.Inspect(t.Context()).PromptSystem, "Second version.")
+	if len(provider.requests) == 0 {
+		t.Fatal("turn did not reach provider")
+	}
+	for _, message := range provider.requests[0].Messages {
+		if message.Role == llm.RoleSystem && strings.Contains(message.Content, "Second version.") {
+			return
+		}
+	}
+	t.Fatal("actual turn did not receive refreshed instructions")
 }
 
 func TestBuildPromptStackIncludesUserPreferencesFragment(t *testing.T) {

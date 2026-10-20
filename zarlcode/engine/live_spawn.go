@@ -24,6 +24,17 @@ import (
 	"github.com/zarldev/zarlmono/zkit/options"
 )
 
+// spawnTarget retains a runner and its registry for the turn's construction phase.
+// A zero value denotes an unavailable optional mode target.
+type spawnTarget struct {
+	runner   *runner.Runner
+	registry *tools.Registry
+}
+
+type spawnTargets struct {
+	explore, verify, implement spawnTarget
+}
+
 func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int, boardAccess ...boardtools.Board) {
 	if maxDepth <= 0 {
 		return
@@ -31,6 +42,28 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 	if l.settings != nil && !l.settings.SpawnEnabled(ctx) {
 		return
 	}
+	modes := SpawnModesConfig{}
+	if l.settings != nil {
+		modes = l.settings.SpawnModes(ctx)
+	}
+	// Build the finite set before wiring any spawn tools. Recursively building
+	// each default's defaults both resets the depth budget and expands a tree
+	// before a single task can run. These runners are shared within this turn,
+	// just as they are shared by sibling tasks; taskscope enforces actual depth.
+	targets := spawnTargets{
+		explore:   l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Explore, boardAccess...),
+		verify:    l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Verify, boardAccess...),
+		implement: l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Implement, boardAccess...),
+	}
+	l.registerSpawnTargets(ctx, reg, parent, group, coordinator, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
+	for _, target := range [...]spawnTarget{targets.explore, targets.verify, targets.implement} {
+		if target.runner != nil {
+			l.registerSpawnTargets(ctx, target.registry, target.runner, group, coordinator, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
+		}
+	}
+}
+
+func (l *LiveRunner) registerSpawnTargets(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int, modes SpawnModesConfig, targets spawnTargets, boardAccess ...boardtools.Board) {
 	awaitTimeout := 30 * time.Second
 	awaitMaxTimeout := 5 * time.Minute
 	if l.settings != nil {
@@ -43,10 +76,8 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 			awaitMaxTimeout = 0
 		}
 	}
-	modes := SpawnModesConfig{}
 	fallback := spawn.FallbackPlanner
 	if l.settings != nil {
-		modes = l.settings.SpawnModes(ctx)
 		fallback = spawn.FallbackPolicy(l.settings.SpawnFallback(ctx))
 	}
 	var planner spawn.SpawnPlanner
@@ -69,13 +100,10 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 			planner = spawn.NewLLMSpawnPlanner(plannerProv)
 		}
 	}
-	exploreTarget := l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Explore, boardAccess...)
-	verifyTarget := l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Verify, boardAccess...)
-	implementTarget := l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Implement, boardAccess...)
 	launch := spawn.NewAsync(parent, group,
 		spawn.WithMaxDepth(maxDepth),
 		spawn.WithAgentResolver(func(name string) (*runner.Runner, error) {
-			return l.resolveAgentRunner(ctx, group, coordinator, name, boardAccess...)
+			return l.resolveAgentRunner(ctx, group, coordinator, name, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
 		}),
 		spawn.WithSpawnPlannerCandidates(planner, candidates),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
@@ -83,9 +111,9 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 		spawn.WithDefaultAgent(spawn.SpawnModeExplore, modes.Explore.DefaultAgent),
 		spawn.WithDefaultAgent(spawn.SpawnModeVerify, modes.Verify.DefaultAgent),
 		spawn.WithDefaultAgent(spawn.SpawnModeImplement, modes.Implement.DefaultAgent),
-		spawn.WithDefaultTarget(spawn.SpawnModeExplore, exploreTarget),
-		spawn.WithDefaultTarget(spawn.SpawnModeVerify, verifyTarget),
-		spawn.WithDefaultTarget(spawn.SpawnModeImplement, implementTarget),
+		spawn.WithDefaultTarget(spawn.SpawnModeExplore, targets.explore.runner),
+		spawn.WithDefaultTarget(spawn.SpawnModeVerify, targets.verify.runner),
+		spawn.WithDefaultTarget(spawn.SpawnModeImplement, targets.implement.runner),
 		spawn.WithModeMaxIterations(spawn.SpawnModeExplore, modes.Explore.MaxIterations),
 		spawn.WithModeMaxIterations(spawn.SpawnModeVerify, modes.Verify.MaxIterations),
 		spawn.WithModeMaxIterations(spawn.SpawnModeImplement, modes.Implement.MaxIterations),
@@ -94,9 +122,9 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 	launch.Register(reg, spawn.WithAwaitTimeout(awaitTimeout), spawn.WithAwaitMaxTimeout(awaitMaxTimeout))
 }
 
-func (l *LiveRunner) buildDefaultSpawnTarget(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, mode SpawnModeConfig, boardAccess ...boardtools.Board) *runner.Runner {
+func (l *LiveRunner) buildDefaultSpawnTarget(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, mode SpawnModeConfig, boardAccess ...boardtools.Board) spawnTarget {
 	if mode.DefaultAgent != "" || mode.DefaultTarget.Name == "" && mode.DefaultTarget.Model == "" {
-		return nil
+		return spawnTarget{}
 	}
 	target, err := l.buildAgentRunner(ctx, group, coordinator, catalog.Agent{
 		Provider: mode.DefaultTarget.Name,
@@ -104,12 +132,12 @@ func (l *LiveRunner) buildDefaultSpawnTarget(ctx context.Context, group *spawn.G
 	}, boardAccess...)
 	if err != nil {
 		slog.WarnContext(ctx, "spawn: default mode target unavailable", "provider", mode.DefaultTarget.Name, "model", mode.DefaultTarget.Model, "err", err)
-		return nil
+		return spawnTarget{}
 	}
 	return target
 }
 
-func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, name string, boardAccess ...boardtools.Board) (*runner.Runner, error) {
+func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, name string, maxDepth, spawnMaxIter int, modes SpawnModesConfig, targets spawnTargets, boardAccess ...boardtools.Board) (*runner.Runner, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("empty agent name")
@@ -117,19 +145,27 @@ func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group,
 	if l == nil || l.catalog == nil {
 		return nil, errors.New("no agent catalog configured")
 	}
-	l.catalog.Reload(l.ws.Root())
+	l.catalog.ReloadContext(ctx, l.ws.Root())
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
 	agent, ok := l.catalog.Agent(name)
 	if !ok {
 		return nil, fmt.Errorf("unknown agent %q", name)
 	}
-	return l.buildAgentRunner(ctx, group, coordinator, agent, boardAccess...)
+	target, err := l.buildAgentRunner(ctx, group, coordinator, agent, boardAccess...)
+	if err != nil {
+		return nil, err
+	}
+	l.registerSpawnTargets(ctx, target.registry, target.runner, group, coordinator, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
+	return target.runner, nil
 }
 
-func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, agent catalog.Agent, boardAccess ...boardtools.Board) (*runner.Runner, error) {
+func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, agent catalog.Agent, boardAccess ...boardtools.Board) (spawnTarget, error) {
 	l.mu.Lock()
 	parentProv, parentModel, parentSpec := l.target.Provider, l.target.Model, l.target.Spec
 	window, webSearch := l.target.Window, l.target.WebSearch
-	reserve, maxIter, spawnMaxIter, spawnDepth := l.target.Reserve, l.target.MaxIter, l.target.SpawnMaxIter, l.target.SpawnDepth
+	reserve, maxIter, spawnMaxIter := l.target.Reserve, l.target.MaxIter, l.target.SpawnMaxIter
 	settings := l.settings
 	l.mu.Unlock()
 
@@ -140,7 +176,7 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	prov := parentProv
 	if agent.Provider != "" || (agent.Model != "" && parentSpec.Name != "") {
 		if settings == nil {
-			return nil, fmt.Errorf("agent %q needs provider rebuild but settings are unavailable", agent.Name)
+			return spawnTarget{}, fmt.Errorf("agent %q needs provider rebuild but settings are unavailable", agent.Name)
 		}
 		spec := parentSpec
 		if agent.Provider != "" {
@@ -149,12 +185,12 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 		spec.Model = model
 		built, err := BuildProvider(ctx, settings.Registry, settings.Svc, spec)
 		if err != nil {
-			return nil, fmt.Errorf("agent %q provider: %w", agent.Name, err)
+			return spawnTarget{}, fmt.Errorf("agent %q provider: %w", agent.Name, err)
 		}
 		prov = built
 	}
 	if prov == nil {
-		return nil, fmt.Errorf("agent %q has no provider", agent.Name)
+		return spawnTarget{}, fmt.Errorf("agent %q has no provider", agent.Name)
 	}
 	maxIter = resolveSpawnMaxIterations(spawnMaxIter, agent.MaxIterations, maxIter)
 	if reserve <= 0 {
@@ -199,19 +235,18 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	}
 	src, reg, err := l.sourceWithExposure(ctx, webSearch, l.guardrailDeps(ctx), l.childMCPExposure())
 	if err != nil {
-		return nil, err
+		return spawnTarget{}, err
 	}
 	if len(boardAccess) != 0 {
 		if err := boardtools.Register(reg, boardAccess[0]); err != nil {
-			return nil, err
+			return spawnTarget{}, err
 		}
 	}
 	src = coderunner.CoordinateWorkspace(src, coordinator)
 	visible = NewModeFilteredSource(src, l.isPlan)
 	opts = append(opts, runner.WithTools(visible))
 	r := runner.New(runner.ClientFromProvider(prov), opts...)
-	l.registerSpawnTools(ctx, reg, r, group, coordinator, spawnDepth-1, spawnMaxIter, boardAccess...)
-	return r, nil
+	return spawnTarget{runner: r, registry: reg}, nil
 }
 
 func spawnRunnerPromptOption(l *LiveRunner, agent catalog.Agent, src func() tools.Source, automaticCompletion bool) options.Option[runner.Runner] {

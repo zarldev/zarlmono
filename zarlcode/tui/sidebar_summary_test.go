@@ -43,7 +43,7 @@ func sidebarText(ui *tui.UI, width, height int) string {
 	if width >= 160 {
 		sideWidth = 56
 	}
-	return screenRegion(surfaceCanvas(ui, width, height), width-sideWidth, 0, width, height-4)
+	return screenRegion(surfaceCanvas(ui, width, height), width-sideWidth, 0, width, height-3)
 }
 
 func screenRegion(canvas uv.ScreenBuffer, x0, y0, x1, y1 int) string {
@@ -226,7 +226,7 @@ func TestDashboardRetainsMetadataAndScrollGeometry(t *testing.T) {
 			ui.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
 			var collected strings.Builder
 			for range 180 {
-				collected.WriteString(screenRegion(surfaceCanvas(ui, width, 20), 2, 2, width-2, 15))
+				collected.WriteString(screenRegion(surfaceCanvas(ui, width, 20), 2, 2, width-2, 16))
 				ui.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 			}
 			text := strings.Join(strings.Fields(collected.String()), "")
@@ -235,10 +235,10 @@ func TestDashboardRetainsMetadataAndScrollGeometry(t *testing.T) {
 					t.Errorf("missing retained %q", want)
 				}
 			}
-			bottom := screenRegion(surfaceCanvas(ui, width, 20), 0, 0, width, 16)
+			bottom := screenRegion(surfaceCanvas(ui, width, 20), 0, 0, width, 17)
 			ui.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 			ui.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
-			if got := screenRegion(surfaceCanvas(ui, width, 20), 0, 0, width, 16); got != bottom {
+			if got := screenRegion(surfaceCanvas(ui, width, 20), 0, 0, width, 17); got != bottom {
 				t.Errorf("End differs from repeated Down:\n%s\nwant:\n%s", got, bottom)
 			}
 			ui.Update(tea.WindowSizeMsg{Width: width, Height: 30})
@@ -288,7 +288,7 @@ func TestDashboardNarrowMetadataPreservesRightEdge(t *testing.T) {
 	ui.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
 	var collected strings.Builder
 	for range 120 {
-		collected.WriteString(screenRegion(surfaceCanvas(ui, width, height), 2, 2, width-2, height-5))
+		collected.WriteString(screenRegion(surfaceCanvas(ui, width, height), 2, 2, width-2, height-4))
 		ui.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	text := strings.Join(strings.Fields(collected.String()), "")

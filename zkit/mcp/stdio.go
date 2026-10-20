@@ -81,6 +81,7 @@ func newStdioTransport(command string, args []string, env map[string]string) (*s
 	}
 
 	cmd := exec.CommandContext(context.Background(), command, args...)
+	zexec.StartProcessGroup(cmd)
 	cmd.Env = zexec.MinimalEnv(env)
 
 	stdin, err := cmd.StdinPipe()
@@ -353,6 +354,12 @@ func (t *stdioTransport) writeFrame(ctx context.Context, payload any, closingOK 
 	// forever and, because writeGate is held, every other Call/Notify with it.
 	werr := make(chan error, 1)
 	t.lifeM.Lock()
+	// Gate acquisition can win even when Done is already ready. Reject that
+	// request before starting a write, without tearing down the shared stream.
+	if cause := context.Cause(ctx); cause != nil {
+		t.lifeM.Unlock()
+		return cause
+	}
 	if t.closing && !closingOK {
 		t.lifeM.Unlock()
 		return errors.New("stdio transport closed")
@@ -480,9 +487,12 @@ func (t *stdioTransport) Close() error {
 		select {
 		case <-exited:
 		case <-time.After(2 * time.Second):
-			_ = t.cmd.Process.Kill()
+			_ = zexec.KillProcessGroup(t.cmd)
 			<-exited
 		}
+		// A graceful leader exit can leave descendants holding inherited pipes.
+		// They belong to this transport too, even when Wait already closed ours.
+		_ = zexec.KillProcessGroup(t.cmd)
 		t.workers.Wait()
 	})
 	return t.closeErr

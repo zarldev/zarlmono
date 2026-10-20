@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -36,6 +37,7 @@ type req struct { JSONRPC string ` + "`json:\"jsonrpc\"`" + `; ID int ` + "`json
 func main() {
  mode := os.Args[1]; scan := bufio.NewScanner(os.Stdin); enc := json.NewEncoder(os.Stdout)
  for scan.Scan() { var r req; if json.Unmarshal(scan.Bytes(), &r) != nil || r.ID == 0 { continue }
+  if mode == "silent" { continue }
   if r.Method == "server/discover" { _ = enc.Encode(map[string]any{"jsonrpc":"2.0", "id":r.ID, "error":map[string]any{"code":-32601, "message":"method not found"}}); continue }
   if r.Method == "initialize" { _ = enc.Encode(map[string]any{"jsonrpc":"2.0", "id":r.ID, "result":map[string]any{"protocolVersion":"2024-11-05", "capabilities":map[string]any{}, "serverInfo":map[string]any{"name":"test", "version":"0"}}}); continue }
   defs := []map[string]any{}
@@ -54,6 +56,29 @@ func main() {
 		t.Fatalf("build server: %v\n%s", err, out)
 	}
 	return bin
+}
+
+func TestMCPConnectCancelsInitialization(t *testing.T) {
+	server := buildMCPDiscoveryServer(t)
+	reg := dynamic.NewMCPRegistry(tools.NewRegistry(), nil)
+	t.Cleanup(func() { _ = reg.CloseAll() })
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	result, err := dynamic.NewMCPConnect(reg).Execute(ctx, tools.ToolCall{
+		ID: "connect", Arguments: tools.ToolParameters{
+			"name": "silent", "transport": "stdio", "command": server, "args": []string{"silent"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || !strings.Contains(result.Error, context.DeadlineExceeded.Error()) {
+		t.Fatalf("initialization = %+v, want deadline", result)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("caller deadline ignored for %s", elapsed)
+	}
 }
 
 func executeMCPConnect(t *testing.T, reg *tools.Registry, name, command, mode string) *tools.ToolResult {

@@ -28,6 +28,9 @@ func (l *LiveRunner) Close(ctx context.Context) error {
 	if !l.closing {
 		l.closing = true
 		l.shutdownDone = make(chan struct{})
+		if l.computer != nil {
+			l.computer.stopStartup()
+		}
 		turnCancel := l.turnCancel
 		shutdownDone := l.shutdownDone
 		go l.shutdown(drained, shutdownDone)

@@ -446,9 +446,11 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 		return nil, ErrSwarmReceiver
 	}
 	if l.catalog != nil {
-		l.catalog.Reload(l.ws.Root())
+		l.catalog.ReloadContext(ctx, l.ws.Root())
 	}
-	l.reloadInstructions()
+	if err := l.reloadInstructions(ctx); err != nil {
+		return nil, fmt.Errorf("refresh workspace instructions: %w", err)
+	}
 
 	// Runner resource assembly starts after its per-turn policy is resolved.
 	// The shared truncator is concurrency-safe, and top-level turns are serialized.

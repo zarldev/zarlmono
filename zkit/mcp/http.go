@@ -381,12 +381,19 @@ func (t *httpTransport) Call(ctx context.Context, req rpcRequest) (rpcResponse, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxRPCBodyBytes))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxRPCBodyBytes))
 		var failure rpcResponse
 		_ = json.Unmarshal(body, &failure)
 		failureError := &httpStatusError{Status: resp.StatusCode, RPC: failure.Error}
 		if resp.StatusCode == http.StatusNotFound && httpReq.Header.Get(headerSessionID) != "" && t.invalidateSession != nil {
 			t.invalidateSession(httpReq.Header.Get(headerSessionID))
+		}
+		// Keep status-driven session invalidation, but do not hide cancellation
+		// behind the status when it interrupted reading the error body.
+		if readErr != nil {
+			if cause := context.Cause(ctx); cause != nil {
+				return rpcResponse{}, cause
+			}
 		}
 		return rpcResponse{}, failureError
 	}

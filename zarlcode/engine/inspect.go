@@ -14,11 +14,10 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 )
 
-// Inspection is a read-only snapshot of what the next turn would assemble — the
-// resolved run target, the tool roster, the rendered system prompt, any
-// reload errors, and the loaded skills/agents/hooks from the catalog. Building it
-// starts no run and mutates no persistent state. The TUI maps it into its own
-// presentation type; nothing here depends on the UI.
+// Inspection previews turn assembly using the latest published discovery
+// snapshots: the resolved run target, tool roster, rendered system prompt,
+// discovery errors, and loaded skills/agents/hooks. It starts no run and mutates
+// no persistent state. The TUI maps it into its own presentation type.
 type Inspection struct {
 	PlanMode                bool
 	Model                   string
@@ -42,13 +41,11 @@ type Inspection struct {
 	Hooks []catalog.Hook
 }
 
-// Inspect builds an [Inspection] mirroring turn assembly without running
-// a turn: it snapshots the run target under the lock, reloads catalog and
-// instructions, arms the guardrail chain, enumerates the tool roster (including
-// the late-registered spawn tool against an inert client), and renders the
-// next-turn system prompt.
-// Inspection reloads runtime-owned discovery state, so an exclusive reservation
-// or shutdown returns an unavailable diagnostic instead of assembling a snapshot.
+// Inspect builds an [Inspection] without reloading catalog or instruction
+// files. Startup, turn assembly, and explicit catalog tools publish discovery
+// snapshots; inspection uses those snapshots to avoid filesystem traversal in
+// UI rendering. It still assembles the current guarded tool roster and prompt.
+// An exclusive reservation or shutdown returns an unavailable diagnostic.
 func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	var ins Inspection
 	if l == nil {
@@ -68,6 +65,9 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	profile := l.promptProfile
 	pm := l.pm
 	mcp := l.mcp
+	for _, err := range l.instructionErrs {
+		ins.Errors = append(ins.Errors, "instructions: "+err.Error())
+	}
 	l.mu.Unlock()
 
 	ins.WorkspaceRoot = l.ws.Root()
@@ -75,12 +75,9 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 		ins.Processes = pm.List()
 	}
 	if l.catalog != nil {
-		for _, err := range l.catalog.Reload(l.ws.Root()) {
+		for _, err := range l.catalog.Errors() {
 			ins.Errors = append(ins.Errors, "catalog: "+err.Error())
 		}
-	}
-	for _, err := range l.reloadInstructions() {
-		ins.Errors = append(ins.Errors, "instructions: "+err.Error())
 	}
 
 	ins.Guardrails = l.guardrailDeps(ctx)

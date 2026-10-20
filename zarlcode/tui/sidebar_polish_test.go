@@ -30,7 +30,7 @@ func TestSidebarPolishHierarchyAndSpacing(t *testing.T) {
 					x := width - sideWidth + 2
 					row := func(text string) int {
 						t.Helper()
-						for y := range height - 4 {
+						for y := range height - 3 {
 							if strings.Contains(screenRegion(canvas, x, y, width, y+1), text) {
 								return y
 							}

@@ -259,6 +259,7 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 		opt(l)
 	}
 	l.planStore.sink = l.sink
+	_ = l.reloadInstructions(context.Background())
 	return l
 }
 

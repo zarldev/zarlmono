@@ -13,18 +13,14 @@ import (
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
-func TestActivitySeparatorHasOneBlankRowAbove(t *testing.T) {
+func TestActivitySeparatorHasNoReservedBlankRowAbove(t *testing.T) {
 	tui.UseTheme(theme.DarkDefault())
 	defer tui.UseTheme(theme.Theme{})
 	for _, width := range []int{40, 220} {
 		for _, draft := range []string{"", "one\ntwo\nthree"} {
 			ui := tui.New()
 			ui.Update(tea.WindowSizeMsg{Width: width, Height: 30})
-			messages := make([]llm.Message, 30)
-			for i := range messages {
-				messages[i] = llm.Message{Role: llm.RoleUser, Content: "history"}
-			}
-			ui.AddTranscriptMessages(messages)
+			ui.AddTranscriptMessages([]llm.Message{{Role: llm.RoleUser, Content: strings.Repeat("history\n", 80)}})
 			ui.Update(teasink.ConversationStartedMsg{TaskID: "padding", Prompt: "working"})
 			if draft != "" {
 				ui.Update(tea.PasteMsg{Content: draft})
@@ -37,18 +33,23 @@ func TestActivitySeparatorHasOneBlankRowAbove(t *testing.T) {
 			if !strings.Contains(transcriptScreenRow(canvas, separator), "0:00") {
 				t.Fatal("input activity moved from its existing row")
 			}
-			if strings.TrimSpace(transcriptScreenRow(canvas, separator-1)) != "" {
-				t.Fatal("activity separator lacks blank row above")
-			}
-			if canvas.CellAt(2, separator-1).Style.Bg != nil {
-				t.Fatal("spacer inherited transcript role surface")
-			}
 			if draft != "" && !strings.Contains(transcriptScreenRow(canvas, 28), "three") {
-				t.Fatal("padding raised the input")
+				t.Fatal("removing the gap moved the input")
 			}
-			ui.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-			if strings.TrimSpace(transcriptScreenRow(surfaceCanvas(ui, width, 30), separator-1)) != "" {
-				t.Fatal("browse rendering filled the spacer")
+			// Browse into the uninterrupted history body, away from legitimate
+			// transcript padding at the tail and between turns.
+			for range 5 {
+				ui.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			}
+			canvas = surfaceCanvas(ui, width, 30)
+			if !strings.Contains(transcriptScreenRow(canvas, separator-1), "history") {
+				t.Fatalf("width %d draft %q: reserved blank row remains above input", width, draft)
+			}
+			if bg := canvas.CellAt(2, separator-1).Style.Bg; bg == nil || !sameSurface(bg, canvas.CellAt(2, separator-2).Style.Bg) {
+				t.Fatal("reclaimed history row lost its transcript surface")
+			}
+			if !strings.Contains(transcriptScreenRow(canvas, separator), "0:00") || ui.ComposerText() != draft {
+				t.Fatal("browsing changed the activity row or authored input")
 			}
 		}
 	}

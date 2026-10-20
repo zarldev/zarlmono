@@ -16,6 +16,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/toolparse"
 	"github.com/zarldev/zarlmono/zkit/options"
+	"github.com/zarldev/zarlmono/zkit/zexec"
 )
 
 const jsonNull = "null"
@@ -197,6 +198,16 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	if err != nil {
 		return false, fmt.Errorf("claudecode: stdout pipe: %w", err)
 	}
+	// Cancellation must reach descendants before waiting for inherited pipes.
+	// Closing stdout also interrupts parsing if a descendant escaped the group;
+	// WaitDelay bounds the remaining os/exec pipe-copy cleanup.
+	zexec.StartProcessGroup(cmd)
+	cmd.Cancel = func() error {
+		err := zexec.KillProcessGroup(cmd)
+		_ = stdout.Close()
+		return err
+	}
+	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
@@ -204,12 +215,17 @@ func (p *Provider) run(ctx context.Context, req llm.CompletionRequest, yield fun
 	}
 	toolCallState := newToolCallState()
 	usage, ok, parseErr := parseStream(stdout, yield, toolCallState, len(req.Tools) > 0, nativeStructured)
+	// Capture a caller/provider deadline before our own parse/consumer cleanup
+	// cancellation, including the read error caused by closing stdout.
+	runCause := context.Cause(runCtx)
 	if !ok || parseErr != nil {
 		cancel()
 	}
 	waitErr := cmd.Wait()
 	stderrText := strings.TrimSpace(stderr.String())
-	runCause := context.Cause(ctx)
+	if runCause == nil {
+		runCause = context.Cause(ctx)
+	}
 	if runCause == nil && parseErr == nil && ok {
 		runCause = context.Cause(runCtx)
 	}

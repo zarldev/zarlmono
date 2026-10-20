@@ -766,12 +766,42 @@ func (m *UI) SaveSession(ctx context.Context) error {
 	return nil
 }
 
+// sessionDeletionPending identifies a barrier that forbids final shutdown saves
+// for the active identity, without suppressing saves when an older identity retires.
+func (m *UI) sessionDeletionPending() bool {
+	if op := m.sessionPersistCurrent; op != nil && op.kind == sessionPersistDelete && op.sessionID() == m.session.ID {
+		return true
+	}
+	for _, op := range m.sessionPersistQueue {
+		if op.kind == sessionPersistDelete && op.sessionID() == m.session.ID {
+			return true
+		}
+	}
+	return false
+}
+
 // FlushSessionPersistence completes queued writes in FIFO order, then writes
 // the final resumable snapshot. It is called after the Bubble Tea loop stops,
 // when no command can concurrently mutate the queue.
 func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 	var firstErr error
-	protectedInput := false
+	protectedInput := m.sessionPersistCurrent != nil && m.sessionPersistCurrent.before != nil
+	deletingSession := m.sessionDeletionPending()
+	for _, op := range m.sessionPersistQueue {
+		protectedInput = protectedInput || op.before != nil
+	}
+	// Capture a final edit whose debounce was never delivered. Use the same
+	// versioned FIFO as normal draft saves, after any older captured writes.
+	// A delete barrier retires this identity; never append a final save behind it.
+	if !deletingSession && !protectedInput && !m.sourceConflict && m.rewindRecovery == "" &&
+		m.settings != nil && m.settings.Store != nil && m.intro == nil &&
+		(m.liveOperation == nil || (!m.exactResume && !m.durableDispatch())) &&
+		(m.composer.text() != "" || len(m.pendingAttachments) != 0 || len(m.rejectedDraftJSON) == 0) {
+		if _, err := m.sessionSnapshot(); errors.Is(err, errSessionSnapshotEmpty) {
+			// Flush below claims returned-but-unstarted commands itself.
+			_ = m.enqueueDraftPersist(m.draftGeneration)
+		}
+	}
 	// A timed-out flush retains queued reservation ownership for the lifecycle
 	// closer's subsequent join; dependencies must remain open until then.
 	for _, op := range m.sessionPersistQueue {
@@ -803,15 +833,13 @@ func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 				firstErr = fmt.Errorf("flush in-flight persistence: %w", result.err)
 			} else if result.sessionID == m.session.ID {
 				m.acknowledgeSource(current)
+				m.acknowledgeDurableDraft(current)
 				m.transcriptPersistedSessionID = result.sessionID
 				if result.revision > m.transcriptPersisted {
 					m.transcriptPersisted = result.revision
 				}
 			}
 			if current.retry != nil {
-				if result.err == nil && result.sessionID == m.session.ID {
-					m.acknowledgeDurableDraft(current)
-				}
 				m.finishSessionRetry(current, result)
 			}
 			m.sessionPersistRunning = false
@@ -845,21 +873,19 @@ func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 			}
 		} else if revision := op.transcriptRevision(); op.sessionID() == m.session.ID {
 			m.acknowledgeSource(&op)
+			m.acknowledgeDurableDraft(&op)
 			m.transcriptPersistedSessionID = op.sessionID()
 			if revision > m.transcriptPersisted {
 				m.transcriptPersisted = revision
 			}
 		}
 		if op.retry != nil {
-			if err == nil && op.sessionID() == m.session.ID {
-				m.acknowledgeDurableDraft(&op)
-			}
 			m.finishSessionRetry(&op, sessionPersistedMsg{err: err})
 		}
 	}
 	m.sessionPersistQueue = nil
-	if protectedInput {
-		return firstErr // do not overwrite the protected recovery prompt with an empty composer
+	if protectedInput || deletingSession {
+		return firstErr // preserve recovery input and deletion barriers
 	}
 	// A successful retry advanced the trusted receipt and completed boundary.
 	// Save any composer edits made after its capture; a failed retry still

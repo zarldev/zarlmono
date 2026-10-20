@@ -45,16 +45,17 @@ type MCPNotifier func(connection, method string, params json.RawMessage)
 // later. The exported type lets zarlcode construct the registry
 // once at startup and pass it to the per-tool constructors below.
 type MCPRegistry struct {
-	mu         sync.Mutex
-	clients    map[string]mcpConnection // name → connection
-	pending    map[string]struct{}      // names reserved by in-flight connects
-	reg        *tools.Registry          // registry to register/unregister tools against
-	notifier   MCPNotifier              // optional notification sink
-	policy     MCPConnectPolicy         // validates process/network-capable connections
-	connects   sync.WaitGroup           // in-flight connects owned by this registry
-	closeMu    sync.Mutex               // serializes CloseAll callers
-	generation uint64
-	closed     bool
+	mu          sync.Mutex
+	clients     map[string]mcpConnection      // name → connection
+	pending     map[string]context.CancelFunc // owned in-flight connection attempts
+	reg         *tools.Registry               // registry to register/unregister tools against
+	notifier    MCPNotifier                   // optional notification sink
+	policy      MCPConnectPolicy              // validates process/network-capable connections
+	connects    sync.WaitGroup                // in-flight connects owned by this registry
+	disconnects sync.WaitGroup                // removed connections still draining or closing
+	closeMu     sync.Mutex                    // serializes CloseAll callers
+	generation  uint64
+	closed      bool
 }
 
 // MCPConnectPolicy is the policy seam for approving or denying MCP
@@ -155,7 +156,7 @@ func (t registeredMCPTool) Execute(ctx context.Context, call tools.ToolCall) (*t
 func NewMCPRegistry(reg *tools.Registry, notifier MCPNotifier) *MCPRegistry {
 	return &MCPRegistry{
 		clients:  make(map[string]mcpConnection),
-		pending:  make(map[string]struct{}),
+		pending:  make(map[string]context.CancelFunc),
 		reg:      reg,
 		notifier: notifier,
 		policy:   DefaultMCPConnectPolicy,
@@ -213,12 +214,14 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 		policy = DefaultMCPConnectPolicy
 	}
 	notifier := r.notifier
-	r.pending[name] = struct{}{}
+	ctx, cancelSetup := context.WithCancel(ctx)
+	r.pending[name] = cancelSetup
 	r.connects.Add(1)
 	r.mu.Unlock()
 
 	reserved := true
 	defer func() {
+		cancelSetup()
 		if reserved {
 			r.mu.Lock()
 			delete(r.pending, name)
@@ -231,12 +234,20 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 		return nil, err
 	}
 
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+
 	var c *mcp.Client
 	var err error
 
 	switch conn.Type {
 	case Transports.TRANSPORTSTDIO:
-		c, err = mcp.NewStdioClient(conn.Command, conn.Args, conn.Env)
+		// Retain the default constructor's handshake ceiling while honoring
+		// caller cancellation. Successful clients own an independent lifetime.
+		initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		c, err = mcp.NewStdioClientContext(initCtx, conn.Command, conn.Args, conn.Env)
+		cancel()
 	case Transports.TRANSPORTHTTP:
 		// The approval gate above decides whether loopback is authorized.
 		// Keep that exception confined to the endpoint and recheck every dial.
@@ -274,6 +285,11 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 		r.mu.Unlock()
 		_ = c.Close()
 		return nil, errors.New("mcp registry is closed")
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		r.mu.Unlock()
+		_ = c.Close()
+		return nil, cause
 	}
 	if _, exists := r.clients[name]; exists {
 		r.mu.Unlock()
@@ -377,6 +393,10 @@ func (r *MCPRegistry) disconnect(name string) error {
 		r.mu.Unlock()
 		return fmt.Errorf("mcp connection %q not found", name)
 	}
+	// Admission shares the shutdown lock: once CloseAll detaches all clients,
+	// no disconnect can add work behind its wait.
+	r.disconnects.Add(1)
+	defer r.disconnects.Done()
 	delete(r.clients, name)
 	conn.lifecycle.cancel()
 	if conn.cancelSub != nil {
@@ -389,19 +409,18 @@ func (r *MCPRegistry) disconnect(name string) error {
 	return conn.client.Close()
 }
 
-// CloseAll tears down every live MCP connection — revoking new calls,
-// cancelling and draining accepted calls, unregistering tools, then closing
-// clients. No registry lock is held across a wait or remote close. Idempotent.
+// CloseAll stops new connections and calls, cancels pending setup and accepted
+// calls, unregisters tools, then joins setup, closes clients, and joins concurrent
+// disconnects. No registry lock is held across a wait or remote close. Idempotent.
 func (r *MCPRegistry) CloseAll() error {
 	r.closeMu.Lock()
 	defer r.closeMu.Unlock()
 
 	r.mu.Lock()
 	r.closed = true
-	r.mu.Unlock()
-	r.connects.Wait()
-
-	r.mu.Lock()
+	for _, cancel := range r.pending {
+		cancel()
+	}
 	connections := make(map[string]mcpConnection, len(r.clients))
 	for name, conn := range r.clients {
 		connections[name] = conn
@@ -414,6 +433,8 @@ func (r *MCPRegistry) CloseAll() error {
 	}
 	r.mu.Unlock()
 
+	r.connects.Wait()
+
 	var firstErr error
 	for name, conn := range connections {
 		conn.lifecycle.calls.Wait()
@@ -421,6 +442,7 @@ func (r *MCPRegistry) CloseAll() error {
 			firstErr = fmt.Errorf("close mcp %q: %w", name, err)
 		}
 	}
+	r.disconnects.Wait()
 	return firstErr
 }
 

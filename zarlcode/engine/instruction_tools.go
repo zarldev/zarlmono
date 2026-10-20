@@ -112,7 +112,7 @@ func (t *loadInstructionTool) Definition() tools.ToolSpec {
 		})}
 }
 
-func (t *loadInstructionTool) Execute(_ context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+func (t *loadInstructionTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
 	args, derr := tools.DecodeArgs[loadInstructionArgs](call.Arguments)
 	if derr != nil {
 		return tools.Failure(call.ID, derr), nil
@@ -122,7 +122,10 @@ func (t *loadInstructionTool) Execute(_ context.Context, call tools.ToolCall) (*
 		return tools.Failure(call.ID, tools.Validation("instruction_load", "path is required")), nil
 	}
 
-	doc, err := instructions.LoadOne(t.wsRoot, path)
+	doc, err := instructions.LoadOneContext(ctx, t.wsRoot, path)
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 	if err != nil {
 		// List the known paths so the model can recover.
 		known := []string{}

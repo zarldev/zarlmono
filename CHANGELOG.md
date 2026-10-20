@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.21.1] — 2026-10-20
+
+### fixed
+
+- Make browser startup cancellable during caller cancellation and shutdown, retain ownership through cleanup, and report errors closing an unpublished session.
+- Bound default spawn-target construction without recursively expanding targets before tasks can run.
+- Honor cancellation during catalog, instruction and prompt discovery, and avoid blocking on special files encountered during discovery.
+- Preserve the latest draft during shutdown while respecting protected recovery input and session-deletion barriers.
+- Remove the unstyled reserved row above the composer without moving the input, status or styled separator; retain transcript-owned trailing padding.
+
+### upgrade notes
+
+- Requires zkit v0.21.1. Publish and verify that module before publishing this consumer release.
+- Agent, skill and hook definitions are limited to 1 MiB each. Oversized definitions are reported as errors instead of parsing or executing a truncated prefix.
+
+## [zkit/v0.21.1] — 2026-10-20
+
+### fixed
+
+- Cancel pending MCP connection setup during registry shutdown, revoke active calls before draining, and join concurrently disconnecting clients.
+- Preserve caller cancellation when reading MCP HTTP error bodies and reject cancelled stdio writes before admitting them to the shared stream.
+- Terminate owned subprocess groups during MCP stdio cleanup and Claude Code or dynamic-tool cancellation, including descendants holding inherited pipes.
+
 ## [zarlcode/v0.21.0] — 2026-10-19
 
 ### added
