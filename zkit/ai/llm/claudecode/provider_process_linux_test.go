@@ -99,17 +99,30 @@ func TestProviderStopsDescendantsHoldingPipes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stat, err := os.ReadFile("/proc/" + string(data) + "/stat")
-			if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			// An orphan may remain a zombie until the host's init reaps it.
-			_, state, found := strings.Cut(string(stat), ") ")
-			if !found || (!strings.HasPrefix(state, "Z ") && !strings.HasPrefix(state, "X ")) {
-				t.Fatalf("descendant still running after provider returned: %s", stat)
+			// SIGKILL delivery to a descendant is asynchronous even after the
+			// leader has been reaped. Observe bounded termination, as the MCP
+			// and dynamic-binary process tests do, without requiring init to reap.
+			deadline := time.NewTimer(time.Second)
+			defer deadline.Stop()
+			tick := time.NewTicker(time.Millisecond)
+			defer tick.Stop()
+			for {
+				stat, err := os.ReadFile("/proc/" + string(data) + "/stat")
+				if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, state, _ := strings.Cut(string(stat), ") ")
+				if strings.HasPrefix(state, "Z ") || strings.HasPrefix(state, "X ") {
+					break // orphan reaping belongs to the host's init
+				}
+				select {
+				case <-tick.C:
+				case <-deadline.C:
+					t.Fatalf("descendant still running after provider returned: %s", stat)
+				}
 			}
 		})
 	}
