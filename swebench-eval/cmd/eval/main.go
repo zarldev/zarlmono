@@ -38,6 +38,7 @@ import (
 	"github.com/zarldev/zarlmono/swebench-eval/evalconfig"
 	"github.com/zarldev/zarlmono/swebench-eval/harness"
 	"github.com/zarldev/zarlmono/swebench-eval/manifest"
+	"github.com/zarldev/zarlmono/swebench-eval/refine"
 	"github.com/zarldev/zarlmono/swebench-eval/report"
 	"github.com/zarldev/zarlmono/swebench-eval/runner"
 	"github.com/zarldev/zarlmono/swebench-eval/task"
@@ -92,6 +93,13 @@ func run() (runErr error) {
 		os.Exit(2)
 	}
 
+	if cfg.Persistence.RunID == "" {
+		cfg.Persistence.RunID = uuid.NewString()
+	}
+	if err := prepareExperiment(&cfg); err != nil {
+		return err
+	}
+
 	ablations, err := cfg.Input.Ablations()
 	if err != nil {
 		return fmt.Errorf("--ablations: %w", err)
@@ -128,9 +136,6 @@ func run() (runErr error) {
 	}
 	defer store.Close()
 
-	if cfg.Persistence.RunID == "" {
-		cfg.Persistence.RunID = uuid.NewString()
-	}
 	startedAt := time.Now()
 	scoreStatus := runner.ScoreStatuses.NOTREQUESTED
 	if cfg.Scoring.Enabled {
@@ -139,6 +144,9 @@ func run() (runErr error) {
 	driverNames := make([]string, len(drivers))
 	for i, driver := range drivers {
 		driverNames[i] = driver.Name()
+	}
+	if cfg.Refinement.Enabled {
+		driverNames = refine.PlannedDrivers()
 	}
 	manifestJSON, err := manifest.Marshal(cfg, specs, driverNames)
 	if err != nil {
@@ -204,7 +212,11 @@ func run() (runErr error) {
 		},
 	}
 
-	results, err = runner.Run(ctx, runCfg)
+	if cfg.Refinement.Enabled {
+		results, err = runRefinement(ctx, cfg, runCfg)
+	} else {
+		results, err = runner.Run(ctx, runCfg)
+	}
 	results.ScoreStatus = scoreStatus
 	if err := errors.Join(err, persistErr, ctx.Err()); err != nil {
 		return fmt.Errorf("run: %w", err)
@@ -246,6 +258,13 @@ func run() (runErr error) {
 // adapters with shared per-driver config. Unknown names are rejected so a
 // typo cannot silently change the evaluation comparison set.
 func buildDrivers(cfg evalconfig.Config, ablations []harness.Ablation) ([]harness.Driver, error) {
+	if trials := cfg.Experiment.Trials(); len(trials) > 0 {
+		drivers := make([]harness.Driver, 0, len(trials))
+		for _, trial := range trials {
+			drivers = append(drivers, newZarlcodeDriver(cfg, harness.Ablation{}, trial))
+		}
+		return drivers, nil
+	}
 	names := strings.Split(cfg.Input.Drivers, ",")
 	out := make([]harness.Driver, 0, len(names))
 	for _, raw := range names {
@@ -261,30 +280,7 @@ func buildDrivers(cfg evalconfig.Config, ablations []harness.Ablation) ([]harnes
 				arms = []harness.Ablation{{}}
 			}
 			for _, arm := range arms {
-				out = append(out, &harness.ZarlcodeDriver{
-					Ablation:            arm,
-					EnvFile:             cfg.Zarlcode.EnvFile,
-					StateDB:             cfg.Zarlcode.StateDB,
-					MaxIter:             cfg.Zarlcode.MaxIter,
-					ToolConcurrency:     cfg.Zarlcode.ToolConcurrency,
-					ContextWindow:       cfg.Zarlcode.ContextWindow,
-					StreamIdle:          cfg.Zarlcode.StreamIdle,
-					IterationTimeout:    cfg.Zarlcode.IterationTimeout,
-					DeadlineGrace:       cfg.Zarlcode.DeadlineGrace,
-					Provider:            cfg.Zarlcode.Provider,
-					Model:               cfg.Zarlcode.Model,
-					CodexEffort:         cfg.Zarlcode.CodexEffort,
-					LlamacppResetURL:    cfg.Zarlcode.LlamacppResetURL,
-					AllowRemoteResetURL: cfg.Zarlcode.AllowRemoteResetURL,
-					VerifiedAttempts:    cfg.Zarlcode.VerifiedAttempts,
-					VerifyDataset:       cfg.Scoring.Dataset,
-					VerifyPython:        cfg.Scoring.Python,
-					VerifyWorkers:       cfg.Zarlcode.VerifyWorkers,
-					VerifyWorkDir:       cfg.Zarlcode.VerifyWorkDir,
-					VerifyTimeout:       cfg.Zarlcode.VerifyTimeout,
-					ThreadTranscript:    cfg.Zarlcode.ThreadTranscript,
-					TranscriptDir:       cfg.Zarlcode.TranscriptDir,
-				})
+				out = append(out, newZarlcodeDriver(cfg, arm, harness.Trial{}))
 			}
 		default:
 			return nil, fmt.Errorf("unknown driver %q", name)

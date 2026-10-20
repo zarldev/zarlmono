@@ -156,6 +156,13 @@ type Result struct {
 	// subprocess. Useful for debugging individual failures.
 	HarnessLog string
 
+	// Evidence identifies a successfully settled trial artifact. Its zero value
+	// means no complete artifact was captured; it never certifies task correctness.
+	Evidence EvidenceReceipt
+	// EvidenceFile identifies an allocated artifact even if capture failed. It is
+	// unverified unless Evidence contains its settled digest-bound receipt.
+	EvidenceFile string
+
 	// Err is non-nil for terminal driver failures (subprocess crash,
 	// timeout, missing binary). A driver's underlying harness
 	// reporting "I couldn't solve this task" returns Err=nil — that's
