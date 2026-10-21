@@ -265,6 +265,23 @@ func (s *Session) reconcileTopLevelRun() {
 	s.Run.bumpRevision()
 }
 
+// reconcileMissingTerminal retires observed tasks only after the runtime's
+// completion marker proves the turn and its children have drained. No usage or
+// successful terminal outcome is inferred from that marker.
+func (s *Session) reconcileMissingTerminal(now time.Time) {
+	for taskID, task := range s.Run.tasks {
+		if task.depth == 0 {
+			s.workingSet().CompleteTurn(taskID)
+			s.checkpoints().CompleteTurn(taskID, now)
+		}
+	}
+	clear(s.Run.tasks)
+	s.Run.toolsRunning = 0
+	s.Run.nestedRunning = 0
+	clear(s.Run.nestedActive)
+	s.reconcileTopLevelRun()
+}
+
 type providerErrorEnvelope struct {
 	Error   providerErrorBody `json:"error"`
 	Detail  string            `json:"detail"`

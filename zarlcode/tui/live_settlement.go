@@ -16,6 +16,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
+var errLiveTerminalMissing = errors.New("turn execution returned without a terminal event")
+
 // liveTurnOperation is owned by Update. Command closures copy its identity;
 // runner task identity is filled only when its start event is applied.
 type liveTurnOperation struct {
@@ -160,6 +162,17 @@ func (m *UI) handleSettledLiveTurn(msg settledLiveTurnMsg) tea.Cmd {
 		return cmd
 	}
 	op.completed = true
+	if !op.ended || op.turnID == "" {
+		// The in-band marker proves execution and child cleanup returned. A
+		// missing terminal is an unknown outcome, not a still-running turn or
+		// a successful exact boundary. Retain content and require explicit
+		// continuation rather than silently consuming queued input.
+		m.session.reconcileMissingTerminal(time.Now())
+		m.timeline.recoverInterrupted()
+		m.timeline.addNotice(palette.Warning.On("⚠ turn outcome unknown — execution returned without a terminal event"))
+		m.completedBoundary = nil
+		return m.failLiveSettlement(errLiveTerminalMissing)
+	}
 	return m.persistSettledLiveTurn()
 }
 

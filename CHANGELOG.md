@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [zarlcode/v0.21.1] — 2026-10-20
+## [zarlcode/v0.21.1] — 2026-10-21
 
 ### fixed
 
@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Honor cancellation during catalog, instruction and prompt discovery, and avoid blocking on special files encountered during discovery.
 - Preserve the latest draft during shutdown while respecting protected recovery input and session-deletion barriers.
 - Remove the unstyled reserved row above the composer without moving the input, status or styled separator; retain transcript-owned trailing padding.
+- Recover from a missing terminal event after turn execution returns: clear stale working activity, preserve interrupted content and queued input, and report an unknown outcome without inventing a successful completion.
 
 ### upgrade notes
 

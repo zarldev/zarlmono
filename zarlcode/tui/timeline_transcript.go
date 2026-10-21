@@ -53,7 +53,7 @@ func (tl *timeline) addUserTranscript(text string, attachments []transcript.Atta
 	}
 }
 
-func (tl *timeline) restoreThread(thread transcript.Thread) {
+func (tl *timeline) restoreThread(thread transcript.Thread) map[string]item {
 	tl.Clear()
 	tl.thread = transcript.NewReducerFrom(thread)
 
@@ -243,6 +243,29 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 		wireTranscriptItem(it, nil)
 	}
 	tl.clearTranscriptPersistence()
+	return items
+}
+
+// recoverInterrupted preserves the live input FIFO while replacing unfinished
+// projections. A historical restore alone must not reactivate queued entries.
+func (tl *timeline) recoverInterrupted() {
+	queued, entryIDs := tl.queued, tl.queuedEntries
+	pendingPersist := tl.pendingPersist
+	recovered, _ := tl.transcriptThread().RecoverInterrupted()
+	items := tl.restoreThread(recovered)
+	for i, entryID := range entryIDs {
+		q := queued[i]
+		if entryID == "" {
+			// Durable queue intents are deliberately absent from the thread.
+			tl.appendItem(q)
+		} else {
+			// Live FIFO identities refer only to queued-user entries in this thread.
+			q, _ = items[entryID].(*queuedUserItem)
+		}
+		tl.queued = append(tl.queued, q)
+		tl.queuedEntries = append(tl.queuedEntries, entryID)
+	}
+	tl.pendingPersist = pendingPersist
 }
 
 func appendProjectedItem(

@@ -123,6 +123,8 @@ func (m *UI) sessionLossRisk() bool {
 // error text that could contain private context, SQL values or credentials.
 func (m *UI) sessionSaveFailureSummary() string {
 	switch {
+	case errors.Is(m.unsavedTurnError, errLiveTerminalMissing):
+		return "turn outcome unknown"
 	case errors.Is(m.unsavedTurnError, db.ErrCheckpointConflict), errors.Is(m.unsavedTurnError, db.ErrTranscriptConflict):
 		return "session changed elsewhere"
 	case errors.Is(m.unsavedTurnError, rewind.ErrInvalid):
