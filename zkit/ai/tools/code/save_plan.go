@@ -43,7 +43,7 @@ type SavePlanTool struct{ ws Workspace }
 // decodes into via tools.DecodeArgs. Field tags drive both JSON decoding
 // and SchemaFor schema generation.
 type SavePlanArgs struct {
-	Name    string `json:"name,omitempty" doc:"Filename slug (without extension). Lowercase letters, digits, dash, underscore. Empty = a timestamp slug like \"plan-20260515-1042\". Must not contain slashes — paths are locked to .zarlcode/plans/."`
+	Name    string `json:"name,omitempty" doc:"Filename slug, no extension/slashes: lowercase letters, digits, dash, underscore. Empty = timestamp slug."`
 	Content string `json:"content" doc:"Full markdown body of the plan."`
 }
 
@@ -66,11 +66,8 @@ func (t *SavePlanTool) Definition() tools.ToolSpec {
 		Name:            ToolNameSavePlan,
 		WorkspaceAccess: tools.WorkspaceAccesses.WRITE,
 		WorkspaceScope:  tools.WorkspaceScopeFixed(".zarlcode/plans"),
-		Description: "Save a plan-mode artifact to .zarlcode/plans/<name>.md. " +
-			"Use at the end of plan-mode work to persist the proposal as a " +
-			"markdown document the user can revisit, edit, or share. Writes " +
-			"are restricted to the plans directory; this tool cannot modify " +
-			"any other file.",
+		Description: "Persist the proposal as Markdown at the end of Plan work in .zarlcode/plans/<name>.md. " +
+			"Writes only within that directory.",
 		Parameters: tools.SchemaFor[SavePlanArgs](),
 	}
 }
@@ -102,8 +99,8 @@ func (t *SavePlanTool) Execute(_ context.Context, call tools.ToolCall) (*tools.T
 		}
 		return tools.Failure(call.ID, tools.Validation("save_plan", fmt.Sprintf(
 			"content too large (%d bytes; cap %d bytes). "+
-				"Scaffold first with save_plan(name=%q, content=\"\") then call save_plan_append "+
-				"repeatedly with chunks up to %d bytes each. "+
+				"Start with save_plan(name=%q, content=<non-empty first chunk>), then call save_plan_append "+
+				"with the remaining chunks, each call up to %d bytes. "+
 				"The cap is the only constraint — chunks well below the cap waste iterations.",
 			len(args.Content), maxWriteContentBytes, hint, maxWriteContentBytes))), nil
 	}

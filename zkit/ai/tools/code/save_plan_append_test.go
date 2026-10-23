@@ -126,4 +126,30 @@ func TestSavePlan_OversizeErrorPointsToAppend(t *testing.T) {
 	if !strings.Contains(res.Error, "save_plan_append") {
 		t.Errorf("oversize error should name save_plan_append as the recovery path; got %q", res.Error)
 	}
+	if !strings.Contains(res.Error, "non-empty first chunk") {
+		t.Fatalf("recovery must start with non-empty content: %s", res.Error)
+	}
+	appendTool := code.NewSavePlanAppendTool(ws)
+	if !strings.Contains(appendTool.Definition().Description, "non-empty first chunk") {
+		t.Fatal("append description disagrees with oversize recovery")
+	}
+	path := filepath.Join(ws.Root(), code.PlansDir, "oversize.md")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("oversized save touched destination: %v", err)
+	}
+	// Execute the advertised recovery: a non-empty first chunk, then remainder.
+	const firstChunkBytes = 256 * 1024
+	if result := execTyped(t, tool, code.SavePlanArgs{Name: "oversize", Content: big[:firstChunkBytes]}); !result.Success {
+		t.Fatalf("save first chunk: %s", result.Error)
+	}
+	if result := execTyped(t, appendTool, code.SavePlanAppendArgs{Name: "oversize", Content: big[firstChunkBytes:]}); !result.Success {
+		t.Fatalf("append remainder: %s", result.Error)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != big {
+		t.Fatal("chunked recovery changed plan content")
+	}
 }

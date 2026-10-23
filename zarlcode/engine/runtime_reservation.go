@@ -370,6 +370,7 @@ func (r *RuntimeReservation) restoreConversationState(messages []llm.Message, sa
 	r.owner.context.context = llm.CloneMessages(messages)
 	r.owner.context.exact = true
 	r.owner.mu.Lock()
+	r.owner.rotateProgramOutputsLocked()
 	r.owner.target = target
 	r.owner.modeGeneration++
 	r.owner.mu.Unlock()

@@ -37,6 +37,7 @@ var planAllowedToolNames = [...]tools.ToolName{
 	ToolNameListInstructions,
 	ToolNameLoadInstruction,
 	programtools.ToolName,
+	programtools.ToolNameOutputRead,
 	computertools.ToolNameComputerObserve,
 	dynamic.ToolNameMCPList,
 	code.ToolNameBashOutput,
@@ -74,38 +75,26 @@ func PlanAllows(name tools.ToolName) bool {
 // semanticHostToolNames returns the stable host names that must remain reserved
 // even when their optional local implementation is disabled for this turn.
 func semanticHostToolNames() []tools.ToolName {
-	return planAllowedToolNames[:]
+	names := append([]tools.ToolName(nil), planAllowedToolNames[:]...)
+	return append(names, computertools.ToolNameComputerAct)
 }
 
-// modeFilteredSource wraps a tools.Source and, when plan() reports PLAN mode,
-// elides the blocked tools from the iterated list AND returns a clear error
-// if the model dispatches one anyway. It holds the mode as a closure (not a
-// captured value) so a mid-run toggle takes effect on the very next dispatch,
-// matching the runner's pull-based source contract.
+// modeFilteredSource keeps the advertised tool surface stable while enforcing
+// workflow authority at dispatch. The live closure applies mode changes to the
+// next call without changing tool definitions or their ordering.
 type modeFilteredSource struct {
 	inner tools.Source
 	plan  func() bool
 }
 
+// NewModeFilteredSource preserves schemas and gates PLAN dispatch with PlanAllows.
 func NewModeFilteredSource(inner tools.Source, plan func() bool) *modeFilteredSource {
 	return &modeFilteredSource{inner: inner, plan: plan}
 }
 
-// Tools yields every inner tool in BUILD mode, and only the allowlisted ones
-// in PLAN mode (registration order preserved — the model sees the same list
-// shape, just shorter).
+// Tools preserves the inner schema surface in both workflow modes.
 func (s *modeFilteredSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
-	return func(yield func(tools.Tool) bool) {
-		plan := s.plan()
-		for t := range s.inner.Tools(ctx) {
-			if plan && !PlanAllows(t.Definition().Name) {
-				continue
-			}
-			if !yield(t) {
-				return
-			}
-		}
-	}
+	return s.inner.Tools(ctx)
 }
 
 // Execute dispatches iff the tool is allowed in the current mode. A blocked
@@ -141,7 +130,7 @@ func newReservedRemoteSource(inner tools.Source) tools.Source {
 func (s *reservedRemoteSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 	return func(yield func(tools.Tool) bool) {
 		for tool := range s.inner.Tools(ctx) {
-			if PlanAllows(tool.Definition().Name) {
+			if PlanAllows(tool.Definition().Name) || tool.Definition().Name == computertools.ToolNameComputerAct {
 				continue
 			}
 			if !yield(tool) {
@@ -152,7 +141,7 @@ func (s *reservedRemoteSource) Tools(ctx context.Context) iter.Seq[tools.Tool] {
 }
 
 func (s *reservedRemoteSource) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	if PlanAllows(call.ToolName) {
+	if PlanAllows(call.ToolName) || call.ToolName == computertools.ToolNameComputerAct {
 		return nil, tools.Permission(call.ToolName.String(), "tool name is reserved by the host")
 	}
 	return s.inner.Execute(ctx, call)

@@ -264,6 +264,13 @@ tasks:
         echo "pushed release tag: $tag"
     requires:
       vars: [VERSION]
+  release-source-check:
+    desc: Reject dirty/stale candidates against explicitly verified commit IDs
+    cmds:
+      - go run ./tools/releasecheck/cmd/releasecheck -source-base '{{.BASE}}' -source-candidate '{{.CANDIDATE}}'
+    requires:
+      vars: [BASE, CANDIDATE]
+
   # --- SWE-bench eval tool ---
 
   sweeval:

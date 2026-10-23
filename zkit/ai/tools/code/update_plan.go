@@ -41,8 +41,8 @@ type UpdatePlanTool struct {
 // UpdatePlanStepArg is one step in the typed update_plan payload.
 // Mirrors the JSON Schema's per-item object {step, status}.
 type UpdatePlanStepArg struct {
-	Step   string     `json:"step" doc:"Step description."`
-	Status StepStatus `json:"status" enum:"pending,in_progress,completed" doc:"Step status."`
+	Step   string     `json:"step"`
+	Status StepStatus `json:"status" enum:"pending,in_progress,completed"`
 }
 
 // UpdatePlanArgs is the typed argument struct UpdatePlanTool.Execute
@@ -51,7 +51,7 @@ type UpdatePlanStepArg struct {
 // dance, no per-field type assertions.
 type UpdatePlanArgs struct {
 	Plan        []UpdatePlanStepArg `json:"plan" doc:"Complete ordered plan; replaces the prior plan."`
-	Explanation string              `json:"explanation,omitempty" doc:"Optional short reason for the update."`
+	Explanation string              `json:"explanation,omitempty" doc:"Short reason for this update."`
 }
 
 // NewUpdatePlanTool returns a tool bound to store. Caller is
@@ -70,7 +70,7 @@ func (t *UpdatePlanTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:            ToolNameUpdatePlan,
 		WorkspaceAccess: tools.WorkspaceAccesses.NONE,
-		Description:     "Replace the live plan with the complete ordered step list. Keep statuses pending, in_progress, or completed truthful as work changes.",
+		Description:     "Replace the live plan with the complete ordered steps; keep statuses truthful as work changes.",
 		Parameters:      tools.SchemaFor[UpdatePlanArgs](),
 	}
 }

@@ -104,6 +104,11 @@ func cloneMessages(messages []llm.Message) []llm.Message {
 func (c *ContextCache) restore(context []llm.Message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.restoreLocked(context)
+}
+
+// restoreLocked requires the context gate to be held by the caller.
+func (c *ContextCache) restoreLocked(context []llm.Message) {
 	repaired, changed := agentcompact.RepairToolPairing(cloneMessages(context))
 	if changed > 0 {
 		slog.Warn("restore: repaired unbalanced tool-call pairing in saved context",

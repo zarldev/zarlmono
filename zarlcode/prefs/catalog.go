@@ -169,7 +169,9 @@ const (
 	KeyCredentialProtection          = "credential_protection" //nolint:gosec // Database setting name, not a credential.
 	KeySudoAskpass                   = "sudo_askpass"
 	KeyEnableWeb                     = "enable_web"
+	KeyEnableComputer                = "enable_computer"
 	KeyProgrammaticTools             = "programmatic_tools"
+	KeyProgramOutputRecovery         = "program_output_recovery"
 	KeyEnableMCP                     = "enable_mcp"
 	KeyMCPToolExposure               = "mcp_tool_exposure"
 	KeyEnableBackground              = "enable_background"

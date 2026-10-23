@@ -64,7 +64,7 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 	src := engine.NewModeFilteredSource(inner, func() bool { return plan })
 	ctx := t.Context()
 
-	// --- PLAN: read-only surface ---
+	// PLAN advertises stable schemas, but still blocks mutating dispatch.
 	names := listedNames(t.Context(), src)
 	if !names[code.ToolNameRead] || !names["web_search"] {
 		t.Errorf("plan: read/web_search should be listed: %v", names)
@@ -88,8 +88,8 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 			t.Errorf("plan: read/planning tool %q should be listed: %v", planTool, names)
 		}
 	}
-	if names[code.ToolNameWrite] || names[code.ToolNameEdit] || names[code.ToolNameBash] {
-		t.Errorf("plan: mutating tools/bash should be filtered out: %v", names)
+	if !names[code.ToolNameWrite] || !names[code.ToolNameEdit] || !names[code.ToolNameBash] {
+		t.Errorf("plan: schemas should remain stable: %v", names)
 	}
 	for _, blocked := range []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit, code.ToolNameBash} {
 		if _, err := src.Execute(ctx, tools.ToolCall{ToolName: blocked}); err == nil {
@@ -165,15 +165,13 @@ func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
 	plan := true
 	visible := engine.NewModeFilteredSource(inner, func() bool { return plan })
 
-	// PLAN mode filters the tools delivered to the model (via the tool interface),
-	// not the prompt text — the prompt no longer enumerates a roster. Assert the
-	// filter on the curated source, and that the prompt carries no tool list.
+	// PLAN keeps advertised schemas stable; dispatch still enforces authority.
 	planNames := toolNameSet(engine.ToolInfoFromSource(t.Context(), visible))
 	if !planNames[code.ToolNameRead] || !planNames[spawn.ToolNameAgentSpawn] {
 		t.Fatalf("plan mode dropped a read-only tool: %v", planNames)
 	}
-	if planNames["write"] || planNames["bash"] {
-		t.Fatalf("plan mode leaked a mutating tool: %v", planNames)
+	if !planNames["write"] || !planNames["bash"] {
+		t.Fatalf("plan mode changed the advertised tool surface: %v", planNames)
 	}
 
 	prompt, err := engine.RenderLivePrompt("plan", engine.LivePlanPromptTemplate, "/repo", nil, nil, nil, engine.ToolInfoFromSource(t.Context(), visible), "")

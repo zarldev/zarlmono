@@ -3,6 +3,7 @@ package compact
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -26,7 +27,7 @@ const (
 	tieredToolTruncationStart = "\n[truncated — "
 	tieredToolTruncationEnd   = " chars elided post-compact]"
 	tieredToolElisionStart    = "[tool result elided post-compact — original ~"
-	tieredToolElisionEnd      = " bytes. Re-run to recover.]"
+	tieredToolElisionEnd      = " bytes. Consult retained output; do not repeat side effects.]"
 )
 
 const tieredAssistantCapsuleEdgeChars = tieredAssistantTruncateChars / 2
@@ -82,13 +83,8 @@ type Tiered struct {
 // budget) fires at roughly 30% of the model's actual capacity —
 // comfortable headroom for the next prompt + response.
 //
-// Pass 0 to fall back to [TieredDefaultTargetBytes], which is sized
-// for 32k-token windows. Computed budgets smaller than the default
-// are clamped up to it: a misconfigured / too-small window would
-// otherwise yield a trigger tight enough to trip Phase 1 on every
-// iteration, which was the original "still aggressively compacting
-// with tons of headroom" bug — the constructor was hardcoded to the
-// 32k default while the runtime model was 1M.
+// Pass 0 to fall back to [TieredDefaultTargetBytes], sized for 32k-token
+// windows. Smaller computed budgets retain that default floor.
 func NewTiered(ctxWindowTokens int) *Tiered {
 	target := TieredDefaultTargetBytes
 	if ctxWindowTokens > 0 {
@@ -155,8 +151,10 @@ func (t *Tiered) plan(history []llm.Message, keepRecent int) tieredPlan {
 		if msg.Role == llm.RoleTool {
 			tool := planTieredToolPhase1(msg)
 			phase1Savings += tool.saved
-			placeholderBytes := len(tieredToolElisionStart) + decimalDigits(tool.contentBytes) + len(tieredToolElisionEnd)
-			phase3Savings += max(tool.contentBytes-placeholderBytes, 0)
+			if toolRecoveryStart(msg.Content) < 0 {
+				placeholderBytes := len(tieredToolElisionStart) + decimalDigits(tool.contentBytes) + len(tieredToolElisionEnd)
+				phase3Savings += max(tool.contentBytes-placeholderBytes, 0)
+			}
 		}
 		var nativeBytes int
 		for _, item := range msg.ContinuationItems {
@@ -219,7 +217,7 @@ func (t *Tiered) Compact(_ context.Context, history []llm.Message, keepRecent in
 			switch msg.Role {
 			case llm.RoleTool:
 				placeholder := fmt.Sprintf("%s%d%s", tieredToolElisionStart, len(msg.Content), tieredToolElisionEnd)
-				if len(placeholder) < len(msg.Content) {
+				if len(placeholder) < len(msg.Content) && toolRecoveryStart(original.Content) < 0 {
 					msg.Content = placeholder
 				}
 			case llm.RoleAssistant:
@@ -253,9 +251,9 @@ func tieredResult(out []llm.Message, trimmed, phase int) Result {
 func tieredTrimTool(msg llm.Message) llm.Message {
 	plan := planTieredToolPhase1(msg)
 	if plan.trimContent {
-		kept := clipToRune(msg.Content, tieredToolTruncateChars)
-		removed := len(msg.Content) - len(kept)
-		msg.Content = fmt.Sprintf("%s%s%d%s", kept, tieredToolTruncationStart, removed, tieredToolTruncationEnd)
+		head, tail := tieredToolEdges(msg.Content)
+		removed := len(msg.Content) - len(head) - len(tail)
+		msg.Content = fmt.Sprintf("%s%s%d%s%s", head, tieredToolTruncationStart, removed, tieredToolTruncationEnd, tail)
 	}
 	if plan.trimAttachments {
 		if msg.Content != "" {
@@ -278,7 +276,8 @@ func planTieredToolPhase1(msg llm.Message) tieredToolPhase1Plan {
 	before := len(msg.Content) + llm.ContentPartsByteLen(msg.Parts)
 	plan := tieredToolPhase1Plan{contentBytes: len(msg.Content)}
 	if len(msg.Content) > tieredToolTruncateChars {
-		keptBytes := len(clipToRune(msg.Content, tieredToolTruncateChars))
+		head, tail := tieredToolEdges(msg.Content)
+		keptBytes := len(head) + len(tail)
 		removedBytes := len(msg.Content) - keptBytes
 		candidateBytes := keptBytes + len(tieredToolTruncationStart) + decimalDigits(removedBytes) + len(tieredToolTruncationEnd)
 		if candidateBytes < plan.contentBytes {
@@ -319,4 +318,30 @@ func tieredAssistantSuffixStart(content string) int {
 		suffixStart++
 	}
 	return suffixStart
+}
+
+// Preserve a bounded existing spill footer or program reader recipe as reference
+// text, never as proof of retention or authority. Receipts may expire or be revoked;
+// preserving their text neither extends their lifetime nor grants reader access.
+func toolRecoveryStart(content string) int {
+	start := -1
+	for _, marker := range []string{"\n\n[truncated by ", "Read with program_output_read(receipt="} {
+		candidate := strings.LastIndex(content, marker)
+		if candidate >= 0 && len(content)-candidate <= 2048 && (start < 0 || candidate < start) {
+			start = candidate
+		}
+	}
+	return start
+}
+
+func tieredToolEdges(content string) (string, string) {
+	head := clipToRune(content, tieredToolTruncateChars/2)
+	tail := tieredAssistantSuffixStart(content)
+	if recovery := toolRecoveryStart(content); recovery >= 0 {
+		tail = min(tail, recovery)
+	}
+	// A footer can begin inside the head for a short result. Keep the result
+	// unchanged rather than duplicate overlapping bytes.
+	tail = max(tail, len(head))
+	return head, content[tail:]
 }

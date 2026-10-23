@@ -20,6 +20,10 @@ func normalizeJSON(v any, maxBytes int) (any, error) {
 	if maxBytes > 0 && len(b) > maxBytes {
 		return nil, fmt.Errorf("value exceeds %d bytes", maxBytes)
 	}
+	return decodeJSON(b)
+}
+
+func decodeJSON(b []byte) (any, error) {
 	var out any
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, err

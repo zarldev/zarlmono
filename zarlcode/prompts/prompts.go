@@ -7,20 +7,26 @@ package prompts
 
 import _ "embed"
 
-// System is the default agent system prompt (prompts/system.md).
-//
+//go:embed common.md
+var common string
+
 //go:embed system.md
-var System string
+var systemBody string
 
-// SystemCompact is the compact BUILD prompt (prompts/system_compact.md).
-//
+// System is the shared operating contract followed by the full BUILD workflow.
+var System = common + "\n" + systemBody
+
 //go:embed system_compact.md
-var SystemCompact string
+var compactBody string
 
-// Plan is the default plan-mode system prompt (prompts/plan.md).
-//
+// SystemCompact is the shared operating contract followed by the compact BUILD workflow.
+var SystemCompact = common + "\n" + compactBody
+
 //go:embed plan.md
-var Plan string
+var planBody string
+
+// Plan is the shared operating contract followed by the inspect-only PLAN workflow.
+var Plan = common + "\n" + planBody
 
 // Init is the canonical AGENTS.md-authoring prompt the /init command
 // sends as a turn (prompts/init.md).

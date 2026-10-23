@@ -486,12 +486,24 @@ func (s *Settings) EnableWeb(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyEnableWeb, "on") == "on"
 }
 
+// EnableComputer gates model exposure of both computer tools, defaulting on.
+// It does not disable host computer APIs or web_fetch's browser fallback.
+func (s *Settings) EnableComputer(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyEnableComputer, "on") == "on"
+}
+
 func (s *Settings) EnableBackground(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyEnableBackground, "on") == "on"
 }
 
 func (s *Settings) ProgrammaticTools(ctx context.Context) bool {
 	return s.setting(ctx, prefs.KeyProgrammaticTools, "on") == "on"
+}
+
+// ProgramOutputRecovery enables bounded memory-only final-emission recovery.
+// It is opt-in; ordinary program limits and exposure remain unchanged when off.
+func (s *Settings) ProgramOutputRecovery(ctx context.Context) bool {
+	return s.setting(ctx, prefs.KeyProgramOutputRecovery, "off") == "on"
 }
 
 // ProgrammaticParallelCalls resolves the maximum number of nested program tool
