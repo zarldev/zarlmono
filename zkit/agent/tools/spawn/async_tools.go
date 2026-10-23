@@ -195,23 +195,41 @@ func NewStatus(group *Group) *StatusTool { return &StatusTool{group: group} }
 
 // Definition advertises agent_status.
 func (*StatusTool) Definition() tools.ToolSpec {
-	return tools.ToolSpec{Name: ToolNameAgentStatus, Description: "Inspect the latest status and any terminal summary of a sub-agent task. Omit task_id only when exactly one task exists among the bound parent's direct children (or the group for an unbound caller); otherwise use list_agent_tasks. Explicit IDs permit intentional tree inspection.", Parameters: tools.SchemaFor[struct {
-		TaskID string `json:"task_id,omitempty" doc:"Task receipt ID returned by agent_spawn. May be omitted only when exactly one task is eligible in the caller's parent scope."`
+	return tools.ToolSpec{Name: ToolNameAgentStatus, Description: "Inspect task status and, by default, its terminal summary. Omit task_id only for a sole task in the caller's parent scope (whole group if unbound); otherwise use list_agent_tasks. Explicit IDs allow tree inspection.", Parameters: tools.SchemaFor[struct {
+		TaskID         string `json:"task_id,omitempty" doc:"Receipt ID from agent_spawn; omit for a sole task in scope."`
+		IncludeSummary bool   `json:"include_summary,omitempty" doc:"Defaults to true. False returns metadata only, without observing the summary or acknowledging automatic delivery."`
 	}]()}
 }
 
-// Execute returns the current task snapshot.
+// Execute returns a task snapshot. Metadata-only reads neither observe terminal
+// summaries nor carry completion admission references.
 func (s *StatusTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
 	if err := configuredGroup(s.group, "agent_status"); err != nil {
 		return tools.Failure(call.ID, err), nil
+	}
+	includeSummary := true
+	if value, present := call.Arguments["include_summary"]; present {
+		var ok bool
+		includeSummary, ok = value.(bool)
+		if !ok {
+			return tools.Failure(call.ID, tools.Validation("agent_status", "include_summary must be a boolean")), nil
+		}
 	}
 	id, err := resolveTaskID(s.group, taskscope.IDFrom(ctx), call.Arguments, false)
 	if err != nil {
 		return tools.Failure(call.ID, err), nil
 	}
-	snapshot, err := s.group.snapshotFor(ctx, id)
+	var snapshot TaskSnapshot
+	if includeSummary {
+		snapshot, err = s.group.snapshotFor(ctx, id)
+	} else {
+		snapshot, err = s.group.Peek(id)
+	}
 	if err != nil {
 		return tools.Failure(call.ID, tools.Validation("agent_status", err.Error())), nil
+	}
+	if !includeSummary {
+		return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: taskMetadata(snapshot), ExecutedAt: time.Now()}, nil
 	}
 	return &tools.ToolResult{ToolCallID: call.ID, Success: true, Data: taskData(snapshot), ExecutedAt: time.Now(), AdmissionReferences: taskReferences(snapshot)}, nil
 }

@@ -170,6 +170,7 @@ func (l *LiveRunner) sourceWithExposure(ctx context.Context, webSearch tools.Too
 	reg := tools.NewRegistry()
 	l.mu.Lock()
 	toolEnv := cloneStringMap(l.toolEnv)
+	programOutputs := l.programOutputs
 	l.mu.Unlock()
 
 	// Optional tool clusters, gated by settings so a lean local-model setup can
@@ -177,6 +178,7 @@ func (l *LiveRunner) sourceWithExposure(ctx context.Context, webSearch tools.Too
 	// roster). Background off → bash registers foreground-only and the
 	// bash_output/stop_process/list_processes trio is omitted (pm = nil).
 	enableWeb, enableMCP, enableBackground, enableProgrammatic := true, true, true, true
+	enableComputer, enableOutputRecovery := true, false
 	programParallel := 0
 	if l.settings != nil {
 		sctx := ctx
@@ -184,6 +186,8 @@ func (l *LiveRunner) sourceWithExposure(ctx context.Context, webSearch tools.Too
 		enableMCP = l.settings.EnableMCP(sctx)
 		enableBackground = l.settings.EnableBackground(sctx)
 		enableProgrammatic = l.settings.ProgrammaticTools(sctx)
+		enableComputer = l.settings.EnableComputer(sctx)
+		enableOutputRecovery = l.settings.ProgramOutputRecovery(sctx)
 		programParallel = l.settings.ProgrammaticParallelCalls(sctx)
 	}
 	pmArg := l.pm
@@ -198,6 +202,10 @@ func (l *LiveRunner) sourceWithExposure(ctx context.Context, webSearch tools.Too
 
 	if generator, ok := l.RunTarget().Provider.(llm.ImageGenerator); ok {
 		_ = reg.Register(NewImageGenerationTool(l.ws, generator))
+	}
+
+	if enableProgrammatic && enableOutputRecovery {
+		_ = reg.Register(programtools.NewOutputReadTool(programOutputs))
 	}
 
 	// update_plan isn't in the standard set (it needs a UI-hooked PlanStore);
@@ -216,7 +224,7 @@ func (l *LiveRunner) sourceWithExposure(ctx context.Context, webSearch tools.Too
 		_ = reg.Register(webSearch)
 	}
 
-	if l.computer != nil {
+	if enableComputer && l.computer != nil {
 		computertools.Register(reg, l.computer, l.computer)
 	}
 
@@ -330,6 +338,9 @@ func (l *LiveRunner) sourceWithExposure(ctx context.Context, webSearch tools.Too
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("program tool source: %w", err)
+		}
+		if enableOutputRecovery {
+			programtools.WithOutputRetainer(programOutputs)(programSource)
 		}
 		// Program is synthetic and was added after the ordinary source was
 		// guarded. Guard only its outer boundary with a fresh chain; direct tools

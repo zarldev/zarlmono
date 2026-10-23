@@ -2,6 +2,7 @@ package releasecheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -14,16 +15,17 @@ import (
 func CheckSource(ctx context.Context, root, upstream, candidate string) error {
 	for _, id := range []string{upstream, candidate} {
 		if len(id) != 40 && len(id) != 64 {
-			return fmt.Errorf("source provenance requires full commit IDs")
+			return errors.New("source provenance requires full commit IDs")
 		}
 		for _, char := range id {
 			if !strings.ContainsRune("0123456789abcdef", char) {
-				return fmt.Errorf("source provenance requires lowercase hexadecimal commit IDs")
+				return errors.New("source provenance requires lowercase hexadecimal commit IDs")
 			}
 		}
 	}
 	git := func(args ...string) (string, error) {
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = root
 		data, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("source git %s: %w", args[0], err)
@@ -42,7 +44,7 @@ func CheckSource(ctx context.Context, root, upstream, candidate string) error {
 		return err
 	}
 	if status != "" {
-		return fmt.Errorf("release source has uncommitted changes")
+		return errors.New("release source has uncommitted changes")
 	}
 	if _, err := git("merge-base", "--is-ancestor", upstream, candidate); err != nil {
 		return fmt.Errorf("candidate does not include verified upstream %s: %w", upstream, err)

@@ -260,8 +260,12 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 			{name: "tools", rows: []settingsRow{
 				{label: "web tools", section: "Surface", key: prefs.KeyEnableWeb, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register web_search + web_fetch. off drops both from the tool surface for a leaner local-model setup."},
+				{label: "computer tools", section: "Surface", key: prefs.KeyEnableComputer, kind: rowEnum, def: "on", opts: []string{"on", "off"},
+					desc: "register computer_act + computer_observe on the next turn. off removes model access to both; host computer APIs and web_fetch browser fallback remain available."},
 				{label: "programmatic tools", section: "Surface", key: prefs.KeyProgrammaticTools, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "replace direct read/search/catalogue tools with one program tool for bounded Starlark fan-out and aggregation."},
+				{label: "program output recovery", section: "Surface", key: prefs.KeyProgramOutputRecovery, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+					desc: "next turn: retain oversized program JSON in memory (1 MiB/result, 8 MiB total, 32 results, 15 minutes) and expose program_output_read. Requires programmatic tools. Conversation replacement or close revokes receipts; read pages follow normal transcript policy."},
 				{label: "mcp tools", section: "Surface", key: prefs.KeyEnableMCP, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register the mcp_connect/disconnect/list tools. off drops MCP management from the tool surface."},
 				{label: "mcp schema exposure", section: "Surface", key: prefs.KeyMCPToolExposure, kind: rowEnum, def: prefs.DefaultMCPToolExposure, opts: []string{"deferred", "direct"},

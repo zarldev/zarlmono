@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.22.0] — 2026-10-23
+
+### added
+
+- Add default-off, bounded memory-only recovery for oversized `program` final emissions, with guarded receipt paging and Settings → Tools control.
+- Allow computer-tool exposure to be disabled independently without granting remote tools the reserved host names.
+
+### changed
+
+- Keep Plan/Build tool definitions stable while preserving dispatch-time restrictions, and deduplicate shared prompt guidance.
+- Revoke retained output on successful conversation replacement or accepted shutdown; preserve it across turns, children, mode changes and compaction.
+- Require explicit source provenance before local release preparation, preserving current upstream fixes during reconciliation.
+
+### fixed
+
+- Preserve a bounded recovery recipe through tiered compaction so retained middle and tail facts remain discoverable without replaying tools.
+- Correct oversized plan guidance to start with a non-empty chunk before appending.
+
+## [zkit/v0.22.0] — 2026-10-23
+
+### added
+
+- Add optional final-emission retention and `program_output_read`: 1 MiB per result, 8 MiB aggregate, 32 results, 15-minute expiry, opaque receipts and bounded UTF-8-safe JSON pages.
+- Add metadata-only agent status inspection that does not observe a terminal summary or acknowledge completion delivery.
+
+### changed
+
+- Preserve bounded head/tail excerpts and recovery reference text during tiered compaction without changing default pressure thresholds or native replay boundaries.
+- Reduce repeated tool-description text while retaining argument shapes, enum values and offset guidance.
+
+### fixed
+
+- Keep recovery failures and pages free of original completion admission references; revoke stale read/write capabilities on owner closure.
+- Document and test exact plan reconstruction using a non-empty first chunk.
+
 ## [zarlcode/v0.21.1] — 2026-10-21
 
 ### fixed

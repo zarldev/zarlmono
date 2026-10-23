@@ -14,6 +14,7 @@ import (
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -82,6 +83,9 @@ type LiveRunner struct {
 	// historyBuffers retain only uncommitted replay batches until the session FIFO
 	// retries them. Access is under mu; each buffer serializes its own writes.
 	historyBuffers map[string]*sessionHistoryBuffer
+	// programOutputs is captured by all sources in the current activation.
+	// Replacement permanently closes it before publishing a new capability.
+	programOutputs *programtools.OutputStore
 
 	// turnCancel cancels the context driving the current turn's runner.Run.
 	// Set under mu before entering the run loop, cleared under mu on exit.
@@ -245,13 +249,14 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 			Model:    model,
 			Window:   LiveContextWindow,
 		},
-		promptProfile: PromptProfiles.LEAN,
-		planStore:     newLivePlanStore(),
-		catalog:       newRuntimeCatalog(ws.Root()),
-		truncator:     &runner.SpillingTruncator{Prefix: "zarlcode-"},
-		operational:   newOperationalState(),
-		fetchTool:     fetch.New(),
-		sink:          nopLiveSink{},
+		promptProfile:  PromptProfiles.LEAN,
+		planStore:      newLivePlanStore(),
+		catalog:        newRuntimeCatalog(ws.Root()),
+		truncator:      &runner.SpillingTruncator{Prefix: "zarlcode-"},
+		operational:    newOperationalState(),
+		fetchTool:      fetch.New(),
+		sink:           nopLiveSink{},
+		programOutputs: programtools.NewOutputStore(),
 	}
 	l.queue = newQueueState(&l.admission)
 	l.computer = &liveComputer{owner: l}
@@ -432,7 +437,7 @@ func (l *LiveRunner) RestoreContext(contextCache []llm.Message) {
 		return
 	}
 	defer l.admission.leave()
-	l.context.restore(contextCache)
+	l.restoreLegacyContext(contextCache, false)
 }
 
 // ClearContext clears the conversation and session-local MCP selection hints.
@@ -444,8 +449,7 @@ func (l *LiveRunner) ClearContext() {
 		return
 	}
 	defer l.admission.leave()
-	l.context.restore(nil)
-	_ = l.restoreMCPActivations(MCPActivations{})
+	l.restoreLegacyContext(nil, true)
 }
 
 // SetPlanMode toggles PLAN mode on the next dispatch / turn. PLAN restricts

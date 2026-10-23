@@ -101,6 +101,9 @@ func (r *RuntimeReservation) RestoreSessionContext(messages []llm.Message, state
 	}
 	r.owner.context.context = llm.CloneMessages(messages)
 	r.owner.context.exact = false
+	r.owner.mu.Lock()
+	r.owner.rotateProgramOutputsLocked()
+	r.owner.mu.Unlock()
 	return nil
 }
 

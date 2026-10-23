@@ -245,7 +245,7 @@ func TestRender_ProgrammaticToolsGuidance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"program` replaces", "read-only investigation fan-out", "An offered shell remains limited"} {
+	for _, want := range []string{"program` replaces", "read-only investigation fan-out", "An advertised shell does not grant permission"} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan prompt missing programmatic guidance %q", want)
 		}
@@ -307,13 +307,13 @@ func TestRender_PhaseOneOperatingPolicy(t *testing.T) {
 		"destructive actions, external",
 		"security-sensitive changes, or material scope expansion",
 		"Only read-only investigation and writes to",
-		"regardless of any unexpected",
+		"Tool visibility does not widen authority",
 		"use offered tools only for",
 		"read-only investigation, plan-artifact writes, or the host-owned `set_mode` control",
 		"No approval dialog, confirmation",
 		"Explicit plan-only",
 		"A mode change never grants additional authority",
-		"even if an unexpected tool for doing so is listed",
+		"workspace mutation remain blocked at dispatch",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan render missing aligned phase-one policy %q", want)
