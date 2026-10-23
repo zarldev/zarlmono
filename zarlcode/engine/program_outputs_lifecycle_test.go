@@ -54,7 +54,8 @@ func TestProgramOutputRecoveryReplacementWaitsForContext(t *testing.T) {
 			t.Fatal(err)
 		}
 		done := make(chan error, 1)
-		go func() { done <- live.RunTurn(t.Context(), "active read") }()
+		ctx := t.Context()
+		go func() { done <- live.RunTurn(ctx, "active read") }()
 		defer func() { unblock(); <-done }()
 		<-started
 		restored := make(chan struct{})
@@ -101,9 +102,10 @@ func TestProgramOutputRecoveryCloseDeadlineDoesNotAbandonDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
+	ctx := t.Context()
 	go func() {
 		defer close(done)
-		_ = live.RunTurn(t.Context(), "block")
+		_ = live.RunTurn(ctx, "block")
 	}()
 	defer func() { unblock(); <-done }()
 	<-started

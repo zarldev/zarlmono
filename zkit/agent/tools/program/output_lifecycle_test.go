@@ -32,9 +32,10 @@ func TestOutputStoreRevokesCapturedSourceBeforeDrain(t *testing.T) {
 	done := make(chan struct{})
 	var result *tools.ToolResult
 	var executionErr error
+	ctx := t.Context()
 	go func() {
 		defer close(done)
-		result, executionErr = source.Execute(t.Context(), tools.ToolCall{ID: "late", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit(call("read"))`}})
+		result, executionErr = source.Execute(ctx, tools.ToolCall{ID: "late", ToolName: program.ToolName, Arguments: tools.ToolParameters{"script": `emit(call("read"))`}})
 	}()
 	defer func() { unblock(); <-done }()
 	<-started
