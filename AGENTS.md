@@ -2,6 +2,14 @@
 
 Compact, repo-wide context only. Module/package detail belongs in nested `AGENTS.md` files and must be loaded when working in those subtrees.
 
+## Baseline and verification provenance
+
+- Before substantive edits, after a handover or workspace-change notice, and before build/install/release, record the absolute worktree root, branch, HEAD, dirty status, current upstream tip, and other worktrees. Verify upstream freshness; if unavailable, say it is unverified.
+- Compare intended changes against current upstream before implementing. A dirty or stale checkout is source evidence, not an integration baseline. Preserve user work and use an owned clean worktree for reconciliation; never overwrite newer upstream fixes with old files.
+- Give delegated tasks the exact worktree and baseline. Keep a per-change disposition: already upstream, superseded, port/adapt, or excluded. Do not port code merely because earlier work produced it.
+- Test results belong to the source state actually tested. Recheck affected tests after edits or baseline movement; never transfer verification across worktrees by assertion. Before release, require a clean candidate and revalidate upstream immediately before publication.
+- Use `go tool task release-source-check BASE=<verified-upstream-sha> CANDIDATE=<verified-candidate-sha>` to reject stale, dirty, or unrelated local candidates. It does not replace the live remote-tip checks in release-dispatch.
+
 ## Monorepo boundaries
 
 `go.work` joins five Go modules: `.` (tooling only), `examples/`, `swebench-eval/`, `zarlcode/`, and `zkit/`.
