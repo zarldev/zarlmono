@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bytes"
 	"container/list"
 	"encoding/json"
 	"fmt"
@@ -112,6 +111,10 @@ type contentBlock struct {
 	// Each source line maps to one rendered line so counts stay accurate.
 	lineNumbers bool
 
+	// compactCode removes renderer-owned code margins when the caller already
+	// supplies a drawer inset. Authored indentation and code styles remain intact.
+	compactCode bool
+
 	// tone applies a uniform colour mood (e.g. muted) to the final rendered
 	// lines. Prefer this over style+stripANSI for cache eligibility.
 	tone contentTone
@@ -213,6 +216,7 @@ type contentRenderCacheKey struct {
 	tone            contentTone
 	themeGeneration uint64
 	lineNumbers     bool
+	compactCode     bool
 }
 
 // contentRenderCacheMaxEntries bounds the shared content-render cache.
@@ -322,6 +326,7 @@ func contentCacheKeyFor(width int, b contentBlock) (contentRenderCacheKey, bool)
 		tone:            b.tone,
 		themeGeneration: themeGen,
 		lineNumbers:     b.lineNumbers,
+		compactCode:     b.compactCode,
 	}, true
 }
 
@@ -371,6 +376,11 @@ func renderCodeContent(width int, b contentBlock) []string {
 	}
 	if b.lineNumbers {
 		return addCodeLineNumbers(lines)
+	}
+	if b.compactCode {
+		for i, line := range lines {
+			lines[i] = ansi.Cut(line, markdownDocumentMargin+markdownCodeMargin, ansi.StringWidth(line))
+		}
 	}
 	return lines
 }
@@ -423,10 +433,8 @@ func renderToolResultContent(width int, b contentBlock) []string {
 		}
 		return renderCodeContent(width, b)
 	default:
-		if pretty, ok := prettyJSON(b.text); ok {
-			b.text = pretty
-			b.syntax = "json"
-			return renderCodeContent(width, b)
+		if lines, ok := readableJSONResultLines(renderAvailableContentWidth(width, b), b.text); ok {
+			return lines
 		}
 		if isSearchTool(b.toolName) {
 			return renderSearchResults(width, b)
@@ -517,6 +525,8 @@ func renderTypedToolResult(width int, b contentBlock) []string {
 		b.data = r.data
 		lines := renderToolImagePreviews(cw, r.images)
 		return append(lines, renderToolResultContent(width, b)...)
+	case code.Plan:
+		return readablePlanLines(cw, r)
 	case search.Result:
 		return renderWebSearchResult(cw, r)
 	case computer.Observation:
@@ -758,25 +768,13 @@ func renderProgramOutputLines(width int, text string) []string {
 	if trimmed == "" {
 		return []string{palette.Muted.On("(empty program output)")}
 	}
+	if lines, ok := readableJSONResultLines(width, trimmed); ok {
+		return lines
+	}
 	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
 		return renderCodeContent(width, contentBlock{kind: contentCode, text: trimmed, syntax: "json"})
 	}
 	return wrapText(trimmed, width)
-}
-
-func prettyJSON(text string) (string, bool) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || (!strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[")) {
-		return "", false
-	}
-	if !json.Valid([]byte(trimmed)) {
-		return "", false
-	}
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, []byte(trimmed), "", "  "); err != nil {
-		return "", false
-	}
-	return buf.String(), true
 }
 
 func toolResultRenderKind(name string) contentKind {
@@ -942,7 +940,7 @@ func renderCodeBlock(width int, text, syntax string, opts ...contentOption) []st
 }
 
 func renderToolResult(width int, toolName, hint, text string, opts ...contentOption) []string {
-	b := contentBlock{kind: contentToolResult, text: text, toolName: toolName, hint: hint}
+	b := contentBlock{kind: contentToolResult, text: text, toolName: toolName, hint: hint, compactCode: isShellTool(toolName)}
 	applyOpts(&b, opts)
 	return renderContentBlock(width, b)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -13,6 +14,31 @@ import (
 // ErrReplayHistory means canonical history or prepared request capture did not
 // succeed. No subsequent provider request is made after a capture failure.
 var ErrReplayHistory = errors.New("record replay history")
+
+// ControlToolDefinition identifies one advertised tool definition without storing
+// its description or schema. Order matches the prepared request.
+type ControlToolDefinition struct {
+	Name           string `json:"name"`
+	DefinitionHash string `json:"definition_hash"`
+}
+
+// ReplayControl is a compact, inspection-only observation of one prepared request.
+// ID identifies this occurrence; SurfaceDigest identifies equal request surfaces.
+type ReplayControl struct {
+	Version         int                     `json:"version"`
+	ID              string                  `json:"id"`
+	TurnID          string                  `json:"turn_id,omitempty"`
+	PolicyLabel     string                  `json:"policy_label"`
+	SystemDigest    string                  `json:"system_digest"`
+	ToolDefinitions []ControlToolDefinition `json:"tool_definitions"`
+	SurfaceDigest   string                  `json:"surface_digest"`
+}
+
+// Clone returns an independently owned control observation.
+func (c ReplayControl) Clone() ReplayControl {
+	c.ToolDefinitions = slices.Clone(c.ToolDefinitions)
+	return c
+}
 
 // ReplayMessage is a canonical occurrence independent of compaction. Message
 // carries complete content and native response items. RawToolCalls retains the
@@ -27,6 +53,7 @@ type ReplayMessage struct {
 	Message      llm.Message    `json:"message"`
 	RawToolCalls []llm.ToolCall `json:"raw_tool_calls,omitempty"`
 	Tool         *ToolOutput    `json:"tool,omitempty"`
+	Control      ReplayControl  `json:"control,omitzero"`
 }
 
 // AdmittedToModelContext excludes inspection-only and interrupted observations.
@@ -37,6 +64,11 @@ func (r ReplayMessage) AdmittedToModelContext() bool {
 // IsToolExecution identifies an inspection-only settled execution occurrence.
 func (r ReplayMessage) IsToolExecution() bool {
 	return r.Kind == ReplayOccurrenceKinds.TOOLEXECUTION
+}
+
+// IsControl identifies a generic inspection-only prepared-request observation.
+func (r ReplayMessage) IsControl() bool {
+	return r.Kind == ReplayOccurrenceKinds.CONTROL
 }
 
 // recordExecution serializes nested settlement capture, independently of the

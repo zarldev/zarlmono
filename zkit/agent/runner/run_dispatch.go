@@ -177,12 +177,15 @@ func (t *taskRun) dispatch(
 	}
 	nested := newNestedToolPublisher(r, spec, call.ExecutionID)
 	nested.attempt, nested.capture = t.attempt, t.recordExecution
+	outputPublisher := newToolOutputPublisher(r, spec, call, "", "", 0)
+	call.ReportOutput = outputPublisher.report
 	execCtx = tools.ContextWithNestedToolObserver(execCtx, nested)
 	execCtx = tools.ContextWithWorkspaceWaitObserver(execCtx, workspaceWaitPublisher{r: r, spec: spec, call: call, nested: nested})
 	execCtx = tools.ContextWithWorkspaceWaitCall(execCtx, tools.WorkspaceWaitCall{ToolID: call.ID, ToolName: call.ToolName})
 	// Execute synchronously: the batch owns this work until it actually exits.
 	// Cancellation requests a stop; it cannot forcibly terminate arbitrary Go code.
 	raw, didDispatch, err := r.executeTool(execCtx, call)
+	outputPublisher.seal()
 	if raw == nil && err != nil {
 		raw = tools.Failure(call.ID, err)
 	}

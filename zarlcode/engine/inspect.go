@@ -101,7 +101,8 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	group := spawn.NewGroup()
 	visible := newModeControlSource(NewModeFilteredSource(src, l.isPlan), &modeTransition{live: l, group: group})
 	dummy := runner.New(inspectorClient{}, runner.WithTools(visible), runner.WithPrompt(runner.StaticPrompt("")), runner.WithSink(runner.NopSink{}))
-	l.registerSpawnTools(ctx, reg, dummy, group, nil, ins.SpawnDepth, ins.SpawnMaxIter)
+	depth := spawnDepthBudget{limit: ins.SpawnDepth, remaining: ins.SpawnDepth}
+	l.registerSpawnTools(ctx, reg, dummy, group, nil, depth, ins.SpawnMaxIter)
 
 	for t := range visible.Tools(ctx) {
 		ins.Tools = append(ins.Tools, t.Definition())

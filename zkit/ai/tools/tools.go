@@ -387,6 +387,9 @@ type ToolCall struct {
 	RawArguments string         `json:"raw_arguments,omitempty"`
 	Status       ToolCallStatus `json:"status"`
 	CreatedAt    time.Time      `json:"created_at"`
+	// ReportOutput publishes invocation-only live output snapshots. It is never
+	// serialized or retained in model/history tool-call data.
+	ReportOutput func(context.Context, ToolOutputUpdate) `json:"-"`
 }
 
 // ToolResult is the outcome of executing a tool.

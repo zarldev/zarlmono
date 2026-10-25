@@ -61,9 +61,11 @@ type Stats struct {
 
 // Limits bounds one program invocation.
 type Limits struct {
-	MaxScriptBytes     int
-	MaxExecutionSteps  uint64
-	MaxToolCalls       int
+	MaxScriptBytes    int
+	MaxExecutionSteps uint64
+	// MaxToolCalls bounds the whole invocation; batches may run in bounded waves.
+	MaxToolCalls int
+	// MaxParallelCalls bounds simultaneous calls, independently of batch length.
 	MaxParallelCalls   int
 	MaxToolResultBytes int
 	MaxOutputBytes     int
@@ -76,9 +78,10 @@ type Policy func(tools.ToolSpec) bool
 
 // Source wraps an inner source with the synthetic program tool.
 type Source struct {
-	inner  tools.Source
-	policy Policy
-	limits Limits
+	inner          tools.Source
+	policy         Policy
+	limits         Limits
+	outputRetainer OutputRetainer
 }
 
 // NewSource returns a source that exposes program alongside inner's tools.
@@ -115,6 +118,21 @@ func WithPolicy(policy Policy) options.Option[Source] {
 // WithLimits sets invocation limits. Zero fields receive documented defaults.
 func WithLimits(limits Limits) options.Option[Source] {
 	return func(s *Source) { s.limits = limits }
+}
+
+// OutputRetainer accepts validated serialized JSON and returns a recovery receipt.
+// Implementations copy bytes they retain and bind receipts to a host-owned scope.
+// Errors must not include the output content. The source borrows this capability;
+// its owner must revoke it when the conversation activation ends.
+type OutputRetainer interface {
+	Retain(context.Context, []byte) (string, error)
+}
+
+// WithOutputRetainer enables recovery of oversized final emissions. The host
+// must expose a guarded program_output_read tool for the same receipt scope.
+// Omitting this option preserves ordinary overflow behavior and tool schemas.
+func WithOutputRetainer(retainer OutputRetainer) options.Option[Source] {
+	return func(s *Source) { s.outputRetainer = retainer }
 }
 
 // Tools yields inner tools and then the synthetic program tool unless inner
@@ -164,16 +182,14 @@ type programTool struct {
 	allowed []tools.ToolSpec
 }
 
-const programDescription = `Run bounded read/search/catalogue calls in Starlark. Direct read/search/catalogue tools are hidden; shell and mutation remain direct.
-
-Built-ins:
-- call(name, args={}) -> {"ok": bool, "data": value, "error": string}
-- call_many([{"name": name, "args": args}, ...]) -> ordered results
-- emit(value) -> final result; required exactly once
-
-Inner calls use the exact JSON argument names in the signatures below. Required arguments have no ` + "`?`" + ` suffix; optional arguments do. Do not invent aliases.
-
-No imports, filesystem, network, shell, environment, mutation, MCP, agent_spawn, or recursion.`
+const programDescription = `Bounded Starlark over hidden read/search/catalogue tools; shell/mutation stay direct.
+call(name,args={}) -> {ok,data,error}; call_many([{"name":name,"args":args},...]) -> ordered bounded waves; emit(value) once.
+Use exact JSON names below; ? means optional. data is structured, not direct rendering. Preserve errors, paths, anchors, guidance and truncation; omit echoed inputs.
+Read example:
+  r = call("read", {"path": "main.go", "limit": 80})
+  emit("main.go\n" + r["data"] if r["ok"] else r)
+Grep data: Hits=[{file,line,text}], Truncated. Keep both; max_results defaults to 100.
+No imports, I/O, shell, mutation, MCP, spawn or recursion.`
 
 func (t programTool) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
@@ -218,7 +234,24 @@ func schemaSignature(schema llm.Schema) string {
 		if typeName == "" {
 			typeName = "value"
 		}
-		fields = append(fields, field+": "+typeName)
+		property := schema.Properties[name]
+		if len(property.Enum) > 0 {
+			values, err := json.Marshal(property.Enum)
+			if err == nil {
+				typeName = string(values)
+			}
+		}
+		if value, ok := property.Extra["default"]; ok {
+			encoded, err := json.Marshal(value)
+			if err == nil {
+				typeName += " = " + string(encoded)
+			}
+		}
+		field += ": " + typeName
+		if name == "offset" && property.Description != "" {
+			field += " (" + property.Description + ")"
+		}
+		fields = append(fields, field)
 	}
 	return strings.Join(fields, ", ")
 }

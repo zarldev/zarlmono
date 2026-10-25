@@ -35,6 +35,9 @@ func (m *UI) rewindReady() error {
 	if m.live == nil || m.settings == nil || m.settings.Store == nil {
 		return errors.New("live session storage unavailable")
 	}
+	if m.isSwarmOpen() {
+		return errors.New("stop the swarm goal before rewinding")
+	}
 	if m.sourceConflict {
 		return errors.New(sourceConflictNotice)
 	}
@@ -207,6 +210,7 @@ func (m *UI) commitRewind(selection rewindSelection) error {
 	if err != nil {
 		return err
 	}
+	branch.Child.MCPActivationsJSON = source.record.MCPActivationsJSON
 	thread, err := snapshot.Transcript.Restore()
 	if err != nil {
 		return err
@@ -215,7 +219,7 @@ func (m *UI) commitRewind(selection rewindSelection) error {
 	if err != nil {
 		return err
 	}
-	if err := reservation.RestoreConversation(messages, snapshot.Target, snapshot.Plan, target); err != nil {
+	if err := reservation.RestoreSessionConversation(messages, snapshot.Target, snapshot.Plan, target, m.live.MCPActivations()); err != nil {
 		m.rewindRecovery = childID
 		m.SetStartupFailure(selection.workspace, "Continuation saved; restart required", "The child branch is durable and active. Restart with -continue to restore it. The source was preserved.")
 		return errors.New("child committed but runtime restoration was rejected; restart with -continue")
@@ -223,6 +227,7 @@ func (m *UI) commitRewind(selection rewindSelection) error {
 	saved := &savedSession{sessionSummary: sessionSummary{ID: childID, Label: branch.Child.Label, CreatedAt: time.Now()},
 		Transcript: thread, Context: messages, Plan: snapshot.Plan, DraftText: snapshot.Boundary.PromptText, settledTurnID: snapshot.Boundary.SettledTurnID,
 		DraftAttachments: llm.CloneContentParts(snapshot.Boundary.Attachments),
+		MCPActivations:   m.live.MCPActivations(),
 		contentVersion:   childVersion,
 		continuation:     true, exactHead: &rewind.ResumeState{Version: 1, Revision: snapshot.Transcript.Revision(),
 			Context: messages, Target: snapshot.Target, SettledTurnID: snapshot.Boundary.SettledTurnID, EventWatermark: watermark, InitialContinuation: initial}}
@@ -236,6 +241,7 @@ func (m *UI) publishExactSession(saved *savedSession, target engine.RunTarget) {
 		m.overlay.pop()
 	}
 	m.intro = nil
+	m.resetSessionModeTarget(true)
 	m.session.resetSession()
 	m.prRefreshPending = false
 	m.liveGeneration++
@@ -307,7 +313,7 @@ func (m *UI) resumeExactSession(ctx context.Context, saved *savedSession) error 
 	if err := m.settings.Svc.SetSetting(ctx, prefs.ScopeWorkspace, activeSessionKey, saved.ID); err != nil {
 		return err
 	}
-	if err := reservation.RestoreConversation(saved.Context, saved.exactHead.Target, saved.Plan, target); err != nil {
+	if err := reservation.RestoreSessionConversation(saved.Context, saved.exactHead.Target, saved.Plan, target, saved.MCPActivations); err != nil {
 		m.rewindRecovery = saved.ID
 		m.SetStartupFailure(m.settings.WorkspaceRoot(), "Continuation selected; restart required", "The durable continuation is active but runtime restoration was rejected. Restart with -continue after restoring its provider availability.")
 		return err

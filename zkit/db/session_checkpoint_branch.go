@@ -274,8 +274,9 @@ func (s *Store) saveCheckpointChild(ctx context.Context, child SessionRecord, no
 		AgentName: child.AgentName, Provider: child.Provider, Model: child.Model,
 		ContextJson: string(child.ContextJSON), PendingJson: string(orEmpty(child.PendingJSON, "[]")),
 		LastUsageJson: string(orEmpty(child.LastUsageJSON, "null")), DiffBodiesJson: string(orEmpty(child.DiffBodiesJSON, "{}")),
-		PlanJson: string(orEmpty(child.PlanJSON, "null")), MessageCount: int64(child.MessageCount),
-		CreatedAt: now.Unix(), UpdatedAt: now.Unix(), ChangedFileCount: int64(child.ChangedFileCount),
+		PlanJson: string(orEmpty(child.PlanJSON, "null")), McpActivationsJson: string(child.MCPActivationsJSON),
+		MessageCount: int64(child.MessageCount),
+		CreatedAt:    now.Unix(), UpdatedAt: now.Unix(), ChangedFileCount: int64(child.ChangedFileCount),
 		PlanCompletedCount: int64(child.PlanCompletedCount), PlanTotalCount: int64(child.PlanTotalCount),
 	}); err != nil {
 		return fmt.Errorf("insert checkpoint child: %w", err)

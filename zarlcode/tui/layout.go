@@ -16,8 +16,8 @@ type uiLayout struct {
 
 const (
 	headerHeight          = 0  // app/mode/model are folded into the timeline title
-	editorMinHeight       = 3  // box: border + one input row
-	editorMaxHeight       = 8  // box: border + six input rows, matching intro prompt
+	editorMinHeight       = 2  // separator + one input row
+	editorMaxHeight       = 7  // separator + six input rows
 	statusHeight          = 1  // single-line hint bar
 	sidebarWidth          = 56 // preferred state summary width on wide terminals
 	sidebarMinWidth       = 32 // minimum usable state summary width
@@ -31,14 +31,16 @@ func computeLayoutWithEditorLinesAndSidebar(w, h, editorLines int, showSidebar b
 	}
 	var l uiLayout
 	l.header = uv.Rect(0, 0, w, headerHeight)
-	editorHeight := max(editorLines+2, editorMinHeight)
+	editorHeight := max(editorLines+1, editorMinHeight)
 	if editorHeight > editorMaxHeight {
 		editorHeight = editorMaxHeight
 	}
 
 	bottom := editorHeight + statusHeight
 	midTop := headerHeight
-	midH := max(h-midTop-bottom, 0)
+	// Reserve breathing room above the separator, not below the input.
+	// Clamp for tiny terminals without moving the editor or feedback row.
+	midH := max(h-midTop-bottom-1, 0)
 
 	if showSidebar && w >= sidebarMinMainWidth+sidebarMinWidth && midH > 0 {
 		width := sidebarMinWidth

@@ -2,9 +2,11 @@ package tui
 
 import (
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const maxSessionLabelRunes = 80
@@ -56,19 +58,33 @@ func (d *sessionNameDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	} else {
 		label += palette.Primary.On("▏")
 	}
-	drawActionDialog(scr, area, "session name", "shown in resume", []string{
+	drawActionDialog(scr, area, "session name", "shown in header, tab and resume", []string{
 		palette.Muted.On("Give this session a memorable label."),
 		label,
 	}, keyLegend(keyHint{"enter", "save"}, keyHint{"esc", "cancel"}), 76)
 }
 
 func normalizeSessionLabel(label string) string {
+	label = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+			return ' '
+		}
+		return r
+	}, ansi.Strip(label))
 	label = strings.Join(strings.Fields(label), " ")
 	runes := []rune(label)
 	if len(runes) > maxSessionLabelRunes {
 		label = string(runes[:maxSessionLabelRunes])
 	}
 	return label
+}
+
+// sessionDisplayName also normalizes labels loaded from older persisted sessions.
+func (m *UI) sessionDisplayName() string {
+	if label := normalizeSessionLabel(m.session.Label); label != "" {
+		return label
+	}
+	return "New session"
 }
 
 func (m *UI) openSessionNameDialog() {

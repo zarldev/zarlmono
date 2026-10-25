@@ -240,15 +240,8 @@ func (d *inspector) toolLines(width int) []string {
 	if d.snapshot.PlanMode {
 		mode = "PLAN"
 	}
-	total := 0
-	for _, spec := range specs {
-		if mode == "PLAN" && !engine.PlanAllows(spec.Name) {
-			continue // blocked in PLAN mode — not part of this turn's surface
-		}
-		total++
-	}
 	lines := []string{
-		headerLine(fmt.Sprintf("tools · %s mode · %d available", mode, total), width, palette.Primary.On),
+		headerLine(fmt.Sprintf("tools · %s mode · %d advertised", mode, len(specs)), width, palette.Primary.On),
 		"",
 	}
 	if surface := d.snapshot.ToolSurface; surface.Fingerprint != "" {
@@ -267,13 +260,9 @@ func (d *inspector) toolLines(width int) []string {
 		lines = append(lines, "")
 	}
 	for _, spec := range specs {
-		visible := true
-		if mode == "PLAN" && !engine.PlanAllows(spec.Name) {
-			visible = false
-		}
 		marker := ""
-		if !visible {
-			marker = palette.Muted.On(" (hidden)")
+		if mode == "PLAN" && !engine.PlanAllows(spec.Name) {
+			marker = palette.Muted.On(" (restricted in PLAN)")
 		}
 		lines = append(lines, fmt.Sprintf("  %s%s", palette.Info.On(string(spec.Name)), marker))
 		lines = append(lines, fmt.Sprintf("    %s", palette.Muted.On(spec.Description)))

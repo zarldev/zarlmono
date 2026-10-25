@@ -67,9 +67,14 @@ type Sink struct {
 
 	// Coalesce state — guarded by mu.
 	mu       sync.Mutex
-	pending  map[contentKey]string // accumulated delta per (TaskID, Depth)
-	keyOrder []contentKey          // FIFO so flushed dispatches preserve arrival order
-	timer    *time.Timer           // armed on first chunk; cleared on flush
+	pending  map[contentKey]pendingContent // accumulated delta and known item identity per (TaskID, Depth)
+	keyOrder []contentKey                  // FIFO so flushed dispatches preserve arrival order
+	timer    *time.Timer                   // armed on first chunk; cleared on flush
+
+	pendingToolOutputs map[toolOutputKey]ToolOutputMsg
+	toolOutputOrder    []toolOutputKey
+	sealedToolOutputs  map[toolOutputKey]struct{}
+	sealedToolOrder    []toolOutputKey
 
 	// Pump state. msgs is the buffered hand-off channel; the pump
 	// goroutine reads from msgs and calls the current send function.
@@ -123,6 +128,11 @@ type contentKey struct {
 	Depth  int
 }
 
+type pendingContent struct {
+	delta              string
+	contentOutputIndex *int
+}
+
 type sendFunc func(tea.Msg)
 
 // New constructs a Sink. send may be nil — set later via SetSend.
@@ -130,10 +140,12 @@ type sendFunc func(tea.Msg)
 // subsequent event delivers to that function via the pump goroutine.
 func New(send func(tea.Msg)) *Sink {
 	s := &Sink{
-		pending: make(map[contentKey]string),
-		msgs:    make(chan tea.Msg, pumpBuffer),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		pending:            make(map[contentKey]pendingContent),
+		pendingToolOutputs: make(map[toolOutputKey]ToolOutputMsg),
+		sealedToolOutputs:  make(map[toolOutputKey]struct{}),
+		msgs:               make(chan tea.Msg, pumpBuffer),
+		stop:               make(chan struct{}),
+		done:               make(chan struct{}),
 	}
 	if send != nil {
 		s.SetSend(send)
@@ -289,12 +301,22 @@ func (s *Sink) OnContent(ctx context.Context, e runner.Content) {
 	key := contentKey{TaskID: string(e.TaskID), Depth: e.Depth}
 
 	s.mu.Lock()
-	if _, ok := s.pending[key]; !ok {
+	pending, exists := s.pending[key]
+	if exists && e.ContentOutputIndex != nil &&
+		(pending.contentOutputIndex == nil || *pending.contentOutputIndex != *e.ContentOutputIndex) {
+		s.flushLocked()
+		pending = pendingContent{}
+		exists = false
+	}
+	if !exists {
 		s.keyOrder = append(s.keyOrder, key)
 	}
-	s.pending[key] += e.Delta
-	armed := s.timer != nil
-	if !armed {
+	pending.delta += e.Delta
+	if pending.contentOutputIndex == nil && e.ContentOutputIndex != nil {
+		pending.contentOutputIndex = new(*e.ContentOutputIndex)
+	}
+	s.pending[key] = pending
+	if s.timer == nil {
 		s.timer = time.AfterFunc(coalesceWindow, s.flush)
 	}
 	s.mu.Unlock()
@@ -360,6 +382,10 @@ type barrierMsg struct{ ack chan struct{} }
 func (s *Sink) flush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.flushLocked()
+}
+
+func (s *Sink) flushLocked() {
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
@@ -368,22 +394,35 @@ func (s *Sink) flush() {
 	// detach pending content, unlock, and enqueue it after an event barrier
 	// that observed an empty buffer. The pump does not acquire this lock.
 	for _, k := range s.keyOrder {
+		pending := s.pending[k]
+		var outputIndex *int
+		if pending.contentOutputIndex != nil {
+			outputIndex = new(*pending.contentOutputIndex)
+		}
 		s.dispatch(ContentMsg{
-			TaskID: k.TaskID,
-			Depth:  k.Depth,
-			Delta:  s.pending[k],
+			TaskID:             k.TaskID,
+			Depth:              k.Depth,
+			Delta:              pending.delta,
+			ContentOutputIndex: outputIndex,
 		})
 	}
 	s.keyOrder = nil
 	clear(s.pending)
+	for _, key := range s.toolOutputOrder {
+		s.dispatch(s.pendingToolOutputs[key])
+	}
+	s.toolOutputOrder = nil
+	clear(s.pendingToolOutputs)
 }
 
 // OnToolStarted flushes pending content first so "tool started"
 // never appears before the chunks that preceded it, then forwards
 // as ToolStartedMsg.
 func (s *Sink) OnToolStarted(ctx context.Context, e runner.ToolStarted) {
-	s.flush()
-	s.dispatch(ToolStartedMsg{
+	s.startToolOutput(toolOutputKeyFor(
+		string(e.TaskID), e.Depth, e.ExecutionID, e.ToolID, e.ToolName,
+		e.ParentExecutionID, e.ParentToolID, e.Sequence,
+	), ToolStartedMsg{
 		TaskID:            string(e.TaskID),
 		Depth:             e.Depth,
 		ExecutionID:       e.ExecutionID,
@@ -409,8 +448,10 @@ func (s *Sink) OnWorkspaceWaitStarted(ctx context.Context, e runner.WorkspaceWai
 
 // OnToolCompleted forwards as ToolCompletedMsg.
 func (s *Sink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
-	s.flush()
-	s.dispatch(ToolCompletedMsg{
+	s.settleToolOutput(toolOutputKeyFor(
+		string(e.TaskID), e.Depth, e.ExecutionID, e.ToolID, e.ToolName,
+		e.ParentExecutionID, e.ParentToolID, e.Sequence,
+	), ToolCompletedMsg{
 		TaskID:            string(e.TaskID),
 		Depth:             e.Depth,
 		ExecutionID:       e.ExecutionID,
@@ -429,8 +470,10 @@ func (s *Sink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
 
 // OnToolFailed forwards as ToolFailedMsg.
 func (s *Sink) OnToolFailed(ctx context.Context, e runner.ToolFailed) {
-	s.flush()
-	s.dispatch(ToolFailedMsg{
+	s.settleToolOutput(toolOutputKeyFor(
+		string(e.TaskID), e.Depth, e.ExecutionID, e.ToolID, e.ToolName,
+		e.ParentExecutionID, e.ParentToolID, e.Sequence,
+	), ToolFailedMsg{
 		TaskID:            string(e.TaskID),
 		Depth:             e.Depth,
 		ExecutionID:       e.ExecutionID,
@@ -499,13 +542,15 @@ func (s *Sink) OnConversationEnded(ctx context.Context, e runner.ConversationEnd
 func (s *Sink) OnIterationCompleted(ctx context.Context, e runner.IterationCompleted) {
 	s.flush()
 	s.dispatch(IterationCompletedMsg{
-		TaskID:      string(e.TaskID),
-		Depth:       e.Depth,
-		Iter:        e.Iter,
-		Usage:       e.Usage,
-		Delta:       e.Delta,
-		Context:     e.Context,
-		ToolSurface: e.ToolSurface,
+		TaskID:                     string(e.TaskID),
+		Depth:                      e.Depth,
+		Iter:                       e.Iter,
+		Usage:                      e.Usage,
+		Delta:                      e.Delta,
+		Context:                    e.Context,
+		ToolSurface:                e.ToolSurface,
+		RequestPreparationDuration: e.RequestPreparationDuration,
+		ToolDispatchDuration:       e.ToolDispatchDuration,
 	})
 }
 

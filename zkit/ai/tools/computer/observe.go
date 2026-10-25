@@ -17,10 +17,10 @@ import (
 
 // ObserveArgs controls which optional fields computer_observe returns.
 type ObserveArgs struct {
-	IncludeScreenshot bool `json:"include_screenshot,omitempty" doc:"Include a screenshot as image content (up to 4 MiB encoded). Request only when visual context is needed."`
-	IncludeTargets    bool `json:"include_targets,omitempty" doc:"Include discovered interactive or semantic targets such as links, buttons, inputs, and role-labelled elements."`
-	IncludeText       bool `json:"include_text,omitempty" doc:"Include visible surface text."`
-	IncludeRaw        bool `json:"include_raw,omitempty" doc:"Include backend-specific raw metadata. This is an escape hatch, not the portable contract."`
+	IncludeScreenshot bool `json:"include_screenshot,omitempty" doc:"Screenshot image, up to 4 MiB encoded; request only for visual context."`
+	IncludeTargets    bool `json:"include_targets,omitempty" doc:"Interactive/semantic targets: links, buttons, inputs, role-labelled elements."`
+	IncludeText       bool `json:"include_text,omitempty" doc:"Visible surface text."`
+	IncludeRaw        bool `json:"include_raw,omitempty" doc:"Backend-specific raw metadata; non-portable escape hatch."`
 }
 
 // ObserveTool observes a computer surface through a model.Observer backend.
@@ -62,7 +62,7 @@ func observeSpec() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:            ToolNameComputerObserve,
 		WorkspaceAccess: tools.WorkspaceAccesses.NONE,
-		Description:     "Observe the current computer surface. Returns surface metadata and, when requested, visible text, semantic targets, screenshot, and backend-specific raw metadata.",
+		Description:     "Observe current surface metadata, plus requested text, targets, screenshot and raw metadata.",
 		Parameters:      tools.SchemaFor[ObserveArgs](),
 	}
 }

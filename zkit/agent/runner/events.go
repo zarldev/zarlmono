@@ -18,6 +18,9 @@ type Content struct {
 	TaskID taskscope.ID
 	Depth  int
 	Delta  string
+	// ContentOutputIndex identifies a native visible output item within this
+	// iteration. Nil means unknown; zero is a valid item. It is event-owned.
+	ContentOutputIndex *int
 }
 
 // Thinking is a streamed reasoning delta — extended-thinking /
@@ -43,6 +46,20 @@ type ToolStarted struct {
 	ParentToolID      string
 	ParentExecutionID string
 	Sequence          int
+}
+
+// ToolOutputProgress is a cumulative, bounded live output preview for one
+// exact tool execution. Text is event-owned and never enters model history.
+type ToolOutputProgress struct {
+	TaskID            taskscope.ID
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	ParentExecutionID string
+	ParentToolID      string
+	Sequence          int
+	Text              string
 }
 
 // WorkspaceWaitStarted fires when a tool call enters the workspace wait queue.
@@ -314,6 +331,7 @@ type ToolSink interface {
 	OnToolStarted(context.Context, ToolStarted)
 	OnToolCompleted(context.Context, ToolCompleted)
 	OnToolFailed(context.Context, ToolFailed)
+	OnToolOutput(context.Context, ToolOutputProgress)
 }
 
 // WorkspaceWaitSink observes path-aware workspace wait lifecycle events.
@@ -346,6 +364,7 @@ type SteerSink interface {
 // the size delta to the user.
 type CompactionSink interface {
 	OnCompactionApplied(context.Context, CompactionApplied)
+	OnCompactionSettled(context.Context, CompactionSettled)
 }
 
 // DiagnosticSink observes non-terminal recovery decisions.
@@ -408,6 +427,7 @@ func (NopSink) OnThinking(context.Context, Thinking)                            
 func (NopSink) OnToolStarted(context.Context, ToolStarted)                       {}
 func (NopSink) OnToolCompleted(context.Context, ToolCompleted)                   {}
 func (NopSink) OnToolFailed(context.Context, ToolFailed)                         {}
+func (NopSink) OnToolOutput(context.Context, ToolOutputProgress)                 {}
 func (NopSink) OnConversationStarted(context.Context, ConversationStarted)       {}
 func (NopSink) OnConversationEnded(context.Context, ConversationEnded)           {}
 func (NopSink) OnIterationCompleted(context.Context, IterationCompleted)         {}

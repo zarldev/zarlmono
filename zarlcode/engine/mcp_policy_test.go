@@ -45,7 +45,8 @@ func TestMCPApprovalBindsEntireSpecification(t *testing.T) {
 func TestMCPApprovalRetainsTransportRestrictions(t *testing.T) {
 	for _, spec := range []dynamic.MCPConnSpec{
 		{Type: dynamic.Transports.TRANSPORTSTDIO, Command: "/bin/sh"},
-		{Type: dynamic.Transports.TRANSPORTHTTP, BaseURL: "http://127.0.0.1/mcp"},
+		{Type: dynamic.Transports.TRANSPORTHTTP, BaseURL: "http://192.168.1.5/mcp"},
+		{Type: dynamic.Transports.TRANSPORTHTTP, BaseURL: "http://127.0.0.1/mcp", AuthToken: "CANARY"},
 		{Type: dynamic.Transports.TRANSPORTHTTP, BaseURL: "http://8.8.8.8/mcp", AuthToken: "CANARY"},
 	} {
 		policy := engine.NewMCPConnectPolicy(map[string]dynamic.MCPConnSpec{"approved": spec})

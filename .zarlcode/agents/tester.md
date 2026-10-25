@@ -2,7 +2,7 @@
 name: tester
 description: Reproduce failures and verify behavior without editing files, using the narrowest relevant Go package, module, race, task, or PTY-backed check.
 provider: openai-codex
-model: gpt-5.6-terra
+model: gpt-6.1-sol
 mode: verify
 ---
 

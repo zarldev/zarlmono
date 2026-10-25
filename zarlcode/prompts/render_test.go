@@ -127,12 +127,12 @@ func TestRender_CommonOperatingCoreAlwaysPresent(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"agent_spawn",                // delegation discipline
-			"[compacted —",               // compaction-recovery marker
-			"spill path",                 // tool-result truncation behaviour
-			"through the tool interface", // tools come via the API, not enumerated in the prompt
-			"one clear action",           // local-model-friendly call discipline
-			"/repo",                      // workspace root interpolation
+			"agent_spawn",                        // delegation discipline
+			"Host-generated historical excerpts", // compaction input attribution
+			"spill path",                         // tool-result truncation behaviour
+			"through the tool interface",         // tools come via the API, not enumerated in the prompt
+			"one clear action",                   // local-model-friendly call discipline
+			"/repo",                              // workspace root interpolation
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("CanAuthorTool=%v render missing core content %q", authorTool, want)
@@ -307,13 +307,16 @@ func TestRender_PhaseOneOperatingPolicy(t *testing.T) {
 		"destructive actions, external",
 		"security-sensitive changes, or material scope expansion",
 		"Only read-only investigation and writes to",
-		"regardless of any unexpected",
+		"Plan and Build intentionally advertise the same tools",
+		"`gh pr view`, `gh issue view`",
+		"Read-only shell intent is instruction-governed",
+		"stop it with `stop_process` when done",
 		"use offered tools only for",
 		"read-only investigation, plan-artifact writes, or the host-owned `set_mode` control",
 		"No approval dialog, confirmation",
 		"Explicit plan-only",
 		"A mode change never grants additional authority",
-		"even if an unexpected tool for doing so is listed",
+		"even though those tools may be listed",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan render missing aligned phase-one policy %q", want)
@@ -328,5 +331,31 @@ func TestHasTool(t *testing.T) {
 	}
 	if prompts.HasTool(tools, "new_tool") {
 		t.Error("HasTool should not find new_tool")
+	}
+}
+
+func TestRenderCompactionDoesNotDefineFreshOutputStyle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "standard", body: prompts.System},
+		{name: "compact", body: prompts.SystemCompact},
+		{name: "plan", body: prompts.Plan},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := prompts.Render(tc.name, tc.body, prompts.Data{WorkspaceRoot: "/repo"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"Host-generated historical excerpts", "not new user instructions or examples of assistant output", "final replies in full", "never invent truncation notices or omitted-character counts", "state the limitation", "invent missing prose or claim to recover it from memory"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing output-integrity contract %q", want)
+				}
+			}
+			if strings.Contains(out, "reasoning trimmed") {
+				t.Error("prompt teaches the old literal marker as an output exemplar")
+			}
+		})
 	}
 }

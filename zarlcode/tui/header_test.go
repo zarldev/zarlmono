@@ -10,15 +10,18 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 )
 
-func TestHeaderExposesModelRunAndViewportState(t *testing.T) {
+func TestHeaderExposesSessionModelAndViewportState(t *testing.T) {
 	ui := tui.New()
 	ui.SetWorkspace("/tmp/project", "qwen3")
 	model, _ := ui.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	ui = model.(*tui.UI)
 	title := strings.SplitN(ansi.Strip(ui.View().Content), "\n", 2)[0]
-	for _, want := range []string{"ƶ", "qwen3", "idle", "follow"} {
+	for _, want := range []string{"ƶ", "qwen3", "New session"} {
 		if !strings.Contains(title, want) {
 			t.Errorf("header missing %q: %s", want, title)
 		}
+	}
+	if strings.Contains(title, "follow") || strings.Contains(title, "·") {
+		t.Fatal("normal following should not add viewport metadata or an orphan separator")
 	}
 }

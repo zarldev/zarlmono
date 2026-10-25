@@ -10,7 +10,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 )
 
-func TestMainWindowStatePaneShowsSessionName(t *testing.T) {
+func TestMainWindowDashboardShowsSessionName(t *testing.T) {
 	var model tea.Model = tui.New()
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	model, _ = model.Update(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'n'})
@@ -18,10 +18,11 @@ func TestMainWindowStatePaneShowsSessionName(t *testing.T) {
 		model, _ = model.Update(tea.KeyPressMsg{Text: string(r), Code: r})
 	}
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = model.Update(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'l'})
 
 	out := ansi.Strip(model.View().Content)
 	if !strings.Contains(out, "name      Fix Ghostty notifications") {
-		t.Fatalf("state pane missing session name:\n%s", out)
+		t.Fatalf("dashboard missing session name:\n%s", out)
 	}
 }
 

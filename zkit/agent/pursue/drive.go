@@ -32,6 +32,7 @@ type Config struct {
 	cancelDrainTimeout time.Duration
 	attemptTimeout     time.Duration
 	contextThreader    ContextThreader
+	supervisor         *Supervisor
 }
 
 // WithMaxAttempts caps how many attempts Drive will make toward the
@@ -144,7 +145,7 @@ func Drive(ctx context.Context, req Request, opts ...options.Option[Config]) Out
 
 	spec := req.Spec
 	for attempt := 1; ; attempt++ {
-		res, watched, err := runAttempt(ctx, req, spec, cfg.cancelDrainTimeout, cfg.attemptTimeout)
+		res, watched, err := runAttempt(ctx, req, spec, cfg.cancelDrainTimeout, cfg.attemptTimeout, cfg.supervisor)
 		current := Attempt{Number: attempt, Spec: spec, Result: res}
 		// err is harness-internal only (the drain timeout); the attempt's
 		// own outcome lives entirely in res.
@@ -257,10 +258,11 @@ func runAttempt(
 	spec runner.TaskSpec,
 	cancelDrainTimeout time.Duration,
 	attemptTimeout time.Duration,
+	supervisor *Supervisor,
 ) (runner.TaskResult, bool, error) {
 	// Fast path: nothing to supervise → call inline and keep the original
 	// (panic-transparent, goroutine-free) shape.
-	if req.Watcher == nil && attemptTimeout <= 0 {
+	if req.Watcher == nil && attemptTimeout <= 0 && supervisor == nil {
 		return req.Attempt(ctx, spec), false, nil
 	}
 
@@ -281,9 +283,13 @@ func runAttempt(
 	}
 
 	done := make(chan runner.TaskResult, 1)
-	go func() {
-		done <- req.Attempt(attemptCtx, spec)
-	}()
+	if supervisor != nil {
+		if !supervisor.attempt(attemptCtx, req, spec, done) {
+			return runner.TaskResult{Reason: runner.TerminalCancelled, Err: errors.Join(ErrSupervisorClosed, context.Cause(ctx))}, false, nil
+		}
+	} else {
+		go func() { done <- req.Attempt(attemptCtx, spec) }()
+	}
 
 	select {
 	case r := <-done:
@@ -297,6 +303,12 @@ func runAttempt(
 			}
 		}
 		return r, false, nil
+	case <-ctx.Done():
+		cancel()
+		r, drainErr := drainAttempt(ctx, done, cancelDrainTimeout)
+		r.Reason = runner.TerminalCancelled
+		r.Err = errors.Join(context.Cause(ctx), r.Err, drainErr)
+		return r, false, nil
 	case <-watchCh:
 		cancel()
 		r, err := drainAttempt(ctx, done, cancelDrainTimeout)
@@ -307,23 +319,32 @@ func runAttempt(
 		// way. watched stays false so Drive surfaces it as an ERRORED
 		// Outcome carrying ErrAttemptTimeout.
 		cancel()
-		_, _ = drainAttempt(ctx, done, cancelDrainTimeout)
-		return runner.TaskResult{
-			Reason: runner.TerminalError,
-			Err:    fmt.Errorf("%w after %s", ErrAttemptTimeout, attemptTimeout),
-		}, false, nil
+		r, drainErr := drainAttempt(ctx, done, cancelDrainTimeout)
+		r.Reason = runner.TerminalError
+		r.Err = errors.Join(fmt.Errorf("%w after %s", ErrAttemptTimeout, attemptTimeout), r.Err, drainErr)
+		return r, false, nil
 	}
 }
 
 func drainAttempt(ctx context.Context, done <-chan runner.TaskResult, timeout time.Duration) (runner.TaskResult, error) {
 	t := time.NewTimer(timeout)
 	defer t.Stop()
+	var interruption, drainErr error
 	select {
 	case r := <-done:
 		return r, nil
 	case <-ctx.Done():
-		return runner.TaskResult{}, fmt.Errorf("%w: %w", ErrAttemptCancelDrainTimeout, ctx.Err())
+		interruption = ctx.Err()
+		drainErr = fmt.Errorf("%w: %w", ErrAttemptCancelDrainTimeout, interruption)
 	case <-t.C:
-		return runner.TaskResult{}, fmt.Errorf("%w after %s", ErrAttemptCancelDrainTimeout, timeout)
+		drainErr = fmt.Errorf("%w after %s", ErrAttemptCancelDrainTimeout, timeout)
+	}
+	// Select does not prioritize a settled result when cancellation or the
+	// deadline is also ready. Preserve evidence already queued at this boundary.
+	select {
+	case r := <-done:
+		return r, interruption
+	default:
+		return runner.TaskResult{}, drainErr
 	}
 }

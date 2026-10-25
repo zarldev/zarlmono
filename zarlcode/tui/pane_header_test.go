@@ -10,7 +10,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 )
 
-// The header bar shows app/mode on the left and the active model on the right.
+// The header shows session identity on the left and the active model on the right.
 func TestHeaderPaneRightAlignsModel(t *testing.T) {
 	const width = 60
 	ui := tui.New()
@@ -22,9 +22,8 @@ func TestHeaderPaneRightAlignsModel(t *testing.T) {
 	if !strings.Contains(line, "claude-opus") {
 		t.Fatalf("model name missing from header:\n%q", line)
 	}
-	end := strings.Index(line, "claude-opus") + len("claude-opus")
-	viewport := strings.Index(line, "follow 100%")
-	if viewport < 0 || viewport-end > 6 {
-		t.Errorf("model name should be pinned beside the right-edge viewport state, model end %d viewport start %d:\n%q", end, viewport, line)
+	end := ansi.StringWidth(strings.TrimRight(line, " "))
+	if end != width-2 || strings.Contains(line, "follow") {
+		t.Errorf("model should use the quiet header's right edge: %q", line)
 	}
 }

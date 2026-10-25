@@ -500,7 +500,8 @@ func composeHelpSections() []helpSection {
 				{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+s", "settings"}},
 				{{"ctrl+p", "plan pane"}, {"ctrl+w", "working set"}, {"ctrl+o", "inspector"}},
 				{{"ctrl+a", "agent activity"}, {"ctrl+h", "tool history"}, {"ctrl+t", "theme"}},
-				{{"ctrl+y", "execution tray"}, {"ctrl+b", "toggle state bar"}, {"ctrl+n", "name session"}},
+				{{"ctrl+y", "execution tray"}, {"ctrl+b", "session sidebar"}, {"ctrl+n", "name session"}},
+				{{"alt+↑↓", "scroll sidebar"}, {"alt+pgup/pgdn", "page sidebar"}, {"alt+home/end", "sidebar top / bottom"}},
 			},
 		},
 		{
@@ -533,7 +534,7 @@ func browseHelpSections() []helpSection {
 				{{"enter / space", "expand / collapse"}, {"i / esc", "back to compose"}},
 			},
 		},
-		{title: "quick panes", rows: [][]keyHint{{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+b", "toggle state bar"}}}},
+		{title: "quick panes", rows: [][]keyHint{{{"ctrl+f", "file viewer"}, {"ctrl+e", "model picker"}, {"ctrl+b", "session sidebar"}}}},
 		{title: "global", rows: [][]keyHint{{{"ctrl+g", "close this help"}, {"ctrl+c", "quit"}}}},
 	}
 }

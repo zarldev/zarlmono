@@ -35,7 +35,7 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 			}
 		case llm.RoleUser:
 			parts := []*genai.Part{}
-			if m.Content != "" {
+			if m.Parts == nil && m.Content != "" {
 				parts = append(parts, &genai.Part{Text: m.Content})
 			}
 			for _, p := range m.Parts {
@@ -56,6 +56,10 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 				parts = append(parts, &genai.Part{Text: m.Content})
 			}
 			for _, tc := range m.ToolCalls {
+				if native := signedFunctionCallPart(m.ContinuationItems, tc); native != nil {
+					parts = append(parts, native)
+					continue
+				}
 				args := map[string]any{}
 				if tc.Function.Arguments != "" {
 					_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
@@ -82,15 +86,18 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 			// MCP/zarlcode tool results are plain text; wrap as
 			// {"result": <text>} so the schema matches what models expect.
 			resp := map[string]any{"result": m.Content}
+			part := &genai.Part{FunctionResponse: &genai.FunctionResponse{
+				ID:       m.ToolCallID,
+				Name:     toolNameFromID(messages, m.ToolCallID),
+				Response: resp,
+			}}
+			if len(contents) > 0 && contents[len(contents)-1].Role == llm.RoleUser {
+				contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, part)
+				continue
+			}
 			contents = append(contents, &genai.Content{
-				Role: llm.RoleUser,
-				Parts: []*genai.Part{{
-					FunctionResponse: &genai.FunctionResponse{
-						ID:       m.ToolCallID,
-						Name:     toolNameFromID(messages, m.ToolCallID),
-						Response: resp,
-					},
-				}},
+				Role:  llm.RoleUser,
+				Parts: []*genai.Part{part},
 			})
 		}
 	}
@@ -102,6 +109,23 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 		}
 	}
 	return sys, contents
+}
+func signedFunctionCallPart(items []llm.ContinuationItem, call llm.ToolCall) *genai.Part {
+	for _, item := range items {
+		if item.Provider != continuationProvider || item.Format != continuationFormat ||
+			item.Kind != "function_call" || item.ID != call.ID ||
+			(item.OutputIndex != nil && call.OutputIndex != nil && *item.OutputIndex != *call.OutputIndex) {
+			continue
+		}
+		var part genai.Part
+		if json.Unmarshal(item.Data, &part) != nil || part.FunctionCall == nil ||
+			(part.FunctionCall.ID != "" && part.FunctionCall.ID != call.ID) ||
+			part.FunctionCall.Name != call.Function.Name || len(part.ThoughtSignature) == 0 {
+			continue
+		}
+		return &part
+	}
+	return nil
 }
 
 // toolNameFromID walks back through messages to find the assistant

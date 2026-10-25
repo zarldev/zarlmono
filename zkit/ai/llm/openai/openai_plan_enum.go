@@ -36,4 +36,5 @@ const (
 	reasoningEffortHigh                          // high
 	reasoningEffortXHigh                         // xhigh
 	reasoningEffortMax                           // max
+	reasoningEffortNone                          // none
 )

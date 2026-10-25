@@ -7,6 +7,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
+const (
+	promptCacheRetentionMemory = "in-memory"
+	promptCacheRetention24h    = "24h"
+)
+
 // requestPlan is the sealed interface for endpoint-specific plans.
 // Only chatCompletionPlan and responsesPlan implement it.
 type requestPlan interface {
@@ -61,12 +66,27 @@ func knownReasoningModel(m string) bool {
 		strings.HasPrefix(norm, "o3") ||
 		strings.HasPrefix(norm, "o4") ||
 		strings.HasPrefix(norm, "gpt-5") ||
-		norm == modelGPT6Astra
+		norm == modelGPT61Sol || norm == modelGPT6Astra || isGPT6SolOrLuna(norm)
 }
 
 func supportsCoreResponses(model string) bool {
 	norm := strings.ToLower(strings.TrimSpace(model))
-	return norm == modelGPT6Astra || norm == modelGPT56 || strings.HasPrefix(norm, modelGPT56+"-")
+	return norm == modelGPT61Sol || norm == modelGPT6Astra || isGPT6SolOrLuna(norm) || norm == modelGPT56 || strings.HasPrefix(norm, modelGPT56+"-")
+}
+
+func isGPT6SolOrLuna(model string) bool {
+	return model == modelGPT6Sol || model == modelGPT6Luna
+}
+
+func supportsReasoningEffort(model string, effort ReasoningEffort) bool {
+	switch effort {
+	case ReasoningEfforts.REASONINGEFFORTNONE:
+		return isGPT6SolOrLuna(strings.ToLower(strings.TrimSpace(model)))
+	case ReasoningEfforts.REASONINGEFFORTMAX:
+		return supportsMaxReasoning(model)
+	default:
+		return true
+	}
 }
 
 func supportsMaxReasoning(model string) bool {
@@ -76,6 +96,18 @@ func supportsMaxReasoning(model string) bool {
 func requestOptionString(options llm.ModelOptions, key string) string {
 	value, _ := options[key].(string)
 	return strings.TrimSpace(value)
+}
+
+// requestServiceTier accepts only published speed tiers; omission preserves the
+// project's default. Account/model eligibility is enforced by the backend.
+func requestServiceTier(options llm.ModelOptions) string {
+	tier := requestOptionString(options, "service_tier")
+	switch tier {
+	case "default", "fast", "priority", "ultrafast":
+		return tier
+	default:
+		return ""
+	}
 }
 
 // planRequest selects the endpoint and parameter plan for a given model
@@ -89,6 +121,9 @@ func requestOptionString(options llm.ModelOptions, key string) string {
 func planRequest(model string, req llm.CompletionRequest, responsesAPI bool, defaults responsesPlan) (requestPlan, error) {
 	if supportsCoreResponses(model) && responsesAPI && req.Stream {
 		plan := defaults
+		if plan.reasoning != nil && *plan.reasoning == ReasoningEfforts.REASONINGEFFORTNONE && !supportsReasoningEffort(model, *plan.reasoning) {
+			plan.reasoning = nil
+		}
 		plan.parallelToolCalls = len(req.Tools) > 0
 		if req.Thinking.Enabled && plan.reasoning == nil {
 			medium := ReasoningEfforts.REASONINGEFFORTMEDIUM
@@ -96,7 +131,7 @@ func planRequest(model string, req llm.CompletionRequest, responsesAPI bool, def
 		}
 		if effort := requestOptionString(req.Options, "reasoning_effort"); effort != "" {
 			parsed, err := ParseReasoningEffort(effort)
-			if err == nil && (effort != "max" || supportsMaxReasoning(model)) {
+			if err == nil && supportsReasoningEffort(model, parsed) {
 				plan.reasoning = &parsed
 			}
 		}
@@ -106,7 +141,7 @@ func planRequest(model string, req llm.CompletionRequest, responsesAPI bool, def
 		if cacheKey := requestOptionString(req.Options, "prompt_cache_key"); cacheKey != "" {
 			plan.promptCacheKey = cacheKey
 		}
-		if retention := requestOptionString(req.Options, "prompt_cache_retention"); retention == "in-memory" || retention == "24h" {
+		if retention := requestOptionString(req.Options, "prompt_cache_retention"); retention == promptCacheRetentionMemory || retention == promptCacheRetention24h {
 			plan.promptCacheRetention = retention
 		}
 		plan.includeEncryptedReasoning = plan.reasoning != nil || hasOpenAIContinuationItems(req.Messages)

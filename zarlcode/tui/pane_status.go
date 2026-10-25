@@ -19,7 +19,7 @@ type mainToastMsg struct{}
 type statusPane struct {
 	session    *Session
 	input      func() string
-	settlement func() string
+	settlement func() settlementNotice
 }
 
 func newStatusPane(session *Session, input func() string) *statusPane {
@@ -34,12 +34,12 @@ func (s *statusPane) Draw(scr uv.Screen, area uv.Rectangle) {
 	hint := s.statusHint()
 	toast := s.statusToast()
 	slashActive := s.input != nil && slashStatusHint(s.input()) != ""
-	settling := s.settlement != nil && s.settlement() != ""
+	settling := s.settlement != nil && s.settlement().text != ""
 	if slashActive && !settling && s.session.ToastTone != toastError && s.session.ToastTone != toastWarn {
 		toast = ""
 	}
 
-	content := uv.Rect(area.Min.X+1, area.Min.Y, max(area.Dx()-1, 0), 1)
+	content := uv.Rect(area.Min.X+2, area.Min.Y, max(area.Dx()-3, 0), 1)
 	if content.Dx() == 0 {
 		return
 	}
@@ -48,19 +48,13 @@ func (s *statusPane) Draw(scr uv.Screen, area uv.Rectangle) {
 		return
 	}
 
-	// Keep both durable context and transient feedback when they fit. On a
-	// collision the toast owns the row: exceptional/transient feedback is more
-	// actionable than the durable mode label, and explicit arbitration avoids
-	// the old right-aligned overlay corrupting the left segment.
-	toastWidth := ansi.StringWidth(toast)
-	hintWidth := ansi.StringWidth(hint)
-	if hintWidth+2+toastWidth <= content.Dx() {
-		drawLine(scr, content, hint)
-		x := content.Max.X - toastWidth
-		drawLine(scr, uv.Rect(x, content.Min.Y, toastWidth, 1), toast)
-		return
-	}
+	// Feedback always starts at the text inset. Command guidance uses spare
+	// space after it, and yields entirely when the row is too narrow.
 	drawLine(scr, content, toast)
+	toastWidth := ansi.StringWidth(toast)
+	if hint != "" && toastWidth+2+ansi.StringWidth(hint) <= content.Dx() {
+		drawLine(scr, uv.Rect(content.Min.X+toastWidth+2, content.Min.Y, content.Dx()-toastWidth-2, 1), hint)
+	}
 }
 
 // Update implements Pane. Status bar is read-only.
@@ -74,17 +68,13 @@ func (s *statusPane) statusHint() string {
 			return hint
 		}
 	}
-	mode := palette.Primary.On("build mode")
-	if s.session.PlanMode {
-		mode = palette.PlanMode.On("plan mode")
-	}
-	return mode
+	return ""
 }
 
 func (s *statusPane) statusToast() string {
 	if s.settlement != nil {
-		if status := s.settlement(); status != "" {
-			return renderFooterToast(status, toastError)
+		if status := s.settlement(); status.text != "" {
+			return renderFooterToast(status.text, status.tone)
 		}
 	}
 	if s.session.Toast == "" || time.Since(s.session.ToastAt) > mainToastTTL {

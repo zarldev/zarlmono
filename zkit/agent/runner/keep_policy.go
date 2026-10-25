@@ -1,6 +1,9 @@
 package runner
 
-import "github.com/zarldev/zarlmono/zkit/ai/llm"
+import (
+	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
+)
 
 // keepPolicy computes the keepRecent argument the runner hands the
 // compactor each iteration — the number of most-recent messages the
@@ -15,7 +18,8 @@ import "github.com/zarldev/zarlmono/zkit/ai/llm"
 //     floor. WithCompactKeepRecent sets static; WithAdaptiveKeepRecent
 //     sets adaptive; they are mutually exclusive (last-write-wins).
 //   - pressure override: when the provider's reported prompt tokens
-//     cross fraction × budget, force a trim and shrink keep to 1.
+//     cross fraction × budget, force a trim and protect at least the newest
+//     message plus its complete tool exchange.
 type keepPolicy struct {
 	static   int                     // floor used when adaptive is nil
 	adaptive func([]llm.Message) int // token-budget-aware sizing; wins over static
@@ -46,19 +50,13 @@ func (p keepPolicy) decide(messages []llm.Message, lastUsage *llm.Usage) (int, b
 			used = lastUsage.TotalTokens
 		}
 		if used > 0 && float64(used)/float64(p.budget) >= p.fraction {
-			// Shrink keep to 1 — just the latest message survives — so the
-			// latest (often huge) tool result is itself eligible for
-			// Tiered's Phase-3 placeholdering next iteration. Without this
-			// the loop treads water: the engine trims old context while a
-			// fresh tool result inside the keep window adds equivalent
-			// bytes, leaving net prompt size unchanged. The assistant
-			// tool_call metadata pointing at the result survives Phase 3,
-			// so the model still sees what it asked for.
+			// Reduce the age-based tail, but never split the newest tool
+			// exchange: its results have not yet been consumed by the model.
 			if keep > 1 {
 				keep = 1
 			}
-			return keep, true
+			return compact.KeepRecentExchange(messages, keep), true
 		}
 	}
-	return keep, false
+	return compact.KeepRecentExchange(messages, keep), false
 }

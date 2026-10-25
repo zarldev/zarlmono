@@ -14,6 +14,7 @@ import (
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
@@ -73,14 +74,19 @@ type LiveRunner struct {
 
 	// mu guards the hot-swappable run target. A turn snapshots target under the
 	// lock at start, so an update takes effect on the next turn.
-	mu             sync.Mutex
-	target         RunTarget
-	promptProfile  PromptProfile
-	readOnly       bool
-	modeGeneration uint64
+	mu              sync.Mutex
+	target          RunTarget
+	promptProfile   PromptProfile
+	readOnly        bool
+	modeGeneration  uint64
+	renderedControl requestControlObservation
 	// historyBuffers retain only uncommitted replay batches until the session FIFO
 	// retries them. Access is under mu; each buffer serializes its own writes.
 	historyBuffers map[string]*sessionHistoryBuffer
+	// programOutputs is the current activation capability, captured by sources.
+	// Replacement closes the old store permanently under mu before publishing
+	// a new one; shutdown closes it without replacement.
+	programOutputs *programtools.OutputStore
 
 	// turnCancel cancels the context driving the current turn's runner.Run.
 	// Set under mu before entering the run loop, cleared under mu on exit.
@@ -174,8 +180,9 @@ type LiveRunner struct {
 	// It persists across per-turn registries and closes with the LiveRunner.
 	fetchTool *fetch.WebFetchTool
 
-	mcp     *dynamic.MCPRegistry
-	mcpHost *tools.Registry
+	mcp         *dynamic.MCPRegistry
+	mcpHost     *tools.Registry
+	mcpExposure *dynamic.MCPExposure
 }
 
 // WithSettings configures live preference resolution.
@@ -207,7 +214,10 @@ func WithToolEnvironment(env map[string]string) options.Option[LiveRunner] {
 
 // WithMCP configures the persistent MCP registry and discovered-tool host.
 func WithMCP(reg *dynamic.MCPRegistry, host *tools.Registry) options.Option[LiveRunner] {
-	return func(l *LiveRunner) { l.mcp, l.mcpHost = reg, host }
+	return func(l *LiveRunner) {
+		l.mcp, l.mcpHost = reg, host
+		l.mcpExposure = dynamic.NewMCPExposure(reg)
+	}
 }
 
 // WithComputerSessionFactory overrides browser-session construction.
@@ -240,13 +250,14 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 			Model:    model,
 			Window:   LiveContextWindow,
 		},
-		promptProfile: PromptProfiles.LEAN,
-		planStore:     newLivePlanStore(),
-		catalog:       newRuntimeCatalog(ws.Root()),
-		truncator:     &runner.SpillingTruncator{Prefix: "zarlcode-"},
-		operational:   newOperationalState(),
-		fetchTool:     fetch.New(),
-		sink:          nopLiveSink{},
+		promptProfile:  PromptProfiles.LEAN,
+		planStore:      newLivePlanStore(),
+		catalog:        newRuntimeCatalog(ws.Root()),
+		truncator:      &runner.SpillingTruncator{Prefix: "zarlcode-"},
+		operational:    newOperationalState(),
+		fetchTool:      fetch.New(),
+		sink:           nopLiveSink{},
+		programOutputs: programtools.NewOutputStore(),
 	}
 	l.queue = newQueueState(&l.admission)
 	l.computer = &liveComputer{owner: l}
@@ -266,6 +277,7 @@ func (l *LiveRunner) AttachMCP(reg *dynamic.MCPRegistry, host *tools.Registry) {
 	defer l.admission.leave()
 	l.mu.Lock()
 	l.mcp, l.mcpHost = reg, host
+	l.mcpExposure = dynamic.NewMCPExposure(reg)
 	l.mu.Unlock()
 }
 
@@ -425,10 +437,10 @@ func (l *LiveRunner) RestoreContext(contextCache []llm.Message) {
 		return
 	}
 	defer l.admission.leave()
-	l.context.restore(contextCache)
+	l.restoreLegacyContext(contextCache, false)
 }
 
-// ClearContext clears the LLM context threaded into the next turn.
+// ClearContext clears the conversation and session-local MCP selection hints.
 func (l *LiveRunner) ClearContext() {
 	if l == nil {
 		return
@@ -437,12 +449,12 @@ func (l *LiveRunner) ClearContext() {
 		return
 	}
 	defer l.admission.leave()
-	l.context.restore(nil)
+	l.restoreLegacyContext(nil, true)
 }
 
-// SetPlanMode toggles PLAN mode on the next dispatch / turn. PLAN restricts
-// the runner to read-only tools and swaps in a planning prompt. Read live by
-// the source filter, so flipping mid-run takes effect on the next tool call.
+// SetPlanMode toggles PLAN dispatch restrictions and the planning prompt on the
+// next dispatch / turn without changing advertised tools. Read-only shell intent
+// is prompt-governed; WithReadOnlyTasks retains its stricter authority ceiling.
 func (l *LiveRunner) SetPlanMode(on bool) {
 	if !l.admission.enter() {
 		return

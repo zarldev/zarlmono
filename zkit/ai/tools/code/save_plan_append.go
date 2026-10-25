@@ -43,7 +43,7 @@ type SavePlanAppendTool struct{ ws Workspace }
 // SavePlanAppendArgs is the typed argument struct
 // SavePlanAppendTool.Execute decodes into via tools.DecodeArgs.
 type SavePlanAppendArgs struct {
-	Name    string `json:"name" doc:"Filename slug (without extension) of the plan to append to. Same shape as save_plan's name: lowercase letters, digits, dash, underscore. Must already have been scaffolded with save_plan; this tool does not infer a default timestamp slug."`
+	Name    string `json:"name" doc:"Existing plan's filename slug (no extension): lowercase letters, digits, dash, underscore. No default; scaffold with save_plan first."`
 	Content string `json:"content" doc:"Bytes to append. Keep each call under the configured cap (256KB default)."`
 }
 
@@ -59,11 +59,8 @@ func (t *SavePlanAppendTool) Definition() tools.ToolSpec {
 		Name:            ToolNameSavePlanAppend,
 		WorkspaceAccess: tools.WorkspaceAccesses.WRITE,
 		WorkspaceScope:  tools.WorkspaceScopeFixed(".zarlcode/plans"),
-		Description: "Append a chunk of markdown to .zarlcode/plans/<name>.md. " +
-			"Use this when a plan exceeds the save_plan one-shot cap: scaffold with " +
-			"save_plan(name, \"\"), then call save_plan_append repeatedly with chunks " +
-			"under the cap. Path is locked to the plans directory; this tool cannot " +
-			"modify any other file.",
+		Description: "Append Markdown only within .zarlcode/plans/<name>.md. " +
+			"For oversized plans, save_plan a non-empty first chunk, then append chunks under the per-call cap.",
 		Parameters: tools.SchemaFor[SavePlanAppendArgs](),
 	}
 }

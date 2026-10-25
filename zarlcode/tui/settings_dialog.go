@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"slices"
+	"strconv"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -65,9 +66,9 @@ type settingsDialog struct {
 const modelCustomSentinel = "✎ custom model…"
 
 // compactActiveSentinel is the compaction / judge provider+model picker entry
-// meaning "reuse the active provider/model" — committing it clears the
-// override.
-const compactActiveSentinel = "(active)"
+// meaning "reuse the active provider/model" — stored explicitly so it can
+// opt out of built-in routes and override a global route.
+const compactActiveSentinel = prefs.ActiveModelTarget
 
 const codexEffortAuto = "(auto)"
 
@@ -109,6 +110,7 @@ type settingsRow struct {
 	cred    string // rowKey: api_keys provider tag
 	kind    settingsRowKind
 	def     string                        // shown (dim) when no row is set
+	builtin string                        // optional built-in baseline when def is an inherited route
 	desc    string                        // one-line help shown in the detail panel
 	opts    []string                      // rowEnum options
 	numeric bool                          // validate as a non-negative integer before commit
@@ -134,25 +136,37 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 		mcp:           newMCPPane(ctx, s),
 		cats: []settingsCat{
 			{name: "model", rows: []settingsRow{
-				{label: "provider", key: prefs.KeyProvider, kind: rowEnum, def: "llamacpp", opts: providerNames(s),
+				{label: "provider", key: prefs.KeyProvider, kind: rowEnum, def: prefs.DefaultProvider, opts: providerNames(s),
 					desc: "which llm backend runs the agent. manage keys & sign-in under providers."},
 				{label: "model", key: prefs.KeyModel, kind: rowModel, def: "(provider default)",
 					desc: "model id for the active provider. enter to pick from the fetched list."},
 				{label: "agent", key: prefs.KeyAgent, kind: rowText, def: "default",
 					desc: "named agent preset; 'default' is the built-in coding agent."},
-				{label: "reasoning effort", key: prefs.KeyCodexEffort, kind: rowEnum, def: codexEffortAuto,
+				{label: "reasoning effort", key: prefs.KeyCodexEffort, kind: rowEnum, def: prefs.DefaultCodexEffort,
 					desc: "reasoning effort for OpenAI Codex models. (auto) uses the model/default heuristic; options narrow to the selected model when known."},
+				{label: "text verbosity", key: prefs.KeyTextVerbosity, kind: rowEnum, def: "(unset)", opts: []string{"(unset)", "low", "medium", "high"},
+					desc: "controls answer detail, independently of reasoning effort; not a token limit. low is concise; high adds detail. (unset) uses provider defaults. unsupported models ignore it. applies next turn."},
 				{label: "temperature", key: prefs.KeyTemperature, kind: rowEnum, def: "(default)", opts: []string{"(default)", "0", "0.2", "0.5", "0.7", "1.0"},
 					desc: "sampling temperature. (default) leaves it to the server; a low value (0–0.2) makes local models more deterministic and improves tool-call reliability."},
+				{label: "speed", key: prefs.KeyServiceTier, kind: rowEnum, def: "(auto)",
+					desc: "main agent speed. (auto) uses backend defaults; standard overrides them. Fast/Ultrafast cost more; estimates exclude tier premiums. Account/workspace access required. Only auto is offered for unsupported models."},
+				{label: "Plan provider", section: "Mode routes", key: prefs.KeyMainPlanProvider, kind: rowEnum, def: "(active)",
+					desc: "provider used after entering Plan mode. (active) keeps the current provider."},
+				{label: "Plan model", key: prefs.KeyMainPlanModel, kind: rowModel, def: "(active)",
+					desc: "model used after entering Plan mode. (active) keeps the current model."},
+				{label: "Build provider", key: prefs.KeyMainBuildProvider, kind: rowEnum, def: "(active)",
+					desc: "provider used after entering Build mode. (active) keeps the current provider."},
+				{label: "Build model", key: prefs.KeyMainBuildModel, kind: rowModel, def: "(active)",
+					desc: "model used after entering Build mode. (active) keeps the current model."},
 			}},
 			{name: "providers", providers: true},
 			{name: "catalog", catalog: true},
 			{name: "context", rows: []settingsRow{
-				{label: "reserve tokens", section: "Headroom", key: prefs.KeyReserveTokens, kind: rowText, numeric: true, def: "512",
+				{label: "reserve tokens", section: "Headroom", key: prefs.KeyReserveTokens, kind: rowText, numeric: true, def: strconv.Itoa(prefs.DefaultReserveTokens),
 					desc: "headroom held back from the context window for the compactor."},
-				{label: "tool result max kb", section: "Headroom", key: prefs.KeyToolResultMaxKB, kind: rowText, numeric: true, def: "50",
+				{label: "tool result max kb", section: "Headroom", key: prefs.KeyToolResultMaxKB, kind: rowText, numeric: true, def: strconv.Itoa(prefs.DefaultToolResultMaxKB),
 					desc: "cap on a tool result (KB) before tail-truncation + spill to disk. lower it for small-context local models."},
-				{label: "tool result max lines", section: "Headroom", key: prefs.KeyToolResultMaxLines, kind: rowText, numeric: true, def: "2000",
+				{label: "tool result max lines", section: "Headroom", key: prefs.KeyToolResultMaxLines, kind: rowText, numeric: true, def: strconv.Itoa(prefs.DefaultToolResultMaxLines),
 					desc: "line cap on a tool result before tail-truncation + spill to disk."},
 				{label: "mode", section: "Compaction", key: prefs.KeyCompactionMode, kind: rowEnum, def: "auto", opts: []string{"auto", "manual"},
 					desc: "auto trims history under context pressure automatically. manual leaves it intact, warns in the cockpit near the limit, and waits for you to compact on demand (conversation actions › compact)."},
@@ -164,23 +178,23 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					desc: "model for llm compaction, from the compaction provider's list. (active) reuses the active model."},
 			}},
 			{name: "limits", rows: []settingsRow{
-				{label: "enable sub-agents", section: "Sub-agents", key: prefs.KeySpawnEnabled, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+				{label: "enable sub-agents", section: "Sub-agents", key: prefs.KeySpawnEnabled, kind: rowEnum, def: prefs.DefaultSpawnEnabled, opts: []string{"off", "on"},
 					desc: "register agent_spawn/await/status/stop/list for each turn. off removes delegation from the model's tool surface entirely."},
-				{label: "max iterations", key: prefs.KeyMaxIterations, kind: rowText, numeric: true, max: 1000, def: "20",
+				{label: "max iterations", key: prefs.KeyMaxIterations, kind: rowText, numeric: true, max: 1000, def: strconv.Itoa(prefs.DefaultMaxIterations),
 					desc: "cap on the agent loop per turn before it must finalize. maximum 1000."},
-				{label: "response timeout", key: prefs.KeyResponseTimeout, kind: rowText, numeric: true, def: "90",
-					desc: "seconds to wait with no output from the model before cancelling the iteration. raise it for slow local models/connections; non-positive falls back to 90."},
-				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, max: 1000, def: "20",
-					desc: "cap on sub-agent iterations per agent_spawn call. unset inherits the parent max; maximum 1000."},
-				{label: "spawn await timeout", key: prefs.KeySpawnAwaitTimeout, kind: rowText, numeric: true, def: "30",
+				{label: "response timeout", key: prefs.KeyResponseTimeout, kind: rowText, numeric: true, def: strconv.Itoa(prefs.DefaultResponseTimeout),
+					desc: "seconds to wait with no output from the model before cancelling the iteration. non-positive falls back to 600."},
+				{label: "spawn max iterations", key: prefs.KeySpawnMaxIterations, kind: rowText, numeric: true, max: 1000, def: strconv.Itoa(prefs.DefaultSpawnMaxIterations),
+					desc: "cap on sub-agent iterations per agent_spawn call. 0 inherits the parent max; maximum 1000."},
+				{label: "spawn await timeout", key: prefs.KeySpawnAwaitTimeout, kind: rowText, numeric: true, def: strconv.Itoa(prefs.DefaultSpawnAwaitTimeout),
 					desc: "seconds agent_await waits before returning a RUNNING snapshot without cancelling the sub-agent."},
-				{label: "spawn await max timeout", key: prefs.KeySpawnAwaitMaxTimeout, kind: rowText, numeric: true, def: "300",
+				{label: "spawn await max timeout", key: prefs.KeySpawnAwaitMaxTimeout, kind: rowText, numeric: true, def: strconv.Itoa(prefs.DefaultSpawnAwaitMaxTimeout),
 					desc: "maximum timeout_seconds an agent may request for one agent_await call. 0 disables the ceiling."},
-				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, max: 16, def: "(unset)",
+				{label: "spawn depth", key: prefs.KeySpawnMaxDepth, kind: rowText, numeric: true, max: 16, def: "1",
 					desc: "how deep agent_spawn may recurse. unset uses the built-in default; maximum 16."},
-				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, max: 1000, def: "0",
+				{label: "fanout cap", key: prefs.KeyFanoutCap, kind: rowText, numeric: true, max: 1000, def: strconv.Itoa(prefs.DefaultFanoutCap),
 					desc: "max calls per capped discovery tool (ls/grep/glob) per task. 0 keeps the built-in per-tool defaults; a positive value caps them uniformly; maximum 1000."},
-				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, max: 1000, def: "8",
+				{label: "spawn fanout cap", key: prefs.KeySpawnFanoutCap, kind: rowText, numeric: true, max: 1000, def: strconv.Itoa(prefs.DefaultSpawnFanoutCap),
 					desc: "max agent_spawn calls per task before the guardrail refuses more. bounds a model that keeps firing sub-agents. 0 removes the cap; maximum 1000."},
 				{label: "default explore agent", section: "Sub-agents", key: prefs.KeySpawnDefaultExploreAgent, kind: rowAgent, def: agentParentSentinel,
 					desc: "named agent profile used when agent_spawn omits agent in explore mode. enter to choose a discovered profile."},
@@ -200,23 +214,23 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					desc: "provider for unnamed implement tasks when no default agent profile is selected. (active) reuses the parent provider."},
 				{label: "implement model", key: prefs.KeySpawnDefaultImplementModel, kind: rowModel, def: "(active)",
 					desc: "model for unnamed implement tasks, from the implement provider. ignored when a named agent profile is selected."},
-				{label: "explore iterations", section: "Sub-agents", key: prefs.KeySpawnExploreMaxIterations, kind: rowText, numeric: true, max: 1000, def: "(shared)",
-					desc: "per-explore child iteration cap. empty/0 inherits spawn max iterations; maximum 1000."},
-				{label: "verify iterations", section: "Sub-agents", key: prefs.KeySpawnVerifyMaxIterations, kind: rowText, numeric: true, max: 1000, def: "(shared)",
-					desc: "per-verify child iteration cap. empty/0 inherits spawn max iterations; maximum 1000."},
-				{label: "implement iterations", section: "Sub-agents", key: prefs.KeySpawnImplementMaxIterations, kind: rowText, numeric: true, max: 1000, def: "(shared)",
-					desc: "per-implement child iteration cap. empty/0 inherits spawn max iterations; maximum 1000."},
-				{label: "max concurrent", section: "Sub-agents", key: prefs.KeySpawnMaxConcurrent, kind: rowText, numeric: true, max: 256, def: "0",
+				{label: "explore iterations", section: "Sub-agents", key: prefs.KeySpawnExploreMaxIterations, kind: rowText, numeric: true, max: 1000, def: strconv.Itoa(prefs.DefaultSpawnExploreMaxIterations),
+					desc: "per-explore child iteration cap. 0 inherits spawn max iterations; maximum 1000."},
+				{label: "verify iterations", section: "Sub-agents", key: prefs.KeySpawnVerifyMaxIterations, kind: rowText, numeric: true, max: 1000, def: strconv.Itoa(prefs.DefaultSpawnVerifyMaxIterations),
+					desc: "per-verify child iteration cap. 0 inherits spawn max iterations; maximum 1000."},
+				{label: "implement iterations", section: "Sub-agents", key: prefs.KeySpawnImplementMaxIterations, kind: rowText, numeric: true, max: 1000, def: strconv.Itoa(prefs.DefaultSpawnImplementMaxIterations),
+					desc: "per-implement child iteration cap. 0 inherits spawn max iterations; maximum 1000."},
+				{label: "max concurrent", section: "Sub-agents", key: prefs.KeySpawnMaxConcurrent, kind: rowText, numeric: true, max: 256, def: strconv.Itoa(prefs.DefaultSpawnMaxConcurrent),
 					desc: "simultaneously running sub-agents per turn. 0 is unbounded; spawn fanout still caps total calls. maximum 256."},
-				{label: "max runtime seconds", section: "Sub-agents", key: prefs.KeySpawnMaxRuntime, kind: rowText, numeric: true, max: 604800, def: "0",
+				{label: "max runtime seconds", section: "Sub-agents", key: prefs.KeySpawnMaxRuntime, kind: rowText, numeric: true, max: 604800, def: strconv.Itoa(prefs.DefaultSpawnMaxRuntime),
 					desc: "maximum total lifetime for each child task. 0 is unbounded; timeout is reported as budget exhaustion. maximum 604800 (7 days)."},
 				{label: "fallback", section: "Sub-agents", key: prefs.KeySpawnFallback, kind: rowEnum, def: "planner", opts: []string{"planner", "parent", "error"},
 					desc: "unresolved routing: planner tries a registered profile then parent; parent skips planning; error refuses the spawn."},
-				{label: "program parallel calls", key: prefs.KeyProgramParallel, kind: rowText, numeric: true, def: "0",
+				{label: "program parallel calls", key: prefs.KeyProgramParallel, kind: rowText, numeric: true, def: strconv.Itoa(prefs.DefaultProgramParallelCalls),
 					desc: "max nested program-tool calls call_many runs concurrently. 0 keeps the built-in default (8)."},
 			}},
 			{name: "safety", rows: []settingsRow{
-				{label: "plan first", section: "Guardrails", key: prefs.KeyPlanFirst, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+				{label: "plan first", section: "Guardrails", key: prefs.KeyPlanFirst, kind: rowEnum, def: prefs.DefaultPlanFirst, opts: []string{"off", "on"},
 					desc: "require update_plan before the first workspace-changing call in a task. on makes planning mandatory (weak/local models); off lets the model dive straight in."},
 				{label: "read before write", section: "Guardrails", key: prefs.KeyReadBeforeWrite, kind: rowEnum, def: "off", opts: []string{"off", "advisory", "strict"},
 					desc: "require the task to read the target file or nearby context before edit/write. advisory and strict both refuse blind edits; strict is the strongest local-model setting."},
@@ -226,17 +240,17 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					desc: "keep the agent working while its verifiers still report failure instead of stopping early. off removes the guardrail from the chain."},
 				{label: "skill hints", section: "Guardrails", key: prefs.KeySkillHints, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "suggest a recovery skill after a tool call keeps failing. off removes the guardrail from the chain."},
-				{label: "decompose judge", section: "Guardrails", key: prefs.KeyDecomposeJudge, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+				{label: "decompose judge", section: "Guardrails", key: prefs.KeyDecomposeJudge, kind: rowEnum, def: prefs.DefaultDecomposeJudge, opts: []string{"off", "on"},
 					desc: "llm verdict judge for repeatedly failing tool calls (grammar-constrained enum). off keeps the deterministic advisory."},
 				{label: "judge provider", section: "Guardrails", key: prefs.KeyJudgeProvider, kind: rowEnum, def: "(active)",
 					desc: "provider for judge verdicts. (active) reuses the active provider — verdicts want a small fast model."},
 				{label: "judge model", section: "Guardrails", key: prefs.KeyJudgeModel, kind: rowModel, def: "(active)",
 					desc: "model for judge verdicts, from the judge provider's list. (active) reuses the active model."},
-				{label: "shell policy", section: "Shell", key: prefs.KeyShellGuard, kind: rowEnum, def: "auto", opts: []string{"auto", "strict", "lenient", "off"},
+				{label: "shell policy", section: "Shell", key: prefs.KeyShellGuard, kind: rowEnum, def: prefs.DefaultShellGuard, opts: []string{"auto", "strict", "lenient", "off"},
 					desc: "static shell-command guardrail leniency. auto follows the sandbox (strict when on, lenient when off); strict/lenient pin it regardless of the sandbox; off removes the guardrail from the chain entirely."},
-				{label: "sandbox", section: "Shell", key: prefs.KeySandbox, kind: rowEnum, def: "on", opts: []string{"on", "off"},
+				{label: "sandbox", section: "Shell", key: prefs.KeySandbox, kind: rowEnum, def: prefs.DefaultSandbox, opts: []string{"on", "off"},
 					desc: "Linux-only kernel filesystem confinement for shell commands. macOS startup asks before saving an unconfined workspace choice; explicitly enabling it there refuses startup. off runs with your account's permissions. applies on restart."},
-				{label: "sudo askpass", section: "Shell", key: prefs.KeySudoAskpass, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+				{label: "sudo askpass", section: "Shell", key: prefs.KeySudoAskpass, kind: rowEnum, def: prefs.DefaultSudoAskpass, opts: []string{"off", "on"},
 					desc: "enable sudo -A support for bash commands. when on, sudo requests show a password popup in the TUI. applies on restart."},
 				{label: "verify command", section: "Verification", key: prefs.KeyVerifyTests, kind: rowText, def: "(off)",
 					desc: "headless oracle: shell command (sh -c) whose zero exit means verified done; failures re-drive the agent."},
@@ -248,10 +262,16 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 			{name: "tools", rows: []settingsRow{
 				{label: "web tools", section: "Surface", key: prefs.KeyEnableWeb, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register web_search + web_fetch. off drops both from the tool surface for a leaner local-model setup."},
+				{label: "computer tools", section: "Surface", key: prefs.KeyEnableComputer, kind: rowEnum, def: "on", opts: []string{"on", "off"},
+					desc: "register computer_act + computer_observe on the next turn. off removes model access to both; host computer APIs and web_fetch browser fallback remain available."},
 				{label: "programmatic tools", section: "Surface", key: prefs.KeyProgrammaticTools, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "replace direct read/search/catalogue tools with one program tool for bounded Starlark fan-out and aggregation."},
+				{label: "program output recovery", section: "Surface", key: prefs.KeyProgramOutputRecovery, kind: rowEnum, def: "off", opts: []string{"off", "on"},
+					desc: "next turn: retain oversized program JSON in memory (1 MiB/result, 8 MiB total, 32 results, 15 minutes) and expose program_output_read. Requires programmatic tools. Conversation replacement or close revokes receipts; read pages follow normal transcript policy."},
 				{label: "mcp tools", section: "Surface", key: prefs.KeyEnableMCP, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "register the mcp_connect/disconnect/list tools. off drops MCP management from the tool surface."},
+				{label: "mcp schema exposure", section: "Surface", key: prefs.KeyMCPToolExposure, kind: rowEnum, def: prefs.DefaultMCPToolExposure, opts: []string{"deferred", "direct"},
+					desc: "direct advertises all connected tools. deferred uses tool_search and tool_activate to expose only selected remote schemas; connection approval is unchanged."},
 				{label: "background processes", section: "Surface", key: prefs.KeyEnableBackground, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "enable bash background mode + the bash_output/stop_process/list_processes tools. off drops the trio and bash runs foreground-only."},
 				{label: "web search provider", section: "Services", key: prefs.KeySearchProvider, kind: rowEnum, def: "searxng", opts: []string{"searxng", "brave"},
@@ -260,7 +280,6 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 					desc: "brave search api key for web_search, stored encrypted in the credential vault (global — shared across workspaces). enter to set/replace; empty + enter clears."},
 				{label: "web search", section: "Services", key: prefs.KeySearxngURL, kind: rowText, def: engine.DefaultSearxngURL,
 					desc: "searxng endpoint the web_search tool queries. empty uses the local default."},
-				{label: "text verbosity", key: prefs.KeyTextVerbosity, kind: rowEnum, def: "(unset)", opts: []string{"(unset)", "low", "medium", "high"}, desc: "output detail for supported targets."},
 				{label: "show computer browser", key: prefs.KeyComputerBrowserVisible, kind: rowEnum, def: "off", opts: []string{"off", "on"}, desc: "show the Chrome window used by computer tools."},
 				{label: "local web_search service", section: "Services", kind: rowAction, def: "SearXNG",
 					desc: "install/start the optional bundled SearXNG Docker Compose service for web_search. model servers stay external.",
@@ -282,7 +301,7 @@ func newSettingsDialog(ctx context.Context, s *engine.Settings) *settingsDialog 
 			{name: "interface", rows: []settingsRow{
 				{label: "confirm quit", key: prefs.KeyConfirmQuit, kind: rowEnum, def: "on", opts: []string{"on", "off"},
 					desc: "show a confirmation prompt before quitting via ctrl+c. turn off to quit instantly."},
-				{label: "notification sounds", key: prefs.KeyNotificationSounds, kind: rowEnum, def: "completion", opts: []string{"off", "completion", "all"},
+				{label: "notification sounds", key: prefs.KeyNotificationSounds, kind: rowEnum, def: prefs.DefaultNotificationSounds, opts: []string{"off", "completion", "all"},
 					desc: "terminal bell on completed runs; all also rings when plan steps become completed."},
 				{label: "pprof address", section: "Diagnostics", key: prefs.KeyPprofAddr, kind: rowText, def: "(off)",
 					desc: "optional listen address for Go pprof + runtime metrics, e.g. 127.0.0.1:6060. applies on restart; CLI -pprof overrides."},
@@ -354,6 +373,7 @@ func (d *settingsDialog) refresh(ctx context.Context) {
 			}
 		}
 	}
+	d.refreshTargetDefaults(ctx)
 	if d.providers != nil {
 		d.providers.refresh() // keep the active marker + key badges in sync
 	}

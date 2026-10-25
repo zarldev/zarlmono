@@ -101,20 +101,13 @@ func FetchModels(ctx context.Context, tokens TokenSource, baseURL string) ([]llm
 			name = m.Slug
 		}
 		models = append(models, llm.Model{
-			ID:          m.Slug,
-			Name:        name,
-			Description: m.Description,
-			MaxTokens:   usableContextWindow(m),
-			InputCost:   0,
-			OutputCost:  0,
-			Capabilities: llm.ModelCapabilities{
-				SupportsStreaming: true,
-				SupportsTools:     true,
-				SupportsSystem:    true,
-				SupportsThinking:  true,
-				SupportsVision:    true,
-				SupportsVideo:     true,
-			},
+			ID:           m.Slug,
+			Name:         name,
+			Description:  m.Description,
+			MaxTokens:    usableContextWindow(m),
+			InputCost:    0,
+			OutputCost:   0,
+			Capabilities: Capabilities(m.Slug),
 		})
 	}
 	return models, nil
@@ -142,19 +135,16 @@ func FetchContextWindow(ctx context.Context, tokens TokenSource, baseURL, model 
 }
 
 func usableContextWindow(m codexModelInfo) int {
+	if m.AutoCompactTokenLimit > 0 {
+		return m.AutoCompactTokenLimit
+	}
 	ctx := m.ContextWindow
 	if ctx <= 0 {
 		ctx = m.MaxContextWindow
 	}
 	if ctx > 0 {
 		contextLimit := ctx * 9 / 10
-		if m.AutoCompactTokenLimit > 0 && m.AutoCompactTokenLimit < contextLimit {
-			return m.AutoCompactTokenLimit
-		}
 		return contextLimit
-	}
-	if m.AutoCompactTokenLimit > 0 {
-		return m.AutoCompactTokenLimit
 	}
 	return DefaultContextWindow
 }

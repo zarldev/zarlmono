@@ -38,6 +38,13 @@ type NestedToolObserver interface {
 	OnNestedToolFinished(context.Context, NestedToolResult)
 }
 
+// NestedToolCallBinder optionally binds invocation-only host state to a child
+// call after its start event has been observed. Unknown or ambiguous calls may
+// be returned unchanged.
+type NestedToolCallBinder interface {
+	BindNestedToolCall(context.Context, NestedToolCall) ToolCall
+}
+
 type nestedToolObserverKey struct{}
 
 // ContextWithNestedToolObserver returns a child context carrying obs.

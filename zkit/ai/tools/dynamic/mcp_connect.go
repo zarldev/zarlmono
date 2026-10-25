@@ -1,6 +1,7 @@
 package dynamic
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,15 +45,16 @@ type MCPNotifier func(connection, method string, params json.RawMessage)
 // later. The exported type lets zarlcode construct the registry
 // once at startup and pass it to the per-tool constructors below.
 type MCPRegistry struct {
-	mu       sync.Mutex
-	clients  map[string]mcpConnection // name → connection
-	pending  map[string]struct{}      // names reserved by in-flight connects
-	reg      *tools.Registry          // registry to register/unregister tools against
-	notifier MCPNotifier              // optional notification sink
-	policy   MCPConnectPolicy         // validates process/network-capable connections
-	connects sync.WaitGroup           // in-flight connects owned by this registry
-	closeMu  sync.Mutex               // serializes CloseAll callers
-	closed   bool
+	mu         sync.Mutex
+	clients    map[string]mcpConnection // name → connection
+	pending    map[string]struct{}      // names reserved by in-flight connects
+	reg        *tools.Registry          // registry to register/unregister tools against
+	notifier   MCPNotifier              // optional notification sink
+	policy     MCPConnectPolicy         // validates process/network-capable connections
+	connects   sync.WaitGroup           // in-flight connects owned by this registry
+	closeMu    sync.Mutex               // serializes CloseAll callers
+	generation uint64
+	closed     bool
 }
 
 // MCPConnectPolicy is the policy seam for approving or denying MCP
@@ -77,48 +80,74 @@ func (f MCPConnectPolicyFunc) ValidateMCPConnect(ctx context.Context, name strin
 // can install their own policy with SetConnectPolicy.
 var DefaultMCPConnectPolicy MCPConnectPolicy = MCPConnectPolicyFunc(
 	func(ctx context.Context, _ string, conn MCPConnSpec) error {
-		if conn.Type == Transports.TRANSPORTHTTP {
-			if err := validateMCPHTTPBaseURL(ctx, conn.BaseURL); err != nil {
-				return err
-			}
-			// Refuse to send a bearer token over cleartext http. The
-			// transport in pkg/mcp/http.go attaches the token as an
-			// Authorization: Bearer header on every request — over
-			// http:// that's a credential exposed to the wire, every
-			// downstream proxy, and any on-path observer. Forcing
-			// https here removes the foot-gun before the request
-			// leaves the binary. Token-less http:// stays allowed for
-			// public / unauthenticated MCP servers.
-			if conn.AuthToken != "" {
-				if u, err := url.Parse(conn.BaseURL); err == nil && strings.EqualFold(u.Scheme, "http") {
-					return errors.New(
-						"mcp_connect: refusing to send auth_token over cleartext http — use an https:// base_url, or drop auth_token for unauthenticated servers",
-					)
-				}
-			}
-			return nil
-		}
-		if conn.Type == Transports.TRANSPORTSTDIO {
-			return validateMCPStdioCommand(conn.Command)
-		}
-		return nil
+		return validateMCPTransport(ctx, conn, false)
 	},
 )
 
+func validateMCPTransport(ctx context.Context, conn MCPConnSpec, allowLoopback bool) error {
+	if conn.Type == Transports.TRANSPORTHTTP {
+		if err := validateMCPHTTPBaseURL(ctx, conn.BaseURL, allowLoopback); err != nil {
+			return err
+		}
+		// Operator approval does not waive credential transport protection.
+		if conn.AuthToken != "" {
+			u, _ := url.Parse(conn.BaseURL) // validated above
+			if u.Scheme == httpScheme {
+				return errors.New("mcp_connect: refusing to send auth_token over cleartext http — use an https:// base_url, or drop auth_token for unauthenticated servers")
+			}
+		}
+		return nil
+	}
+	if conn.Type == Transports.TRANSPORTSTDIO {
+		return validateMCPStdioCommand(conn.Command)
+	}
+	return nil
+}
+
 const (
-	shellBash = "bash"
+	shellBash  = "bash"
+	httpScheme = "http"
 
 	maxMCPToolsPerConnection = 64
-	maxMCPDescriptionBytes   = 2048
+	maxMCPDescriptionBytes   = 10 * 1024 * 1024
 	maxMCPSchemaBytes        = 32 * 1024
 	maxMCPConnections        = 8
 )
 
 type mcpConnection struct {
-	client    *mcp.Client
-	tools     []tools.Tool // the RemoteTool instances for cleanup
-	toolNames []string     // for reporting
-	cancelSub func()       // unregister the SubscribeAny on disconnect
+	client     *mcp.Client
+	tools      []mcpCatalogEntry
+	toolNames  []string // for reporting
+	cancelSub  func()   // unregister the SubscribeAny on disconnect
+	lifecycle  *mcpConnectionLifecycle
+	generation uint64
+}
+
+type mcpCatalogEntry struct {
+	ref        MCPToolRef
+	spec       tools.ToolSpec
+	tool       tools.Tool
+	generation uint64
+}
+
+type mcpConnectionLifecycle struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	calls  sync.WaitGroup
+}
+
+type registeredMCPTool struct {
+	registry   *MCPRegistry
+	connection string
+	ref        MCPToolRef
+	generation uint64
+	spec       tools.ToolSpec
+}
+
+func (t registeredMCPTool) Definition() tools.ToolSpec { return t.spec }
+
+func (t registeredMCPTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
+	return t.registry.executeRemoteWhen(ctx, t.connection, t.ref, t.generation, call, nil)
 }
 
 // NewMCPRegistry constructs an empty registry. Pass notifier=nil for
@@ -209,15 +238,15 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 	case Transports.TRANSPORTSTDIO:
 		c, err = mcp.NewStdioClient(conn.Command, conn.Args, conn.Env)
 	case Transports.TRANSPORTHTTP:
-		// Pass the same allowlist validateMCPHTTPBaseURL uses at
-		// config time, but enforced per-dial. The URL validator
-		// only checks the boot-time DNS reply; this policy
-		// re-checks every resolved IP at TCP connect time, so a
-		// rebinding (or initially-allowed host whose A-record
-		// flips to RFC1918 between calls) can't tunnel to local
-		// services through the MCP transport.
-		c = mcp.NewClientWithDialPolicy(conn.BaseURL, conn.AuthToken,
-			func(ip netip.Addr) bool { return !isDisallowedMCPAddr(ip) })
+		// The approval gate above decides whether loopback is authorized.
+		// Keep that exception confined to the endpoint and recheck every dial.
+		u, parseErr := url.Parse(conn.BaseURL)
+		if parseErr == nil && isMCPLoopbackHost(u.Hostname()) {
+			c = mcp.NewLoopbackClient(conn.BaseURL, conn.AuthToken)
+		} else {
+			c = mcp.NewClientWithDialPolicy(conn.BaseURL, conn.AuthToken,
+				func(ip netip.Addr) bool { return !isDisallowedMCPAddr(ip) })
+		}
 	default:
 		return nil, fmt.Errorf("unknown transport type %s", conn.Type)
 	}
@@ -246,21 +275,40 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 		_ = c.Close()
 		return nil, errors.New("mcp registry is closed")
 	}
-	defer r.mu.Unlock()
 	if _, exists := r.clients[name]; exists {
+		r.mu.Unlock()
 		_ = c.Close()
 		return nil, fmt.Errorf("mcp connection %q already exists", name)
 	}
 	toolNames, err := r.validateRemoteToolNames(provider, mcpTools)
 	if err != nil {
+		r.mu.Unlock()
 		_ = c.Close()
 		return nil, err
 	}
 
+	r.generation++
+	generation := r.generation
+	lifecycleCtx, cancel := context.WithCancel(context.Background())
+	catalog := make([]mcpCatalogEntry, len(mcpTools))
+	for i, remote := range mcpTools {
+		spec := remote.Definition()
+		hash, hashErr := hashMCPDefinition(name, spec)
+		if hashErr != nil {
+			cancel()
+			r.mu.Unlock()
+			_ = c.Close()
+			return nil, hashErr
+		}
+		catalog[i] = mcpCatalogEntry{
+			ref:  MCPToolRef{Connection: name, Name: spec.Name, DefinitionHash: hash},
+			spec: spec, tool: remote, generation: generation,
+		}
+	}
 	mc := mcpConnection{
-		client:    c,
-		tools:     mcpTools,
-		toolNames: toolNames,
+		client: c, tools: catalog, toolNames: toolNames,
+		lifecycle:  &mcpConnectionLifecycle{ctx: lifecycleCtx, cancel: cancel},
+		generation: generation,
 	}
 
 	// Wire the connection's server-pushed notifications to the
@@ -275,21 +323,21 @@ func (r *MCPRegistry) connect(ctx context.Context, name string, conn MCPConnSpec
 	}
 
 	r.clients[name] = mc
-
-	for _, t := range mcpTools {
-		_ = r.reg.RegisterWithProvider(t, provider)
+	for _, entry := range catalog {
+		registered := registeredMCPTool{
+			registry: r, connection: name, ref: entry.ref,
+			generation: generation, spec: entry.spec,
+		}
+		_ = r.reg.RegisterWithProvider(registered, provider)
 	}
+	r.mu.Unlock()
 
 	return toolNames, nil
 }
 
 // validateRemoteToolNames preflights MCP-discovered tool names before
-// registration. Registry registration intentionally replaces same-name
-// tools, but a remote MCP server is untrusted input: it must not be able
-// to shadow built-ins, dynamic tools, or tools from another MCP
-// connection by advertising a colliding name. Duplicate names within the
-// same discovery response are rejected too, because otherwise the later
-// registration would silently win.
+// registration. Duplicate and invalid names from one server are always
+// rejected, as are collisions with every live registry tool.
 func (r *MCPRegistry) validateRemoteToolNames(provider string, mcpTools []tools.Tool) ([]string, error) {
 	seen := make(map[tools.ToolName]struct{}, len(mcpTools))
 	toolNames := make([]string, len(mcpTools))
@@ -320,31 +368,30 @@ func (r *MCPRegistry) validateRemoteToolNames(provider string, mcpTools []tools.
 	return toolNames, nil
 }
 
-// disconnect tears down an MCP client and unregisters its tools.
+// disconnect revokes new calls, cancels and drains accepted calls, then closes
+// the client. No registry lock is held across call draining or remote close.
 func (r *MCPRegistry) disconnect(name string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	conn, exists := r.clients[name]
 	if !exists {
+		r.mu.Unlock()
 		return fmt.Errorf("mcp connection %q not found", name)
 	}
-
+	delete(r.clients, name)
+	conn.lifecycle.cancel()
 	if conn.cancelSub != nil {
 		conn.cancelSub()
 	}
 	r.reg.UnregisterProvider("mcp:" + name)
-	delete(r.clients, name)
+	r.mu.Unlock()
 
+	conn.lifecycle.calls.Wait()
 	return conn.client.Close()
 }
 
-// CloseAll tears down every live MCP connection — cancelling each
-// subscription, unregistering its tools, and closing the client (which, for a
-// stdio transport, gracefully stops then kills the child process). Used by the
-// shell's shutdown path so a stdio MCP server subprocess isn't orphaned on
-// exit. Idempotent: the client map is cleared, so a second call is a no-op.
-// Returns the first close error encountered, after attempting all of them.
+// CloseAll tears down every live MCP connection — revoking new calls,
+// cancelling and draining accepted calls, unregistering tools, then closing
+// clients. No registry lock is held across a wait or remote close. Idempotent.
 func (r *MCPRegistry) CloseAll() error {
 	r.closeMu.Lock()
 	defer r.closeMu.Unlock()
@@ -355,20 +402,91 @@ func (r *MCPRegistry) CloseAll() error {
 	r.connects.Wait()
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	var firstErr error
+	connections := make(map[string]mcpConnection, len(r.clients))
 	for name, conn := range r.clients {
+		connections[name] = conn
+		delete(r.clients, name)
+		conn.lifecycle.cancel()
 		if conn.cancelSub != nil {
 			conn.cancelSub()
 		}
 		r.reg.UnregisterProvider("mcp:" + name)
+	}
+	r.mu.Unlock()
+
+	var firstErr error
+	for name, conn := range connections {
+		conn.lifecycle.calls.Wait()
 		if err := conn.client.Close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("close mcp %q: %w", name, err)
 		}
-		delete(r.clients, name)
 	}
 	return firstErr
+}
+
+func (r *MCPRegistry) catalogSnapshot() []mcpCatalogEntry {
+	r.mu.Lock()
+	entries := make([]mcpCatalogEntry, 0)
+	for _, conn := range r.clients {
+		entries = append(entries, conn.tools...)
+	}
+	r.mu.Unlock()
+	slices.SortFunc(entries, func(a, b mcpCatalogEntry) int {
+		if byName := cmp.Compare(a.ref.Name, b.ref.Name); byName != 0 {
+			return byName
+		}
+		return cmp.Compare(a.ref.Connection, b.ref.Connection)
+	})
+	return entries
+}
+
+func (r *MCPRegistry) executeRemoteWhen(
+	ctx context.Context,
+	connection string,
+	ref MCPToolRef,
+	generation uint64,
+	call tools.ToolCall,
+	active func() bool,
+) (*tools.ToolResult, error) {
+	// A directly held Tool may be invoked without a routing name; Source
+	// dispatch resolves a nonempty name before it reaches this bound handle.
+	if call.ToolName != "" && call.ToolName != ref.Name {
+		return nil, tools.Validation("mcp execute", "call name does not match activated reference")
+	}
+
+	r.mu.Lock()
+	conn, exists := r.clients[connection]
+	if !exists || conn.generation != generation {
+		r.mu.Unlock()
+		return nil, tools.NotFound("mcp execute", "connection generation is no longer active")
+	}
+	var remote tools.Tool
+	for _, entry := range conn.tools {
+		if entry.ref == ref && entry.generation == generation {
+			remote = entry.tool
+			break
+		}
+	}
+	if remote == nil {
+		r.mu.Unlock()
+		return nil, tools.NotFound("mcp execute", "tool definition is no longer active")
+	}
+	if active != nil && !active() {
+		r.mu.Unlock()
+		return nil, tools.NotFound("mcp exposure execute", fmt.Sprintf("tool %q is no longer activated", call.ToolName))
+	}
+	conn.lifecycle.calls.Add(1)
+	lifecycleCtx := conn.lifecycle.ctx
+	r.mu.Unlock()
+
+	callCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(lifecycleCtx, cancel)
+	defer func() {
+		stop()
+		cancel()
+		conn.lifecycle.calls.Done()
+	}()
+	return remote.Execute(callCtx, call)
 }
 
 // list returns the names of all connected MCP servers.
@@ -464,7 +582,10 @@ func (t *MCPConnect) Definition() tools.ToolSpec {
 			"collide with existing tools; colliding MCP servers are rejected instead of shadowing " +
 			"runtime tools. Use mcp_list to see active connections, " +
 			"and mcp_disconnect to tear one down.",
-		Parameters: tools.SchemaFor[MCPConnectArgs](),
+		Parameters:       tools.SchemaFor[MCPConnectArgs](),
+		AffectsWorkspace: true, // An approved subprocess may touch workspace state.
+		WorkspaceAccess:  tools.WorkspaceAccesses.WRITE,
+		DispatchBarrier:  true,
 	}
 }
 
@@ -514,17 +635,23 @@ func (t *MCPConnect) Execute(ctx context.Context, call tools.ToolCall) (*tools.T
 	return tools.Success(call.ID, fmt.Sprintf("connected %s (%d tools): %s", args.Name, len(toolNames), joinStrings(", ", toolNames))), nil
 }
 
-func validateMCPHTTPBaseURL(ctx context.Context, raw string) error {
+func validateMCPHTTPBaseURL(ctx context.Context, raw string, allowLoopback bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid base_url: %w", err)
+		return errors.New("invalid base_url")
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	if u.Scheme != httpScheme && u.Scheme != "https" {
 		return fmt.Errorf("base_url scheme must be http or https, got %q", u.Scheme)
 	}
 	host := u.Hostname()
 	if host == "" {
 		return errors.New("base_url host required")
+	}
+	if u.User != nil || u.Fragment != "" {
+		return errors.New("base_url must not contain user credentials or a fragment")
+	}
+	if allowLoopback && isMCPLoopbackHost(host) {
+		return nil
 	}
 	lowerHost := strings.ToLower(strings.TrimSuffix(host, "."))
 	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") {
@@ -623,9 +750,12 @@ func NewMCPDisconnect(r *MCPRegistry) *MCPDisconnect { return &MCPDisconnect{reg
 // parameter — the connection name given to mcp_connect.
 func (t *MCPDisconnect) Definition() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name:        ToolNameMCPDisconnect,
-		Description: "Disconnect an MCP server and unregister all its tools. The connection name is the one you gave when calling mcp_connect.",
-		Parameters:  tools.SchemaFor[MCPDisconnectArgs](),
+		Name:             ToolNameMCPDisconnect,
+		Description:      "Disconnect an MCP server and unregister all its tools. The connection name is the one you gave when calling mcp_connect.",
+		Parameters:       tools.SchemaFor[MCPDisconnectArgs](),
+		AffectsWorkspace: true,                         // Durable authority/registry change, not a completed file edit.
+		WorkspaceAccess:  tools.WorkspaceAccesses.NONE, // Registry revocation, not file access.
+		DispatchBarrier:  true,
 	}
 }
 

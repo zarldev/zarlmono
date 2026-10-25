@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
@@ -75,6 +76,7 @@ type Runner struct {
 	modelName    string
 
 	// optional plumbing
+	inference       inference.Scope
 	sink            EventSink
 	convLock        *ConversationLock
 	prompt          PromptSource
@@ -153,8 +155,10 @@ type Runner struct {
 	// modelOptions are copied onto every completion request and merged with
 	// runner-owned options such as prompt_cache_key.
 	modelOptions llm.ModelOptions
-	activeMu     sync.Mutex
-	activeIDs    map[taskscope.ID]struct{}
+	// promptCacheKey is an optional root-conversation route, independent of task identity.
+	promptCacheKey string
+	activeMu       sync.Mutex
+	activeIDs      map[taskscope.ID]struct{}
 }
 
 // New constructs a Runner. The only required argument is the LLM client

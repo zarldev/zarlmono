@@ -52,7 +52,7 @@ func requestHasTool(req llm.CompletionRequest, name string) bool {
 }
 func assertModeRequest(t *testing.T, req llm.CompletionRequest, plan bool) {
 	t.Helper()
-	if !requestHasTool(req, "set_mode") || requestHasTool(req, "write") == plan {
+	if !requestHasTool(req, "set_mode") || !requestHasTool(req, "write") || !requestHasTool(req, "bash") {
 		t.Errorf("mode=%v tools=%+v", plan, req.Tools)
 	}
 	if len(req.Messages) == 0 || strings.Contains(req.Messages[0].Content, "**PLAN mode**") != plan {

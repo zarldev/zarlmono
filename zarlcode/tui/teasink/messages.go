@@ -25,6 +25,9 @@ type ContentMsg struct {
 	TaskID string
 	Depth  int
 	Delta  string
+	// ContentOutputIndex preserves the known provider-local output item for
+	// these coalesced deltas. Nil is unknown, distinct from valid item zero.
+	ContentOutputIndex *int
 }
 
 // ThinkingMsg fires for each streamed reasoning delta (extended thinking /
@@ -49,6 +52,20 @@ type ToolStartedMsg struct {
 	ParentToolID      string
 	ParentExecutionID string
 	Sequence          int
+}
+
+// ToolOutputMsg carries the latest cumulative sanitized preview for one exact
+// tool execution. It contains values only and never retains the callback context.
+type ToolOutputMsg struct {
+	TaskID            string
+	Depth             int
+	ExecutionID       string
+	ToolID            string
+	ToolName          string
+	ParentExecutionID string
+	ParentToolID      string
+	Sequence          int
+	Text              string
 }
 
 // WorkspaceWaitStartedMsg fires when a tool call enters the workspace wait queue.
@@ -182,6 +199,9 @@ type IterationCompletedMsg struct {
 	// iteration — drives the cockpit's context graph. Nil when unreported.
 	Context     *runner.ContextBreakdown
 	ToolSurface runner.ToolSurface
+	// These phases cover completed iterations only, not failed preparations/attempts.
+	RequestPreparationDuration time.Duration
+	ToolDispatchDuration       time.Duration
 }
 
 // PlanUpdatedMsg carries the structured plan the agent maintains via the

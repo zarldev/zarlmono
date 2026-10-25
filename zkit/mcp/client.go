@@ -3,7 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +32,11 @@ type ToolDef struct {
 type Client struct {
 	transport Transport
 	nextID    atomic.Int64
+	negotiate bool
+	readyGate chan struct{}
+	protocolM sync.Mutex
+	protocol  string
+	ready     bool
 
 	subM     sync.Mutex
 	subs     map[string][]subscription // method → handlers
@@ -72,7 +79,7 @@ type AnyNotificationHandler func(method string, params json.RawMessage)
 // window between config-time URL validation and the actual TCP
 // dial.
 func NewClient(baseURL, authToken string) *Client {
-	return NewClientWithTransport(newHTTPTransport(baseURL, authToken, nil))
+	return newNegotiatingClient(newHTTPTransport(baseURL, authToken, nil, false))
 }
 
 // NewClientWithDialPolicy is like [NewClient] but installs policy
@@ -82,7 +89,16 @@ func NewClient(baseURL, authToken string) *Client {
 // policy returns false — closing the rebinding gap a one-shot
 // URL validation can't.
 func NewClientWithDialPolicy(baseURL, authToken string, policy AddrPolicy) *Client {
-	return NewClientWithTransport(newHTTPTransport(baseURL, authToken, policy))
+	return newNegotiatingClient(newHTTPTransport(baseURL, authToken, policy, false))
+}
+
+// NewLoopbackClient connects to an operator-approved local HTTP endpoint.
+// Every dial must resolve to loopback; proxies and redirects are disabled so
+// the endpoint cannot expand its authority to another service. The caller owns
+// approval and credential-transport validation before constructing the client.
+func NewLoopbackClient(baseURL, authToken string) *Client {
+	return newNegotiatingClient(newHTTPTransport(baseURL, authToken,
+		func(ip netip.Addr) bool { return ip.Unmap().IsLoopback() }, true))
 }
 
 // stdioInitTimeout caps the initialize handshake at construction
@@ -115,11 +131,11 @@ func NewStdioClientContext(ctx context.Context, command string, args []string, e
 	if err != nil {
 		return nil, err
 	}
-	c := NewClientWithTransport(t)
+	c := newNegotiatingClient(t)
 	// Stdio servers generally require an `initialize` handshake before any
 	// other calls will succeed. HTTP servers we've connected to are
 	// tolerant of skipping it; we do it here to keep stdio reliable.
-	if err := c.initialize(ctx); err != nil {
+	if err := c.ensureReady(ctx); err != nil {
 		_ = t.Close()
 		return nil, fmt.Errorf("mcp initialize: %w", err)
 	}
@@ -223,11 +239,61 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	// Monotonic int64 ID rendered as JSON number bytes. Stored as
-	// json.RawMessage so the wire ID type is whatever the client
-	// chose — not coerced through an integer struct field that
-	// conflates "missing" with "0".
-	id := c.nextID.Add(1)
+	if err := c.ensureReady(ctx); err != nil {
+		return nil, err
+	}
+	c.protocolM.Lock()
+	modern := c.protocol == protocolVersion20260728
+	c.protocolM.Unlock()
+	if modern {
+		if method == methodToolsCall {
+			if err := c.ensureSchemaHeaders(ctx); err != nil {
+				return nil, err
+			}
+		}
+		prepared, err := paramsFor20260728(params)
+		if err != nil {
+			return nil, err
+		}
+		params = prepared
+	}
+	return c.rawCall(ctx, method, params, modern)
+}
+
+func newNegotiatingClient(transport Transport) *Client {
+	client := &Client{transport: transport, negotiate: true, readyGate: make(chan struct{}, 1)}
+	if httpTransport, ok := transport.(*httpTransport); ok {
+		httpTransport.ensureReady = client.ensureReady
+		httpTransport.invalidateSession = client.invalidateHTTPSession
+	}
+	return client
+}
+
+func (c *Client) invalidateHTTPSession(expired string) {
+	c.protocolM.Lock()
+	if transport, ok := c.transport.(*httpTransport); ok {
+		if !transport.clearExpiredSession(expired) {
+			c.protocolM.Unlock()
+			return
+		}
+	}
+	c.protocol = ""
+	c.ready = false
+	c.protocolM.Unlock()
+}
+
+func (c *Client) rawCall(ctx context.Context, method string, params any, modern bool) (json.RawMessage, error) {
+	// Ordinary requests use increasing IDs. Negotiation uses reserved negative
+	// IDs under the readiness gate, keeping the namespaces distinct.
+	var id int64
+	switch method {
+	case "server/discover":
+		id = -1
+	case methodInitialize:
+		id = -2
+	default:
+		id = c.nextID.Add(1)
+	}
 	rawID := strconv.AppendInt(nil, id, 10)
 	resp, err := c.transport.Call(ctx, rpcRequest{
 		JSONRPC: jsonrpcVersion,
@@ -238,8 +304,16 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	if err != nil {
 		return nil, err
 	}
+	if resp.JSONRPC != jsonrpcVersion || string(resp.ID) != string(rawID) || (resp.Error == nil) == (len(resp.Result) == 0 || string(resp.Result) == "null") {
+		return nil, errors.New("invalid MCP response envelope")
+	}
 	if resp.Error != nil {
 		return nil, resp.Error
+	}
+	if modern {
+		if err := validateCompleteResult(resp.Result); err != nil {
+			return nil, err
+		}
 	}
 	return resp.Result, nil
 }
@@ -258,28 +332,32 @@ var ClientInfo = map[string]any{"name": "mcp-go-client", "version": "0.1.0"}
 // it's safe to call multiple times; servers may return different
 // capabilities on each call, but we don't inspect them.
 func (c *Client) initialize(ctx context.Context) error {
-	_, err := c.call(ctx, "initialize", initializeParams{
-		ProtocolVersion: "2024-11-05",
-		Capabilities:    map[string]any{},
-		ClientInfo:      ClientInfo,
-	})
+	raw, err := c.rawCall(ctx, methodInitialize, initializeParams{ProtocolVersion: protocolVersion20251125, Capabilities: map[string]any{}, ClientInfo: ClientInfo}, false)
 	if err != nil {
 		return err
 	}
-	if notifier, ok := c.transport.(interface {
-		Notify(ctx context.Context, n rpcNotification) error
-	}); ok {
-		_ = notifier.Notify(ctx, rpcNotification{
-			JSONRPC: jsonrpcVersion,
-			Method:  "notifications/initialized",
-		})
+	result, err := validateInitializeResult(raw)
+	if err != nil {
+		return err
 	}
+	if transport, ok := c.transport.(*httpTransport); ok {
+		transport.setProtocol(result.ProtocolVersion)
+	}
+	if notifier, ok := c.transport.(interface {
+		Notify(context.Context, rpcNotification) error
+	}); ok {
+		if err := notifier.Notify(ctx, rpcNotification{JSONRPC: jsonrpcVersion, Method: "notifications/initialized"}); err != nil {
+			return fmt.Errorf("send initialized: %w", err)
+		}
+	}
+	c.setReady(result.ProtocolVersion)
 	return nil
 }
 
 // listResult is the result of a tools/list call.
 type listResult struct {
-	Tools []ToolDef `json:"tools"`
+	Tools      []ToolDef `json:"tools"`
+	NextCursor string    `json:"nextCursor,omitempty"`
 }
 
 // Discover calls tools/list and returns the available tool definitions.
@@ -287,25 +365,89 @@ type listResult struct {
 // returned nil, so consumers can pass it to a JSON-Schema validator
 // without nil checks.
 func (c *Client) Discover(ctx context.Context) ([]ToolDef, error) {
-	raw, err := c.call(ctx, "tools/list", nil)
-	if err != nil {
-		return nil, fmt.Errorf("tools/list: %w", err)
+	var tools []ToolDef
+	cursor := ""
+	seen := make(map[string]bool)
+	for range 128 {
+		var params any
+		if cursor != "" {
+			params = map[string]string{"cursor": cursor}
+		}
+		raw, err := c.call(ctx, "tools/list", params)
+		if err != nil {
+			return nil, fmt.Errorf("tools/list: %w", err)
+		}
+		var page listResult
+		if err := json.Unmarshal(raw, &page); err != nil {
+			return nil, fmt.Errorf("parse tools/list page: %w", err)
+		}
+		if len(tools)+len(page.Tools) > 10000 {
+			return nil, errors.New("MCP tool discovery exceeds definition limit")
+		}
+		tools = append(tools, page.Tools...)
+		if page.NextCursor == "" {
+			combined, err := json.Marshal(listResult{Tools: tools})
+			if err != nil {
+				return nil, fmt.Errorf("combine tool definitions: %w", err)
+			}
+			return c.decodeDiscoveredTools(combined, c.modernProtocol())
+		}
+		if seen[page.NextCursor] {
+			return nil, errors.New("MCP tool discovery repeated a cursor")
+		}
+		seen[page.NextCursor] = true
+		cursor = page.NextCursor
 	}
+	return nil, errors.New("MCP tool discovery exceeds page limit")
+}
 
+func (c *Client) modernProtocol() bool {
+	c.protocolM.Lock()
+	defer c.protocolM.Unlock()
+	return c.protocol == protocolVersion20260728
+}
+
+func (c *Client) ensureSchemaHeaders(ctx context.Context) error {
+	transport, ok := c.transport.(*httpTransport)
+	if !ok || transport.schemaHeadersReady() {
+		return nil
+	}
+	_, err := c.Discover(ctx)
+	return err
+}
+
+func (c *Client) decodeDiscoveredTools(raw json.RawMessage, modern bool) ([]ToolDef, error) {
 	var result listResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("parse tools/list result: %w", err)
 	}
 
-	for i := range result.Tools {
-		if result.Tools[i].InputSchema == nil {
-			result.Tools[i].InputSchema = map[string]any{
+	bindings := make(map[string][]schemaHeaderBinding)
+	invalidBindings := make(map[string]bool)
+	tools := make([]ToolDef, 0, len(result.Tools))
+	for _, tool := range result.Tools {
+		if tool.InputSchema == nil {
+			tool.InputSchema = map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
 			}
 		}
+		if modern {
+			toolBindings, err := schemaHeaderBindings(tool.InputSchema)
+			if err != nil {
+				invalidBindings[tool.Name] = true
+				continue
+			}
+			bindings[tool.Name] = toolBindings
+		}
+		tools = append(tools, tool)
 	}
-	return result.Tools, nil
+	if modern {
+		if transport, ok := c.transport.(*httpTransport); ok {
+			transport.setSchemaHeaders(bindings, invalidBindings)
+		}
+	}
+	return tools, nil
 }
 
 // callParams are the params for a tools/call request.
@@ -475,7 +617,7 @@ type readResourceResult struct {
 // references (rare). Most calls return a single TextContent or
 // ImageContent.
 func (c *Client) ReadResource(ctx context.Context, uri string) ([]Content, error) {
-	raw, err := c.call(ctx, "resources/read", readResourceParams{URI: uri})
+	raw, err := c.call(ctx, methodResourcesRead, readResourceParams{URI: uri})
 	if err != nil {
 		return nil, fmt.Errorf("resources/read %s: %w", uri, err)
 	}
@@ -529,7 +671,7 @@ func (c *Client) ReadResource(ctx context.Context, uri string) ([]Content, error
 // (distinct from transport errors, which are returned as the second
 // value).
 func (c *Client) Call(ctx context.Context, name string, args map[string]any) (CallResult, error) {
-	raw, err := c.call(ctx, "tools/call", callParams{Name: name, Arguments: args})
+	raw, err := c.call(ctx, methodToolsCall, callParams{Name: name, Arguments: args})
 	if err != nil {
 		return CallResult{}, fmt.Errorf("tools/call %s: %w", name, err)
 	}

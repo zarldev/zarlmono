@@ -200,9 +200,10 @@ func TestStructural_NeverTrimsUserMessages(t *testing.T) {
 // fakeProvider implements just enough of [llm.Provider] for the
 // summary test: a Complete that emits a single chunk and closes.
 type fakeProvider struct {
-	llm.Provider // embed to inherit nil methods; we only override Complete
-	out          string
+	out string
 }
+
+func (fakeProvider) Name() string { return "fixture" }
 
 func (f fakeProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {
@@ -296,9 +297,9 @@ func TestSummary_ReplacesOlderWithSummary(t *testing.T) {
 
 // errorProvider returns an immediate stream error to verify Compact
 // surfaces provider failures rather than silently no-op'ing.
-type errorProvider struct {
-	llm.Provider
-}
+type errorProvider struct{}
+
+func (errorProvider) Name() string { return "fixture" }
 
 func (errorProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {

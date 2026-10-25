@@ -39,7 +39,7 @@ func (tl *timeline) nearestCopyableLine(line, total int) int {
 			}
 			lines := tl.renderItem(it, tl.lwidth())
 			if local < len(lines) {
-				return strings.TrimSpace(cleanTranscriptCopyLine(it, lines[local])) != ""
+				return strings.TrimSpace(cleanTranscriptCopyLine(it, lines[local], local)) != ""
 			}
 		}
 		return false
@@ -123,7 +123,7 @@ func (tl *timeline) selectedText() string {
 			if abs > hi {
 				break
 			}
-			lines = append(lines, cleanTranscriptCopyLine(it, line))
+			lines = append(lines, cleanTranscriptCopyLine(it, line, k))
 		}
 	}
 	return strings.Join(trimBlankEdges(lines), "\n")
@@ -180,29 +180,16 @@ func (tl *timeline) totalLines(width int) int {
 	return total
 }
 
-func cleanTranscriptCopyLine(it item, line string) string {
-	plain := ansi.Strip(line)
+// Content strings contain no pane padding. Exclude only the known role header
+// row; authored indentation, literal rails and labels are never string-stripped.
+func cleanTranscriptCopyLine(it item, line string, local int) string {
 	switch it.(type) {
 	case *userItem, *queuedUserItem, *assistantItem:
-		plain = stripTranscriptRail(plain)
+		if local == 0 {
+			return ""
+		}
 	}
-	return strings.TrimRight(plain, " \t")
-}
-
-func stripTranscriptRail(line string) string {
-	for strings.HasPrefix(line, "⇢ ") {
-		line = strings.TrimPrefix(line, "⇢ ")
-	}
-	line = strings.TrimPrefix(line, "◷ queued ")
-	line = strings.TrimPrefix(line, "▌ ")
-	line = strings.TrimPrefix(line, "│ ")
-	if line == "└─" || line == "├─" {
-		return ""
-	}
-	if strings.HasPrefix(line, "[you]") || strings.HasPrefix(line, "[zarl]") {
-		return ""
-	}
-	return line
+	return strings.TrimRight(ansi.Strip(line), " \t")
 }
 
 func trimBlankEdges(lines []string) []string {
@@ -244,13 +231,16 @@ func transcriptItemText(it item) string {
 	case *diffItem:
 		text = value.diff
 	default:
-		lines := it.render(maxTranscriptWidth)
+		// Non-message clipboard fallbacks use a stable wrap width independent
+		// of the resizable transcript pane.
+		const copyWrapWidth = 110
+		lines := it.render(copyWrapWidth)
 		for index := range lines {
-			lines[index] = cleanTranscriptCopyLine(it, lines[index])
+			lines[index] = cleanTranscriptCopyLine(it, lines[index], index)
 		}
 		text = strings.Join(lines, "\n")
 	}
-	return strings.TrimSpace(text)
+	return strings.Trim(text, "\n")
 }
 
 func transcriptToolText(tool *toolItem) string {

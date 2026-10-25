@@ -22,9 +22,10 @@ func TestResolveShellSandboxPlatformAndPreference(t *testing.T) {
 		name, platform, global, workspace string
 		wantEnabled, wantConsent          bool
 	}{
-		{name: "fresh Linux", platform: "linux", wantEnabled: true},
+		{name: "fresh Linux", platform: "linux"},
 		{name: "fresh Darwin", platform: "darwin", wantConsent: true},
-		{name: "other platforms fail closed", platform: "windows", wantEnabled: true},
+		{name: "other platforms default off", platform: "windows"},
+		{name: "Linux explicit on", platform: "linux", global: "on", wantEnabled: true},
 		{name: "Darwin explicit global on", platform: "darwin", global: "on", wantEnabled: true},
 		{name: "Darwin explicit global off", platform: "darwin", global: "off"},
 		{name: "Darwin workspace opt in", platform: "darwin", global: "off", workspace: "on", wantEnabled: true},

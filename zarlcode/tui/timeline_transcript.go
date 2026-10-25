@@ -102,7 +102,7 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 			appendTop(it)
 			items[entry.ID] = it
 		case transcript.EntryKinds.ENTRYASSISTANTMESSAGE:
-			it := &assistantItem{content: payload.Text, done: true, interrupted: payload.Interrupted}
+			it := &assistantItem{content: payload.Text, textBreaks: append([]int(nil), payload.TextBreaks...), done: true, interrupted: payload.Interrupted}
 			appendProjectedItem(tl, entry.ParentID, it, subagents, &topTools, &topEdits)
 			items[entry.ID] = it
 			if entry.TurnID != "" {
@@ -139,9 +139,15 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 			if err != nil {
 				failureKind = tools.Kinds.UNKNOWN
 			}
+			input := payload.ToolInput
+			if input != "" {
+				_, input = presentToolCall(payload.ToolName, nil, input)
+			}
 			it := &toolItem{
-				name: payload.ToolName, arg: payload.Argument, effect: payload.Effect,
-				state: state, failKind: failureKind,
+				name: payload.ToolName, arg: escapeToolInputControls(redactToolInputText(payload.Argument)), effect: payload.Effect,
+				input:      input,
+				liveOutput: presentLiveToolOutput(payload.ToolOutputPreview),
+				state:      state, failKind: failureKind,
 				dur:      time.Duration(payload.DurationMS) * time.Millisecond,
 				sequence: payload.Sequence,
 			}
@@ -218,6 +224,9 @@ func (tl *timeline) restoreThread(thread transcript.Thread) {
 			it := &noticeItem{text: payload.Text}
 			appendProjectedItem(tl, entry.ParentID, it, subagents, &topTools, &topEdits)
 			items[entry.ID] = it
+		case transcript.EntryKinds.ENTRYCONTROLCHANGE:
+			// Control observations are audit records, not chat messages.
+			continue
 		case transcript.EntryKinds.ENTRYNOTICE:
 			if mode, ok := restoredModeNotice(payload.Text); ok {
 				think := ensureThinking(entry)

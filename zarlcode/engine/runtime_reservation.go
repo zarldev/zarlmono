@@ -107,11 +107,13 @@ func (a *runtimeAdmission) release() {
 // must disable these controls during its transition; MCP injection stays
 // non-blocking and reports rejection with zero depth.
 type RuntimeReservation struct {
-	mu           sync.Mutex
-	owner        *LiveRunner
-	active       bool
-	queuedID     int
-	queuedPrompt string
+	mu            sync.Mutex
+	owner         *LiveRunner
+	active        bool
+	dispatchOnly  bool
+	targetMutable bool
+	queuedID      int
+	queuedPrompt  string
 }
 
 // ReserveRuntime attempts exclusive admission without waiting. Turns (including
@@ -119,7 +121,7 @@ type RuntimeReservation struct {
 // processes, closing, and other reservations make it unavailable. Call Release
 // when finished; acquisition starts no goroutine and cancels no work.
 func (l *LiveRunner) ReserveRuntime() (*RuntimeReservation, error) {
-	return l.reserveRuntime(0, "")
+	return l.reserveRuntime(0, "", false, false, true)
 }
 
 // ReserveQueuedTurn reserves a settled runtime for promotion of the exact queue
@@ -130,10 +132,33 @@ func (l *LiveRunner) ReserveQueuedTurn(id int, prompt string) (*RuntimeReservati
 	if id == 0 {
 		return nil, ErrRuntimeBusy
 	}
-	return l.reserveRuntime(id, prompt)
+	return l.reserveRuntime(id, prompt, true, true, false)
 }
 
-func (l *LiveRunner) reserveRuntime(queuedID int, prompt string) (*RuntimeReservation, error) {
+// ReserveTurn reserves a new turn's checkpoint and dispatch while allowing
+// process-manager-owned background work to continue. Active turns, cleanup,
+// pending input, and other reservations still exclude admission. This reservation
+// cannot restore checkpoints or targets; use ReserveRuntime for those operations.
+func (l *LiveRunner) ReserveTurn() (*RuntimeReservation, error) {
+	return l.reserveRuntime(0, "", true, true, false)
+}
+
+// ReserveTargetTurn reserves a new turn while allowing detached managed work,
+// so a prepared provider target can be published before checkpoint capture and
+// converted to the turn without an unreserved gap.
+func (l *LiveRunner) ReserveTargetTurn() (*RuntimeReservation, error) {
+	return l.reserveRuntime(0, "", true, true, true)
+}
+
+// ReserveQueuedTargetTurn is ReserveTargetTurn for the exact queue head.
+func (l *LiveRunner) ReserveQueuedTargetTurn(id int, prompt string) (*RuntimeReservation, error) {
+	if id == 0 {
+		return nil, ErrRuntimeBusy
+	}
+	return l.reserveRuntime(id, prompt, true, true, true)
+}
+
+func (l *LiveRunner) reserveRuntime(queuedID int, prompt string, dispatchOnly, allowBackground, targetMutable bool) (*RuntimeReservation, error) {
 	if err := l.admission.reserve(); err != nil {
 		return nil, err
 	}
@@ -155,7 +180,7 @@ func (l *LiveRunner) reserveRuntime(queuedID int, prompt string) (*RuntimeReserv
 		l.admission.release()
 		return nil, ErrRuntimeBusy
 	}
-	if pm != nil {
+	if !allowBackground && pm != nil {
 		for _, process := range pm.List() {
 			if process.Running {
 				l.admission.release()
@@ -163,7 +188,7 @@ func (l *LiveRunner) reserveRuntime(queuedID int, prompt string) (*RuntimeReserv
 			}
 		}
 	}
-	return &RuntimeReservation{owner: l, active: true, queuedID: queuedID, queuedPrompt: prompt}, nil
+	return &RuntimeReservation{owner: l, active: true, dispatchOnly: dispatchOnly, targetMutable: targetMutable, queuedID: queuedID, queuedPrompt: prompt}, nil
 }
 
 // Release ends admission exclusion. Repeated calls are safe, including after a
@@ -204,6 +229,28 @@ func (r *RuntimeReservation) PersistenceSnapshot() ([]llm.Message, rewind.Target
 	}
 	target := r.owner.RunTarget()
 	return r.owner.context.snapshot(), checkpointTarget(target), r.owner.checkpointTargetSupported(target), nil
+}
+
+// ApplyTarget publishes a prebuilt provider target while this reservation owns
+// exclusive mutable-runtime admission. It returns an error rather than silently
+// dropping a route when the reservation is no longer valid.
+func (r *RuntimeReservation) ApplyTarget(update TargetUpdate) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active || !r.targetMutable {
+		return ErrRuntimeBusy
+	}
+	r.owner.publication.Lock()
+	defer r.owner.publication.Unlock()
+	r.owner.mu.Lock()
+	r.owner.target.Provider = update.Provider
+	r.owner.target.Model = update.Spec.Model
+	r.owner.target.Spec = update.Spec
+	if update.Window > 0 {
+		r.owner.target.Window = update.Window
+	}
+	r.owner.mu.Unlock()
+	return nil
 }
 
 // PlanSnapshot returns independently owned historical plan intent under the reservation.
@@ -271,7 +318,7 @@ func (r *RuntimeReservation) runTurn(ctx context.Context, prompt string, attachm
 func (r *RuntimeReservation) RestoreCheckpoint(checkpoint rewind.Checkpoint, target RunTarget) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.active || r.queuedID != 0 {
+	if !r.active || r.dispatchOnly {
 		return ErrRuntimeBusy
 	}
 	snapshot, err := checkpoint.Snapshot()
@@ -291,13 +338,17 @@ func (r *RuntimeReservation) RestoreCheckpoint(checkpoint rewind.Checkpoint, tar
 func (r *RuntimeReservation) RestoreConversation(messages []llm.Message, savedTarget rewind.Target, plan code.Plan, target RunTarget) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.active || r.queuedID != 0 {
+	if !r.active || r.dispatchOnly {
 		return ErrRuntimeBusy
 	}
 	return r.restoreConversation(messages, savedTarget, plan, target)
 }
 
 func (r *RuntimeReservation) restoreConversation(messages []llm.Message, savedTarget rewind.Target, savedPlan code.Plan, target RunTarget) error {
+	return r.restoreConversationState(messages, savedTarget, savedPlan, target, nil)
+}
+
+func (r *RuntimeReservation) restoreConversationState(messages []llm.Message, savedTarget rewind.Target, savedPlan code.Plan, target RunTarget, activations *MCPActivations) error {
 	if savedTarget != checkpointTarget(target) || !r.owner.checkpointTargetSupported(target) || r.owner.readOnly && !target.Plan {
 		return rewind.ErrTarget
 	}
@@ -311,9 +362,15 @@ func (r *RuntimeReservation) restoreConversation(messages []llm.Message, savedTa
 	defer r.owner.context.mu.Unlock()
 	r.owner.publication.Lock()
 	defer r.owner.publication.Unlock()
+	if activations != nil {
+		if err := r.owner.restoreMCPActivations(*activations); err != nil {
+			return err
+		}
+	}
 	r.owner.context.context = llm.CloneMessages(messages)
 	r.owner.context.exact = true
 	r.owner.mu.Lock()
+	r.owner.rotateProgramOutputsLocked()
 	r.owner.target = target
 	r.owner.modeGeneration++
 	r.owner.mu.Unlock()

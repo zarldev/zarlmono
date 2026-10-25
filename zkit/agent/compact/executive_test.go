@@ -28,12 +28,12 @@ func (f *fakeStateProvider) Verification() *compact.VerificationState   { return
 func (f *fakeStateProvider) UnresolvedFailures() []compact.FailureState { return f.failures }
 
 // execFakeProvider produces a scripted narrative for the LLM call.
-// Embeds llm.Provider so we inherit nil methods we don't need.
 type execFakeProvider struct {
-	llm.Provider
 	body string
 	err  error
 }
+
+func (execFakeProvider) Name() string { return "fixture" }
 
 func (f execFakeProvider) Complete(_ context.Context, _ llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {

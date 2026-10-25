@@ -9,6 +9,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -27,6 +28,9 @@ type historyJSON struct {
 // MarshalReplayMessage preserves every string byte in a stored replay occurrence,
 // including invalid UTF-8, without changing provider or ordinary message JSON.
 func MarshalReplayMessage(record ReplayMessage) ([]byte, error) {
+	if err := validateReplayMessage(record); err != nil {
+		return nil, err
+	}
 	return marshalHistoryJSON(record)
 }
 
@@ -37,16 +41,80 @@ func UnmarshalReplayMessage(data []byte) (ReplayMessage, error) {
 	if err := unmarshalHistoryJSON(data, &record); err != nil {
 		return ReplayMessage{}, err
 	}
-	if !record.Kind.IsValid() {
-		return ReplayMessage{}, errors.New("unsupported replay occurrence kind")
-	}
-	if record.IsToolExecution() && (record.Tool == nil || record.Interrupted || len(record.RawToolCalls) != 0 || !reflect.ValueOf(record.Message).IsZero()) {
-		return ReplayMessage{}, errors.New("invalid execution occurrence")
-	}
-	if err := validateObservation(record.Message); err != nil {
+	if err := validateReplayMessage(record); err != nil {
 		return ReplayMessage{}, err
 	}
 	return record, nil
+}
+
+func validateReplayMessage(record ReplayMessage) error {
+	if !record.Kind.IsValid() {
+		return errors.New("unsupported replay occurrence kind")
+	}
+	controlZero := reflect.ValueOf(record.Control).IsZero()
+	switch record.Kind {
+	case ReplayOccurrenceKinds.MESSAGE:
+		if !controlZero {
+			return errors.New("invalid message occurrence")
+		}
+	case ReplayOccurrenceKinds.TOOLEXECUTION:
+		if record.Tool == nil || record.Interrupted || len(record.RawToolCalls) != 0 ||
+			!reflect.ValueOf(record.Message).IsZero() || !controlZero {
+			return errors.New("invalid execution occurrence")
+		}
+	case ReplayOccurrenceKinds.CONTROL:
+		if record.Interrupted || len(record.RawToolCalls) != 0 || record.Tool != nil ||
+			!reflect.ValueOf(record.Message).IsZero() || validateReplayControl(record.Control) != nil {
+			return errors.New("invalid control occurrence")
+		}
+	}
+	if err := validateObservation(record.Message); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateReplayControl(control ReplayControl) error {
+	if control.Version != 1 || control.ID == "" || len(control.ID) > 128 ||
+		!validReplayTurnID(control.TurnID) ||
+		control.PolicyLabel == "" || len(control.PolicyLabel) > 128 ||
+		!isSHA256(control.SystemDigest) || !isSHA256(control.SurfaceDigest) ||
+		len(control.ToolDefinitions) > 512 {
+		return errors.New("invalid replay control")
+	}
+	for _, definition := range control.ToolDefinitions {
+		if definition.Name == "" || len(definition.Name) > 256 || !isSHA256(definition.DefinitionHash) {
+			return errors.New("invalid replay control tool definition")
+		}
+	}
+	return nil
+}
+
+func validReplayTurnID(id string) bool {
+	if id == "" {
+		return true
+	}
+	if len(id) > 128 || !utf8.ValidString(id) {
+		return false
+	}
+	for _, char := range id {
+		if unicode.IsControl(char) || unicode.Is(unicode.Bidi_Control, char) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // MarshalHistoryRequest encodes the prepared runner request for immutable

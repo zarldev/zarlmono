@@ -32,6 +32,10 @@ func (s callbackContextSink) OnToolStarted(ctx context.Context, e runner.ToolSta
 	s.observe(ctx, "ToolStarted", e.TaskID)
 }
 
+func (s callbackContextSink) OnToolOutput(ctx context.Context, e runner.ToolOutputProgress) {
+	s.observe(ctx, "ToolOutput", e.TaskID)
+}
+
 func (s callbackContextSink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
 	s.observe(ctx, "ToolCompleted", e.TaskID)
 }
@@ -72,6 +76,10 @@ func (s callbackContextSink) OnCompactionApplied(ctx context.Context, e runner.C
 	s.observe(ctx, "CompactionApplied", e.TaskID)
 }
 
+func (s callbackContextSink) OnCompactionSettled(ctx context.Context, e runner.CompactionSettled) {
+	s.observe(ctx, "CompactionSettled", e.TaskID)
+}
+
 func (s callbackContextSink) OnDiagnostic(ctx context.Context, e runner.Diagnostic) {
 	s.observe(ctx, "Diagnostic", e.TaskID)
 }
@@ -96,6 +104,9 @@ func TestSyncSinkForwardsContextAfterCancellation(t *testing.T) {
 		{"Thinking", func(s runner.EventSink, ctx context.Context) { s.OnThinking(ctx, runner.Thinking{TaskID: "task"}) }},
 		{"ToolStarted", func(s runner.EventSink, ctx context.Context) {
 			s.OnToolStarted(ctx, runner.ToolStarted{TaskID: "task"})
+		}},
+		{"ToolOutput", func(s runner.EventSink, ctx context.Context) {
+			s.OnToolOutput(ctx, runner.ToolOutputProgress{TaskID: "task"})
 		}},
 		{"ToolCompleted", func(s runner.EventSink, ctx context.Context) {
 			s.OnToolCompleted(ctx, runner.ToolCompleted{TaskID: "task"})
@@ -124,6 +135,9 @@ func TestSyncSinkForwardsContextAfterCancellation(t *testing.T) {
 		}},
 		{"CompactionApplied", func(s runner.EventSink, ctx context.Context) {
 			s.OnCompactionApplied(ctx, runner.CompactionApplied{TaskID: "task"})
+		}},
+		{"CompactionSettled", func(s runner.EventSink, ctx context.Context) {
+			s.OnCompactionSettled(ctx, runner.CompactionSettled{TaskID: "task"})
 		}},
 		{"Diagnostic", func(s runner.EventSink, ctx context.Context) { s.OnDiagnostic(ctx, runner.Diagnostic{TaskID: "task"}) }},
 		{"WaitingForInputs", func(s runner.EventSink, ctx context.Context) {

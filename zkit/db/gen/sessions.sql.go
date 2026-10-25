@@ -22,6 +22,7 @@ func (q *Queries) ClearSessionDraft(ctx context.Context, id string) error {
 const deleteEmptySession = `-- name: DeleteEmptySession :exec
 DELETE FROM sessions
 WHERE id = ? AND context_json = '[]' AND pending_json = '[]'
+  AND mcp_activations_json = ''
   AND NOT EXISTS (SELECT 1 FROM session_transcripts WHERE session_id = sessions.id)
   AND NOT EXISTS (SELECT 1 FROM session_checkpoints WHERE session_id = sessions.id)
   AND NOT EXISTS (SELECT 1 FROM session_branches WHERE session_id = sessions.id)
@@ -44,7 +45,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual
+SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual, mcp_activations_json
 FROM sessions WHERE id = ?
 `
 
@@ -69,6 +70,7 @@ type GetSessionRow struct {
 	PlanCompletedCount int64
 	PlanTotalCount     int64
 	LabelManual        int64
+	McpActivationsJson string
 }
 
 func (q *Queries) GetSession(ctx context.Context, id string) (GetSessionRow, error) {
@@ -95,6 +97,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (GetSessionRow, err
 		&i.PlanCompletedCount,
 		&i.PlanTotalCount,
 		&i.LabelManual,
+		&i.McpActivationsJson,
 	)
 	return i, err
 }
@@ -169,7 +172,7 @@ func (q *Queries) ListSessionSummariesByWorkspace(ctx context.Context, workspace
 }
 
 const listSessionsByWorkspace = `-- name: ListSessionsByWorkspace :many
-SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual
+SELECT id, workspace, label, agent_name, provider, model, context_json, pending_json, last_usage_json, diff_bodies_json, created_at, updated_at, plan_json, message_count, pinned, pinned_at, changed_file_count, plan_completed_count, plan_total_count, label_manual, mcp_activations_json
 FROM sessions
 WHERE workspace = ?
 ORDER BY updated_at DESC
@@ -196,6 +199,7 @@ type ListSessionsByWorkspaceRow struct {
 	PlanCompletedCount int64
 	PlanTotalCount     int64
 	LabelManual        int64
+	McpActivationsJson string
 }
 
 func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string) ([]ListSessionsByWorkspaceRow, error) {
@@ -228,6 +232,7 @@ func (q *Queries) ListSessionsByWorkspace(ctx context.Context, workspace string)
 			&i.PlanCompletedCount,
 			&i.PlanTotalCount,
 			&i.LabelManual,
+			&i.McpActivationsJson,
 		); err != nil {
 			return nil, err
 		}
@@ -322,11 +327,12 @@ const upsertSession = `-- name: UpsertSession :exec
 INSERT INTO sessions (
     id, workspace, label, label_manual, agent_name, provider, model,
     context_json, pending_json, last_usage_json, diff_bodies_json, plan_json, message_count,
-    created_at, updated_at, changed_file_count, plan_completed_count, plan_total_count
+    created_at, updated_at, changed_file_count, plan_completed_count, plan_total_count,
+    mcp_activations_json
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (id) DO UPDATE SET
     label            = excluded.label,
@@ -343,7 +349,8 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at           = excluded.updated_at,
     changed_file_count   = excluded.changed_file_count,
     plan_completed_count = excluded.plan_completed_count,
-    plan_total_count     = excluded.plan_total_count
+    plan_total_count     = excluded.plan_total_count,
+    mcp_activations_json = excluded.mcp_activations_json
 `
 
 type UpsertSessionParams struct {
@@ -365,6 +372,7 @@ type UpsertSessionParams struct {
 	ChangedFileCount   int64
 	PlanCompletedCount int64
 	PlanTotalCount     int64
+	McpActivationsJson string
 }
 
 func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) error {
@@ -387,6 +395,7 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) er
 		arg.ChangedFileCount,
 		arg.PlanCompletedCount,
 		arg.PlanTotalCount,
+		arg.McpActivationsJson,
 	)
 	return err
 }

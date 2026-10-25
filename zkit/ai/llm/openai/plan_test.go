@@ -15,12 +15,13 @@ func TestProviderPlansRequestsOnTheWire(t *testing.T) {
 	t.Parallel()
 
 	tool := llm.Tool{Type: "function", Function: llm.ToolFunction{Name: "read", Parameters: llm.SchemaFromMap(map[string]any{"type": "object"})}}
-	tests := []struct {
+	type requestCase struct {
 		name, model, path, tokenField string
 		tools, thinking, stream       bool
 		reasoningEffort               string
 		wantErr                       bool
-	}{
+	}
+	tests := []requestCase{
 		{name: "ordinary chat", model: "gpt-4o-mini", path: "/chat/completions", tokenField: "max_tokens", stream: true},
 		{name: "ordinary chat with tools", model: "gpt-4o-mini", path: "/chat/completions", tokenField: "max_tokens", tools: true, stream: true},
 		{name: "o3 without tools", model: "o3", path: "/chat/completions", tokenField: "max_completion_tokens", stream: true},
@@ -34,6 +35,23 @@ func TestProviderPlansRequestsOnTheWire(t *testing.T) {
 		{name: "case and space variation", model: " GPT-5.6-SOL ", path: "/responses", tools: true, stream: true},
 		{name: "unknown model stays on chat", model: "company-model-v7", path: "/chat/completions", tokenField: "max_tokens", tools: true, stream: true},
 		{name: "local model stays on chat", model: "llama-3.3-local", path: "/chat/completions", tokenField: "max_tokens", tools: true, stream: true},
+		{name: "gpt 6 sol rejects non-stream tools", model: "gpt-6-sol", tools: true, wantErr: true},
+		{name: "gpt 6 luna rejects non-stream tools", model: "gpt-6-luna", tools: true, wantErr: true},
+		{name: "gpt 6 sol plain stream", model: "gpt-6-sol", path: "/responses", stream: true},
+		{name: "gpt 6 luna plain stream", model: "gpt-6-luna", path: "/responses", stream: true},
+		{name: "unknown gpt 6 stays on chat", model: "gpt-6-unknown", path: "/chat/completions", tokenField: "max_tokens", tools: true, stream: true},
+		{name: "gpt 6.1 sol rejects non-stream tools", model: "gpt-6.1-sol", tools: true, wantErr: true},
+		{name: "gpt 6.1 sol non-stream without tools", model: "gpt-6.1-sol", path: "/chat/completions", tokenField: "max_completion_tokens"},
+		{name: "gpt 6.1 sol plain stream", model: "gpt-6.1-sol", path: "/responses", stream: true},
+		{name: "unknown gpt 6.1 stays on chat", model: "gpt-6.1-unknown", path: "/chat/completions", tokenField: "max_tokens", tools: true, stream: true},
+	}
+	for _, model := range []string{"gpt-6-sol", "gpt-6-luna"} {
+		for _, effort := range []string{"", "none", "low", "medium", "high", "xhigh", "max"} {
+			tests = append(tests, requestCase{name: model + " effort " + effort, model: model, path: "/responses", tokenField: "max_output_tokens", tools: true, thinking: true, stream: true, reasoningEffort: effort})
+		}
+	}
+	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max"} {
+		tests = append(tests, requestCase{name: "gpt-6.1-sol effort " + effort, model: "gpt-6.1-sol", path: "/responses", tokenField: "max_output_tokens", tools: true, thinking: true, stream: true, reasoningEffort: effort})
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

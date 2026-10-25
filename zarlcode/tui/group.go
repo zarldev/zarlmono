@@ -10,10 +10,6 @@ const (
 	groupAgents
 )
 
-// groupItem folds an iteration's tool calls (or edits) into one
-// collapsible block: a summary line, plus the child rows when expanded.
-// Collapsed by default (just the summary line); browse + enter expands
-// it. closeGroups freezes it when the iteration ends.
 type versionNotifier func()
 
 func notifyParent(local func(), parent versionNotifier) versionNotifier {
@@ -25,6 +21,8 @@ func notifyParent(local func(), parent versionNotifier) versionNotifier {
 	}
 }
 
+// groupItem owns an iteration's activity: collapsed is summary-only, expanded
+// exposes every child. Individual calls retain their own evidence disclosures.
 type groupItem struct {
 	versioned
 	depth    int
@@ -55,11 +53,17 @@ func (g *groupItem) add(it item) {
 	g.bump()
 }
 
-// childWidth is the render width for this group's children. Children sit under
-// the two-space gutter, and the group historically reserves four columns for
-// them — the single source of this number, shared by render, togglerAt, and
-// selectableLocals via renderChildBlock.
-func (g *groupItem) childWidth(width int) int { return width - 4 }
+// childWidth shares the single activity indent with text and image placement.
+func (g *groupItem) childWidth(width int) int { return width - len(childIndent) }
+
+// visibleChildren is shared by text, disclosure navigation and native images.
+// Its borrowed item identities retain their original execution/detail state.
+func (g *groupItem) visibleChildren() []item {
+	if g.expanded {
+		return g.children
+	}
+	return nil
+}
 
 // togglerAt maps a local line within the group's rendered block to its toggle:
 // line 0 is the group's own [+]/[-]; when expanded, each child's header line
@@ -69,20 +73,16 @@ func (g *groupItem) togglerAt(width, ln int) toggler {
 	if ln == 0 {
 		return g
 	}
-	if !g.expanded {
-		return nil
-	}
+	children := g.visibleChildren()
 	childWidth := g.childWidth(width)
-	return g.layout.render(g.children, childWidth, g.version()).togglerForLine(ln, childWidth, g.children, g.bump)
+	return g.layout.render(children, childWidth, g.version()).togglerForLine(ln, childWidth, children, g.bump)
 }
 
 func (g *groupItem) toggleLocals(width int) []int {
-	if !g.expanded {
-		return []int{0}
-	}
+	children := g.visibleChildren()
 	childWidth := g.childWidth(width)
-	children := g.layout.render(g.children, childWidth, g.version())
-	return append([]int{0}, children.toggleLocals(childWidth, g.children)...)
+	locals := g.layout.render(children, childWidth, g.version()).toggleLocals(childWidth, children)
+	return append([]int{0}, locals...)
 }
 
 func (g *groupItem) render(width int) []string {
@@ -90,13 +90,10 @@ func (g *groupItem) render(width int) []string {
 	if g.expanded {
 		toggle = palette.Subtle.On("[") + palette.Primary.On("-") + palette.Subtle.On("]")
 	}
-	lines := []string{toggle + " " + palette.Subtle.On(g.summary())}
-	if g.expanded {
-		lines = append(lines, g.layout.render(g.children, g.childWidth(width), g.version()).lines...)
-	}
-	if g.nested {
-		lines = prefixLines(lines, nestPad)
-	}
+	children := g.visibleChildren()
+	head := toggle + " " + palette.Muted.On(g.summary())
+	lines := []string{head}
+	lines = append(lines, g.layout.render(children, g.childWidth(width), g.version()).lines...)
 	return indentLines(lines, g.depth)
 }
 
@@ -155,7 +152,7 @@ type toolRef struct {
 func (tl *timeline) ensureToolGroup(depth int) *groupItem {
 	if tl.curTools == nil {
 		g := &groupItem{depth: depth, kind: groupTools, nested: true}
-		g.notify = func() { tl.invalidateItem(g) } // under the response, collapsed
+		g.notify = func() { tl.invalidateItem(g) }
 		tl.appendItem(g)
 		tl.curTools = g
 	}
@@ -172,13 +169,14 @@ func (tl *timeline) ensureEditGroup(depth int) *groupItem {
 	return tl.curEdits
 }
 
-// closeGroups ends the current iteration's groups: collapse them to
-// summaries and freeze. The next tool/edit opens fresh groups, giving
-// per-iteration grouping. Also closes groups for any active sub-agents.
+// closeGroups freezes the current iteration without discarding tool inspection
+// state. The next iteration opens fresh groups, including for active sub-agents.
 func (tl *timeline) closeGroups() {
 	for _, g := range []*groupItem{tl.curTools, tl.curEdits} {
 		if g != nil {
-			g.expanded = false
+			if g.kind != groupTools {
+				g.expanded = false
+			}
 			g.closed = true
 			g.bump()
 		}

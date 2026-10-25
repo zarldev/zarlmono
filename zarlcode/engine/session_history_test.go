@@ -91,8 +91,24 @@ func TestRecordedHistorySnapshotRetryAndAcknowledgment(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, messages, _, err := store.ReadCheckpointHistory(t.Context(), boundary)
-	if err != nil || len(messages) != 4 {
+	if err != nil || len(messages) != 5 {
 		t.Fatalf("retry duplicated occurrences: %d, %v", len(messages), err)
+	}
+	modelMessages, controls := 0, 0
+	for _, data := range messages {
+		record, decodeErr := runner.UnmarshalReplayMessage(data)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		switch {
+		case record.IsControl():
+			controls++
+		case record.Kind == runner.ReplayOccurrenceKinds.MESSAGE:
+			modelMessages++
+		}
+	}
+	if modelMessages != 4 || controls != 1 {
+		t.Fatalf("replay occurrences = %d model messages + %d controls, want 4 + 1", modelMessages, controls)
 	}
 	model, err = store.GetSessionModelContext(t.Context(), "session")
 	if err != nil || model.Generation != 2 {

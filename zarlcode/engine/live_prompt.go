@@ -10,6 +10,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/instructions"
 	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -84,11 +85,21 @@ func (l *LiveRunner) promptFunc(src func() tools.Source) runner.PromptFunc {
 		l.mu.Lock()
 		plan := l.target.Plan || l.readOnly
 		profile := l.promptProfile
+		observation := requestControlObservation{policyLabel: controlPolicyBuild, generation: l.modeGeneration}
+		if plan {
+			observation.policyLabel = modePlan
+		}
 		l.mu.Unlock()
 
 		selection := selectLivePrompt(plan, profile)
 		l.publishPromptDiagnostics(selection.Diagnostics)
-		return RenderLivePrompt(selection.Name, selection.Body, l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, src()), selection.Preferences)
+		text, err := RenderLivePrompt(selection.Name, selection.Body, l.ws.Root(), l.catalogSnapshotSkills(), l.catalogSnapshotAgents(), l.instructionSnapshotDocs(), ToolInfoFromSource(ctx, src()), selection.Preferences)
+		if err == nil && taskscope.DepthFrom(ctx) == 0 {
+			l.mu.Lock()
+			l.renderedControl = observation
+			l.mu.Unlock()
+		}
+		return text, err
 	}
 }
 

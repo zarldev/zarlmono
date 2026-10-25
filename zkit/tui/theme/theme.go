@@ -72,7 +72,30 @@ type Theme struct {
 	Success, Warning, Error, Info Color
 	// Conversation roles.
 	User, Assistant, Tool, System Color
+	// UserBg and AssistantBg optionally override conversation row backgrounds.
+	// Unset assistant surfaces inherit Bg; user surfaces tint Bg toward Fg.
+	// A zero theme emits no background colour. Explicit overrides take priority.
+	UserBg, AssistantBg Color
 	// Structure.
 	Border, BorderFocus            Color
 	Highlight, Selection, PlanMode Color
+}
+
+// ConversationBackgrounds resolves optional surfaces from the active palette.
+// User rows use an 8% foreground tint of Bg; assistant/activity rows use Bg.
+// Missing or invalid blend colours fall back to Bg without guessing a scheme.
+func (t Theme) ConversationBackgrounds() (Color, Color) {
+	user, assistant := t.UserBg, t.AssistantBg
+	if user == "" {
+		user = t.Bg
+		br, bg, bb, baseOK := t.Bg.rgb()
+		fr, fg, fb, foregroundOK := t.Fg.rgb()
+		if baseOK && foregroundOK {
+			user = Color(fmt.Sprintf("#%02x%02x%02x", (92*br+8*fr)/100, (92*bg+8*fg)/100, (92*bb+8*fb)/100))
+		}
+	}
+	if assistant == "" {
+		assistant = t.Bg
+	}
+	return user, assistant
 }

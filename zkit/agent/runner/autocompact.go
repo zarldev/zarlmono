@@ -35,24 +35,10 @@ func shouldRunCompact(keep int, history []llm.Message, c compact.Compactor) bool
 // TaskResult. It skips iteration 0 (no prior usage to drive a decision) and
 // runners without a compactor configured.
 //
-// Uses the unified compact.Compactor interface — the runner passes its
-// configured keepRecent (a static cap set via WithCompactKeepRecent); the
-// engine decides whether the current history is heavy enough to act on.
-//
-// Two pre-gates short-circuit before we even build the Compact call, because
-// both Structural and Tiered ran (cheaply but non-trivially) every iteration
-// in the eval traces — 75 fires per task, even on iterations where the
-// history was nowhere near pressure:
-//
-//  1. Message-count floor: skip when history is at or below 2 * keep —
-//     nothing older than the keep window means nothing eligible to compact.
-//  2. Prober gate: if the engine implements [compact.Prober] and
-//     WouldReduceBytes returns 0 for this history+keep, the engine itself
-//     promises Compact would be a no-op. Skipping saves the iteration the
-//     per-message scan and the publish-event branch.
-//
-// Both gates are conservative: an engine without Prober (or reporting a
-// positive estimate) still gets called as before.
+// Static or adaptive retention is expanded to preserve the newest tool
+// exchange. A Prober may skip work when it predicts no reduction; reported
+// token pressure bypasses that gate but not exchange retention. A prior forced
+// no-op is latched until enough history accrues to make older input eligible.
 func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm.Message, lastUsage *llm.Usage, iterNum int, st *loopState) ([]llm.Message, error) {
 	if iterNum == 0 || r.compactor == nil {
 		return messages, nil
@@ -80,6 +66,9 @@ func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm
 	}
 
 	result, cerr := r.compactor.Compact(ctx, messages, keep)
+	if result.Inference != nil {
+		r.sink.OnCompactionSettled(ctx, CompactionSettled{TaskID: spec.ID, Depth: spec.Depth, Inference: *result.Inference, Err: cerr})
+	}
 	if cerr != nil {
 		return messages, fmt.Errorf("%w: %w", ErrCompact, cerr)
 	}

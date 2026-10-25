@@ -1,5 +1,7 @@
 # AGENTS.md — `zkit/agent/tools/spawn`
 
+`agent_status(include_summary=false)` is a metadata-only exception to terminal result reads: use `Group.Peek`, omit summary/error text and admission references, and leave observation and automatic delivery unchanged. Omitted/true retains full status delivery; listing remains metadata-only.
+
 Notes for editors. See [`zkit/agent/runner/AGENTS.md`](../../runner/AGENTS.md) for the loop this tool calls back into; `taskscope.DepthFrom(ctx)` is the only runner-internal helper it depends on.
 
 ## What this package is

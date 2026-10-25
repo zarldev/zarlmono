@@ -56,6 +56,62 @@ func TestProviderParsesResponsesEvents(t *testing.T) {
 	}
 }
 
+func TestProviderHandlesResponsesIncompleteAndTopLevelError(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		event  string
+		finish llm.FinishReason
+	}{
+		{
+			name:   "incomplete length",
+			event:  `{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`,
+			finish: llm.FinishReasons.LENGTH,
+		},
+		{
+			name:   "incomplete content filter",
+			event:  `{"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"},"usage":null}}`,
+			finish: llm.FinishReasons.CONTENTFILTER,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sse := "data: " + tc.event + "\n\n" +
+				`data: {"type":"response.output_text.delta","delta":"must not be yielded"}` + "\n\n"
+			chunks, err := runResponses(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte(sse))
+			}), nil)
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if len(chunks) != 1 || chunks[0].FinishReason != tc.finish {
+				t.Fatalf("chunks = %+v, want one %q terminal chunk", chunks, tc.finish)
+			}
+			if tc.finish == llm.FinishReasons.LENGTH && (!chunks[0].UsageReported || chunks[0].Usage.TotalTokens != 5) {
+				t.Fatalf("length usage = %+v reported=%v", chunks[0].Usage, chunks[0].UsageReported)
+			}
+			if tc.finish == llm.FinishReasons.CONTENTFILTER && chunks[0].UsageReported {
+				t.Fatalf("null usage reported: %+v", chunks[0])
+			}
+		})
+	}
+
+	sse := `data: {"type":"error","code":"invalid_request","message":"bad request"}` + "\n\n" +
+		`data: {"type":"response.output_text.delta","delta":"must not be yielded"}` + "\n\n"
+	chunks, err := runResponses(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sse))
+	}), nil)
+	if err == nil || !strings.Contains(err.Error(), "bad request") {
+		t.Fatalf("error = %v, want top-level response error", err)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("successful chunks after error = %+v, want none", chunks)
+	}
+}
+
 func TestProviderOrdersResponsesFunctionCalls(t *testing.T) {
 	t.Parallel()
 	sse := "data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"type\":\"function_call\",\"id\":\"item-b\",\"call_id\":\"call-b\",\"name\":\"b\",\"arguments\":\"{\\\"b\\\":\"}}\n\n" +

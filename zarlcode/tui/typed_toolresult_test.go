@@ -39,7 +39,7 @@ func TestRenderTypedToolResultNilFallsBack(t *testing.T) {
 func TestRenderTypedToolResultProgram(t *testing.T) {
 	r := program.Result{Output: map[string]any{"answer": "yes"}, Stats: program.Stats{ToolCalls: 2, ParallelBatches: 1}}
 	out := ansi.Strip(strings.Join(tui.RenderTypedToolResult(80, "program", "ignored", r), "\n"))
-	for _, w := range []string{"\"answer\": \"yes\"", "program: 2 calls, 1 parallel"} {
+	for _, w := range []string{"answer: yes", "program: 2 calls, 1 parallel"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("missing %q:\n%s", w, out)
 		}

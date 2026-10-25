@@ -20,10 +20,19 @@ import (
 // any other backend they'd be wrong (e.g. a local llama.cpp URL leaking onto
 // openai), so other providers resolve those through the registry chain.
 func (s *Settings) ActiveProvider(ctx context.Context, fb ProviderSpec) ProviderSpec {
+	name := s.resolveProvider(ctx, fb.Name)
+	model := fb.Model
+	if name != fb.Name {
+		model = s.DefaultModelSelection(name).Model
+	}
+	effort := fb.CodexEffort
+	if effort == "" {
+		effort = prefs.DefaultCodexEffort
+	}
 	spec := ProviderSpec{
-		Name:        s.resolveProvider(ctx, fb.Name),
-		Model:       s.setting(ctx, prefs.KeyModel, fb.Model),
-		CodexEffort: s.setting(ctx, prefs.KeyCodexEffort, fb.CodexEffort),
+		Name:        name,
+		Model:       s.setting(ctx, prefs.KeyModel, model),
+		CodexEffort: s.setting(ctx, prefs.KeyCodexEffort, effort),
 	}
 	if spec.Name == fb.Name {
 		spec.BaseURL = fb.BaseURL
@@ -126,14 +135,13 @@ func (s *Settings) CompactEngine(ctx context.Context) string {
 }
 
 // CompactorProvider resolves the LLM target for the summary/executive
-// compaction engines. The compact_provider / compact_model settings win when
-// set (so daily work can run on a cheap model while briefings use a bigger
-// one); otherwise it reuses the active provider + model. A build failure
+// compaction engines. Saved overrides win over the built-in compaction route;
+// an explicit "(active)" inherits the main provider/model. A build failure
 // falls back to the active provider so a misconfigured override never breaks
 // compaction.
 func (s *Settings) CompactorProvider(ctx context.Context, active llm.Provider, activeModel string) (llm.Provider, string) {
-	cp := s.setting(ctx, prefs.KeyCompactProvider, "")
-	cm := s.setting(ctx, prefs.KeyCompactModel, "")
+	target := s.ModelTarget(ctx, prefs.KeyCompactProvider)
+	cp, cm := target.Name, target.Model
 	if cm == "" {
 		cm = activeModel
 	}
@@ -148,18 +156,17 @@ func (s *Settings) CompactorProvider(ctx context.Context, active llm.Provider, a
 }
 
 // DecomposeJudgeProvider resolves the LLM target for the decompose
-// guardrail's constrained-verdict judge. It returns nil while decompose_judge
-// is off (the default) — the guardrail keeps its deterministic advisory path.
-// When on, judge_provider / judge_model override the target the same way the
-// compact_* pair does (verdicts want a small fast model); both unset reuses
-// the active provider. A build failure falls back to the active provider so a
+// guardrail's constrained-verdict judge. Enabled by default, it uses the
+// built-in judge route unless saved preferences override it. Explicit "off"
+// keeps the deterministic advisory path; "(active)" reuses the main provider.
+// A build failure falls back to the active provider so a
 // misconfigured override never silently disables a judge the user enabled.
 func (s *Settings) DecomposeJudgeProvider(ctx context.Context, active llm.Provider, activeSpec ProviderSpec) llm.Provider {
-	if s.setting(ctx, prefs.KeyDecomposeJudge, "off") != "on" {
+	if s.setting(ctx, prefs.KeyDecomposeJudge, prefs.DefaultDecomposeJudge) != "on" {
 		return nil
 	}
-	jp := s.setting(ctx, prefs.KeyJudgeProvider, "")
-	jm := s.setting(ctx, prefs.KeyJudgeModel, "")
+	target := s.ModelTarget(ctx, prefs.KeyJudgeProvider)
+	jp, jm := target.Name, target.Model
 	if jp == "" && jm == "" {
 		return active
 	}
@@ -205,7 +212,7 @@ func (s *Settings) TextVerbosity(ctx context.Context, target ProviderSpec) strin
 
 // CodexEffort resolves the persisted Codex reasoning effort when supported.
 func (s *Settings) CodexEffort(ctx context.Context, target ProviderSpec) string {
-	return validCodexEffort(target, s.setting(ctx, prefs.KeyCodexEffort, ""))
+	return validCodexEffort(target, s.setting(ctx, prefs.KeyCodexEffort, prefs.DefaultCodexEffort))
 }
 func validCodexEffort(target ProviderSpec, raw string) string {
 	id, _ := llm.ParseLLMProvider(target.Name)
@@ -228,5 +235,5 @@ func SupportsTextVerbosity(target ProviderSpec) bool {
 		return true
 	}
 	m := strings.ToLower(strings.TrimSpace(target.Model))
-	return id == llm.LLMProviders.OPENAI && (m == "gpt-6-astra" || m == "gpt-5.6" || strings.HasPrefix(m, "gpt-5.6-"))
+	return id == llm.LLMProviders.OPENAI && (m == "gpt-6.1-sol" || m == "gpt-6-astra" || m == "gpt-5.6" || strings.HasPrefix(m, "gpt-5.6-"))
 }

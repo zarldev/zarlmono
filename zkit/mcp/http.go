@@ -48,9 +48,21 @@ type AddrPolicy func(ip netip.Addr) bool
 // OnNotification call) keeps the transport free of background
 // goroutines when nobody's subscribing.
 type httpTransport struct {
-	baseURL   string
-	authToken string
-	http      *http.Client
+	baseURL               string
+	authToken             string
+	http                  *http.Client
+	protocolMu            sync.Mutex
+	version               string
+	session               string
+	headerBindings        map[string][]schemaHeaderBinding
+	invalidHeaderBindings map[string]bool
+	headerBindingsReady   bool
+	ownerContext          context.Context
+	ownerCancel           context.CancelCauseFunc
+	active                sync.WaitGroup
+	closeDone             chan struct{}
+	ensureReady           func(context.Context) error
+	invalidateSession     func(string)
 
 	// Push-notification plumbing. notifMu serialises (notifier,
 	// sseCancel, sseDone) — registering a handler, replacing it, and
@@ -64,19 +76,30 @@ type httpTransport struct {
 	sseDone   chan struct{}
 }
 
-func newHTTPTransport(baseURL, authToken string, policy AddrPolicy) *httpTransport {
+func newHTTPTransport(baseURL, authToken string, policy AddrPolicy, confineEndpoint bool) *httpTransport {
 	tr := zhttp.DefaultTransport()
 	if policy != nil {
 		tr.DialContext = validatingDialContext(policy)
 	}
+	client := &http.Client{Transport: tr, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("MCP endpoint redirects are not allowed")
+	}}
+	if confineEndpoint {
+		// Proxies can bypass confinement even when redirects are disabled.
+		tr.Proxy = nil
+	}
+	ownerContext, ownerCancel := context.WithCancelCause(context.Background())
 	return &httpTransport{
-		baseURL:   baseURL,
-		authToken: authToken,
+		baseURL:      baseURL,
+		authToken:    authToken,
+		ownerContext: ownerContext,
+		ownerCancel:  ownerCancel,
+		closeDone:    make(chan struct{}),
 		// SSE wants no total-request timeout — the stream is meant to
 		// stay open. We rely on per-call timeouts in Do() instead by
 		// using a context with deadline on POST requests, and use zhttp's
 		// hardened transport for Dial / TLS / Header / Idle timeouts.
-		http: &http.Client{Transport: tr},
+		http: client,
 	}
 }
 
@@ -147,9 +170,11 @@ func (t *httpTransport) Close() error {
 	t.notifMu.Lock()
 	if t.closed {
 		t.notifMu.Unlock()
+		<-t.closeDone
 		return nil
 	}
 	t.closed = true
+	t.ownerCancel(errors.New("MCP HTTP transport closed"))
 	cancel := t.sseCancel
 	done := t.sseDone
 	t.notifMu.Unlock()
@@ -159,6 +184,10 @@ func (t *httpTransport) Close() error {
 	if done != nil {
 		<-done
 	}
+	t.active.Wait()
+	t.closeSession()
+	t.http.CloseIdleConnections()
+	close(t.closeDone)
 	return nil
 }
 
@@ -228,7 +257,7 @@ func (t *httpTransport) runSSEListener(ctx context.Context, done chan struct{}) 
 // Returns the underlying error so runSSEListener can decide whether
 // to reconnect with backoff.
 func (t *httpTransport) readSSEStream(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.baseURL, nil)
+	req, err := t.subscriptionRequest(ctx)
 	if err != nil {
 		return err
 	}
@@ -241,6 +270,9 @@ func (t *httpTransport) readSSEStream(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound && req.Header.Get(headerSessionID) != "" && t.invalidateSession != nil {
+		t.invalidateSession(req.Header.Get(headerSessionID))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("sse: status %d", resp.StatusCode)
 	}
@@ -257,6 +289,12 @@ func (t *httpTransport) readSSEStream(ctx context.Context) error {
 		var note rpcNotificationIn
 		if err := json.Unmarshal(payload, &note); err != nil {
 			return // Tolerate non-JSON heartbeats / comments.
+		}
+		if req.Method == http.MethodPost && !validSubscriptionNotification(note.Params, json.RawMessage(`"subscription"`)) {
+			return
+		}
+		if note.Method == methodSubscriptionAcknowledged {
+			return
 		}
 		if note.Method == "" {
 			return
@@ -280,7 +318,7 @@ func (t *httpTransport) readSSEStream(ctx context.Context) error {
 			continue
 		}
 		payload = strings.TrimPrefix(payload, " ")
-		dataBuf, err = appendSSEData(dataBuf, payload)
+		dataBuf, err = appendSSEData(dataBuf, payload, maxRPCBodyBytes)
 		if err != nil {
 			return err
 		}
@@ -294,6 +332,27 @@ func (t *httpTransport) readSSEStream(ctx context.Context) error {
 }
 
 func (t *httpTransport) Call(ctx context.Context, req rpcRequest) (rpcResponse, error) {
+	t.notifMu.Lock()
+	if t.closed {
+		t.notifMu.Unlock()
+		return rpcResponse{}, errors.New("MCP HTTP transport closed")
+	}
+	t.active.Add(1)
+	t.notifMu.Unlock()
+	defer t.active.Done()
+	callContext, cancel := context.WithCancelCause(ctx)
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(t.ownerContext, func() {
+		defer close(callbackDone)
+		cancel(context.Cause(t.ownerContext))
+	})
+	defer func() {
+		cancel(nil)
+		if !stop() {
+			<-callbackDone
+		}
+	}()
+	ctx = callContext
 	b, err := json.Marshal(req)
 	if err != nil {
 		return rpcResponse{}, fmt.Errorf("marshal request: %w", err)
@@ -308,19 +367,61 @@ func (t *httpTransport) Call(ctx context.Context, req rpcRequest) (rpcResponse, 
 	if t.authToken != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+t.authToken)
 	}
+	if err := t.protocolHeaders(httpReq, req); err != nil {
+		return rpcResponse{}, err
+	}
 
 	resp, err := t.http.Do(httpReq)
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return rpcResponse{}, cause
+		}
 		return rpcResponse{}, fmt.Errorf("request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return rpcResponse{}, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxRPCBodyBytes))
+		var failure rpcResponse
+		_ = json.Unmarshal(body, &failure)
+		failureError := &httpStatusError{Status: resp.StatusCode, RPC: failure.Error}
+		if resp.StatusCode == http.StatusNotFound && httpReq.Header.Get(headerSessionID) != "" && t.invalidateSession != nil {
+			t.invalidateSession(httpReq.Header.Get(headerSessionID))
+		}
+		return rpcResponse{}, failureError
 	}
 
-	return decodeHTTPResponse(resp.Header.Get("Content-Type"), resp.Body, req.ID)
+	if req.IsNotification() {
+		return rpcResponse{}, notificationResponse(resp)
+	}
+	var decoded rpcResponse
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		decoded, err = decodeSSEResponse(resp.Body, req.ID, t.dispatchHTTPNotification)
+	} else {
+		decoded, err = decodeHTTPResponse(resp.Header.Get("Content-Type"), resp.Body, req.ID)
+	}
+	if err != nil {
+		return rpcResponse{}, err
+	}
+	if decoded.JSONRPC != jsonrpcVersion || string(decoded.ID) != string(req.ID) {
+		return rpcResponse{}, errors.New("MCP response envelope/id mismatch")
+	}
+	if req.Method == methodInitialize && decoded.Error == nil {
+		result, validateErr := validateInitializeResult(decoded.Result)
+		if validateErr != nil {
+			return rpcResponse{}, validateErr
+		}
+		if result.ProtocolVersion != protocolVersion20251125 {
+			return rpcResponse{}, fmt.Errorf("unsupported MCP HTTP initialization revision %q", result.ProtocolVersion)
+		}
+		if headerVersion := resp.Header.Get(headerProtocolVersion); headerVersion != "" && headerVersion != result.ProtocolVersion {
+			return rpcResponse{}, fmt.Errorf("MCP initialize response protocol header %q does not match %q", headerVersion, result.ProtocolVersion)
+		}
+		if err := t.acceptSession(resp); err != nil {
+			return rpcResponse{}, err
+		}
+	}
+	return decoded, nil
 }
 
 // decodeHTTPResponse handles both plain JSON and Server-Sent Events
@@ -339,12 +440,12 @@ func decodeHTTPResponse(contentType string, body io.Reader, wantID json.RawMessa
 	// Read one extra byte so the cap covers the complete JSON document, not
 	// merely its first value. A decoder alone accepts a valid object followed
 	// by a second value, which is not a JSON-RPC response body.
-	payload, err := io.ReadAll(io.LimitReader(body, maxRPCBodyBytes+1))
+	payload, err := io.ReadAll(io.LimitReader(body, maxRPCResponseBytes+1))
 	if err != nil {
 		return rpcResponse{}, fmt.Errorf("read response: %w", err)
 	}
-	if len(payload) > maxRPCBodyBytes {
-		return rpcResponse{}, fmt.Errorf("decode response: body exceeds %d bytes", maxRPCBodyBytes)
+	if len(payload) > maxRPCResponseBytes {
+		return rpcResponse{}, fmt.Errorf("decode response: body exceeds %d bytes", maxRPCResponseBytes)
 	}
 	dec := json.NewDecoder(bytes.NewReader(payload))
 	var r rpcResponse
@@ -375,9 +476,9 @@ func decodeRPCEvent(payload []byte) (rpcResponse, bool) {
 // split across lines parses correctly. Previously each line was
 // json-unmarshalled independently, which silently dropped events
 // whose payload exceeded one line.
-func decodeSSEResponse(body io.Reader, wantID json.RawMessage) (rpcResponse, error) {
+func decodeSSEResponse(body io.Reader, wantID json.RawMessage, notifications ...func([]byte)) (rpcResponse, error) {
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 64*1024), maxSSELineBytes)
+	scanner.Buffer(make([]byte, 64*1024), maxRPCResponseBytes+len("data: \r\n")+1)
 	var dataBuf []byte
 	flush := func() (rpcResponse, bool) {
 		if len(dataBuf) == 0 {
@@ -390,6 +491,9 @@ func decodeSSEResponse(body io.Reader, wantID json.RawMessage) (rpcResponse, err
 			// Tolerate junk events — e.g. heartbeats with non-JSON data —
 			// rather than abort the whole stream.
 			return rpcResponse{}, false
+		}
+		if len(r.ID) == 0 && len(notifications) != 0 {
+			notifications[0](payload)
 		}
 		if bytes.Equal(r.ID, wantID) {
 			return r, true
@@ -417,7 +521,7 @@ func decodeSSEResponse(body io.Reader, wantID json.RawMessage) (rpcResponse, err
 		// through to "data:" handles servers that omit the space.
 		payload = strings.TrimPrefix(payload, " ")
 		var err error
-		dataBuf, err = appendSSEData(dataBuf, payload)
+		dataBuf, err = appendSSEData(dataBuf, payload, maxRPCResponseBytes)
 		if err != nil {
 			return rpcResponse{}, err
 		}

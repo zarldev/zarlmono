@@ -73,11 +73,11 @@ The parent agent owns planning, implementation, integration, and final reporting
 
 `github.com/anthropics/anthropic-sdk-go` and `github.com/invopop/jsonschema`
 must be upgraded as a compatible pair in every affected module. The current
-validated pair is Anthropic `v1.68.0` with JSON Schema `v0.14.0`. After a broad
+validated pair is Anthropic `v1.80.0` with JSON Schema `v0.14.0`. After a broad
 dependency update, align and tidy each affected module:
 
 ```bash
-go get github.com/anthropics/anthropic-sdk-go@v1.68.0 github.com/invopop/jsonschema@v0.14.0
+go get github.com/anthropics/anthropic-sdk-go@v1.80.0 github.com/invopop/jsonschema@v0.14.0
 go mod tidy
 ```
 

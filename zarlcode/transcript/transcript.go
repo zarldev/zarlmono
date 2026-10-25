@@ -2,11 +2,15 @@
 package transcript
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
+	"github.com/zarldev/zarlmono/zkit/ai/tools"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
 	"github.com/zarldev/zarlmono/zkit/zsync"
 )
@@ -91,8 +95,10 @@ func cloneEntry(entry Entry) Entry {
 
 func clonePayload(payload Payload) Payload {
 	payload.Plan = clonePlan(payload.Plan)
+	payload.TextBreaks = append([]int(nil), payload.TextBreaks...)
 	payload.Skills = append([]string(nil), payload.Skills...)
 	payload.Attachments = append([]Attachment(nil), payload.Attachments...)
+	payload.Control = payload.Control.Clone()
 	return payload
 }
 
@@ -121,6 +127,7 @@ type InputAdmission struct {
 // Payload carries kind-specific durable facts. Fields unrelated to Kind remain zero.
 type Payload struct {
 	Text        string `json:"text,omitempty"`
+	TextBreaks  []int  `json:"text_breaks,omitempty"`
 	Injected    bool   `json:"injected,omitempty"`
 	Complete    bool   `json:"complete,omitempty"`
 	Interrupted bool   `json:"interrupted,omitempty"`
@@ -132,6 +139,8 @@ type Payload struct {
 	ParentExecutionID string    `json:"parent_execution_id,omitempty"`
 	ToolName          string    `json:"tool_name,omitempty"`
 	Argument          string    `json:"argument,omitempty"`
+	ToolInput         string    `json:"tool_input,omitempty"`
+	ToolOutputPreview string    `json:"tool_output_preview,omitempty"`
 	Effect            string    `json:"effect,omitempty"`
 	ToolState         ToolState `json:"tool_state,omitempty"`
 	FailureKind       string    `json:"failure_kind,omitempty"`
@@ -152,8 +161,25 @@ type Payload struct {
 	SpawnExecutionID string        `json:"spawn_execution_id,omitempty"`
 	Subagent         SubagentState `json:"subagent,omitempty"`
 
-	InputAdmission InputAdmission `json:"input_admission,omitzero"`
-	InputWaiting   bool           `json:"input_waiting,omitempty"`
+	InputAdmission InputAdmission       `json:"input_admission,omitzero"`
+	InputWaiting   bool                 `json:"input_waiting,omitempty"`
+	Control        runner.ReplayControl `json:"control,omitzero"`
+}
+
+// TextSegments returns independent Markdown source segments without changing Text.
+// An absent boundary list returns Text as one segment; a boundary at the end does
+// not add an empty trailing segment.
+func (p Payload) TextSegments() []string {
+	segments := make([]string, 0, len(p.TextBreaks)+1)
+	start := 0
+	for _, end := range p.TextBreaks {
+		segments = append(segments, p.Text[start:end])
+		start = end
+	}
+	if start < len(p.Text) || len(segments) == 0 {
+		segments = append(segments, p.Text[start:])
+	}
+	return segments
 }
 
 // Builder mutates one Thread while maintaining stable semantic identities.
@@ -260,6 +286,41 @@ func (b *Builder) append(kind EntryKind, parentID, turnID string, payload Payloa
 	return id
 }
 
+func (b *Builder) recordControl(turnID string, control runner.ReplayControl) (string, error) {
+	encoded, err := encodeControl(control)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range b.thread.entries {
+		if entry.ID != control.ID {
+			continue
+		}
+		if entry.Kind != EntryKinds.ENTRYCONTROLCHANGE {
+			return "", errors.New("control identity collides with another entry")
+		}
+		existing, err := encodeControl(entry.Payload.Control)
+		if err != nil || !bytes.Equal(existing, encoded) {
+			return "", errors.New("control identity has different payload")
+		}
+		return entry.ID, nil
+	}
+	if number, ok := generatedEntryNumber(control.ID); ok && number > b.nextID {
+		b.nextID = number
+	}
+	b.thread.revision++
+	b.thread.entries = append(b.thread.entries, Entry{
+		ID: control.ID, TurnID: turnID, Kind: EntryKinds.ENTRYCONTROLCHANGE,
+		Revision: b.thread.revision, Payload: Payload{Control: control.Clone()},
+	})
+	return control.ID, nil
+}
+
+func encodeControl(control runner.ReplayControl) ([]byte, error) {
+	return runner.MarshalReplayMessage(runner.ReplayMessage{
+		Kind: runner.ReplayOccurrenceKinds.CONTROL, Control: control,
+	})
+}
+
 func (b *Builder) update(id string, update func(*Entry)) {
 	for i := range b.thread.entries {
 		if b.thread.entries[i].ID == id {
@@ -323,6 +384,36 @@ func (b *Builder) AppendAssistant(turnID, parentID, delta string) {
 	b.update(b.turnResponse[turnID], func(entry *Entry) { entry.Payload.Text += delta })
 }
 
+// FinishAssistantSegment records the end of a non-empty assistant Markdown source
+// segment without closing the turn or any other turn-owned stream.
+func (b *Builder) FinishAssistantSegment(turnID string) {
+	id := b.turnResponse[turnID]
+	if id == "" {
+		return
+	}
+	for i := range b.thread.entries {
+		entry := b.thread.entries[i]
+		if entry.ID != id {
+			continue
+		}
+		// JSON replaces invalid UTF-8 bytes; offsets after such bytes would
+		// no longer identify the same position after persistence. Preserve the
+		// opaque text without introducing an unsafe presentation boundary.
+		if !utf8.ValidString(entry.Payload.Text) {
+			return
+		}
+		end := len(entry.Payload.Text)
+		if end == 0 || len(entry.Payload.TextBreaks) > 0 && entry.Payload.TextBreaks[len(entry.Payload.TextBreaks)-1] == end {
+			return
+		}
+		b.thread.revision++
+		entry.Payload.TextBreaks = append(entry.Payload.TextBreaks, end)
+		entry.Revision = b.thread.revision
+		b.thread.entries[i] = entry
+		return
+	}
+}
+
 // AppendReasoning accumulates streamed reasoning for turnID.
 func (b *Builder) AppendReasoning(turnID, parentID, delta string) {
 	if delta == "" {
@@ -380,10 +471,14 @@ func (b *Builder) StartTool(turnID, parentID, toolID, parentToolID, name, argume
 
 // StartToolExecution records one tool invocation under its exact runner identity.
 func (b *Builder) StartToolExecution(turnID, parentID, executionID, toolID, parentExecutionID, parentToolID, name, argument string, sequence int) string {
+	return b.startToolExecution(turnID, parentID, executionID, toolID, parentExecutionID, parentToolID, name, argument, "", sequence)
+}
+
+func (b *Builder) startToolExecution(turnID, parentID, executionID, toolID, parentExecutionID, parentToolID, name, argument, input string, sequence int) string {
 	id := b.append(EntryKinds.ENTRYTOOLCALL, parentID, turnID, Payload{
 		ToolID: toolID, ParentToolID: parentToolID, ToolName: name,
 		ExecutionID: executionID, ParentExecutionID: parentExecutionID,
-		Argument: argument, ToolState: ToolRunning, Sequence: sequence,
+		Argument: argument, ToolInput: input, ToolState: ToolRunning, Sequence: sequence,
 	})
 	if executionID != "" {
 		b.tools[executionID] = id
@@ -408,6 +503,32 @@ func (b *Builder) ToolExecutionEntryID(executionID, toolID string) string {
 		return b.tools[executionID]
 	}
 	return b.ToolEntryID(toolID)
+}
+
+// UpdateToolOutputPreview replaces the bounded preview for one active exact invocation.
+// Unknown, legacy, mismatched, and terminal invocations are ignored.
+func (b *Builder) UpdateToolOutputPreview(executionID, toolID, output string) {
+	if executionID == "" {
+		return
+	}
+	id := b.tools[executionID]
+	if id == "" {
+		return
+	}
+	for i := range b.thread.entries {
+		entry := &b.thread.entries[i]
+		if entry.ID != id {
+			continue
+		}
+		if entry.Payload.ExecutionID != executionID || entry.Payload.ToolID != toolID ||
+			entry.Payload.ToolState != ToolRunning || entry.Payload.ToolOutputPreview == output {
+			return
+		}
+		b.thread.revision++
+		entry.Payload.ToolOutputPreview = output
+		entry.Revision = b.thread.revision
+		return
+	}
 }
 
 // FinishTool records one legacy tool call's durable terminal facts.
@@ -687,13 +808,8 @@ func validateEntry(entry Entry) error {
 		if p.Text == "" && len(p.Attachments) == 0 {
 			return errors.New("text and attachments are empty")
 		}
-		for _, attachment := range p.Attachments {
-			if attachment.Name == "" {
-				return errors.New("attachment name is empty")
-			}
-			if attachment.Size < 0 {
-				return errors.New("attachment size is negative")
-			}
+		if err := validateAttachments(p.Attachments); err != nil {
+			return err
 		}
 	case EntryKinds.ENTRYQUEUEDUSER, EntryKinds.ENTRYREASONING, EntryKinds.ENTRYNOTICE:
 		if p.Text == "" {
@@ -703,26 +819,19 @@ func validateEntry(entry Entry) error {
 		if p.Text == "" || p.InputAdmission.Namespace == "" || p.InputAdmission.ID == "" {
 			return errors.New("input admission identity or text is empty")
 		}
+	case EntryKinds.ENTRYCONTROLCHANGE:
+		return validateControlEntry(entry)
 	case EntryKinds.ENTRYINPUTWAIT:
 		if p.Text == "" {
 			return errors.New("input wait text is empty")
 		}
 	case EntryKinds.ENTRYASSISTANTMESSAGE:
-		if !p.Complete && !p.Interrupted && p.Text == "" {
-			return errors.New("assistant entry is empty and nonterminal")
+		if err := validateAssistantText(p); err != nil {
+			return err
 		}
 	case EntryKinds.ENTRYTOOLCALL:
-		if p.ToolID == "" || p.ToolName == "" {
-			return errors.New("tool identity is incomplete")
-		}
-		if p.ToolState != ToolRunning && p.ToolState != ToolSucceeded && p.ToolState != ToolFailed && p.ToolState != ToolInterrupted {
-			return fmt.Errorf("invalid tool state %q", p.ToolState)
-		}
-		if (p.ToolState == ToolRunning || p.ToolState == ToolInterrupted) && p.DurationMS != 0 {
-			return fmt.Errorf("%s tool has duration %d", p.ToolState, p.DurationMS)
-		}
-		if p.ToolState != ToolFailed && p.FailureKind != "" {
-			return fmt.Errorf("%s tool has failure kind %q", p.ToolState, p.FailureKind)
+		if err := validateToolPayload(p); err != nil {
+			return err
 		}
 	case EntryKinds.ENTRYDIFF:
 		if p.Path == "" {
@@ -761,6 +870,76 @@ func validateEntry(entry Entry) error {
 		}
 	default:
 		return fmt.Errorf("unsupported kind %s", entry.Kind)
+	}
+	if entry.Kind != EntryKinds.ENTRYASSISTANTMESSAGE && len(p.TextBreaks) != 0 {
+		return errors.New("text breaks belong only to assistant entries")
+	}
+	if entry.Kind != EntryKinds.ENTRYTOOLCALL && p.ToolInput != "" {
+		return errors.New("tool input belongs only to tool entries")
+	}
+	if entry.Kind != EntryKinds.ENTRYTOOLCALL && p.ToolOutputPreview != "" {
+		return errors.New("tool output preview belongs only to tool entries")
+	}
+	return nil
+}
+
+func validateToolPayload(payload Payload) error {
+	if payload.ToolID == "" || payload.ToolName == "" {
+		return errors.New("tool identity is incomplete")
+	}
+	if payload.ToolState != ToolRunning && payload.ToolState != ToolSucceeded && payload.ToolState != ToolFailed && payload.ToolState != ToolInterrupted {
+		return fmt.Errorf("invalid tool state %q", payload.ToolState)
+	}
+	if (payload.ToolState == ToolRunning || payload.ToolState == ToolInterrupted) && payload.DurationMS != 0 {
+		return fmt.Errorf("%s tool has duration %d", payload.ToolState, payload.DurationMS)
+	}
+	if payload.ToolState != ToolFailed && payload.FailureKind != "" {
+		return fmt.Errorf("%s tool has failure kind %q", payload.ToolState, payload.FailureKind)
+	}
+	return validateToolOutputPreview(payload.ToolOutputPreview)
+}
+
+func validateToolOutputPreview(output string) error {
+	if !utf8.ValidString(output) {
+		return errors.New("tool output preview is invalid UTF-8")
+	}
+	if len(output) > tools.MaxToolOutputPreviewBytes {
+		return fmt.Errorf("tool output preview exceeds %d bytes", tools.MaxToolOutputPreviewBytes)
+	}
+	return nil
+}
+
+// validateAttachments is shared by live events and persisted user records so
+// their external attachment metadata obeys the same entry-boundary contract.
+func validateAttachments(attachments []Attachment) error {
+	for _, attachment := range attachments {
+		if attachment.Name == "" {
+			return errors.New("attachment name is empty")
+		}
+		if attachment.Size < 0 {
+			return errors.New("attachment size is negative")
+		}
+	}
+	return nil
+}
+
+func validateAssistantText(payload Payload) error {
+	if !payload.Complete && !payload.Interrupted && payload.Text == "" {
+		return errors.New("assistant entry is empty and nonterminal")
+	}
+	return validateTextBreaks(payload.Text, payload.TextBreaks)
+}
+
+func validateTextBreaks(text string, breaks []int) error {
+	previous := 0
+	for _, offset := range breaks {
+		if offset <= previous || offset > len(text) {
+			return errors.New("text breaks are not strictly increasing within text")
+		}
+		if offset < len(text) && !utf8.RuneStart(text[offset]) {
+			return errors.New("text break splits UTF-8 encoding")
+		}
+		previous = offset
 	}
 	return nil
 }

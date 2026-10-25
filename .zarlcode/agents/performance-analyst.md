@@ -2,7 +2,7 @@
 name: performance-analyst
 description: Investigate zarlmono latency, throughput, allocations, contention, and resource usage with bounded benchmarks and profiles, recommending measured improvements without editing files.
 provider: openai-codex
-model: gpt-5.6-terra
+model: gpt-6.1-sol
 mode: verify
 ---
 

@@ -88,7 +88,7 @@ func Builtin(name string) (ProviderDefinition, bool) {
 
 // defaultGeminiModel is the shared default for both Google surfaces —
 // the Gemini API and Vertex AI serve the same model family.
-const defaultGeminiModel = "gemini-2.5-flash"
+const defaultGeminiModel = "gemini-3.8-flash"
 
 // --- Built-in provider definitions ---
 
@@ -103,7 +103,7 @@ func BuiltinDefinitions() []ProviderDefinition {
 			BaseURL:      "https://api.openai.com/v1",
 			DefaultModel: "gpt-4o-mini",
 			SeedModels: []string{
-				"gpt-6-astra",
+				"gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
 				"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 				"gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
 				"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini",
@@ -237,9 +237,10 @@ func openAICodexSeedModelIDs() []string {
 func init() {
 	// OpenAI-compatible adapters (static API key)
 	registerAdapter(openAICompatible, adapterDef{
-		build: func(p buildParams) (llm.Provider, error) {
+		build: func(_ context.Context, p buildParams) (llm.Provider, error) {
 			opts := []options.Option[openai.Provider]{
 				openai.WithReasoningHistory(p.reasoningHistory),
+				openai.WithChatTemplateKwargs(p.templateKwargs),
 			}
 			if p.baseURL != "" {
 				opts = append(opts, openai.WithBaseURL(p.baseURL))
@@ -260,7 +261,7 @@ func init() {
 	// the model (V4 echoes it, R1 strips it), so it is NOT a plain
 	// *openai.Provider and must be registered under its own concrete type.
 	registerAdapter(deepSeekCompatible, adapterDef{
-		build: func(p buildParams) (llm.Provider, error) {
+		build: func(_ context.Context, p buildParams) (llm.Provider, error) {
 			opts := []options.Option[deepseek.Provider]{}
 			if p.baseURL != "" {
 				opts = append(opts, deepseek.WithBaseURL(p.baseURL))
@@ -275,7 +276,7 @@ func init() {
 
 	// Anthropic-compatible
 	registerAdapter(anthropicCompatible, adapterDef{
-		build: func(p buildParams) (llm.Provider, error) {
+		build: func(_ context.Context, p buildParams) (llm.Provider, error) {
 			opts := []options.Option[anthropic.Provider]{}
 			if p.baseURL != "" {
 				opts = append(opts, anthropic.WithBaseURL(p.baseURL))
@@ -290,8 +291,11 @@ func init() {
 
 	// Google-compatible (Gemini API)
 	registerAdapter(googleCompatible, adapterDef{
-		build: func(p buildParams) (llm.Provider, error) {
+		build: func(_ context.Context, p buildParams) (llm.Provider, error) {
 			opts := []options.Option[google.Provider]{}
+			if p.baseURL != "" {
+				opts = append(opts, google.WithBaseURL(p.baseURL))
+			}
 			if p.model != "" {
 				opts = append(opts, google.WithModel(p.model))
 			}
@@ -305,7 +309,7 @@ func init() {
 	// placeholder) and resolves project/location from p.options or
 	// the SDK's environment lookup.
 	registerAdapter(googleVertex, adapterDef{
-		build: func(p buildParams) (llm.Provider, error) {
+		build: func(ctx context.Context, p buildParams) (llm.Provider, error) {
 			opts := []options.Option[google.Provider]{}
 			if p.model != "" {
 				opts = append(opts, google.WithModel(p.model))
@@ -316,7 +320,7 @@ func init() {
 			project, _ := p.options["project"].(string)
 			location, _ := p.options["location"].(string)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			return google.NewVertexProvider(ctx, project, location, opts...)
 		},

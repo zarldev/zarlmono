@@ -30,6 +30,18 @@ func (m *UI) handleMouse(msg tea.Msg) bool {
 	}
 	switch e := msg.(type) {
 	case tea.MouseWheelMsg:
+		mo := e.Mouse()
+		r := m.layout.sidebar
+		if !m.session.StateSidebarHidden && mo.X >= r.Min.X && mo.X < r.Max.X && mo.Y >= r.Min.Y && mo.Y < r.Max.Y {
+			switch mo.Button {
+			case tea.MouseWheelUp:
+				m.scrollSidebar(-wheelStep)
+				return true
+			case tea.MouseWheelDown:
+				m.scrollSidebar(wheelStep)
+				return true
+			}
+		}
 		switch e.Mouse().Button {
 		case tea.MouseWheelUp:
 			m.timeline.wheelUp() // line scroll, not item selection
@@ -46,11 +58,12 @@ func (m *UI) handleMouse(msg tea.Msg) bool {
 			return false
 		}
 		main := m.layout.main
-		innerH := main.Dy() - 2
+		g := transcriptGeometry(main)
+		innerH := g.content.Dy()
 		if innerH < 1 {
 			return false
 		}
-		top := main.Min.Y + 2
+		top := g.content.Min.Y
 		if mo.Y < top || mo.Y >= top+innerH {
 			return false
 		}
@@ -66,11 +79,12 @@ func (m *UI) handleMouse(msg tea.Msg) bool {
 		// bears one — the group / thinking header, or an individual tool / diff
 		// sub-entry. Consume it only when something actually toggled, so a click
 		// on plain text falls through.
-		innerW := main.Dx() - scrollbarWidth
-		if mo.X >= main.Min.X && mo.X < main.Min.X+innerW {
+		if mo.X >= g.surface.Min.X && mo.X < g.content.Min.X {
+			return m.timeline.selectAtViewportLine(mo.Y - top)
+		}
+		if mo.X >= g.content.Min.X && mo.X < g.content.Max.X {
 			return m.timeline.toggleAtViewportLine(mo.Y - top)
 		}
-		return false
 	}
 	return false
 }

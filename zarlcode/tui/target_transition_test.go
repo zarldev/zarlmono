@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -90,6 +91,38 @@ func TestSwitchTargetRejectsStaleCompletion(t *testing.T) {
 	wantSpec := engine.ProviderSpec{Name: winningSelection.Provider, Model: winningSelection.Model}
 	if got.Spec != wantSpec || got.Model != winningSelection.Model {
 		t.Fatalf("live target=%+v, want winning spec=%+v", got, wantSpec)
+	}
+}
+
+func TestClearMainModelAppliesSameDefaultAsRestart(t *testing.T) {
+	for _, global := range []string{"", "global-model"} {
+		t.Run("global="+global, func(t *testing.T) {
+			settings := newTestSettings(t)
+			if global != "" {
+				if err := settings.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeyModel, global); err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := prefs.ModelSelection{Provider: "openai-codex", Model: "gpt-5.6-sol"}
+			requireSetSelection(t, settings, prefs.ScopeWorkspace, old)
+			ui, live := newTargetUI(t, settings, old)
+			cmd := ui.SwitchTarget(prefs.ModelSelection{Provider: old.Provider})
+			step(t, ui, cmd())
+			want := "gpt-6-astra"
+			if global != "" {
+				want = global
+			}
+			if got := live.RunTarget(); got.Spec.Model != want || got.Model != want {
+				t.Fatalf("cleared live model = %+v, want %s", got.Spec, want)
+			}
+			if _, err := settings.Svc.GetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel); !errors.Is(err, prefs.ErrNotFound) {
+				t.Fatalf("model override was not cleared: %v", err)
+			}
+			resolved := settings.ActiveProvider(t.Context(), engine.ProviderSpec{Name: prefs.DefaultProvider, Model: prefs.DefaultModel})
+			if resolved.Model != want || ui.ActiveProviderSpec().Model != want {
+				t.Fatalf("live/session/restart model mismatch: session=%+v restart=%+v", ui.ActiveProviderSpec(), resolved)
+			}
+		})
 	}
 }
 

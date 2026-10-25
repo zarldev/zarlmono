@@ -49,18 +49,20 @@ func TestActiveProviderClaudeCodeNeverInheritedDefault(t *testing.T) {
 	}
 }
 
-func TestBooleanSettingsDefaultOnAndCanBeDisabled(t *testing.T) {
+func TestBooleanSettingsDefaultsAndOverrides(t *testing.T) {
 	ctx, s := t.Context(), newTestSettings(t)
 	for _, tc := range []struct {
-		name, key string
-		get       func() bool
+		name, key   string
+		get         func() bool
+		wantDefault bool
 	}{
-		{"confirm quit", prefs.KeyConfirmQuit, func() bool { return s.ConfirmQuit(ctx) }},
-		{"shell sandbox", prefs.KeySandbox, func() bool { return s.ShellSandbox(ctx) }},
+		{"confirm quit", prefs.KeyConfirmQuit, func() bool { return s.ConfirmQuit(ctx) }, true},
+		{"shell sandbox", prefs.KeySandbox, func() bool { return s.ShellSandbox(ctx) }, false},
+		{"sudo askpass", prefs.KeySudoAskpass, func() bool { return s.SudoAskpass(ctx) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.get() {
-				t.Fatal("unset should default on")
+			if got := tc.get(); got != tc.wantDefault {
+				t.Fatalf("unset = %v, want %v", got, tc.wantDefault)
 			}
 			if err := s.Svc.SetSetting(ctx, prefs.ScopeWorkspace, tc.key, "off"); err != nil {
 				t.Fatal(err)

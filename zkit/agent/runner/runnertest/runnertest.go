@@ -152,6 +152,7 @@ type Sink struct {
 	mu          sync.Mutex
 	contents    []runner.Content
 	starts      []runner.ToolStarted
+	outputs     []runner.ToolOutputProgress
 	waitStarts  []runner.WorkspaceWaitStarted
 	waitEnds    []runner.WorkspaceWaitEnded
 	completes   []runner.ToolCompleted
@@ -178,6 +179,13 @@ func (s *Sink) OnToolStarted(ctx context.Context, e runner.ToolStarted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.starts = append(s.starts, e)
+}
+
+// OnToolOutput appends e to the output-progress slice under the mutex.
+func (s *Sink) OnToolOutput(_ context.Context, e runner.ToolOutputProgress) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.outputs = append(s.outputs, e)
 }
 
 // OnWorkspaceWaitStarted appends e to the wait-start slice under the mutex.
@@ -292,6 +300,13 @@ func (s *Sink) FirstWorkspaceWaitEnded() (runner.WorkspaceWaitEnded, bool) {
 		return runner.WorkspaceWaitEnded{}, false
 	}
 	return s.waitEnds[0], true
+}
+
+// ToolOutputs returns an independent snapshot of output-progress events.
+func (s *Sink) ToolOutputs() []runner.ToolOutputProgress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]runner.ToolOutputProgress(nil), s.outputs...)
 }
 
 // ToolStartedCount returns the number of OnToolStarted events received.

@@ -2,7 +2,7 @@
 name: architect
 description: Turn zarlmono feature requests into evidence-backed implementation plans covering package ownership, APIs, trade-offs, migration, and verification without editing files.
 provider: openai-codex
-model: gpt-5.6-sol
+model: gpt-6.1-sol
 mode: explore
 ---
 

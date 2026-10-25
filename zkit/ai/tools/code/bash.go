@@ -219,16 +219,29 @@ func (t *BashTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Too
 	}
 
 	collector := &limitedBuffer{max: bashMaxOutput}
-	cmd.Stdout = collector
-	cmd.Stderr = collector
+	var preview *bashOutputPreview
+	if call.ReportOutput != nil {
+		preview = &bashOutputPreview{publish: func(text string) { call.ReportOutput(runCtx, tools.ToolOutputUpdate{Text: text}) }}
+	}
+	cmd.Stdout = bashPreviewWriter{collector: collector, preview: preview}
+	cmd.Stderr = bashPreviewWriter{collector: collector, preview: preview, stderr: true}
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("bash start: %w", err)
 	}
+	stopPreview := func() {}
+	if preview != nil {
+		stopPreview = preview.startFlush(runCtx)
+		defer stopPreview()
+	}
 	waitErr := cmd.Wait()
+	stopPreview()
+	if preview != nil {
+		preview.finish()
+	}
 
 	var b bytes.Buffer
-	b.WriteString(tools.RedactSecrets(ansiRe.ReplaceAllString(collector.String(), "")))
+	b.WriteString(collector.redactedOutput())
 
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	if timedOut {
@@ -371,36 +384,54 @@ func looksLikeDenial(output string) bool {
 		strings.Contains(output, "permission denied")
 }
 
-// limitedBuffer is an io.Writer that captures up to max bytes and
-// silently discards the rest, flagging the overflow.
+// limitedBuffer retains each stream independently under one global raw-byte
+// budget. Redacting before combining prevents an interleaved stderr line from
+// being mistaken for a credential value belonging to stdout (or vice versa).
 type limitedBuffer struct {
-	mu   sync.Mutex
-	buf  bytes.Buffer
-	max  int
-	over bool
+	mu      sync.Mutex
+	streams [2]bytes.Buffer
+	used    int
+	max     int
+	over    bool
 }
 
-func (b *limitedBuffer) Write(p []byte) (int, error) {
+func (b *limitedBuffer) write(p []byte, stderr bool) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	remaining := b.max - b.buf.Len()
+	remaining := b.max - b.used
 	if remaining <= 0 {
 		b.over = true
 		return len(p), nil
 	}
-	if len(p) > remaining {
-		b.buf.Write(p[:remaining])
+	keep := len(p)
+	if keep > remaining {
+		keep = remaining
 		b.over = true
-		return len(p), nil
 	}
-	b.buf.Write(p)
+	index := 0
+	if stderr {
+		index = 1
+	}
+	_, _ = b.streams[index].Write(p[:keep]) // bytes.Buffer writes cannot fail.
+	b.used += keep
 	return len(p), nil
 }
 
-func (b *limitedBuffer) String() string {
+func (b *limitedBuffer) redactedOutput() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.String()
+	stdout := tools.RedactSecrets(ansiRe.ReplaceAllString(b.streams[0].String(), ""))
+	stderr := tools.RedactSecrets(ansiRe.ReplaceAllString(b.streams[1].String(), ""))
+	if stdout == "" {
+		return stderr
+	}
+	if stderr == "" {
+		return stdout
+	}
+	if !strings.HasSuffix(stdout, "\n") {
+		stdout += "\n"
+	}
+	return stdout + "[stderr]\n" + stderr
 }
 
 func (b *limitedBuffer) truncated() bool {

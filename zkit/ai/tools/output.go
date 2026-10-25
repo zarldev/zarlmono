@@ -27,3 +27,14 @@ func (f OutputFormat) Resolve() OutputFormat {
 	}
 	return OutputLabeled
 }
+
+// MaxToolOutputPreviewBytes is the maximum cumulative live output preview an
+// invocation may report. Final tool results use their existing independent
+// limits.
+const MaxToolOutputPreviewBytes = 64 * 1024
+
+// ToolOutputUpdate is an immutable cumulative snapshot of an invocation's
+// already-sanitized, bounded live output preview.
+type ToolOutputUpdate struct {
+	Text string
+}

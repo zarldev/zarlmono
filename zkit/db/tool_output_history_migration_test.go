@@ -83,7 +83,7 @@ func TestMigrationToolHistoryClassification(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertMigrationVersion(t, provider, 34)
+			assertMigrationVersion(t, provider, 35)
 			history, err := store.ListToolOutputHistory(ctx, "history")
 			if err != nil || len(history) != 1 {
 				t.Fatalf("read preserved history: count=%d, err=%v", len(history), err)

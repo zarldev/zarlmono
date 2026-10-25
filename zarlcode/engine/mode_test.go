@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	boardtools "github.com/zarldev/zarlmono/zkit/agent/tools/board"
 	programtools "github.com/zarldev/zarlmono/zkit/agent/tools/program"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 
@@ -56,13 +57,14 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 		code.ToolNameSavePlan, code.ToolNameSavePlanAppend, code.ToolNameUpdatePlan,
 		programtools.ToolName, engine.ToolNameListInstructions, engine.ToolNameLoadInstruction, "web_search",
 		computertools.ToolNameComputerObserve, dynamic.ToolNameMCPList,
-		code.ToolNameBashOutput, code.ToolNameListProcesses,
+		code.ToolNameBashOutput, code.ToolNameListProcesses, code.ToolNameStopProcess,
+		boardtools.PostName, boardtools.ListName, boardtools.ReadName,
 	}}
 	plan := true // toggled below to prove the filter reads it live
 	src := engine.NewModeFilteredSource(inner, func() bool { return plan })
 	ctx := t.Context()
 
-	// --- PLAN: read-only surface ---
+	// PLAN advertises every tool, while restricting dispatch.
 	names := listedNames(t.Context(), src)
 	if !names[code.ToolNameRead] || !names["web_search"] {
 		t.Errorf("plan: read/web_search should be listed: %v", names)
@@ -78,21 +80,28 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 		dynamic.ToolNameMCPList,
 		code.ToolNameBashOutput,
 		code.ToolNameListProcesses,
+		boardtools.PostName,
+		boardtools.ListName,
+		boardtools.ReadName,
 	} {
 		if !names[planTool] {
 			t.Errorf("plan: read/planning tool %q should be listed: %v", planTool, names)
 		}
 	}
-	if names[code.ToolNameWrite] || names[code.ToolNameEdit] || names[code.ToolNameBash] {
-		t.Errorf("plan: mutating tools/bash should be filtered out: %v", names)
+	if len(names) != len(inner.names) {
+		t.Errorf("plan: every tool should be listed: %v", names)
 	}
-	if _, err := src.Execute(ctx, tools.ToolCall{ToolName: code.ToolNameWrite}); err == nil {
-		t.Error("plan: dispatching write should error")
+	for _, blocked := range []tools.ToolName{code.ToolNameWrite, code.ToolNameEdit} {
+		if _, err := src.Execute(ctx, tools.ToolCall{ToolName: blocked}); err == nil {
+			t.Errorf("plan: dispatching %q should error", blocked)
+		}
 	}
 	if _, err := src.Execute(ctx, tools.ToolCall{ToolName: code.ToolNameRead}); err != nil {
 		t.Errorf("plan: dispatching read should be allowed: %v", err)
 	}
 	for _, planTool := range []tools.ToolName{
+		code.ToolNameBash,
+		code.ToolNameStopProcess,
 		code.ToolNameSavePlan,
 		code.ToolNameSavePlanAppend,
 		code.ToolNameUpdatePlan,
@@ -103,6 +112,9 @@ func TestModeFilter_PlanRestrictsAndBuildAllows(t *testing.T) {
 		dynamic.ToolNameMCPList,
 		code.ToolNameBashOutput,
 		code.ToolNameListProcesses,
+		boardtools.PostName,
+		boardtools.ListName,
+		boardtools.ReadName,
 	} {
 		if _, err := src.Execute(ctx, tools.ToolCall{ToolName: planTool}); err != nil {
 			t.Errorf("plan: dispatching read/planning tool %q should be allowed: %v", planTool, err)
@@ -145,7 +157,7 @@ func (s *forgettingToolSource) ForgetTask(id taskscope.ID) {
 	s.forgotten = append(s.forgotten, id)
 }
 
-func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
+func TestRenderLivePromptUsesSharedCuratedTools(t *testing.T) {
 	inner := fakeSource{names: []tools.ToolName{
 		code.ToolNameRead,
 		code.ToolNameWrite,
@@ -155,15 +167,13 @@ func TestRenderLivePromptUsesFilteredCuratedTools(t *testing.T) {
 	plan := true
 	visible := engine.NewModeFilteredSource(inner, func() bool { return plan })
 
-	// PLAN mode filters the tools delivered to the model (via the tool interface),
-	// not the prompt text — the prompt no longer enumerates a roster. Assert the
-	// filter on the curated source, and that the prompt carries no tool list.
+	// Both modes advertise the same tools via the interface, not a prompt roster.
 	planNames := toolNameSet(engine.ToolInfoFromSource(t.Context(), visible))
 	if !planNames[code.ToolNameRead] || !planNames[spawn.ToolNameAgentSpawn] {
 		t.Fatalf("plan mode dropped a read-only tool: %v", planNames)
 	}
-	if planNames["write"] || planNames["bash"] {
-		t.Fatalf("plan mode leaked a mutating tool: %v", planNames)
+	if !planNames["write"] || !planNames["bash"] {
+		t.Fatalf("plan mode omitted advertised tools: %v", planNames)
 	}
 
 	prompt, err := engine.RenderLivePrompt("plan", engine.LivePlanPromptTemplate, "/repo", nil, nil, nil, engine.ToolInfoFromSource(t.Context(), visible), "")

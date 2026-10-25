@@ -49,7 +49,7 @@ func TestSandboxConsentRequiresExplicitKey(t *testing.T) {
 
 func TestSandboxConsentExplainsRiskAndScope(t *testing.T) {
 	view := (&tui.SandboxConsent{}).View().Content
-	for _, text := range []string{"requires Linux", "without kernel confinement", "account's permissions", "remember for this workspace", "exit without changing settings"} {
+	for _, text := range []string{"requires Linux", "without kernel confinement", "account's permissions", "Shell policy checks are also off", "remember for this workspace", "exit without changing settings"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("consent omits %q", text)
 		}

@@ -1,6 +1,7 @@
 package mcp_test
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,10 +25,12 @@ func TestClientDialPolicyRejectsLiteralIP(t *testing.T) {
 func TestClientDialPolicyAllowsApprovedLiteralIP(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
-	}))
+		var request map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request["id"], "result": map[string]any{"tools": []any{}}})
+	})))
 	t.Cleanup(srv.Close)
 
 	client := mcp.NewClientWithDialPolicy(srv.URL, "", func(ip netip.Addr) bool { return ip.IsLoopback() })

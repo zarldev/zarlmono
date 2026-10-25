@@ -215,8 +215,8 @@ func (r *runner) callManyBuiltin(thread *starlark.Thread, args starlark.Tuple, k
 	if err := starlark.UnpackArgs(builtinCallMany, args, kwargs, "calls", &list); err != nil {
 		return nil, err
 	}
-	if list.Len() > r.source.limits.MaxParallelCalls {
-		return nil, r.setScriptError(tools.Budget(op, fmt.Sprintf("parallel call batch exceeds %d", r.source.limits.MaxParallelCalls)))
+	if list.Len() > r.source.limits.MaxToolCalls {
+		return nil, r.setScriptError(tools.Budget(op, fmt.Sprintf("call batch exceeds %d total calls", r.source.limits.MaxToolCalls)))
 	}
 	calls := make([]nestedCall, 0, list.Len())
 	for i := range list.Len() {
@@ -296,7 +296,7 @@ func (r *runner) emitBuiltin(thread *starlark.Thread, args starlark.Tuple, kwarg
 	if err != nil {
 		return nil, err
 	}
-	out, err := normalizeJSON(raw, r.source.limits.MaxOutputBytes)
+	out, err := r.normalizeOutput(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -322,8 +322,14 @@ func (r *runner) executeNested(nc nestedCall, rejected *tools.Error) nestedResul
 	observedCall := call
 	observedCall.Arguments = tools.CloneParameters(call.Arguments)
 	startedEvent := tools.NestedToolCall{ParentID: r.callID, ChildID: call.ID, Sequence: nc.Sequence, Call: observedCall, Started: started}
-	if obs := tools.NestedToolObserverFromContext(r.ctx); obs != nil {
+	obs := tools.NestedToolObserverFromContext(r.ctx)
+	if obs != nil {
 		obs.OnNestedToolStarted(r.ctx, startedEvent)
+		if binder, ok := obs.(tools.NestedToolCallBinder); ok {
+			call = binder.BindNestedToolCall(r.ctx, startedEvent)
+			startedEvent.Call = call
+			startedEvent.Call.Arguments = tools.CloneParameters(call.Arguments)
+		}
 	}
 	var out nestedResult
 	var result *tools.ToolResult

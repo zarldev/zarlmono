@@ -6,6 +6,9 @@ import (
 
 const (
 	modelGPT6Astra     = "gpt-6-astra"
+	modelGPT61Sol      = "gpt-6.1-sol"
+	modelGPT6Sol       = "gpt-6-sol"
+	modelGPT6Luna      = "gpt-6-luna"
 	gpt6ContextWindow  = 1_050_000
 	modelGPT56         = "gpt-5.6"
 	modelGPT56Sol      = "gpt-5.6-sol"
@@ -54,8 +57,11 @@ type modelPreset struct {
 // are intentionally not listed; they may remain API-key-only, but zarlcode's
 // openai-codex backend uses ChatGPT OAuth.
 var presetModels = []modelPreset{
+	{ID: modelGPT61Sol, BaseModel: modelGPT61Sol, Description: "GPT-6.1 Sol (coding/agentic)", ContextWindow: gpt6ContextWindow},
 	// gpt-6-astra (strongest end-to-end coding, apps, and research model)
 	{ID: modelGPT6Astra, BaseModel: modelGPT6Astra, Description: "GPT-6 Astra (most capable)", ContextWindow: gpt6ContextWindow},
+	{ID: modelGPT6Sol, BaseModel: modelGPT6Sol, Description: "GPT-6 Sol (coding/agentic)", ContextWindow: gpt6ContextWindow},
+	{ID: modelGPT6Luna, BaseModel: modelGPT6Luna, Description: "GPT-6 Luna (fast/efficient)", ContextWindow: gpt6ContextWindow},
 	// gpt-5.6 alias (OpenAI's recommended Codex CLI shorthand for Sol)
 	{ID: modelGPT56, BaseModel: modelGPT56, Description: "GPT-5.6 (recommended)", ContextWindow: gpt56ContextWindow},
 	// gpt-5.6-sol (strongest coding/research/cybersecurity model)
@@ -116,7 +122,10 @@ func ContextWindowFor(id string) int {
 // by the settings pane (later) to constrain the effort dropdown to
 // what the active model actually accepts.
 var effortVariants = map[string][]reasoningEffort{
+	modelGPT61Sol:   gpt56Efforts(),
 	modelGPT6Astra:  gpt56Efforts(),
+	modelGPT6Sol:    gpt56Efforts(),
+	modelGPT6Luna:   gpt56Efforts(),
 	modelGPT56:      gpt56Efforts(),
 	modelGPT56Sol:   gpt56Efforts(),
 	modelGPT56Terra: gpt56Efforts(),
@@ -221,6 +230,13 @@ func resolveModel(id string) (string, reasoningEffort) {
 	return id, ""
 }
 
+// BaseModelFor resolves registered reasoning presets to their wire model ID.
+// Unknown IDs pass through unchanged, matching provider request resolution.
+func BaseModelFor(id string) string {
+	base, _ := resolveModel(id)
+	return base
+}
+
 // ListPresetModels returns the full preset catalogue in registration
 // order. Used by the model registry to expose Codex models in the
 // settings picker.
@@ -232,20 +248,13 @@ func ListPresetModels() []llm.Model {
 			ctx = DefaultContextWindow
 		}
 		out = append(out, llm.Model{
-			ID:          p.ID,
-			Name:        p.ID,
-			Description: p.Description,
-			MaxTokens:   ctx,
-			InputCost:   0, // covered by ChatGPT subscription
-			OutputCost:  0,
-			Capabilities: llm.ModelCapabilities{
-				SupportsStreaming: true,
-				SupportsTools:     true,
-				SupportsSystem:    true,
-				SupportsThinking:  true,
-				SupportsVision:    true,
-				SupportsVideo:     true,
-			},
+			ID:           p.ID,
+			Name:         p.ID,
+			Description:  p.Description,
+			MaxTokens:    ctx,
+			InputCost:    0, // covered by ChatGPT subscription
+			OutputCost:   0,
+			Capabilities: Capabilities(p.ID),
 		})
 	}
 	return out

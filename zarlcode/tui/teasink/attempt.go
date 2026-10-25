@@ -2,6 +2,7 @@ package teasink
 
 import (
 	"context"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -15,6 +16,11 @@ type ProviderAttemptSettledMsg struct {
 	Attempt int
 	Usage   *llm.Usage
 	Reason  runner.TerminalReason
+	// Duration includes CallbackDuration; neither is server-only inference time.
+	Duration         time.Duration
+	CallbackDuration time.Duration
+	// TimeToFirstOutput is attempt-relative; nil means no meaningful output.
+	TimeToFirstOutput *time.Duration
 }
 
 // OnProviderAttemptSettled forwards an owned usage snapshot after buffered text.
@@ -25,6 +31,11 @@ func (s *Sink) OnProviderAttemptSettled(ctx context.Context, e runner.ProviderAt
 	if e.Usage != nil {
 		usage = new(*e.Usage)
 	}
+	var firstOutput *time.Duration
+	if e.TimeToFirstOutput != nil {
+		firstOutput = new(*e.TimeToFirstOutput)
+	}
 	s.dispatch(ProviderAttemptSettledMsg{TaskID: string(e.TaskID), Depth: e.Depth,
-		Attempt: e.Attempt, Usage: usage, Reason: e.Reason})
+		Attempt: e.Attempt, Usage: usage, Reason: e.Reason,
+		Duration: e.Duration, CallbackDuration: e.CallbackDuration, TimeToFirstOutput: firstOutput})
 }

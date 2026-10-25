@@ -22,7 +22,7 @@ type RunTarget struct {
 	SpawnMaxIter int        // sub-agent loop cap per agent_spawn; 0 = inherit MaxIter
 	SpawnDepth   int        // sub-agent recursion ceiling; 0 = spawning disabled
 	WebSearch    tools.Tool // web_search tool; nil leaves it unregistered
-	Plan         bool       // PLAN mode: read-only tool surface + planning prompt
+	Plan         bool       // PLAN mode: shared tool surface, restricted dispatch + planning prompt
 }
 
 // TargetUpdate is an atomic runtime transition for provider policy.

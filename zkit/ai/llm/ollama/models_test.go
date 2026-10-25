@@ -13,11 +13,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/ollama"
 )
 
-// /api/show responses in the wild can carry context_length under
-// different keys depending on the model's architecture
-// ("llama.context_length", "qwen2.context_length", ...). The probe
-// must scan for any "<arch>.context_length" key rather than
-// enumerating archs — the table tests pin that.
+// Architectural model_info capacity is not an effective runtime window.
+// Unloaded models report only explicit num_ctx configuration, or unknown.
 func TestContextWindowFor_ParsesModelInfo(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -30,14 +27,14 @@ func TestContextWindowFor_ParsesModelInfo(t *testing.T) {
 			body: map[string]any{
 				"model_info": map[string]any{"llama.context_length": 131072},
 			},
-			want: 131072,
+			want: 0,
 		},
 		{
 			name: "qwen arch",
 			body: map[string]any{
 				"model_info": map[string]any{"qwen2.context_length": 32768},
 			},
-			want: 32768,
+			want: 0,
 		},
 		{
 			name: "details.num_ctx fallback (older servers)",
@@ -65,6 +62,10 @@ func TestContextWindowFor_ParsesModelInfo(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/ps" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"models": []any{}})
+					return
+				}
 				if r.URL.Path != "/api/show" {
 					t.Errorf("got path %q, want /api/show", r.URL.Path)
 				}

@@ -34,6 +34,13 @@ storage, runtime errors, and targeted axe WCAG A/AA checks with no exclusions.
 Screenshots go to ignored `.playwright/`; failures go to `test-results/`.
 Automated checks are not cross-browser or full accessibility certification.
 
+The `postcss-nested@6.2.0` override pins `postcss-selector-parser` to 7.1.6
+for GHSA-rj75-hqrm-r3gf. Expressive Code 0.44.2 still depends on the vulnerable
+parser v6 range; the scoped override avoids downgrading Starlight. Remove it
+when that dependency chain supports a patched parser. When changing it, compare
+generated CSS and run the browser checks, because parser v7 changes insertion
+during iteration.
+
 ## Edit and preview
 
 ```sh

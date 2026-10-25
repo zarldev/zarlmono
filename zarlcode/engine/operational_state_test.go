@@ -162,7 +162,9 @@ func TestLiveRunnerOperationalStateFeedsExecutiveBriefing(t *testing.T) {
 	}
 }
 
-type operationalNarrativeProvider struct{ llm.Provider }
+type operationalNarrativeProvider struct{}
+
+func (operationalNarrativeProvider) Name() string { return "fixture" }
 
 func (operationalNarrativeProvider) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {

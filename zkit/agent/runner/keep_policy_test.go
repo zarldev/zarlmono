@@ -59,7 +59,7 @@ func TestCompactionKeepPolicy(t *testing.T) {
 				runner.WithCompactKeepRecent(6),
 				runner.WithTokenPressureCompact(100, 0.8),
 			},
-			wantKeep: 1,
+			wantKeep: 2, // assistant call plus its unconsumed result
 		},
 		{
 			name:  "pressure falls back to total tokens",
@@ -68,7 +68,7 @@ func TestCompactionKeepPolicy(t *testing.T) {
 				runner.WithCompactKeepRecent(6),
 				runner.WithTokenPressureCompact(100, 0.8),
 			},
-			wantKeep: 1,
+			wantKeep: 2, // assistant call plus its unconsumed result
 		},
 		{
 			name:  "disabled pressure leaves keep",

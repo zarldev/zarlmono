@@ -35,6 +35,8 @@ Without an automatic input source, summaries are read through `agent_await`, ter
 
 An opted-in parent can use `runner.WithInputSource(group)` to admit one typed host observation per child at a safe history boundary. Bind the root with `group.Bind(runCtx, spec.ID)` before `Run` and close that scope after `Run` returns, before releasing shared dependencies; child scopes are owned by the group. A no-tool parent waits for child results or genuine user input without spending provider attempts. It finishes only after ordinary completion checks accept and admission is atomically sealed. Explicit reads remain available and may intentionally repeat a result. The zarlcode engine enables automatic delivery for OpenAI, Anthropic, Google, llama.cpp, and OpenAI Codex receiving providers; other receiving providers retain explicit-only delivery.
 
+`Bind` establishes lifetime ownership, not automatic receiving. The runner's first `Ready` call enrolls the bound scope before any dispatch, protecting observed-but-unadmitted results from pruning. Direct hosts must likewise call `Ready` before dispatching or fully inspecting children; later enrollment cannot resurrect evicted history. Metadata-only reads never consume evidence or enroll receiving.
+
 Observation by an explicit tool and admission into model history are distinct. The runner acknowledges trusted references only after history capture succeeds; buffered capture is not a promise of durable storage. Output-preserving wrappers retain these references, while discarded, transformed, or truncated output must not acknowledge a result. Host provenance survives storage, compaction and replay; child summaries remain evidence from their original assignments, not user instructions or proof of current state.
 
 Observed terminal tasks are retained as bounded recent history (32 by default). Running tasks, active waiters, and terminal results still pending automatic admission are pinned. `WithMaxObserved` sets the bound on evictable history; nonpositive disables pruning. `WithMaxRuntime` bounds child lifetime in addition to the owning parent's cancellation/deadline. Runtime exhaustion is reported distinctly as a budget failure.
@@ -49,7 +51,7 @@ RUNNING -> COMPLETED
         -> CANCELLED
 ```
 
-`Group.Close` stops admission, cancels live children, and waits for all owned goroutines within the supplied context. Tasks are turn-scoped and do not survive session restart.
+`Group.Close` stops admission, cancels live children and in-progress preparation, and waits for all owned work within the supplied context. Preparation reserves capacity before planner inference and is also canceled/joined by its parent scope. It is outstanding work for `Ready`/`Finish`, but is not a child receipt. Tasks are turn-scoped and do not survive session restart.
 
 ## Depth, fan-out, and work modes
 
@@ -59,12 +61,14 @@ The default depth ceiling is one delegation hop. A separate per-task fan-out gua
 - `verify` — review and bounded verification without file-edit tools;
 - `implement` — full tool surface.
 
+A child cannot widen its ancestor's work mode or tool restrictions. Requested and authored profile modes narrow the inherited ceiling; arbitrary inherited tool gates are intersected with the child policy.
+
 Workspace scopes are inferred automatically for every tool call: file tools use `path` or `root`, `apply_patch` coordinates all patch paths, and plan tools use `.zarlcode/plans`. Disjoint paths execute concurrently; overlapping calls wait in fair arrival order until the conflicting call completes. Cancellation removes a queued call cleanly. Opaque operations such as bash, and calls with missing or unsafe paths, conservatively cover the whole workspace.
 
 ## Named agents
 
 `WithAgentResolver` maps names returned by `list_agents` to alternate runners. Unknown names soft-fall back to the parent runner with a visible notice. The optional grammar-constrained planner chooses only from registered candidates.
 `WithDefaultAgent` can map each work mode to one of those named profiles when the caller omits `agent`; an explicit `agent` always wins.
-Per-mode iteration budgets override the shared child budget. `WithMaxConcurrent` bounds simultaneously running children in a group, while `WithFallbackPolicy` selects planner recovery, direct parent fallback, or strict refusal.
+Per-mode iteration budgets override the shared child budget. `WithMaxConcurrent` bounds children and their in-progress preparation together, while `WithFallbackPolicy` selects planner recovery, direct parent fallback, or strict refusal.
 
 See [`AGENTS.md`](AGENTS.md) for package invariants and editor guidance.

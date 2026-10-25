@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -11,6 +13,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/db"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // sessionHistorySink borrows the store until the turn and persistence FIFO drain.
@@ -21,6 +24,7 @@ type sessionHistorySink struct {
 	buffer    *sessionHistoryBuffer
 	provider  string
 	model     string
+	live      *LiveRunner
 }
 
 var _ runner.HistorySink = sessionHistorySink{}
@@ -53,22 +57,15 @@ func (s sessionHistorySink) Request(ctx context.Context, request llm.CompletionR
 	if err != nil {
 		return fmt.Errorf("encode prepared model request: %w", err)
 	}
-	s.buffer.mu.Lock()
-	defer s.buffer.mu.Unlock()
-	s.buffer.pending = append(s.buffer.pending, db.SessionHistoryBatch{ID: uuid.NewString(), RequestJSON: data})
-	// The provider must not run before its exact request and input boundary are
-	// durable. Keep receipts/bytes through settlement, including ambiguous errors.
-	return s.store.SaveSessionHistory(ctx, s.sessionID, s.buffer.pending)
+	rendered, current, observer := s.live.requestControlCapture(ctx)
+	return s.buffer.captureRequest(ctx, s.store, s.sessionID, request, data, rendered, current, observer)
 }
 
 // RunRecordedTurn dispatches a reserved turn with canonical replay capture and
 // separately stored prepared model input. The caller first commits its BEFORE
 // checkpoint and lends store until the turn and persistence FIFO have drained.
 func (r *RuntimeReservation) RunRecordedTurn(ctx context.Context, prompt string, attachments []llm.ContentPart, store *db.Store, sessionID string) error {
-	target := r.owner.RunTarget()
-	return r.runTurn(ctx, prompt, attachments, runner.WithHistorySink(sessionHistorySink{
-		store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model, buffer: r.owner.historyBuffer(sessionID),
-	}))
+	return r.runTurn(ctx, prompt, attachments, r.owner.sessionRecordingOptions(store, sessionID)...)
 }
 
 // RunRecordedTurn records a session-owned turn when no BEFORE checkpoint can be
@@ -78,10 +75,26 @@ func (l *LiveRunner) RunRecordedTurn(ctx context.Context, prompt string, attachm
 		return l.admission.rejection()
 	}
 	defer l.admission.leave()
+	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {}, l.sessionRecordingOptions(store, sessionID)...)
+}
+
+// Session IDs survive resume and change on forks/new sessions. Hashing keeps
+// caller-supplied session names out of provider routing keys and Codex headers.
+func sessionPromptCacheKey(sessionID string) string {
+	sum := sha256.Sum256([]byte("zarlcode:prompt-cache:" + sessionID))
+	return hex.EncodeToString(sum[:])
+}
+
+// sessionRecordingOptions returns the shared prompt-cache and history-capture
+// options for one recorded turn against store/sessionID.
+func (l *LiveRunner) sessionRecordingOptions(store *db.Store, sessionID string) []options.Option[runner.Runner] {
 	target := l.RunTarget()
-	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {}, runner.WithHistorySink(sessionHistorySink{
-		store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model, buffer: l.historyBuffer(sessionID),
-	}))
+	return []options.Option[runner.Runner]{
+		runner.WithPromptCacheKey(sessionPromptCacheKey(sessionID)),
+		runner.WithHistorySink(sessionHistorySink{
+			store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model, buffer: l.historyBuffer(sessionID), live: l,
+		}),
+	}
 }
 
 // sessionHistoryBuffer owns serialized batches, never runner aliases. No writer
@@ -89,6 +102,7 @@ func (l *LiveRunner) RunRecordedTurn(ctx context.Context, prompt string, attachm
 type sessionHistoryBuffer struct {
 	mu      sync.Mutex
 	pending []db.SessionHistoryBatch
+	control requestControlState
 }
 
 func (l *LiveRunner) historyBuffer(sessionID string) *sessionHistoryBuffer {
@@ -137,4 +151,16 @@ func (l *LiveRunner) AcknowledgeRecordedHistory(sessionID string, batches []db.S
 	}
 	clear(buffer.pending[len(pending):])
 	buffer.pending = pending
+	if len(buffer.control.notified) != 0 {
+		retained := make(map[string]bool)
+		for _, batch := range pending {
+			for _, data := range batch.Messages {
+				record, err := runner.UnmarshalReplayMessage(data)
+				if err == nil && record.IsControl() && buffer.control.notified[record.Control.ID] {
+					retained[record.Control.ID] = true
+				}
+			}
+		}
+		buffer.control.notified = retained
+	}
 }

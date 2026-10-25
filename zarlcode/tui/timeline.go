@@ -456,18 +456,55 @@ func (tl *timeline) ensureTurn(taskID string, depth int) *openTurn {
 }
 
 func (tl *timeline) appendContent(taskID string, depth int, delta string) {
-	tl.applyTranscript(transcript.AssistantDelta{TurnID: taskID, Delta: delta})
-	if sa := tl.subAgents[taskID]; sa != nil {
-		sa.appendContent(delta)
-		return
-	}
+	tl.appendContentOutput(taskID, depth, delta, nil)
+}
+
+// appendContentOutput retains provider-local output-item boundaries without
+// inserting guessed punctuation or whitespace into the observed raw text.
+func (tl *timeline) appendContentOutput(taskID string, depth int, delta string, outputIndex *int) {
 	if delta == "" {
 		return
 	}
-	ot := tl.ensureTurn(taskID, depth)
-	ot.resp.content += delta
-	ot.resp.bump()
-	tl.invalidateItem(ot.resp)
+	var turn *openTurn
+	if child := tl.subAgents[taskID]; child != nil {
+		turn = child.ensureTurn()
+	} else {
+		turn = tl.ensureTurn(taskID, depth)
+	}
+	if outputIndex != nil {
+		if turn.hasOutputIndex && turn.outputIndex != *outputIndex {
+			tl.finishAssistantSegment(taskID)
+		}
+		turn.outputIndex, turn.hasOutputIndex = *outputIndex, true
+	}
+	tl.applyTranscript(transcript.AssistantDelta{TurnID: taskID, Delta: delta})
+	if child := tl.subAgents[taskID]; child != nil {
+		child.appendContent(delta)
+		return
+	}
+	turn.resp.content += delta
+	turn.resp.bump()
+	tl.invalidateItem(turn.resp)
+}
+
+func (tl *timeline) finishAssistantSegment(taskID string) {
+	turn := tl.turns[taskID]
+	child := tl.subAgents[taskID]
+	if child != nil {
+		turn = child.turn
+	}
+	if turn == nil {
+		return
+	}
+	turn.hasOutputIndex = false
+	tl.applyTranscript(transcript.AssistantSegmentFinished{TurnID: taskID})
+	if turn.resp.finishSegment() {
+		if child != nil {
+			child.bump()
+		} else {
+			tl.invalidateItem(turn.resp)
+		}
+	}
 }
 
 // appendThinking routes a reasoning delta from the runner's out-of-band
@@ -537,12 +574,12 @@ func toolEventKey(executionID, toolID string) string {
 	return toolID
 }
 
-func (tl *timeline) startToolWithParent(taskID string, depth int, executionID, toolID, name, arg, parentExecutionID, parentToolID string, sequence int) {
+func (tl *timeline) startToolWithInput(taskID string, depth int, executionID, toolID, name, arg, parentExecutionID, parentToolID string, sequence int, input string) {
 	key := toolEventKey(executionID, toolID)
 	parentKey := toolEventKey(parentExecutionID, parentToolID)
-	tl.applyTranscript(transcript.ToolStarted{TurnID: taskID, ExecutionID: executionID, ToolID: toolID, ParentExecutionID: parentExecutionID, ParentToolID: parentToolID, Name: name, Argument: arg, Sequence: sequence})
+	tl.applyTranscript(transcript.ToolStarted{TurnID: taskID, ExecutionID: executionID, ToolID: toolID, ParentExecutionID: parentExecutionID, ParentToolID: parentToolID, Name: name, Argument: arg, Input: input, Sequence: sequence})
 	if parentToolID != "" || parentExecutionID != "" {
-		child := &toolItem{depth: depth + 1, name: name, arg: arg, state: toolRunning, sequence: sequence}
+		child := &toolItem{depth: depth + 1, name: name, arg: arg, input: input, state: toolRunning, sequence: sequence}
 		if ref, ok := tl.toolIdx[parentKey]; ok && ref.tool != nil {
 			tl.attachChildTool(ref, key, child, sequence)
 			return
@@ -555,7 +592,7 @@ func (tl *timeline) startToolWithParent(taskID string, depth int, executionID, t
 		return
 	}
 	if sa := tl.subAgents[taskID]; sa != nil {
-		sa.startTool(key, name, arg)
+		sa.startTool(key, name, arg, input)
 		return
 	}
 	if ot := tl.turns[taskID]; ot != nil && ot.resp.content == "" {
@@ -567,7 +604,7 @@ func (tl *timeline) startToolWithParent(taskID string, depth int, executionID, t
 		tl.markTurnActivity(ot)
 	}
 	g := tl.ensureToolGroup(depth)
-	t := &toolItem{name: name, arg: arg, state: toolRunning, notify: g.bump}
+	t := &toolItem{name: name, arg: arg, input: input, state: toolRunning, notify: g.bump}
 	g.add(t)
 	tl.toolIdx[key] = toolRef{group: g, tool: t}
 	tl.attachPendingChildren(key, toolRef{group: g, tool: t})

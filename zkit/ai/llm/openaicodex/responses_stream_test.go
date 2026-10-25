@@ -344,6 +344,40 @@ func TestParseSSEStream_Failure(t *testing.T) {
 	}
 }
 
+func TestParseSSEStream_TopLevelErrorYieldsExactlyOnce(t *testing.T) {
+	t.Parallel()
+	payload := strings.Join([]string{
+		`data: {"type":"error","code":"invalid_request","message":"bad request"}`,
+		``,
+		`data: {"type":"response.output_text.delta","delta":"must not be yielded"}`,
+		``,
+	}, "\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, payload)
+	}))
+	t.Cleanup(srv.Close)
+	provider := openaicodex.NewProvider(
+		openaicodex.StaticTokenSource{T: openaicodex.Token{Access: "access", AccountID: "account"}},
+		openaicodex.WithBaseURL(srv.URL),
+		openaicodex.WithNoRetry(),
+	)
+	yields := 0
+	provider.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "test"}}})(func(chunk llm.CompletionChunk, err error) bool {
+		yields++
+		if err == nil || !strings.Contains(err.Error(), "bad request") {
+			t.Fatalf("yield error = %v", err)
+		}
+		if chunk.Content != "" || chunk.Thinking != "" || len(chunk.ToolCalls) != 0 || chunk.FinishReason != llm.FinishReasons.UNKNOWN || chunk.UsageReported {
+			t.Fatalf("terminal error chunk = %+v, want zero", chunk)
+		}
+		return true
+	})
+	if yields != 1 {
+		t.Fatalf("yield calls = %d, want exactly 1", yields)
+	}
+}
+
 func TestParseSSEStream_IncompleteIsTruncatedNotError(t *testing.T) {
 	t.Parallel()
 	// response.incomplete is a normal terminal status (the model stopped
@@ -369,6 +403,21 @@ func TestParseSSEStream_IncompleteIsTruncatedNotError(t *testing.T) {
 	}
 	if !last.UsageReported || last.Usage.PromptTokens != 20 || last.Usage.CachedTokens != 8 {
 		t.Errorf("usage = %+v reported=%v, want prompt=20 cached=8", last.Usage, last.UsageReported)
+	}
+}
+
+func TestParseSSEStream_IncompleteContentFilter(t *testing.T) {
+	t.Parallel()
+	stream := "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"},\"usage\":null}}\n\n"
+	chunks, err := collectChunks(t, stream)
+	if err != nil {
+		t.Fatalf("parseSSEStream: %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].FinishReason != llm.FinishReasons.CONTENTFILTER {
+		t.Fatalf("chunks = %+v, want content-filter terminal metadata", chunks)
+	}
+	if chunks[0].UsageReported {
+		t.Fatalf("null usage reported: %+v", chunks[0])
 	}
 }
 

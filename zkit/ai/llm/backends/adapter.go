@@ -1,6 +1,8 @@
 package backends
 
 import (
+	"context"
+
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
@@ -18,12 +20,13 @@ type buildParams struct {
 	// the built provider. Set only for the llama.cpp built-in; strict
 	// OpenAI-compatible backends and forwarding proxies (LiteLLM) reject
 	// the unknown field with HTTP 400.
-	cachePrompt bool
+	cachePrompt    bool
+	templateKwargs bool
 }
 
 // adapterDef bundles the constructor for one adapter type.
 type adapterDef struct {
-	build func(buildParams) (llm.Provider, error)
+	build func(context.Context, buildParams) (llm.Provider, error)
 	// noKeyOK reports whether the adapter works without an API key (e.g.
 	// llamacpp, ollama). When false, the registry requires successful
 	// key resolution before Build proceeds.

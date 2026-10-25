@@ -62,10 +62,8 @@ func (c *composer) submit() string {
 }
 
 func (c *composer) displayLines(width int) []string {
-	innerW := width - 2
-	// Reserve the compact prompt glyph prefix ("› ") so a filled line is not
-	// clipped after the styled prefix is prepended.
-	wrapW := max(innerW-2, 1)
+	// Two cells for the prompt/inset and one blank right gutter.
+	wrapW := max(width-3, 1)
 
 	// Build a plain-text display string with an unstyled cursor marker, wrap it,
 	// then style the cursor and prefix after wrapping so ANSI codes don't throw
@@ -83,22 +81,21 @@ func (c *composer) displayLineCount(width int) int {
 }
 
 func (c *composer) draw(scr uv.Screen, r uv.Rectangle, planMode bool) {
-	// In PLAN mode the frame, label, and prompt glyph take the theme's
-	// PlanMode tint so the read-only mode is unmistakable.
-	border, accent, label := palette.BorderFocus, palette.Primary, ""
+	// Keep the mode cue on the separator, prompt and cursor without a frame.
+	border, accent := palette.BorderFocus, palette.Primary
 	if border == "" {
 		border = palette.Primary
 	}
 	if planMode {
 		border, accent = palette.PlanMode, palette.PlanMode
 	}
-	drawBoxColored(scr, r, label, border, accent)
+	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), border.On(strings.Repeat("─", max(0, r.Dx()))))
 	w, h := r.Dx(), r.Dy()
-	if w < 4 || h < 3 {
+	if w < 4 || h < 2 {
 		return
 	}
-	innerW := w - 2
-	maxLines := h - 2
+	innerW := w - 1
+	maxLines := h - 1
 
 	lines := c.displayLines(w)
 
@@ -133,7 +130,7 @@ func (c *composer) draw(scr uv.Screen, r uv.Rectangle, planMode bool) {
 			prefix = accent.On("›") + " "
 		}
 		uv.NewStyledString(padStyled(prefix+line, innerW)).
-			Draw(scr, uv.Rect(r.Min.X+1, r.Min.Y+1+i, innerW, 1))
+			Draw(scr, uv.Rect(r.Min.X, r.Min.Y+1+i, innerW, 1))
 	}
 }
 
@@ -209,6 +206,9 @@ func (m *UI) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.session.CockpitExpanded {
 		return m.handleDashboardKey(msg)
 	}
+	if m.handleSidebarKey(msg.String()) {
+		return nil
+	}
 	if m.timeline.browsing {
 		return m.handleBrowseKey(msg)
 	}
@@ -256,8 +256,10 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		state := "shown"
 		if m.session.StateSidebarHidden {
 			state = "hidden"
+		} else if m.width < sidebarMinMainWidth+sidebarMinWidth {
+			state = "enabled · widen terminal or Ctrl+L for details"
 		}
-		m.session.SetToast("state bar " + state)
+		m.session.SetToast("session sidebar " + state)
 		return m.toastExpiryCmd(), true
 	case "ctrl+r":
 		m.openTranscriptReader()
@@ -358,6 +360,8 @@ func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Browsing freezes the transcript viewport, not the composer. Dedicated
 	// navigation keys and the documented v/i browse commands remain controls;
 	// other printable text keeps editing the prompt while scrolled back.
+	// Tool-only view shortcuts take precedence only for a selected tool that
+	// can perform that action; normal composer and selection modes stay intact.
 	switch msg.String() {
 	case "v":
 		m.timeline.startSelection()
@@ -365,6 +369,11 @@ func (m *UI) handleBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "i":
 		m.timeline.exitBrowse()
 		return nil
+	}
+	if key := msg.String(); key == "a" || key == "r" || key == "j" {
+		if m.timeline.controlSelectedTool(key) {
+			return nil
+		}
 	}
 	if msg.Text != "" {
 		return m.handleComposerKey(msg)
@@ -442,8 +451,15 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch msg.String() {
 	case "esc":
-		if m.session.Run.Running && m.live != nil {
-			m.live.CancelTurn()
+		if m.isSwarmOpen() {
+			return m.stopForegroundSwarm()
+		}
+		if m.session.Run.Running && m.live != nil && m.live.CancelTurn() {
+			if m.liveOperation != nil {
+				m.liveOperation.cancelled = true
+			}
+			m.session.SetToast("cancelling — waiting for cleanup")
+			return m.toastExpiryCmd()
 		}
 	case "tab":
 		m.timeline.enterBrowse()
@@ -621,14 +637,15 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 		m.session.SetErrorToast(sourceConflictNotice)
 		return nil, false
 	}
-	if m.liveOperation != nil && !m.session.Run.Running {
+	if m.liveOperation != nil && (!m.session.Run.Running || m.liveOperation.cancelled) {
 		return m.blockUnsettledSubmit(), false
+	}
+	if m.isSwarmOpen() {
+		m.session.SetErrorToast("a swarm goal is open; stop it before submitting")
+		return m.toastExpiryCmd(), false
 	}
 	if strings.HasPrefix(text, "/") {
 		return m.handleSlashSubmit(text), true
-	}
-	if m.hasIdleQueuedTurn() {
-		return m.launchQueuedTurn(), false
 	}
 	if m.session.Run.Running && m.live != nil {
 		if len(m.pendingAttachments) > 0 {
@@ -645,6 +662,15 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 			m.timeline.addQueuedUser(text)
 		}
 		return nil, true
+	}
+	// Steering belongs to the active turn; only new turns need the next
+	// mode/provider target to be ready.
+	if err := m.modeTargetSubmitBlocked(); err != nil {
+		m.showModeTargetBlocked(err, "; input retained")
+		return nil, false
+	}
+	if m.hasIdleQueuedTurn() {
+		return m.launchQueuedTurn(), false
 	}
 	m.generateFirstPromptLabel(text)
 	if m.live != nil {

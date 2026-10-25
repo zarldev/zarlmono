@@ -9,4 +9,5 @@ type replayOccurrenceKind int
 const (
 	message       replayOccurrenceKind = iota // message
 	toolExecution                             // tool_execution
+	control                                   // control
 )

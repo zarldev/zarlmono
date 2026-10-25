@@ -190,6 +190,9 @@ func (r *transcriptReader) draw(scr uv.Screen, area uv.Rectangle) {
 	if area.Dx() < 4 || area.Dy() < 3 {
 		return
 	}
+	g := transcriptGeometry(uv.Rect(area.Min.X, area.Min.Y, area.Dx(), area.Dy()-1))
+	r.viewportWidth, r.viewportHeight = g.content.Dx(), g.content.Dy()
+	r.syncViewport()
 	header := lg.NewStyle().
 		Background(lgColor(palette.Highlight)).
 		Width(area.Dx()).
@@ -197,18 +200,13 @@ func (r *transcriptReader) draw(scr uv.Screen, area uv.Rectangle) {
 	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y, area.Dx(), 1), header)
 	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y+1, area.Dx(), 1), palette.Border.On(strings.Repeat("─", area.Dx())))
 
-	body := uv.Rect(area.Min.X+1, area.Min.Y+2, max(0, area.Dx()-2), max(0, area.Dy()-3))
-	r.viewportWidth, r.viewportHeight = body.Dx(), body.Dy()
-	r.syncViewport()
 	if r.initialTail {
 		_, _, total := r.view.layoutIndex(r.view.lwidth())
 		r.view.scrollTop = maxOffset(total, r.view.viewHeight)
 		r.initialTail = false
 	}
-	lines := r.view.renderViewport(body.Dx(), body.Dy())
-	for i, line := range lines {
-		drawLine(scr, uv.Rect(body.Min.X, body.Min.Y+i, body.Dx(), 1), line)
-	}
+	lines := r.view.renderViewport(g.content.Dx(), g.content.Dy())
+	r.view.drawRows(scr, g, lines, true)
 	footer := " [ / ] prompt · r preview rewind · ctrl+f search · Y copy · esc close"
 	if r.readOnly {
 		footer = " READ-ONLY saved history · [ / ] prompt · ctrl+f search · Y copy · esc back"

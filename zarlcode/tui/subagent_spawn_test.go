@@ -14,7 +14,7 @@ import (
 
 func TestSubagentSpawnCorrelatesReservedRow(t *testing.T) {
 	out := drive(t, teasink.ToolStartedMsg{TaskID: "root", ToolID: "spawn", ToolName: "agent_spawn", Parameters: map[string]any{"agent": "reviewer", "prompt": "review"}}, teasink.ConversationStartedMsg{TaskID: "child", Depth: 1, ParentToolCallID: "spawn", AgentName: "reviewer", Prompt: "review"})
-	if strings.Count(out, "reviewer: review") != 1 {
+	if strings.Count(out, "[running]  reviewer: review") != 1 {
 		t.Fatalf("spawn row not correlated:\n%s", out)
 	}
 }
@@ -57,7 +57,7 @@ func TestTeaSinkProjectsOneSubagentRowPerExactSpawnExecution(t *testing.T) {
 	}
 	out := drive(t, messages...)
 	for _, want := range []string{"reviewer: review A", "tester: test B"} {
-		if count := strings.Count(out, want); count != 1 {
+		if count := strings.Count(out, "[running]  "+want); count != 1 {
 			t.Fatalf("visible subsection %q count = %d, want 1:\n%s", want, count, out)
 		}
 	}

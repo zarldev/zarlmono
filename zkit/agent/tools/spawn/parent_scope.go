@@ -27,6 +27,7 @@ type ParentScope struct {
 type parentState struct {
 	deadline     time.Time
 	sealed       bool
+	receiving    bool
 	stop         func() bool
 	callbackDone chan struct{}
 	changed      chan struct{}
@@ -42,6 +43,8 @@ type childLifetime struct {
 // dispatch context values but outlive dispatch cancellation; this scope links
 // them to the parent run's cancellation and deadline instead. Unbound callers
 // retain the legacy group-owned lifetime and explicit result delivery contract.
+// Bind alone does not enroll automatic delivery. Receiving hosts call Ready
+// before dispatching children or inspecting results to protect pending evidence.
 func (g *Group) Bind(ctx context.Context, id taskscope.ID) (ParentScope, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -78,11 +81,17 @@ func (s ParentScope) cancel(cause error) []childLifetime {
 	state.sealed = true
 	g.parents[s.id] = state
 	g.signalLocked(s.id)
+	g.pruneObservedLocked("") // A sealed receiver cannot admit pending observations.
 	var children []childLifetime
 	for _, id := range g.order {
 		t := g.tasks[id]
 		if t.parent == s.id && t.snapshot.State == AgentTaskStates.RUNNING {
 			children = append(children, childLifetime{cancel: t.cancel, done: t.done})
+		}
+	}
+	for _, p := range g.preparations {
+		if p.parent == s.id {
+			children = append(children, childLifetime{cancel: p.cancel, done: p.done})
 		}
 	}
 	g.mu.Unlock()

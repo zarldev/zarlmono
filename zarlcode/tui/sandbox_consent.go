@@ -44,8 +44,8 @@ func (m *SandboxConsent) View() tea.View {
 	return tea.NewView("\n  Shell sandbox unavailable on macOS\n\n" +
 		"  The kernel shell sandbox currently requires Linux.\n" +
 		"  Continuing lets shell tools run with your account's permissions,\n" +
-		"  without kernel confinement. Shell policy checks still apply,\n" +
-		"  but are not a replacement for a sandbox.\n\n" +
+		"  without kernel confinement. Shell policy checks are also off\n" +
+		"  by default; enabling them is not a replacement for a sandbox.\n\n" +
 		"  y: continue unconfined and remember for this workspace\n" +
 		"  n / Enter / Esc: exit without changing settings\n\n" +
 		"  If you require confinement, use a supported Linux environment.\n")

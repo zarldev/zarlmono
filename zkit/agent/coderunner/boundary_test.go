@@ -29,6 +29,11 @@ func TestRestrictedMCPManagement(t *testing.T) {
 			if connect.Definition().Mutates || disconnect.Definition().Mutates {
 				t.Fatal("connection management must not count as a completed file edit")
 			}
+			for _, spec := range []tools.ToolSpec{connect.Definition(), disconnect.Definition()} {
+				if !spec.ChangesWorkspace() || !spec.DispatchBarrier {
+					t.Fatal("connection management lost authority-change or exclusive-dispatch metadata")
+				}
+			}
 			for _, tool := range []tools.Tool{connect, disconnect} {
 				if err := registry.Register(tool); err != nil {
 					t.Fatal(err)

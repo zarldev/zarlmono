@@ -1,7 +1,9 @@
 package claudecode_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,7 +165,7 @@ func TestProviderReportsUsage(t *testing.T) {
 		stream string
 		want   llm.Usage
 	}{
-		{name: "terminal result", stream: `{"type":"result","subtype":"success","usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":50}}`, want: llm.Usage{PromptTokens: 150, CompletionTokens: 50, TotalTokens: 200, CachedTokens: 30}},
+		{name: "terminal result", stream: `{"type":"result","subtype":"success","usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":50}}`, want: llm.Usage{PromptTokens: 150, CompletionTokens: 50, TotalTokens: 200, CachedTokens: 30, CacheCreationTokens: 20}},
 		{name: "assistant fallback", stream: `{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":5}}}`, want: llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}},
 	}
 	for _, tc := range cases {
@@ -189,5 +191,88 @@ func TestProviderHonorsDownstreamStop(t *testing.T) {
 	})
 	if calls != 1 {
 		t.Fatalf("yield calls = %d, want 1", calls)
+	}
+}
+
+type recordingTokenSource struct {
+	called bool
+}
+
+func (s *recordingTokenSource) Token(context.Context) (claudecode.Token, error) {
+	s.called = true
+	return claudecode.Token{Access: "should-not-be-used"}, nil
+}
+
+func TestProviderRejectsMediaBeforeTokenOrCLILaunch(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "launched")
+	script := filepath.Join(dir, "claude")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch \"$CLAUDE_TEST_LAUNCHED\"\n"), 0o700); err != nil {
+		t.Fatalf("write fake CLI: %v", err)
+	}
+	t.Setenv("CLAUDE_TEST_LAUNCHED", marker)
+	tokens := &recordingTokenSource{}
+	provider := claudecode.NewProvider(tokens, claudecode.WithBinaryPath(script))
+	var got error
+	for chunk, err := range provider.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{
+		Role: llm.RoleUser,
+		Parts: []llm.ContentPart{
+			llm.TextPart("inspect"),
+			llm.ImagePartFromURL("https://example.invalid/image.png"),
+		},
+	}}}) {
+		if chunk.Content != "" || chunk.Thinking != "" || len(chunk.ToolCalls) != 0 || chunk.FinishReason != llm.FinishReasons.UNKNOWN || chunk.UsageReported {
+			t.Fatalf("error chunk = %+v, want zero", chunk)
+		}
+		got = err
+	}
+	if !errors.Is(got, llm.ErrModelNotSupported) {
+		t.Fatalf("error = %v, want ErrModelNotSupported", got)
+	}
+	if tokens.called {
+		t.Fatal("media rejection acquired an OAuth token")
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("CLI launch marker stat error = %v, want not exist", err)
+	}
+}
+
+func TestProviderPreservesCancellationCauseAfterCLILaunch(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	body := "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"stream_event\",\"event\":{\"delta\":{\"type\":\"text_delta\",\"text\":\"ready\"}}}'\nexec sleep 60\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatalf("write fake CLI: %v", err)
+	}
+	provider := claudecode.NewProvider(
+		claudecode.StaticTokenSource{T: claudecode.Token{Access: "test-token"}},
+		claudecode.WithBinaryPath(script),
+	)
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cause := errors.New("synthetic cancellation")
+	defer cancel(cause)
+
+	var got error
+	yields := 0
+	provider.Complete(ctx, llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "wait"}}})(func(chunk llm.CompletionChunk, err error) bool {
+		yields++
+		if yields == 1 {
+			if err != nil || chunk.Content != "ready" {
+				t.Fatalf("first yield = (%+v, %v), want ready content", chunk, err)
+			}
+			cancel(cause)
+			return true
+		}
+		if chunk.Content != "" || chunk.Thinking != "" || len(chunk.ToolCalls) != 0 || chunk.FinishReason != llm.FinishReasons.UNKNOWN || chunk.UsageReported {
+			t.Fatalf("terminal error chunk = %+v, want zero", chunk)
+		}
+		got = err
+		return true
+	})
+	if yields != 2 {
+		t.Fatalf("yield calls = %d, want content then cancellation", yields)
+	}
+	if !errors.Is(got, cause) {
+		t.Fatalf("error = %v, want cancellation cause %v", got, cause)
 	}
 }

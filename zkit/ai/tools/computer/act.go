@@ -10,8 +10,8 @@ import (
 
 // Point describes a two-dimensional point or delta in surface coordinates.
 type Point struct {
-	X int `json:"x,omitempty" doc:"Horizontal coordinate/delta."`
-	Y int `json:"y,omitempty" doc:"Vertical coordinate/delta."`
+	X int `json:"x,omitempty"`
+	Y int `json:"y,omitempty"`
 }
 
 // TargetRef identifies an action or trigger target. Resolution is backend
@@ -22,13 +22,13 @@ type TargetRef struct {
 	Role     string `json:"role,omitempty" doc:"Semantic role."`
 	Name     string `json:"name,omitempty" doc:"Accessible name."`
 	Text     string `json:"text,omitempty" doc:"Visible text."`
-	Locator  string `json:"locator,omitempty" doc:"Backend locator (for example CSS)."`
+	Locator  string `json:"locator,omitempty" doc:"Backend locator, e.g. CSS."`
 	Position *Point `json:"position,omitempty" doc:"Fallback coordinates."`
 }
 
 // Action describes an operation to perform on the current computer surface.
 type Action struct {
-	Kind   model.ActionKind `json:"kind" enum:"navigate,click,fill,press,scroll" doc:"Action kind."`
+	Kind   model.ActionKind `json:"kind" enum:"navigate,click,fill,press,scroll"`
 	Target *TargetRef       `json:"target,omitempty" doc:"Target for click/fill/press."`
 	Value  string           `json:"value,omitempty" doc:"Fill value."`
 	Key    string           `json:"key,omitempty" doc:"Key name or text to press."`
@@ -39,7 +39,7 @@ type Action struct {
 // Trigger describes a condition used by When and Until. When is an action
 // precondition; Until is a completion/settlement condition after the action.
 type Trigger struct {
-	Kind   model.TriggerKind `json:"kind" enum:"visible,hidden,focused,text_present,value_equals,url_matches,navigation_complete,surface_stable" doc:"Condition kind."`
+	Kind   model.TriggerKind `json:"kind" enum:"visible,hidden,focused,text_present,value_equals,url_matches,navigation_complete,surface_stable"`
 	Target *TargetRef        `json:"target,omitempty" doc:"Condition target."`
 	Text   string            `json:"text,omitempty" doc:"Expected text."`
 	Value  string            `json:"value,omitempty" doc:"Expected value."`
@@ -49,9 +49,9 @@ type Trigger struct {
 // ActArgs describes a computer_act request. When is checked before the action;
 // Until is checked after the action before the resulting observation is returned.
 type ActArgs struct {
-	Action Action   `json:"action" doc:"Action to perform."`
-	When   *Trigger `json:"when,omitempty" doc:"Precondition before the action."`
-	Until  *Trigger `json:"until,omitempty" doc:"Completion condition after it."`
+	Action Action   `json:"action"`
+	When   *Trigger `json:"when,omitempty" doc:"Wait before acting."`
+	Until  *Trigger `json:"until,omitempty" doc:"Wait after acting."`
 }
 
 // ActTool applies computer actions through a model.Actor backend.
@@ -79,7 +79,7 @@ func (t *ActTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.Tool
 func actSpec() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:             ToolNameComputerAct,
-		Description:      "Act on the current surface; optionally wait for a precondition and post-action completion condition.",
+		Description:      "Act on the current surface with optional pre/post conditions; return the resulting observation.",
 		Parameters:       tools.SchemaFor[ActArgs](),
 		AffectsWorkspace: true,
 	}

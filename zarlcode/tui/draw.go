@@ -55,6 +55,7 @@ func (m *UI) Draw(scr uv.Screen, _ uv.Rectangle) {
 		}
 	}
 	m.composer.draw(scr, m.layout.editor, m.session.PlanMode)
+	m.drawInputActivity(scr, m.layout.editor)
 	m.statusPane.Draw(scr, m.layout.status)
 
 	// Dialogs draw last, centered over everything.

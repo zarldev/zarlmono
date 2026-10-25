@@ -5,6 +5,9 @@
 // than the public Anthropic API. It is useful for consumers that intentionally
 // want Claude Code's OAuth/product integration while still speaking zkit's
 // provider-neutral streaming contract.
+// JSON-schema response requests without host tools use the CLI's native
+// --json-schema flag and terminal structured_output value. Tool-enabled turns
+// retain the package's host tool protocol and use prompt-level schema guidance.
 //
 // Because this package depends on a product CLI and OAuth token lifecycle, its
 // upstream behavior is more volatile than official API providers. Keep the core

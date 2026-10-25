@@ -50,8 +50,44 @@ zarlcode keys oauth openai-codex
 ```
 
 On an interactive first run with no explicit provider, zarlcode opens the setup
-screen: press `Enter` to accept the local defaults or `Ctrl+S` to select a
-provider/model. Credentials remain encrypted, and headless runs never enter the wizard.
+screen. The default target is `openai-codex/gpt-6-astra` with high reasoning;
+connect your Codex account or use `Ctrl+S` to choose another provider/model.
+When the selected provider is usable, `Enter` accepts it without making a model
+request. Credentials remain encrypted, and headless runs never enter the wizard.
+
+Application defaults are shared by runtime resolution and Settings. Saved
+workspace preferences still override global preferences, which override these
+defaults; upgrading does not rewrite saved settings.
+
+| Setting | Default |
+| --- | --- |
+| Main / child iterations | 900 / 300; explore and verify 80 |
+| Concurrent children / spawn depth | 20 / 1 |
+| Child wait, maximum wait, lifetime / response idle timeout | 600 seconds each |
+| Discovery / spawn fanout caps | 80 each |
+| Parallel `program` calls | 16 |
+| Tool result cap before spilling | 512 KiB / 3,500 lines |
+| Context reserve | 5,120 tokens |
+| Delegation / plan-first / decompose judge | On |
+| Shell policy / kernel sandbox / read-before-write | Off |
+| Sudo askpass / notification sounds | On / all |
+
+Compaction and implementation children default to `openai-codex/gpt-6-sol`;
+verification children use `openai-codex/gpt-6-luna`; exploration children and the
+judge use `deepseek/deepseek-v4-flash`. These routes require the corresponding
+credentials. Provider-construction failures fall back to the active provider for
+compaction/judging, or normal planner/parent routing for children; authentication
+or model-access errors discovered during a request still surface as run errors.
+Codex model availability depends on account access and rollout. Saved GPT-5.6
+selections are preserved; upgrading these defaults does not migrate preferences.
+Select `(active)` to inherit the active target explicitly, or clear an override to restore inherited
+settings/defaults. Local themes, agent profiles, endpoints, and paths are not copied
+into application defaults.
+
+Sudo askpass permits an interactive password prompt, not automatic privilege
+grants. Credential encryption remains enabled. macOS still requires explicit
+consent for unconfined shell execution, and headless runs keep strict test-edit
+protection regardless of the interactive test-edit setting.
 
 Run `zarlcode keys --help` for credential commands. Credentials are encrypted with
 a passphrase and stored globally by default; workspace settings can still select

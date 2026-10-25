@@ -19,9 +19,10 @@ type rpcRequest struct {
 }
 
 type rpcResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      int            `json:"id"`
+	Result  interface{}    `json:"result,omitempty"`
+	Error   map[string]any `json:"error,omitempty"`
 }
 
 func main() {
@@ -85,7 +86,7 @@ func main() {
 				"content": []map[string]any{{"type": "text", "text": fmt.Sprintf("echo: %s", msg)}},
 			}})
 		default:
-			_ = enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: nil})
+			_ = enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32601, "message": "method not found"}})
 		}
 	}
 }

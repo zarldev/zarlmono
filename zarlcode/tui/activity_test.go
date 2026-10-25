@@ -15,8 +15,8 @@ func TestRunActivityUsesBrailleGlyphs(t *testing.T) {
 	var model tea.Model = tui.New()
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	idle := ansi.Strip(model.View().Content)
-	if !strings.Contains(idle, "○ idle") {
-		t.Fatalf("idle UI missing idle activity indicator:\n%s", idle)
+	if strings.Contains(idle, "○ idle") || containsBraille(idle) {
+		t.Fatalf("idle composer should have a quiet separator:\n%s", idle)
 	}
 
 	model, _ = model.Update(teasink.ConversationStartedMsg{TaskID: "turn", Prompt: "work"})

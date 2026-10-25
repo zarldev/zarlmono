@@ -498,7 +498,7 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 		return tools.Failure(call.ID, tools.Fatal("agent_spawn", errors.New("parent runner is nil"))), nil
 	}
 
-	mode := t.effectiveMode(args, profileMode, explicitMode)
+	mode := t.effectiveMode(ctx, args, profileMode, explicitMode)
 	childSpec := runner.TaskSpec{
 		ID:                taskscope.ID(uuid.NewString()),
 		Prompt:            childPromptWithMode(args.Prompt, mode),
@@ -523,7 +523,7 @@ func (t *Tool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolRes
 			runCtx = taskscope.WithWorkMode(runCtx, wm)
 		}
 		if t.modePolicy != nil {
-			runCtx = runner.WithToolGate(runCtx, func(spec tools.ToolSpec) bool {
+			runCtx = runner.WithAdditionalToolGate(runCtx, func(spec tools.ToolSpec) bool {
 				return t.modePolicy(mode, spec)
 			})
 		}
@@ -734,7 +734,8 @@ func (t *Tool) applyPlanner(ctx context.Context, args *Args) string {
 	}
 
 	args.Agent = plan.Agent
-	args.Mode = string(plan.Mode)
+	// Routing recovery may narrow authority, never widen the requested mode.
+	args.Mode = string(stricterMode(normalizeMode(args.Mode), plan.Mode))
 
 	target := plan.Agent
 	if target == "" {
@@ -745,19 +746,14 @@ func (t *Tool) applyPlanner(ctx context.Context, args *Args) string {
 		target, plan.Mode, plan.Rationale)
 }
 
-func (t *Tool) effectiveMode(args Args, profileMode SpawnMode, _ bool) SpawnMode {
-	argMode := normalizeMode(args.Mode)
-	profileMode = normalizeMode(string(profileMode))
-	if profileMode.Valid() && argMode.Valid() {
-		return stricterMode(profileMode, argMode)
+func (t *Tool) effectiveMode(ctx context.Context, args Args, profileMode SpawnMode, _ bool) SpawnMode {
+	mode := SpawnModeImplement
+	for _, candidate := range []SpawnMode{normalizeMode(args.Mode), normalizeMode(string(profileMode)), normalizeMode(taskscope.WorkModeFrom(ctx).String())} {
+		if candidate.Valid() {
+			mode = stricterMode(mode, candidate)
+		}
 	}
-	if profileMode.Valid() {
-		return profileMode
-	}
-	if argMode.Valid() {
-		return argMode
-	}
-	return SpawnModeImplement
+	return mode
 }
 
 func normalizeMode(raw string) SpawnMode {

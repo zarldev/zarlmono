@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [zarlcode/v0.21.0] — 2026-10-18
+
+### added
+
+- Added separate plan/build model routes and speed controls, with coordinated runtime target changes and persisted preferences.
+- Added deferred MCP tool discovery and explicit activation, with validated session-selection restoration rather than restoration of connection authority.
+- Added Codex image generation into new workspace files, with optional workspace reference images.
+- Added an experimental, opt-in native workbench using Wails and the existing agent controller. It does not replace the TUI: settings, onboarding, attachments, history navigation and other workflows still have coverage gaps; native macOS execution remains unverified.
+
+### changed
+
+- Refreshed conversation surfaces, assistant segment boundaries, readable tool input/output, live output previews and tool drawers.
+- Restored every plan step and its full wrapped description in the independently scrollable sidebar. Ctrl+P now provides a progress overview, selectable step outline, focused detail reading and active/unfinished-step navigation, while retaining responsive saved-plan previews and quiet lowercase controls.
+- Added a neutral trailing transcript-content row after the final entry and tool calls, separate from existing composer spacing; it scrolls with history and is excluded from copied text.
+- Added richer cache-creation and cost accounting, and inspection-only records of prepared request controls.
+- Updated built-in model routes, reasoning defaults and execution/delegation limits. Explicit saved preferences continue to take precedence.
+
+### upgrade notes
+
+- Requires the corresponding zkit v0.21.0 release. Publish zkit and wait for public Go proxy availability before updating the consumer dependency pin and publishing zarlcode.
+- The new defaults disable the static shell guard and kernel shell sandbox, enable sudo askpass, and increase execution/delegation limits. Review these security and usage implications before adopting the defaults; saved explicit selections are not rewritten.
+- Back up the state database together with its credential-vault files before upgrade if rollback may be needed. Migration `00035` adds persisted MCP activation hints; newly written control/history fields may not be readable by older binaries. Reverting the binary alone is not a supported rollback procedure.
+- Native workbench builds require the separate desktop toolchain and frontend assets. Standard CLI release artifacts do not include a native workbench executable.
+
+## [zkit/v0.21.0] — 2026-10-18
+
+### added
+
+- Added discovery-first MCP negotiation, notification/session handling, explicitly approved loopback HTTP connections and server origin policy.
+- Added deferred MCP exposure with metadata search and exact-definition tool activation/deactivation. Persisted selections do not grant endpoint, credential or approval authority.
+- Added bounded live tool-output events, prepared-request control observations, and an optional image-generation provider interface with Codex support.
+- Added in-process findings-board and goal-scoped swarm primitives. These APIs do not provide restart durability or remote delivery.
+
+### changed
+
+- Improved provider cache-creation/TTL usage and cost accounting, model metadata, reasoning/service-tier controls, structured output, continuation and stream termination handling.
+- Kept canonical history separate from model-context compaction and attributed historical assistant excerpts to the host.
+- Migrated the OpenAI SDK dependency from `/v2` to `/v3`, and refreshed provider SDKs while retaining the compatible Anthropic v1.80.0 / JSON Schema v0.14.0 pair.
+
+### migration notes
+
+- Custom `runner.ToolSink` and composite `runner.EventSink` implementations must implement `OnToolOutput(context.Context, runner.ToolOutputProgress)` or embed an appropriate `runner.NopSink`.
+- Migration `00035_session_mcp_activations.sql` adds `sessions.mcp_activations_json`; session checkpoint branches preserve those activation hints.
+- New replay control kinds and history fields require consumers to account for the expanded contracts. Back up databases before upgrade and do not assume older binaries can read newly written history.
+
 ## [zarlcode/v0.20.1] — 2026-09-23
 
 ### Fixed

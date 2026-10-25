@@ -1,0 +1,11 @@
+
+- file_map(include_tests?: boolean, max_files?: integer, output?: ["labeled","json"], pattern?: string, root?: string)
+- glob(include_dirs?: boolean, max_results?: integer, output?: ["labeled","json"], pattern: string, root?: string)
+- grep(case_insensitive?: boolean, glob?: string, max_results?: integer, output?: ["labeled","json"], path?: string, pattern: string)
+- list_agents()
+- list_instructions()
+- list_skills()
+- ls(output?: ["labeled","json"], path?: string, show_hidden?: boolean)
+- read(hash_len?: integer, limit?: integer, offset?: integer (Zero-based line offset to start reading from.), path: string)
+- retrieve_code(include_tests?: boolean, limit?: integer, max_bytes_per_chunk?: integer, max_files?: integer, output?: ["labeled","json"], pattern?: string, query: string, root?: string)
+- web_fetch(max_chars?: integer, selector?: string, url: string, use_browser?: boolean)

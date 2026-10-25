@@ -78,6 +78,7 @@ func TestCompletionPendingRecordsSurviveObservedRetentionCap(t *testing.T) {
 	if _, err := group.Bind(t.Context(), "parent"); err != nil {
 		t.Fatal(err)
 	}
+	group.Ready("parent") // Enroll before full explicit reads can evict results.
 	ctx := taskscope.WithID(t.Context(), "parent")
 	for i := range 10 {
 		id := startScopedTask(t, ctx, spawn.NewAsync(runner.New(&immediateClient{content: strconv.Itoa(i)}), group))

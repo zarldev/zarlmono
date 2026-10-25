@@ -76,6 +76,11 @@ func (tl *timeline) renderTail(width, height int) []string {
 			vLocal = append(vLocal, k)
 		}
 	}
+	if len(out) > 0 {
+		out = append(out, "")
+		vItem = append(vItem, -1)
+		vLocal = append(vLocal, 0)
+	}
 	if len(out) > height {
 		cut := len(out) - height
 		out, vItem, vLocal = out[cut:], vItem[cut:], vLocal[cut:]
@@ -85,12 +90,10 @@ func (tl *timeline) renderTail(width, height int) []string {
 	return out
 }
 
-var nestPad = palette.Assistant.On("│ ")
+const nestPad = "  "
 
 func turnOwnerPrefixes(label string, style func(string) string) (string, string) {
-	anchor := bracketed(style(label))
-	rail := style("│ ")
-	return anchor, rail
+	return style(label), ""
 }
 
 // itemNested reports whether an item is turn activity (rendered tight,
@@ -121,82 +124,70 @@ const scrollbarWidth = 1
 // transcript stays open on the left, right, and bottom so its content reads as
 // the primary surface rather than another boxed pane.
 func (m *UI) drawTimeline(scr uv.Screen, r uv.Rectangle) {
-	m.drawTimelineTopBar(scr, r)
-	w, h := r.Dx(), r.Dy()
-	if w < 4 || h < 4 {
+	if r.Dx() < 5 || r.Dy() < 4 {
+		m.drawTimelineTopBar(scr, r)
 		return
 	}
-	// Reserve only the final column for the scrollbar. The transcript itself
-	// starts at the pane edge; ownership anchors provide its visual gutter.
-	innerW, innerH := w-scrollbarWidth, h-2
-	if innerW < 1 {
-		innerW = 1
-	}
-	// With mode 2027 the terminal + renderer agree on grapheme width, so
-	// emoji render aligned. Without it, emoji widths are unpredictable and
-	// bleed across panes — strip them so the cell grid stays sound.
-	keepEmoji := m.widthMethod == ansi.GraphemeWidth
-	contentW := transcriptContentWidth(innerW)
-	lines := m.timeline.renderViewport(contentW, innerH)
+	g := transcriptGeometry(r)
+	// Establish the actual text width before header/scrollbar geometry queries.
+	// Otherwise a resize can measure history at both the old and new widths.
+	m.timeline.viewWidth, m.timeline.viewHeight = g.content.Dx(), g.content.Dy()
+	m.drawTimelineTopBar(scr, r)
+	lines := m.timeline.renderViewport(g.content.Dx(), g.content.Dy())
 	if m.graphics != nil && !m.overlay.active() {
-		m.timelineGraphics = m.timeline.timelineGraphics(uv.Rect(r.Min.X, r.Min.Y+2, contentW, innerH), len(lines))
+		m.timelineGraphics = m.timeline.timelineGraphics(g.content, len(lines))
 	}
-	for i, ln := range lines {
-		if !keepEmoji {
-			ln = stripWide(ln)
-		}
-		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+2+i, contentW, 1), ln)
-	}
-	// Paint the scrollbar gutter on the right edge.
-	m.drawTimelineScrollbar(scr, r, innerH, len(lines))
+	m.timeline.drawRows(scr, g, lines, m.widthMethod == ansi.GraphemeWidth)
+	m.drawTimelineScrollbar(scr, r, g.content.Dy(), len(lines))
 }
 
-const maxTranscriptWidth = 110
-
+// transcriptContentWidth uses the pane's available text lane after its gutters.
 func transcriptContentWidth(available int) int {
-	if available < 1 {
-		return 1
-	}
-	return min(available, maxTranscriptWidth)
+	return max(1, available)
 }
 
 func (m *UI) drawTimelineTopBar(scr uv.Screen, r uv.Rectangle) {
 	if r.Dx() < 1 || r.Dy() < 1 {
 		return
 	}
+	// Match the transcript inset. Reserve viewport state, then a useful title
+	// measure before allowing optional model metadata to consume the row.
+	width := max(1, r.Dx()-3)
 	left, model, viewport := m.transcriptHeaderSegments()
-	right := viewport
-	const separatorWidth = 3
-	modelWidth := r.Dx() - ansi.StringWidth(left) - 1 - ansi.StringWidth(viewport) - separatorWidth
-	if model != "" && modelWidth > 0 {
-		right = ansi.Truncate(model, modelWidth, "…") + palette.Subtle.On("  ·  ") + viewport
+	// Follow the transcript's non-2027 policy before allocating header cells:
+	// joined emoji otherwise occupy more wcwidth cells than grapheme columns.
+	if m.widthMethod != ansi.GraphemeWidth {
+		left, model = stripWide(left), stripWide(model)
 	}
-	line := rowLayout(left, right, r.Dx())
-	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), line)
+	if width < 24 {
+		viewport = ""
+		model = ""
+	}
+	right := viewport
+	separator := ""
+	if viewport != "" {
+		separator = palette.Subtle.On("  ·  ")
+	}
+	titleReserve := min(ansi.StringWidth(left), max(12, width/2))
+	modelWidth := width - titleReserve - 1 - ansi.StringWidth(viewport) - ansi.StringWidth(separator)
+	if model != "" && modelWidth >= 8 {
+		right = ansi.Truncate(model, modelWidth, "…") + separator + viewport
+	}
+	line := rowLayout(left, right, width)
+	drawLine(scr, uv.Rect(r.Min.X+2, r.Min.Y, width, 1), line)
 	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1, r.Dx(), 1), palette.Border.On(strings.Repeat("─", r.Dx())))
 }
 
 func (m *UI) transcriptHeaderSegments() (string, string, string) {
-	// The transcript needs a quiet orientation mark, not a second title. The
-	// composer and terminal already establish product context, so retain identity
-	// as the compact ƶ mark and let operational state carry the row.
-	left := palette.Primary.On("ƶ")
-
-	run := "○ idle"
-	runTone := palette.Muted
-	if m.session.Run.Running {
-		run = runActivityGlyph(m.frame, true) + " " + m.session.Run.activityLabel()
-		runTone = palette.Success
-		if tps := m.session.Run.liveTokPerSec(); tps > 0 {
-			run += "  ·  " + itoa(int(tps+0.5)) + " tok/s"
-		}
-	}
-	left += palette.Subtle.On("  ·  ") + runTone.On(run)
+	left := palette.Primary.On("ƶ") + " " + palette.Fg.On(m.sessionDisplayName())
 	model := ""
 	if name := strings.ToLower(m.session.Model); name != "" {
 		model = palette.Muted.On(name)
 	}
-	viewport := palette.Info.On(m.timeline.viewportStateLabel())
+	viewport := ""
+	if m.timeline.browsing || m.timeline.selectionActive() {
+		viewport = palette.Info.On(m.timeline.viewportStateLabel())
+	}
 	return left, model, viewport
 }
 
@@ -298,24 +289,12 @@ func indentLines(lines []string, depth int) []string {
 	return prefixLines(lines, strings.Repeat("⇢ ", depth))
 }
 
-// maxContentWidth caps the measure for prose/markdown so content stays
-// readable on wide terminals instead of stretching across the full pane
-// (a 4-column table at ~195 cols is unreadable padding). Panes use the
-// screen width; prose does not.
-const maxContentWidth = 90
-
 // toolResultMaxLines caps how much of a tool's output the expanded row
 // shows (the full result is still in the model's context).
 const toolResultMaxLines = 40
 
 func contentWidth(w int) int {
-	if w > maxContentWidth {
-		return maxContentWidth
-	}
-	if w < 1 {
-		return 1
-	}
-	return w
+	return max(1, w)
 }
 
 // stripWide drops emoji, variation selectors, and ZWJ from display text.

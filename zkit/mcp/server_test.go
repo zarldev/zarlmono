@@ -130,8 +130,8 @@ func TestServer_HTTPRoundTrip_NotificationProducesNoResponse(t *testing.T) {
 		t.Fatalf("Post: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("status = %d, want 204 (no content) for notification", resp.StatusCode)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("status = %d, want 202 (accepted) for notification", resp.StatusCode)
 	}
 	buf := make([]byte, 32)
 	n, _ := resp.Body.Read(buf)
@@ -345,8 +345,10 @@ func TestClient_HTTPSubscribeReceivesPushedNotifications(t *testing.T) {
 	// outbound notification, so the deterministic shape is "keep
 	// pushing until received."
 	stop := make(chan struct{})
-	defer close(stop)
+	producerDone := make(chan struct{})
+	defer func() { close(stop); <-producerDone }()
 	go func() {
+		defer close(producerDone)
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -354,15 +356,15 @@ func TestClient_HTTPSubscribeReceivesPushedNotifications(t *testing.T) {
 			case <-stop:
 				return
 			case <-ticker.C:
-				s.Notify("notifications/progress", map[string]any{"step": 1})
+				s.Notify("notifications/tools/list_changed", map[string]any{})
 			}
 		}
 	}()
 
 	select {
 	case method := <-got:
-		if method != "notifications/progress" {
-			t.Errorf("method = %q, want notifications/progress", method)
+		if method != "notifications/tools/list_changed" {
+			t.Errorf("method = %q, want notifications/tools/list_changed", method)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("HTTP subscriber did not receive notification within 5s")
@@ -382,7 +384,7 @@ func TestClient_HTTPSubscribeReceivesPushedNotifications(t *testing.T) {
 func TestHTTPClient_SSEMultiLineDataIsConcatenated(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(protocolFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The client speaks JSON-RPC over POST and accepts either
 		// application/json or text/event-stream. Force SSE so we
 		// exercise the multi-line decoder.
@@ -417,7 +419,7 @@ func TestHTTPClient_SSEMultiLineDataIsConcatenated(t *testing.T) {
 		if flusher != nil {
 			flusher.Flush()
 		}
-	}))
+	})))
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "")

@@ -53,6 +53,26 @@ type rpcRequest struct {
 	Params  any             `json:"params,omitempty"`
 }
 
+// UnmarshalJSON leaves method parameters opaque until their owning decoder can
+// validate them without rounding integers through interface{}'s float64 default.
+func (r *rpcRequest) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	r.JSONRPC, r.ID, r.Method = wire.JSONRPC, wire.ID, wire.Method
+	r.Params = nil
+	if len(wire.Params) != 0 {
+		r.Params = wire.Params
+	}
+	return nil
+}
+
 // IsNotification reports whether this request is a JSON-RPC
 // notification — defined by the spec as a request with no "id"
 // member. The server MUST NOT respond to a notification, so dispatch
@@ -80,8 +100,9 @@ type rpcResponse struct {
 
 // rpcError is a JSON-RPC 2.0 error object.
 type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 func (e *rpcError) Error() string {

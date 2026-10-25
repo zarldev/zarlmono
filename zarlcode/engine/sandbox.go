@@ -32,7 +32,7 @@ func ShellSandbox(enabled bool, root string, policy sandbox.Policy, build func(s
 // taking precedence over effective preferences. Only an unset Darwin preference
 // requests consent to run unconfined; acceptance records sandbox=off for this
 // workspace. Declining returns context.Canceled without changing preferences.
-// Explicit enables and all other platform defaults still require confinement.
+// Explicit enables still require confinement; other platforms default to off.
 // confirm must not prompt in headless launches; it should return an actionable error.
 func (s *Settings) ResolveShellSandbox(ctx context.Context, platform string, confirm func(context.Context) (bool, error)) (bool, error) {
 	if enabled, ok := sandbox.EnvOverride(); ok {
@@ -53,7 +53,7 @@ func (s *Settings) ResolveShellSandbox(ctx context.Context, platform string, con
 		return false, fmt.Errorf("read sandbox preference: %w", err)
 	}
 	if platform != "darwin" {
-		return true, nil
+		return prefs.DefaultSandbox == "on", nil
 	}
 	accepted, err := confirm(ctx)
 	if err != nil {

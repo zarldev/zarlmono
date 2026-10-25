@@ -153,7 +153,12 @@ func checkpointPayloadValid(entry Entry) bool {
 		allowed = Payload{Text: p.Text, Attachments: p.Attachments}
 	case EntryKinds.ENTRYQUEUEDUSER:
 		allowed = Payload{Text: p.Text, Injected: p.Injected}
-	case EntryKinds.ENTRYASSISTANTMESSAGE, EntryKinds.ENTRYREASONING:
+	case EntryKinds.ENTRYASSISTANTMESSAGE:
+		if p.Complete && p.Interrupted {
+			return false
+		}
+		allowed = Payload{Text: p.Text, TextBreaks: p.TextBreaks, Complete: p.Complete, Interrupted: p.Interrupted}
+	case EntryKinds.ENTRYREASONING:
 		if p.Complete && p.Interrupted {
 			return false
 		}
@@ -162,7 +167,8 @@ func checkpointPayloadValid(entry Entry) bool {
 		allowed = Payload{
 			ToolID: p.ToolID, ParentToolID: p.ParentToolID, ToolName: p.ToolName,
 			ExecutionID: p.ExecutionID, ParentExecutionID: p.ParentExecutionID,
-			Argument: p.Argument, Effect: p.Effect, ToolState: p.ToolState,
+			Argument: p.Argument, ToolInput: p.ToolInput, ToolOutputPreview: p.ToolOutputPreview,
+			Effect: p.Effect, ToolState: p.ToolState,
 			FailureKind: p.FailureKind, DurationMS: p.DurationMS, Sequence: p.Sequence,
 		}
 	case EntryKinds.ENTRYDIFF:
@@ -181,6 +187,8 @@ func checkpointPayloadValid(entry Entry) bool {
 		allowed = Payload{Text: p.Text, InputAdmission: p.InputAdmission}
 	case EntryKinds.ENTRYINPUTWAIT:
 		allowed = Payload{Text: p.Text, InputWaiting: p.InputWaiting}
+	case EntryKinds.ENTRYCONTROLCHANGE:
+		allowed = Payload{Control: p.Control}
 	case EntryKinds.ENTRYNOTICE:
 		allowed = Payload{Text: p.Text}
 	default:

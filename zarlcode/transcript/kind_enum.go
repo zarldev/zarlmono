@@ -19,4 +19,5 @@ const (
 	entryNotice                            // notice
 	entryInputAdmission                    // input_admission
 	entryInputWait                         // input_wait
+	entryControlChange                     // control_change
 )

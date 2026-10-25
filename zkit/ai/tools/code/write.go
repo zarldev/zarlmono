@@ -67,9 +67,8 @@ func (t *WriteTool) Definition() tools.ToolSpec { return writeSpec() }
 
 func writeSpec() tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: ToolNameWrite,
-		Description: "Create a NEW file in the workspace. Refuses if the path already exists — " +
-			"use `edit` to modify an existing file. Creates parent directories as needed.",
+		Name:           ToolNameWrite,
+		Description:    "Create a new workspace file and parent directories. Refuses existing paths; use edit instead.",
 		WorkspaceScope: tools.WorkspaceScopeArgument("path"),
 		Parameters:     tools.SchemaFor[WriteArgs](),
 		Mutates:        true,

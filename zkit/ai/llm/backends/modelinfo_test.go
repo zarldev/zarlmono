@@ -34,8 +34,8 @@ func TestBuiltinOpenAIIncludesGPT6Astra(t *testing.T) {
 func TestRegistryCost(t *testing.T) {
 	reg := newModelInfoRegistry()
 
-	if in, out, ok := reg.Cost("anthropic", "claude-opus-4-7"); !ok || in != 0.015 || out != 0.075 {
-		t.Errorf("anthropic opus cost = %v/%v ok=%v, want 0.015/0.075 true", in, out, ok)
+	if in, out, ok := reg.Cost("anthropic", "claude-opus-4-7"); !ok || in != 0.005 || out != 0.025 {
+		t.Errorf("anthropic opus cost = %v/%v ok=%v, want 0.005/0.025 true", in, out, ok)
 	}
 	if in, _, ok := reg.Cost("gemini", "gemini-2.5-pro"); !ok || in != 0.00125 {
 		t.Errorf("gemini 2.5-pro input cost = %v ok=%v, want 0.00125 true", in, ok)
@@ -490,5 +490,24 @@ func TestEstimateCost_UnknownOrCachedIncomplete(t *testing.T) {
 	}
 	if !est.Incomplete || est.Reason != "cached_token_discount_unknown" {
 		t.Fatalf("cached EstimateCost = %+v, want incomplete cached_token_discount_unknown", est)
+	}
+	if math.Abs(est.InputUSD-0.000075) > 1e-12 || math.Abs(est.TotalUSD-0.000675) > 1e-12 {
+		t.Fatalf("cached EstimateCost subtotal = %+v, want input .000075 total .000675", est)
+	}
+
+	est, ok = reg.EstimateCost(t.Context(), "openai", "gpt-4o-mini", llm.Usage{
+		PromptTokens:        400,
+		CompletionTokens:    1000,
+		CachedTokens:        250,
+		CacheCreationTokens: 300,
+	})
+	if !ok {
+		t.Fatal("EstimateCost cache creation ok=false, want true")
+	}
+	if !est.Incomplete || est.Reason != "cache_write_pricing_unknown" {
+		t.Fatalf("cache creation EstimateCost = %+v, want incomplete cache_write_pricing_unknown", est)
+	}
+	if est.InputUSD != 0 || math.Abs(est.TotalUSD-0.0006) > 1e-12 {
+		t.Fatalf("cache creation EstimateCost subtotal = %+v, want input 0 total .0006", est)
 	}
 }

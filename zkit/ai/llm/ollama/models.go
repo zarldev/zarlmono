@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,11 +17,9 @@ import (
 // whatever `num_ctx` the modelfile (and any user override) pinned
 // at load time, so the only reliable answer is to ask the server.
 //
-// Wire format: POST /api/show with {"name": "<model>"} returns a
-// JSON blob whose model_info map contains "<arch>.context_length"
-// (eg "llama.context_length", "qwen2.context_length"). Older
-// servers expose the same value under details.parameter_size /
-// .num_ctx; both shapes are tolerated.
+// GET /api/ps reports loaded models' effective context_length. If the model
+// is not loaded, POST /api/show can supply an explicit num_ctx configuration.
+// Architectural model_info capacity alone is not a runtime context guarantee.
 //
 // Returns 0 on any error so the caller's fallback chain
 // (LLM_CONTEXT env, conservative default) stays in charge. baseURL
@@ -32,30 +31,54 @@ func ContextWindowFor(ctx context.Context, baseURL, model string) int {
 		return 0
 	}
 	root := strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if body := contextProbe(probeCtx, http.MethodGet, root+"/api/ps", nil); body != nil {
+		var loaded struct {
+			Models []struct {
+				Name          string `json:"name"`
+				Model         string `json:"model"`
+				ContextLength int    `json:"context_length"`
+			} `json:"models"`
+		}
+		if json.Unmarshal(body, &loaded) == nil {
+			for _, running := range loaded.Models {
+				if (sameOllamaModel(running.Name, model) || sameOllamaModel(running.Model, model)) && running.ContextLength > 0 {
+					return running.ContextLength
+				}
+			}
+		}
+	}
 	payload, err := json.Marshal(map[string]string{"name": model})
 	if err != nil {
 		return 0
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, root+"/api/show", bytes.NewReader(payload))
+	return parseShowResponse(contextProbe(probeCtx, http.MethodPost, root+"/api/show", bytes.NewReader(payload)))
+}
+
+func sameOllamaModel(left, right string) bool {
+	return strings.TrimSuffix(left, ":latest") == strings.TrimSuffix(right, ":latest")
+}
+
+func contextProbe(ctx context.Context, method, endpoint string, body io.Reader) []byte {
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return 0
+		return nil
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return 0
+		return nil
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	data, err := io.ReadAll(io.LimitReader(response.Body, 256*1024))
 	if err != nil {
-		return 0
+		return nil
 	}
-	return parseShowResponse(body)
+	return data
 }
 
 // parseShowResponse extracts the context window from an /api/show
@@ -68,8 +91,8 @@ func parseShowResponse(body []byte) int {
 	// every known arch. The details.num_ctx fallback handles older
 	// servers that don't expose model_info.
 	var probe struct {
-		ModelInfo map[string]json.RawMessage `json:"model_info"`
-		Details   struct {
+		Parameters string `json:"parameters"`
+		Details    struct {
 			NumCtx        int    `json:"num_ctx"`
 			ParameterSize string `json:"parameter_size"`
 		} `json:"details"`
@@ -80,23 +103,19 @@ func parseShowResponse(body []byte) int {
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return 0
 	}
-	for key, raw := range probe.ModelInfo {
-		if !strings.HasSuffix(key, ".context_length") {
-			continue
-		}
-		var n int
-		if err := json.Unmarshal(raw, &n); err != nil {
-			continue
-		}
-		if n > 0 {
-			return n
-		}
-	}
 	if probe.NumCtx > 0 {
 		return probe.NumCtx
 	}
 	if probe.Details.NumCtx > 0 {
 		return probe.Details.NumCtx
+	}
+	for _, line := range strings.Split(probe.Parameters, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "num_ctx" {
+			if value, err := strconv.Atoi(fields[1]); err == nil && value > 0 {
+				return value
+			}
+		}
 	}
 	return 0
 }

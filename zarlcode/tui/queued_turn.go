@@ -11,8 +11,23 @@ import (
 // while the model was already streaming its final answer, so the current runner
 // never reached another Steerer drain point.
 func (m *UI) launchQueuedTurn() tea.Cmd {
-	if m == nil || m.live == nil || m.runFn == nil {
+	if m.live == nil || m.runFn == nil {
 		return nil
+	}
+	if m.isSwarmOpen() {
+		m.session.SetErrorToast("stop the swarm goal before dispatching queued input")
+		return m.toastExpiryCmd()
+	}
+	if err := m.modeTargetSubmitBlocked(); err != nil {
+		m.showModeTargetBlocked(err, "; queued input retained")
+		return nil
+	}
+	if !m.durableDispatch() && m.modeTarget.prepared != nil {
+		queue := m.live.QueueSnapshot()
+		if len(queue) == 0 {
+			return nil
+		}
+		return m.runLiveTurnInput(queue[0].Message.Content, nil, queue[0].ID)
 	}
 	if m.durableDispatch() {
 		queue := m.live.QueueSnapshot()

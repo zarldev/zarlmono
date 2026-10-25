@@ -27,6 +27,7 @@ func (l *LiveRunner) Close(ctx context.Context) error {
 	l.mu.Lock()
 	if !l.closing {
 		l.closing = true
+		l.programOutputs.Close()
 		l.shutdownDone = make(chan struct{})
 		turnCancel := l.turnCancel
 		shutdownDone := l.shutdownDone

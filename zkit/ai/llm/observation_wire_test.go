@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/google"
@@ -73,11 +74,25 @@ func TestHostObservationUsesSupportedUserWireShape(t *testing.T) {
 			}))
 			defer server.Close()
 			provider := route.new(t, server.URL)
-			request := llm.CompletionRequest{Messages: []llm.Message{
+			compactor := compact.Tiered{TargetBytes: 1000, Phase1Threshold: .1, Phase2Threshold: .2, Phase3Threshold: 100}
+			compacted, err := compactor.Compact(t.Context(), []llm.Message{
+				{Role: llm.RoleAssistant, Content: strings.Repeat("earlier assistant prose ", 100), ToolCalls: []llm.ToolCall{{ID: "excerpt-call", Type: "function", Function: llm.ToolCallFunction{Name: "read", Arguments: `{}`}}}},
+				{Role: llm.RoleTool, ToolCallID: "excerpt-call", Content: "earlier result"},
+				{Role: llm.RoleUser, Content: "fresh human follow-up"},
+			}, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			excerpt := compacted.History[0]
+			if excerpt.Observation.Version != 1 {
+				t.Fatal("fixture did not produce a tiered host excerpt")
+			}
+			messages := []llm.Message{
 				{Role: llm.RoleUser, Content: "original assignment"},
 				{Role: llm.RoleAssistant, Content: "provisional answer"},
 				{Role: llm.RoleUser, Content: "host-observation-marker", Observation: llm.ObservationProvenance{Version: 1, ID: "private-origin-id"}},
-			}, Stream: route.stream}
+			}
+			request := llm.CompletionRequest{Messages: append(messages, compacted.History...), Stream: route.stream}
 			for _, err := range provider.Complete(t.Context(), request) {
 				if err != nil {
 					t.Fatal(err)
@@ -95,6 +110,20 @@ func TestHostObservationUsesSupportedUserWireShape(t *testing.T) {
 				if !userWireContainsObservation(body) {
 					t.Fatalf("host input was not carried by a supported user message: %s", encoded)
 				}
+				if !wireRoleContainsText(body, "user", "Host-generated historical excerpts") {
+					t.Fatal("tiered excerpt did not use supported user-role wire input")
+				}
+				for _, role := range []string{"assistant", "model", "system", "developer"} {
+					if wireRoleContainsText(body, role, "Host-generated historical excerpts") {
+						t.Errorf("tiered host excerpt was attributed to %s", role)
+					}
+				}
+				if strings.Contains(string(encoded), excerpt.Observation.ID) || strings.Contains(string(encoded), "reasoning trimmed") {
+					t.Fatal("host provenance or old compaction marker leaked into provider request")
+				}
+				if !strings.Contains(string(encoded), "earlier result") || !strings.Contains(string(encoded), "read") {
+					t.Fatal("provider request lost the excerpt's tool call/result")
+				}
 			default:
 				t.Fatal("provider did not send the fixture request")
 			}
@@ -106,22 +135,26 @@ func TestHostObservationUsesSupportedUserWireShape(t *testing.T) {
 }
 
 func userWireContainsObservation(value any) bool {
+	return wireRoleContainsText(value, "user", "host-observation-marker")
+}
+
+func wireRoleContainsText(value any, role, text string) bool {
 	switch value := value.(type) {
 	case map[string]any:
-		if value["role"] == "user" {
+		if value["role"] == role {
 			encoded, _ := json.Marshal(value)
-			if strings.Contains(string(encoded), "host-observation-marker") {
+			if strings.Contains(string(encoded), text) {
 				return true
 			}
 		}
 		for _, child := range value {
-			if userWireContainsObservation(child) {
+			if wireRoleContainsText(child, role, text) {
 				return true
 			}
 		}
 	case []any:
 		for _, child := range value {
-			if userWireContainsObservation(child) {
+			if wireRoleContainsText(child, role, text) {
 				return true
 			}
 		}

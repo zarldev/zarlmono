@@ -35,13 +35,13 @@ Every provider's `Complete` MUST:
 Carries `Messages`, `Temperature`, `MaxTokens`, `Stream`, `Tools`, plus four escape hatches:
 
 - **`ChatTemplateKwargs`** — typed payload for the llama.cpp / vLLM `chat_template_kwargs` extension; built from the chat template's thinking kwargs for Qwen3-style loops and rendered to a raw map only at provider transport edges. Providers that don't recognize it drop it.
-- **`ResponseFormat`** — pins output shape via JSON Schema. On OpenAI this hits structured output; on llama.cpp it triggers GBNF-constrained sampling (the model literally cannot emit a token sequence violating the schema, including invented enum values). Anthropic and Google ignore this field.
+- **`ResponseFormat`** — pins output shape. OpenAI-compatible and Codex adapters map JSON object/schema modes to their native structured-output fields; llama.cpp uses that OpenAI-compatible field for grammar-constrained sampling. Anthropic supports JSON Schema mode but has no separate JSON-object mode. Google maps JSON-object mode to `application/json` and JSON Schema mode to its raw-schema field.
 - **`Thinking`** — toggles extended reasoning, mapped to each provider's native mechanism (Anthropic budget, Gemini config, OpenAI/codex effort, llama.cpp kwargs). Providers that surface reasoning unconditionally ignore the toggle.
 - **`Options ModelOptions`** — a `map[string]any` escape hatch. Reach for it only when a feature isn't worth a typed field yet; typed fields graduate when a second consumer wants the same thing.
 
 ## Message content
 
-Messages carry `Content` (visible answer) and separate `ReasoningContent` (chain-of-thought). The separation is the provider contract — Anthropic extended thinking, DeepSeek/OpenAI `reasoning_content`, Gemini thought parts, and codex reasoning events all land in `ReasoningContent`, out of band from `Content`. The runner populates it from `CompletionChunk.Thinking` at end-of-turn; per-provider history serializers reshape it back onto the wire. Messages also carry `Parts` (multimodal text/image/audio), `ToolCalls`, and `ToolCallID`.
+Messages carry `Content` (visible answer) and separate `ReasoningContent` (the displayable reasoning projection). Anthropic extended thinking, DeepSeek/OpenAI `reasoning_content`, Gemini thought parts, and Codex reasoning events surface as `CompletionChunk.Thinking`; the runner accumulates that into `ReasoningContent`. Provider-native replay data is kept separately in `ContinuationItems`, and adapters consume only items matching their provider and format. Messages also carry `Parts` (multimodal content), `ToolCalls`, and `ToolCallID`.
 
 ## Provider tree
 
@@ -49,7 +49,7 @@ Messages carry `Content` (visible answer) and separate `ReasoningContent` (chain
 |---|---|---|
 | `openai/` | core | OpenAI SDK; the OAI-compat surface every "OpenAI-like" provider rides on |
 | `anthropic/` | core | Claude SDK; `cache_control: ephemeral` on system prompts for prompt-cache hits |
-| `google/` | core | genai SDK; retry-on-429 honouring Retry-After; synthesises `<think>` from thought parts |
+| `google/` | core | genai SDK; retry-on-429 honoring Retry-After; surfaces thought parts as reasoning and preserves signed native continuation items |
 | `llamacpp/` | facade | thin facade over `openai/`; defaults to `localhost:8081/v1`, no total-request timeout (local generations can be long) |
 | `ollama/` | facade | thin facade over `openai/`; defaults to `localhost:11434/v1` |
 | `deepseek/` | facade | facade over `openai/` → `api.deepseek.com`; handles reasoning-history differences |
@@ -59,6 +59,8 @@ Messages carry `Content` (visible answer) and separate `ReasoningContent` (chain
 | `repair/` | utility | JSON-recovery cascade for small-model tool-call argument fallout |
 | `templates/` | utility | chat-template metadata + thinking-tag split |
 | `providertest/` | harness | `Scenario` + `Suite` + canonical assertions for provider conformance |
+
+The verified SDK pins are Anthropic `v1.80.0`, OpenAI `v3.78.0`, and Google Gen AI `v1.74.0`. Anthropic's paired JSON Schema dependency is `v0.14.0`; keep that pair aligned as required by the root guidance.
 
 llama.cpp is the **default zarlcode provider** when no provider is configured.
 

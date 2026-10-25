@@ -43,6 +43,20 @@ func terminalNotice(reason runner.TerminalReason, iterations int) string {
 // Depth>0 events (agent_spawn sub-agents) route into a collapsible
 // subAgentItem instead of rendering as flat indented notices.
 func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
+	switch event := msg.(type) {
+	case teasink.CompactionSettledMsg:
+		m.session.applyCompactionSettled(event)
+	case teasink.RequestControlRecordedMsg:
+		m.handleRequestControlRecorded(event)
+	case teasink.ToolOutputMsg:
+		m.timeline.updateToolOutput(event.ExecutionID, event.ToolID, event.Text)
+	default:
+		return m.handleRunnerLifecycleMsg(msg)
+	}
+	return true, nil
+}
+
+func (m *UI) handleRunnerLifecycleMsg(msg tea.Msg) (bool, tea.Cmd) {
 	var cmd tea.Cmd
 	switch e := msg.(type) {
 	case turnSetupFailedMsg:
@@ -79,7 +93,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 
 	case teasink.ContentMsg:
 		m.session.applyContent(e)
-		m.timeline.appendContent(e.TaskID, e.Depth, e.Delta)
+		m.timeline.appendContentOutput(e.TaskID, e.Depth, e.Delta, e.ContentOutputIndex)
 
 	case teasink.ThinkingMsg:
 		m.session.applyThinking(e)
@@ -87,7 +101,8 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 
 	case teasink.ToolStartedMsg:
 		m.session.applyToolStarted(e)
-		m.timeline.startToolWithParent(e.TaskID, e.Depth, e.ExecutionID, e.ToolID, e.ToolName, toolArgHint(e.ToolName, e.Parameters), e.ParentExecutionID, e.ParentToolID, e.Sequence)
+		hint, input := presentToolCall(e.ToolName, e.Parameters, e.RawArguments)
+		m.timeline.startToolWithInput(e.TaskID, e.Depth, e.ExecutionID, e.ToolID, e.ToolName, hint, e.ParentExecutionID, e.ParentToolID, e.Sequence, input)
 		if e.ToolName == "agent_spawn" {
 			agent, _ := e.Parameters["agent"].(string)
 			if agent == "" {
@@ -121,11 +136,12 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.timeline.addDiff(e.TaskID, e.Path, e.Diff)
 
 	case teasink.ModeChangedMsg:
-		m.handleModeChanged(e)
+		cmd = tea.Batch(cmd, m.handleModeChanged(e))
 
 	case teasink.PlanUpdatedMsg:
 		before := m.session.Plan
 		m.session.applyPlanUpdated(e)
+		m.resetSidebarForPlan(before)
 		m.timeline.addPlanUpdate(e.TaskID, e.Plan)
 		cmd = tea.Batch(cmd, planProgressSoundCmd(m.appContext(), m.settings, before, e.Plan))
 
@@ -144,6 +160,7 @@ func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 
 	case teasink.IterationCompletedMsg:
 		m.session.applyIterationCompleted(e)
+		m.timeline.finishAssistantSegment(e.TaskID)
 
 	case teasink.CompactionAppliedMsg:
 		m.session.applyCompactionApplied(e)
@@ -245,14 +262,27 @@ func (m *UI) handleToolFailed(e teasink.ToolFailedMsg) {
 	}
 }
 
-func (m *UI) handleModeChanged(e teasink.ModeChangedMsg) {
+func (m *UI) handleModeChanged(e teasink.ModeChangedMsg) tea.Cmd {
 	if m.live != nil && e.Generation != m.live.AppliedMode().Generation {
-		return // A newer automatic transition or operator override already won.
+		return nil // A newer automatic transition or operator override already won.
 	}
+	changed := m.session.PlanMode != e.Plan
 	m.session.PlanMode = e.Plan
 	mode := "Build"
 	if e.Plan {
 		mode = "Plan"
 	}
 	m.timeline.addModeChange(e.TaskID, mode, e.Reason)
+	if changed {
+		return m.requestModeTarget(e.Plan, e.Generation)
+	}
+	return nil
+}
+
+func (m *UI) handleRequestControlRecorded(e teasink.RequestControlRecordedMsg) {
+	turnID := e.Control.TurnID
+	if turnID == "" {
+		turnID = e.TaskID
+	}
+	m.timeline.addControl(turnID, e.Control)
 }

@@ -62,7 +62,7 @@ func expandedNativeScreenshot(t *testing.T, count int) (*tui.UI, func(string) st
 	step(t, m, teasink.ToolStartedMsg{TaskID: "t", ToolID: "observe", ToolName: "computer_observe"})
 	step(t, m, teasink.ToolCompletedMsg{TaskID: "t", ToolID: "observe", ToolName: "computer_observe", FormattedResult: "readable observation metadata", Parts: parts})
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // tools
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	return m, output
@@ -303,7 +303,7 @@ func TestNativeScreenshotInsideProgram(t *testing.T) {
 	step(t, m, teasink.ToolStartedMsg{TaskID: "t", ToolID: "image", ParentToolID: "program", ToolName: "computer_observe"})
 	step(t, m, teasink.ToolCompletedMsg{TaskID: "t", ToolID: "image", ParentToolID: "program", ToolName: "computer_observe", Parts: []llm.ContentPart{screenshotPart(t, image.NewGray(image.Rect(0, 0, 100, 60)))}})
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-	step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // group
+	step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // tools
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // program
 	step(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
