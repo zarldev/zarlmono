@@ -67,6 +67,10 @@ func (m *UI) requestModeTarget(plan bool, modeGeneration uint64) tea.Cmd {
 	if m.live == nil || m.settings == nil {
 		return nil
 	}
+	if m.isSwarmOpen() {
+		m.session.SetErrorToast("stop the swarm goal before changing targets")
+		return m.toastExpiryCmd()
+	}
 	m.modeTarget.manualOverride = false
 	m.modeTarget.generation++
 	generation := m.modeTarget.generation

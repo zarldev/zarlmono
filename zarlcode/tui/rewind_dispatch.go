@@ -13,6 +13,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
+	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -27,6 +28,7 @@ type beforeTurn struct {
 	sourceWritten  *atomic.Pointer[sourceWrite]
 	attachments    []llm.ContentPart
 	reservation    *engine.RuntimeReservation
+	swarm          *engine.RecordedSwarmActivation
 	mu             sync.Mutex
 	stopping       bool
 	admitted       bool
@@ -53,6 +55,15 @@ func (b *beforeTurn) stopped() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.stopping
+}
+
+// runtimeReservation returns the borrowed recorded-activation reservation when
+// this beforeTurn dispatches a swarm activation; otherwise its own reservation.
+func (b *beforeTurn) runtimeReservation() *engine.RuntimeReservation {
+	if b.swarm != nil {
+		return b.swarm.Reservation
+	}
+	return b.reservation
 }
 
 func (m *UI) durableDispatch() bool {
@@ -172,7 +183,10 @@ func saveBeforeTurn(ctx context.Context, store *db.Store, snapshot *sessionSnaps
 }
 
 func (b *beforeTurn) run(ctx, saveCtx context.Context, store *db.Store, snapshot *sessionSnapshot) (tea.Msg, error) {
-	defer b.reservation.Release()
+	reservation := b.runtimeReservation()
+	if b.swarm == nil {
+		defer reservation.Release()
+	}
 	if err := b.save(saveCtx, store, snapshot); err != nil {
 		return nil, err
 	}
@@ -181,14 +195,24 @@ func (b *beforeTurn) run(ctx, saveCtx context.Context, store *db.Store, snapshot
 		return beforeTurnFailedMsg{prompt: input.Boundary.PromptText, attachments: b.attachments, err: context.Canceled, checkpointSaved: true}, nil
 	}
 	ctx = engine.WithToolOutputSession(ctx, input.SessionID)
+	if b.swarm != nil {
+		result := b.swarm.RunRecorded(ctx, store, input.SessionID)
+		if result.Err != nil {
+			return beforeTurnFailedMsg{prompt: input.Boundary.PromptText, attachments: b.attachments, err: result.Err, checkpointSaved: true}, nil
+		}
+		if result.Reason != runner.TerminalCompleted {
+			return beforeTurnFailedMsg{prompt: input.Boundary.PromptText, attachments: b.attachments, err: fmt.Errorf("swarm activation ended: %s", result.Reason), checkpointSaved: true}, nil
+		}
+		return liveTurnFinishedMsg{}, nil
+	}
 	var err error
 	if snapshot.exact {
-		err = b.reservation.RunRecordedTurn(ctx, input.Boundary.PromptText, b.attachments, store, input.SessionID)
+		err = reservation.RunRecordedTurn(ctx, input.Boundary.PromptText, b.attachments, store, input.SessionID)
 	} else {
 		// Canonical exact replay requires the history root established with a
 		// BEFORE checkpoint. Ordinary routes retain transcript/context saves
 		// and raw tool output without claiming that replay qualification.
-		err = b.reservation.RunTurn(ctx, input.Boundary.PromptText, b.attachments)
+		err = reservation.RunTurn(ctx, input.Boundary.PromptText, b.attachments)
 	}
 	if err != nil {
 		return beforeTurnFailedMsg{prompt: input.Boundary.PromptText, attachments: b.attachments, err: err, checkpointSaved: true}, nil
@@ -203,14 +227,14 @@ func (b *beforeTurn) save(ctx context.Context, store *db.Store, snapshot *sessio
 	input := b.input
 	var err error
 	var exact bool
-	input.Context, input.Target, exact, err = b.reservation.PersistenceSnapshot()
+	input.Context, input.Target, exact, err = b.runtimeReservation().PersistenceSnapshot()
 	if err == nil && snapshot.exact && !exact {
 		err = rewind.ErrTarget
 	}
 	if err != nil {
 		return err
 	}
-	input.Plan, err = b.reservation.PlanSnapshot()
+	input.Plan, err = b.runtimeReservation().PlanSnapshot()
 	if err != nil {
 		return err
 	}

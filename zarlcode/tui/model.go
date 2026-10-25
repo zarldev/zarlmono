@@ -70,6 +70,7 @@ type UI struct {
 	live                *engine.LiveRunner
 	liveSink            *teasink.Sink
 	liveOperation       *liveTurnOperation
+	foreground          *foregroundSwarm
 	liveGeneration      uint64
 	unsavedTurnError    error // persistence failure does not retain turn admission
 	completedBoundary   *completedSessionBoundary
@@ -465,6 +466,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
+	case foregroundSwarmActivationMsg:
+		return m, m.handleForegroundSwarmActivation(msg)
+	case foregroundSwarmStoppedMsg:
+		m.handleForegroundSwarmStopped(msg)
+		return m, m.toastExpiryCmd()
 	case settledLiveTurnMsg:
 		return m, m.handleSettledLiveTurn(msg)
 	case liveTurnFinishedMsg:

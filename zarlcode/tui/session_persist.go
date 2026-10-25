@@ -785,6 +785,8 @@ func (m *UI) sessionDeletionPending() bool {
 // when no command can concurrently mutate the queue.
 func (m *UI) FlushSessionPersistence(ctx context.Context) error {
 	var firstErr error
+	// A recorded swarm activation must not block its worker past shutdown.
+	m.resolveSwarmSettle(m.liveOperation, errSwarmShutdown)
 	protectedInput := m.sessionPersistCurrent != nil && m.sessionPersistCurrent.before != nil
 	deletingSession := m.sessionDeletionPending()
 	for _, op := range m.sessionPersistQueue {

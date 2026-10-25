@@ -243,6 +243,13 @@ func WithModelOptions(opts llm.ModelOptions) options.Option[Runner] {
 	}
 }
 
+// WithPromptCacheKey routes root-task requests using a conversation-scoped key
+// without changing task IDs. Empty keys and delegated tasks use their task ID.
+// The route is a provider hint, not a cache-hit guarantee or an authority boundary.
+func WithPromptCacheKey(key string) options.Option[Runner] {
+	return func(r *Runner) { r.promptCacheKey = key }
+}
+
 // WithThinkingBudget cuts an iteration that has streamed only reasoning
 // (thinking) tokens past byteBudget without yet emitting any visible
 // content or tool call — the degenerate "stuck thinking" loop. The cut is

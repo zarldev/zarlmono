@@ -118,6 +118,14 @@ func (m *UI) switchTarget(selection prefs.ModelSelection, done func(error)) tea.
 		m.session.SetErrorToast(err.Error())
 		return nil
 	}
+	if m.isSwarmOpen() {
+		err := errors.New("stop the swarm goal before changing providers")
+		if done != nil {
+			done(err)
+		}
+		m.session.SetErrorToast(err.Error())
+		return nil
+	}
 	m.markManualTargetOverride()
 	fb, _ := m.session.ProviderContext()
 	spec := engine.ProviderSpec{Name: selection.Provider, Model: selection.Model}

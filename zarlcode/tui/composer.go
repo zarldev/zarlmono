@@ -451,6 +451,9 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch msg.String() {
 	case "esc":
+		if m.isSwarmOpen() {
+			return m.stopForegroundSwarm()
+		}
 		if m.session.Run.Running && m.live != nil && m.live.CancelTurn() {
 			if m.liveOperation != nil {
 				m.liveOperation.cancelled = true
@@ -636,6 +639,10 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 	}
 	if m.liveOperation != nil && (!m.session.Run.Running || m.liveOperation.cancelled) {
 		return m.blockUnsettledSubmit(), false
+	}
+	if m.isSwarmOpen() {
+		m.session.SetErrorToast("a swarm goal is open; stop it before submitting")
+		return m.toastExpiryCmd(), false
 	}
 	if strings.HasPrefix(text, "/") {
 		return m.handleSlashSubmit(text), true

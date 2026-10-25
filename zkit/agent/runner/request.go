@@ -42,6 +42,9 @@ func (t *taskRun) prepareRequest(ctx context.Context, finalizeNudge string) (llm
 	// Pin every iteration to the same prompt-cache route. Providers that do not
 	// support routing ignore this option; it does not guarantee a cache hit.
 	options["prompt_cache_key"] = string(spec.ID)
+	if spec.Depth == 0 && r.promptCacheKey != "" {
+		options["prompt_cache_key"] = r.promptCacheKey
+	}
 	req := llm.CompletionRequest{
 		Messages: shaped, Tools: requestTools.tools, Stream: true, MaxTokens: r.maxTokens,
 		Temperature: r.temperature, Thinking: llm.ThinkingConfig{Enabled: t.thinking},
