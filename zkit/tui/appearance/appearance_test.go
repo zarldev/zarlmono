@@ -1,7 +1,6 @@
 package appearance_test
 
 import (
-	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -31,7 +30,7 @@ func names(t *testing.T) []string {
 }
 func choice(t *testing.T, s *appearance.Store, app, workspace, name, scope string) {
 	t.Helper()
-	c, err := s.Resolve(context.Background(), app, workspace)
+	c, err := s.Resolve(t.Context(), app, workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +40,7 @@ func choice(t *testing.T, s *appearance.Store, app, workspace, name, scope strin
 }
 func TestPrecedenceAndReset(t *testing.T) {
 	s, _ := store(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	n := names(t)
 	choice(t, s, "app", "workspace", appearance.DefaultTheme, "default")
 	for _, tc := range []struct {
@@ -70,7 +69,7 @@ func TestPrecedenceAndReset(t *testing.T) {
 }
 func TestMissingReadResetNoFiles(t *testing.T) {
 	s, path := store(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	if _, err := s.Resolve(ctx, "a", "w"); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +97,7 @@ func TestMissingReadResetNoFiles(t *testing.T) {
 }
 func TestValidationAndCorruption(t *testing.T) {
 	s, path := store(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, scope := range []string{"", "unknown", "workspace", "app"} {
 		if _, err := appearance.TargetFor(scope, "", ""); err == nil {
 			t.Fatalf("accepted %q", scope)
@@ -148,7 +147,7 @@ func TestValidationAndCorruption(t *testing.T) {
 }
 func TestConcurrentWriters(t *testing.T) {
 	s, _ := store(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	n := names(t)
 	// Pre-create schema so these workers exercise concurrent independent handles.
 	if err := s.Set(ctx, appearance.Global(), n[0]); err != nil {
@@ -185,7 +184,7 @@ func TestConcurrentWriters(t *testing.T) {
 }
 func TestPickerPreviewAndGeometry(t *testing.T) {
 	s, path := store(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	n := names(t)
 	original, _ := theme.ByName(n[0])
 	p, err := appearance.NewPicker(ctx, s, "app", "my workspace", original)

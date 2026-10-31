@@ -28,7 +28,9 @@ func inspectionUI(t *testing.T, contextView bool) *tui.UI {
 		ui.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	}
 	t.Cleanup(func() {
-		if err := ui.FlushSessionPersistence(context.Background()); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		if err := ui.FlushSessionPersistence(cleanupCtx); err != nil {
 			t.Errorf("join inspection: %v", err)
 		}
 	})
@@ -214,7 +216,9 @@ func TestInspectionJoinDoesNotPreemptDraftSave(t *testing.T) {
 	defer func() {
 		close(release)
 		<-done
-		if err := f.ui.FlushSessionPersistence(context.Background()); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		if err := f.ui.FlushSessionPersistence(cleanupCtx); err != nil {
 			t.Errorf("final join: %v", err)
 		}
 	}()

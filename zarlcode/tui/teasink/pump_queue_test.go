@@ -35,10 +35,11 @@ func TestPumpQueueCloseWakesCapacityWaiters(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sink, release, _ := blockedPreviewSink(t)
 		produced := make(chan struct{})
+		ctx := t.Context()
 		go func() {
 			defer close(produced)
 			for range 5000 {
-				sink.OnThinking(t.Context(), runner.Thinking{Delta: "queued"})
+				sink.OnThinking(ctx, runner.Thinking{Delta: "queued"})
 			}
 		}()
 		synctest.Wait()
