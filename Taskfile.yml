@@ -4,7 +4,6 @@ vars:
   BIN_DIR:
     sh: 'printf "%s" "${BIN_DIR:-$HOME/.local/bin}"'
   ZARLCODE: '{{.BIN_DIR}}/zarlcode'
-  ZARLOS: '{{.BIN_DIR}}/zarlos'
   SWEEVAL: '{{.BIN_DIR}}/sweeval'
   ZARLCODE_VERSION:
     sh: 'printf "%s+%s" "$(git describe --tags --match "zarlcode/v*" --dirty --always 2>/dev/null | sed "s#^zarlcode/##" || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
@@ -73,6 +72,30 @@ tasks:
           echo "==> go test ($m)"
           go test -C "$m" -count=1 ./...
         done
+
+  code-risk:
+    desc: Collect a report-only function complexity and coverage baseline (all Go modules)
+    cmds:
+      - |
+        set -eu
+        mkdir -p coverage/coderisk
+        run=$(mktemp -d "$(pwd)/coverage/coderisk/run.XXXXXX")
+        echo "Collection: $run"
+        go env -json GOOS GOARCH GOVERSION GOFLAGS CGO_ENABLED > "$run/environment.json"
+        for name in root examples zkit zarlcode swebench-eval; do
+          module="$name"
+          pattern=./...
+          if [ "$name" = root ]; then module=.; pattern=./tools/...; fi
+          echo "==> coverage ($name); log: $run/$name.test.log"
+          go -C "$module" list -json "$pattern" > "$run/$name.packages.json"
+          if ! go -C "$module" test -count=1 -timeout=10m -covermode=atomic -coverprofile="$run/$name.cover" "$pattern" > "$run/$name.test.log" 2>&1; then
+            tail -n 60 "$run/$name.test.log"
+            echo "Collection incomplete; no report generated. See $run" >&2
+            exit 1
+          fi
+        done
+        touch "$run/complete"
+        go run ./tools/coderisk/cmd/coderisk -input "$run" {{.CLI_ARGS}}
 
   test-policy:
     desc: Enforce external-package, internal-test, and test-context policies
@@ -214,18 +237,6 @@ tasks:
     desc: Alias for zarlcode
     cmds:
       - task: zarlcode
-
-  zarlos:
-    desc: Build and install the zarlos system helper
-    cmds:
-      - mkdir -p {{.BIN_DIR}}
-      - GOAMD64="${GOAMD64:-v3}" go build -trimpath -ldflags='-s -w' -o {{.ZARLOS}} ./zarlos
-      - echo "installed{{":"}} {{.ZARLOS}}"
-
-  zarlos:install:
-    desc: Alias for zarlos
-    cmds:
-      - task: zarlos
 
   zarlcode:run:
     desc: Run zarlcode from source
