@@ -14,10 +14,11 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/zarldev/zarlmono/zkit v0.22.0
+	github.com/zarldev/zarlmono/zkit v0.23.0
 	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
+	google.golang.org/genai v1.76.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -91,7 +92,6 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/api v0.293.0 // indirect
-	google.golang.org/genai v1.76.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect

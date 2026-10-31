@@ -20,15 +20,16 @@ import (
 // reaching into the swarm or changing the script's evidence.
 type handoffSink struct {
 	runner.NopSink
-	mu          sync.Mutex
-	researcher  taskscope.ID
-	implementer taskscope.ID
-	waiting     taskscope.ID
-	refreshed   bool
-	ready       chan struct{}
-	posted      chan struct{}
-	readyOnce   sync.Once
-	postOnce    sync.Once
+	mu             sync.Mutex
+	researcher     taskscope.ID
+	implementer    taskscope.ID
+	waiting        taskscope.ID
+	refreshed      bool
+	beforeResponse bool
+	ready          chan struct{}
+	posted         chan struct{}
+	readyOnce      sync.Once
+	postOnce       sync.Once
 }
 
 func (s *handoffSink) OnConversationStarted(_ context.Context, event runner.ConversationStarted) {
@@ -57,18 +58,27 @@ func (s *handoffSink) OnToolStarted(ctx context.Context, event runner.ToolStarte
 	}
 }
 
-func (s *handoffSink) OnToolCompleted(_ context.Context, event runner.ToolCompleted) {
+func (s *handoffSink) OnToolCompleted(ctx context.Context, event runner.ToolCompleted) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if event.TaskID == s.researcher && event.ToolName == boardtools.PostName.String() {
 		s.postOnce.Do(func() { close(s.posted) })
 	}
 	if event.TaskID != s.implementer || event.ToolName != boardtools.ListName.String() {
+		s.mu.Unlock()
 		return
 	}
 	page, ok := event.Result.(board.Page)
 	if ok && len(page.Posts) == 1 && page.Posts[0].Author == "host" {
 		s.waiting = event.TaskID
+	}
+	wait := s.beforeResponse && s.waiting == event.TaskID
+	s.mu.Unlock()
+	if wait {
+		s.readyOnce.Do(func() { close(s.ready) })
+		select {
+		case <-s.posted:
+		case <-ctx.Done():
+		}
 	}
 }
 
@@ -95,6 +105,21 @@ func TestLatePrerequisiteRefreshesWithinSameActivation(t *testing.T) {
 		// RunExperiment has joined every callback before returning.
 		if sink.waiting == "" || !sink.refreshed || !report.Complete || !report.ShutdownJoined {
 			t.Fatalf("late prerequisite not handled in the same turn: waiting=%s refreshed=%t report=%+v", sink.waiting, sink.refreshed, report)
+		}
+	})
+}
+
+// The stale board result is followed by a newer admitted observation before the
+// next model response, so the script must refresh without relying on reactivation.
+func TestPrerequisiteArrivingBeforeResponseRefreshesBoard(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sink := &handoffSink{ready: make(chan struct{}), posted: make(chan struct{}), beforeResponse: true}
+		report, err := experiment.RunExperiment(t.Context(), experiment.ExperimentLimits(), sink)
+		if err != nil {
+			t.Fatalf("run experiment: %v; report: %+v", err, report)
+		}
+		if sink.waiting == "" || !sink.refreshed || !report.Complete || !report.ShutdownJoined {
+			t.Fatalf("stale board page was not refreshed: waiting=%s refreshed=%t report=%+v", sink.waiting, sink.refreshed, report)
 		}
 	})
 }

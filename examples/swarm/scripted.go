@@ -16,14 +16,15 @@ import (
 // Each activation owns one client, used synchronously by its runner. Decisions
 // use only model-visible tool results, never direct access to the shared board.
 type scriptedClient struct {
-	prerequisite contribution
-	step         contribution
-	runID        string
-	calls        int
-	lastID       string
-	lastTool     tools.ToolName
-	readID       board.ID
-	posted       bool
+	prerequisite     contribution
+	step             contribution
+	runID            string
+	calls            int
+	lastID           string
+	lastTool         tools.ToolName
+	readID           board.ID
+	posted           bool
+	listObservations int
 }
 
 var _ runner.Client = (*scriptedClient)(nil)
@@ -43,7 +44,17 @@ func (c *scriptedClient) next(history []llm.Message) (llm.CompletionChunk, error
 	if c.posted {
 		return runnertest.ChunkText("Contribution already published; no duplicate work."), nil
 	}
-	if c.lastID == "" {
+	observations := 0
+	for _, message := range history {
+		if message.Observation.Version != 0 {
+			observations++
+		}
+	}
+	// A board notification can be admitted after List took its snapshot but
+	// before this response. Refresh that stale page even though no pending
+	// input remains to reactivate the runner after a final response.
+	if c.lastID == "" || c.lastTool == boardtools.ListName && observations > c.listObservations {
+		c.listObservations = observations
 		return c.call(boardtools.ListName, struct {
 			Limit int `json:"limit"`
 		}{Limit: board.MaxPage})
