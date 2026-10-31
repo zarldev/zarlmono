@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update the documentation site to Astro 7.4.2 and Starlight 0.42.7. Building the site requires Node >=22.23.4.
 - Extract the zarlos helper from the monorepo workspace and install tasks. It is not part of the zkit or zarlcode release artifacts; examples and swebench-eval also retain their own release lifecycles.
 
-## [zarlcode/v0.23.0] — 2026-10-31
+## [zarlcode/v0.23.0] — 2026-11-01
 
 ### added
 
