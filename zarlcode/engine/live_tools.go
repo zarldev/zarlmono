@@ -498,6 +498,9 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 		runner.WithTemperature(policy.temperature),
 		runner.WithModelOptions(policy.modelOptions),
 	)
+	if scope.Account != nil {
+		opts = append(opts, runner.WithModelIdentity(policy.target.Provider.Name(), policy.target.Model))
+	}
 	if policy.autoCompact {
 		opts = append(opts, runner.WithCompactor(coderunner.StandardCompactor(
 			buildScopedCompactor(policy.compactEngine, policy.target.Window, policy.compactProvider, policy.compactModel, l, l.ws.Root(), scope), policy.target.Window, policy.reserve)))
