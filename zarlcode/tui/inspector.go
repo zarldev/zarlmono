@@ -440,6 +440,7 @@ func (d *inspector) processLines(width int) []string {
 		headerLine(fmt.Sprintf("processes · %d running · %d tracked", running, len(procs)), width, palette.Primary.On),
 		"",
 	}
+	style := terminalChrome()
 	for _, p := range procs {
 		selected := d.processCursor >= 0 && d.processCursor < len(procs) && procs[d.processCursor].ID == p.ID
 		state := palette.Success.On("running")
@@ -447,11 +448,8 @@ func (d *inspector) processLines(width int) []string {
 			state = palette.Muted.On(fmt.Sprintf("exited %d", p.ExitCode))
 		}
 		age := time.Since(p.StartedAt).Round(time.Second)
-		marker := " "
-		if selected {
-			marker = palette.Primary.On("▶")
-		}
-		lines = append(lines, fmt.Sprintf("%s %s  pid=%d  %s  age=%s", marker, palette.Info.On(p.ID.String()), p.PID, state, age))
+		label := fmt.Sprintf("%s  pid=%d  %s  age=%s", palette.Info.On(p.ID.String()), p.PID, state, age)
+		lines = append(lines, listRow(style, label, "", width, selected))
 		lines = append(lines, fmt.Sprintf("    %s", palette.Muted.On(p.Command)))
 		lines = append(lines, fmt.Sprintf("    cwd=%s · stdout=%d lines · stderr=%d lines", palette.Muted.On(p.CWD), p.StdoutLines, p.StderrLines))
 	}

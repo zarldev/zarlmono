@@ -180,6 +180,7 @@ type toolItem struct {
 	layout             childBlockCache
 	layoutChildren     []item
 	notify             func()
+	jsonResult         toolJSONPresentation
 }
 
 func (t *toolItem) bump() {
@@ -304,6 +305,9 @@ func (t *toolItem) resultBodyLines(width int) []string {
 	}
 	if t.jsonView {
 		if text, ok := t.resultJSON(); ok {
+			if len(text) > largeToolPreviewBytes {
+				return prefixLines(renderLargeToolPreview(max(1, width-t.depth*2-4), text, toolResultMaxLines), "    ")
+			}
 			return renderPlain(width-t.depth*2, text, withBodyPrefix("    "), withMaxLines(toolResultMaxLines))
 		}
 	}

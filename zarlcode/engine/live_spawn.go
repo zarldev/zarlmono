@@ -16,8 +16,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/claudecode"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/deepseek"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/google"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/llamacpp"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/ollama"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
@@ -188,6 +191,14 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 			return spawnTarget{}, fmt.Errorf("agent %q provider: %w", agent.Name, err)
 		}
 		prov = built
+		// A child's provider/model can have a much smaller context than its
+		// parent. Use the same resolved budget as foreground target selection.
+		window = settings.ContextWindow(ctx, spec)
+		if window <= 0 {
+			// Unknown target limits must not inherit a potentially much larger
+			// parent's budget or disable the standard pressure guard.
+			window = LiveContextWindow
+		}
 	}
 	if prov == nil {
 		return spawnTarget{}, fmt.Errorf("agent %q has no provider", agent.Name)
@@ -263,8 +274,13 @@ func spawnRunnerPromptOption(l *LiveRunner, agent catalog.Agent, src func() tool
 }
 
 func receivesAutomaticCompletion(provider llm.Provider) bool {
+	// Registry local/custom routes use llm.Named around a concrete adapter.
+	// Inspect that adapter, not the mutable route name, for delivery behavior.
+	if wrapper, ok := provider.(interface{ Unwrap() llm.Provider }); ok {
+		return receivesAutomaticCompletion(wrapper.Unwrap())
+	}
 	switch provider.(type) {
-	case *openai.Provider, *anthropic.Provider, *google.Provider, *llamacpp.Provider, *openaicodex.Provider:
+	case *openai.Provider, *anthropic.Provider, *google.Provider, *llamacpp.Provider, *ollama.Provider, *deepseek.Provider, *claudecode.Provider, *openaicodex.Provider:
 		return true
 	default:
 		return false

@@ -28,6 +28,7 @@ import (
 type UI struct {
 	width            int
 	height           int
+	canvas           uv.ScreenBuffer // owned by the serial Update/View loop; reused at a stable size
 	layout           uiLayout
 	timeline         *timeline
 	graphics         *terminalGraphics
@@ -404,7 +405,7 @@ func New() *UI {
 // Init implements tea.Model. Non-critical startup work runs as Bubble Tea
 // commands so the first frame is not blocked by external services.
 func (m *UI) Init() tea.Cmd {
-	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd, m.transcriptPersistenceCmd(), m.initialModeTarget())
+	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd, m.transcriptPersistenceCmd(), m.initialModeTarget(), m.appearanceTick())
 }
 
 // Update implements tea.Model. Resize recomputes the layout rects; esc stops
@@ -445,6 +446,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.overlay.coversScreen() {
 			return m, settingsTick()
 		}
+		return m, nil
+	}
+	if _, ok := msg.(appearanceTickMsg); ok {
+		return m, tea.Batch(m.appearanceRefreshCmd(), m.appearanceTick())
+	}
+	if value, ok := msg.(appearancePollResult); ok {
+		m.receiveAppearance(value)
 		return m, nil
 	}
 	if cmd, ok := m.handleDraftPersistenceMsg(msg); ok {
@@ -593,7 +601,7 @@ func (m *UI) recomputeLayout() {
 	)
 }
 
-// View implements tea.Model. It allocates a screen buffer, paints the
+// View implements tea.Model. It reuses an owned screen buffer, paints the
 // pane rects into it via Draw, and hands the flattened content back to
 // bubbletea. Alt-screen and mouse mode are set on the View — bubbletea
 // v2 has no WithAltScreen program option; per-View fields replace it.
@@ -608,10 +616,14 @@ func (m *UI) View() tea.View {
 		}
 		return v
 	}
-	canvas := uv.NewScreenBuffer(m.width, m.height)
-	canvas.Method = m.widthMethod // match the renderer's negotiated width method
-	m.Draw(canvas, canvas.Bounds())
-	v.Content = strings.ReplaceAll(canvas.Render(), "\r\n", "\n")
+	if m.canvas.RenderBuffer == nil || m.canvas.Width() != m.width || m.canvas.Height() != m.height {
+		m.canvas = uv.NewScreenBuffer(m.width, m.height)
+	} else {
+		m.canvas.Clear()
+	}
+	m.canvas.Method = m.widthMethod // match the renderer's negotiated width method
+	m.Draw(m.canvas, m.canvas.Bounds())
+	v.Content = strings.ReplaceAll(m.canvas.Render(), "\r\n", "\n")
 	if m.graphics != nil {
 		frame := m.timelineGraphics
 		if m.overlay.active() {

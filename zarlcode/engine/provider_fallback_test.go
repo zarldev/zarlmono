@@ -44,6 +44,54 @@ func TestActiveProviderKeepsFallbackCredentialsOnlyForFallbackBackend(t *testing
 	}
 }
 
+func TestActiveProviderPairsInheritedModelWithProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		globalProvider string
+		workspace      string
+		globalModel    string
+		wantModel      string
+	}{
+		{name: "different global provider", globalProvider: "openai", workspace: "deepseek", globalModel: "global-openai", wantModel: "deepseek-flash"},
+		{name: "same global provider", globalProvider: "deepseek", workspace: "deepseek", globalModel: "global-deepseek", wantModel: "global-deepseek"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			settings := engine.NewSettings(store, nil, nil, t.TempDir())
+			if err := settings.Svc.SetModelSelection(t.Context(), prefs.ScopeGlobal, prefs.ModelSelection{Provider: tc.globalProvider, Model: tc.globalModel}); err != nil {
+				t.Fatal(err)
+			}
+			if err := settings.Svc.SetModelSelection(t.Context(), prefs.ScopeWorkspace, prefs.ModelSelection{Provider: tc.workspace}); err != nil {
+				t.Fatal(err)
+			}
+			got := settings.ActiveProvider(t.Context(), engine.ProviderSpec{Name: "llamacpp", Model: "fallback-model"})
+			if got.Name != tc.workspace || got.Model != tc.wantModel {
+				t.Fatalf("ActiveProvider() = %s/%s, want %s/%s", got.Name, got.Model, tc.workspace, tc.wantModel)
+			}
+		})
+	}
+}
+
+func TestActiveProviderKeepsLegacyGlobalModelOnFallbackRoute(t *testing.T) {
+	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	settings := engine.NewSettings(store, nil, nil, t.TempDir())
+	if err := settings.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeyModel, "legacy-model"); err != nil {
+		t.Fatal(err)
+	}
+	got := settings.ActiveProvider(t.Context(), engine.ProviderSpec{Name: "llamacpp", Model: "fallback-model"})
+	if got.Name != "llamacpp" || got.Model != "legacy-model" {
+		t.Fatalf("ActiveProvider() = %s/%s, want fallback provider with legacy model", got.Name, got.Model)
+	}
+}
+
 func TestInheritedClaudeCodeDoesNotReplaceFallback(t *testing.T) {
 	store, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -52,18 +100,21 @@ func TestInheritedClaudeCodeDoesNotReplaceFallback(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	settings := engine.NewSettings(store, nil, nil, t.TempDir())
-	if err := settings.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeyProvider, "claude-code"); err != nil {
-		t.Fatalf("set global provider: %v", err)
+	if err := settings.Svc.SetModelSelection(t.Context(), prefs.ScopeGlobal, prefs.ModelSelection{Provider: "claude-code", Model: "inherited-claude-model"}); err != nil {
+		t.Fatalf("set global selection: %v", err)
+	}
+	if err := settings.Svc.SetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyModel, "workspace-model-for-ignored-route"); err != nil {
+		t.Fatalf("set workspace model: %v", err)
 	}
 	fallback := engine.ProviderSpec{Name: "llamacpp", Model: "local"}
-	if got := settings.ActiveProvider(t.Context(), fallback); got.Name != fallback.Name {
-		t.Fatalf("inherited claude-code selected %q, want fallback %q", got.Name, fallback.Name)
+	if got := settings.ActiveProvider(t.Context(), fallback); got.Name != fallback.Name || got.Model != fallback.Model {
+		t.Fatalf("inherited claude-code resolved to %q/%q, want fallback %q/%q", got.Name, got.Model, fallback.Name, fallback.Model)
 	}
 
-	if err := settings.Svc.SetSetting(t.Context(), prefs.ScopeWorkspace, prefs.KeyProvider, "claude-code"); err != nil {
-		t.Fatalf("set workspace provider: %v", err)
+	if err := settings.Svc.SetModelSelection(t.Context(), prefs.ScopeWorkspace, prefs.ModelSelection{Provider: "claude-code", Model: "workspace-claude-model"}); err != nil {
+		t.Fatalf("set workspace selection: %v", err)
 	}
-	if got := settings.ActiveProvider(t.Context(), fallback); got.Name != "claude-code" {
-		t.Fatalf("workspace claude-code selected %q", got.Name)
+	if got := settings.ActiveProvider(t.Context(), fallback); got.Name != "claude-code" || got.Model != "workspace-claude-model" {
+		t.Fatalf("workspace claude-code resolved to %q/%q", got.Name, got.Model)
 	}
 }

@@ -152,7 +152,11 @@ func (m *UI) drawTimelineTopBar(scr uv.Screen, r uv.Rectangle) {
 	}
 	// Match the transcript inset. Reserve viewport state, then a useful title
 	// measure before allowing optional model metadata to consume the row.
-	width := max(1, r.Dx()-3)
+	if r.Dx() < 4 {
+		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), m.sessionDisplayName())
+		return
+	}
+	width := r.Dx() - 3
 	left, model, viewport := m.transcriptHeaderSegments()
 	// Follow the transcript's non-2027 policy before allocating header cells:
 	// joined emoji otherwise occupy more wcwidth cells than grapheme columns.
@@ -173,15 +177,16 @@ func (m *UI) drawTimelineTopBar(scr uv.Screen, r uv.Rectangle) {
 	if model != "" && modelWidth >= 8 {
 		right = ansi.Truncate(model, modelWidth, "…") + separator + viewport
 	}
+	style := terminalChrome()
 	line := rowLayout(left, right, width)
 	drawLine(scr, uv.Rect(r.Min.X+2, r.Min.Y, width, 1), line)
-	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1, r.Dx(), 1), palette.Border.On(strings.Repeat("─", r.Dx())))
+	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+1, r.Dx(), 1), style.Rule("", r.Dx(), false))
 }
 
 func (m *UI) transcriptHeaderSegments() (string, string, string) {
 	left := palette.Primary.On("ƶ") + " " + palette.Fg.On(m.sessionDisplayName())
 	model := ""
-	if name := strings.ToLower(m.session.Model); name != "" {
+	if name := m.session.Model; name != "" {
 		model = palette.Muted.On(name)
 	}
 	viewport := ""

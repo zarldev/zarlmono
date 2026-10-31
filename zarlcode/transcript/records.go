@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 )
 
@@ -29,14 +30,39 @@ func (t Thread) RecordsSince(revision uint64) ([]Record, error) {
 		if entry.Revision <= revision {
 			continue
 		}
-		payload, err := json.Marshal(entry.Payload)
+		record, err := t.recordAt(sequence)
 		if err != nil {
-			return nil, fmt.Errorf("encode transcript entry %q: %w", entry.ID, err)
+			return nil, err
 		}
-		records = append(records, Record{
-			Sequence: uint64(sequence + 1), ID: entry.ID, ParentID: entry.ParentID,
-			TurnID: entry.TurnID, Kind: entry.Kind.String(), Revision: entry.Revision, Payload: payload,
-		})
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func (t Thread) recordAt(index int) (Record, error) {
+	entry := t.entries[index]
+	payload, err := json.Marshal(entry.Payload)
+	if err != nil {
+		return Record{}, fmt.Errorf("encode transcript entry %q: %w", entry.ID, err)
+	}
+	return Record{
+		Sequence: uint64(index) + 1, ID: entry.ID, ParentID: entry.ParentID, //nolint:gosec // G115: the slice access above already bounds index to a nonnegative int.
+		TurnID: entry.TurnID, Kind: entry.Kind.String(), Revision: entry.Revision, Payload: payload,
+	}, nil
+}
+
+func (b *Builder) changedRecords() ([]Record, error) {
+	// Events can touch a child before its parent, or append then update the
+	// same entry. Emit each final value once, in canonical sequence order.
+	slices.Sort(b.changed)
+	indices := slices.Compact(b.changed)
+	records := make([]Record, 0, len(indices))
+	for _, index := range indices {
+		record, err := b.thread.recordAt(index)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
 	}
 	return records, nil
 }

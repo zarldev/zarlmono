@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -32,25 +30,6 @@ func (m *UI) drawSidebar(scr uv.Screen, r uv.Rectangle) {
 	}
 	// Keep details reachable even when the sidebar body overflows.
 	drawLine(scr, uv.Rect(x, r.Max.Y-1, innerW, 1), palette.Subtle.On("ctrl+l more · ctrl+p plan"))
-}
-
-func paneSectionRule(line string, width int) string {
-	if width < 1 {
-		return ""
-	}
-	lineW := ansi.StringWidth(line)
-	if lineW >= width {
-		return ansi.Truncate(line, width, "")
-	}
-	fill := max(width-lineW-1, 0)
-	return line + palette.Border.On(strings.Repeat("─", fill)+"┤")
-}
-
-// drawSectionRule paints a section-head line as a full-width rule joining the
-// pane's left separator (r.Min.X-1) and right border (r.Max.X).
-func drawSectionRule(scr uv.Screen, r uv.Rectangle, y int, line string) {
-	width := r.Dx() + 2
-	drawLine(scr, uv.Rect(r.Min.X-1, y, width, 1), paneSectionRule(line, width))
 }
 
 func (m *UI) stateSidebarLines(innerW, innerH int) []string {

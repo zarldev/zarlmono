@@ -10,6 +10,9 @@
 // opaque: compactors count their bytes, clone retained items, and never interpret
 // or truncate payloads. Summary/collapse strategies discard them with an owning
 // message; Tiered Phase 3 additionally defines an explicit native replay boundary
-// by dropping whole items from older retained messages while preserving projected
-// content and paired tool history. Recent turns retain exact replay.
+// by dropping whole items from older retained non-action messages while preserving
+// projected content and paired tool history. An assistant turn with both tool calls
+// and ContinuationItems is an indivisible provider replay unit: Tiered clones every
+// field unchanged and excludes the entire turn from savings. Recent turns retain
+// exact replay.
 package compact

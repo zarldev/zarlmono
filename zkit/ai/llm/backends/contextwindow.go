@@ -7,15 +7,12 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/anthropic"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/claudecode"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/deepseek"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/google"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/llamacpp"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/ollama"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openaicodex"
 )
-
-// geminiContextWindow is the published window shared by all current
-// Gemini 1.5 / 2.x chat models.
-const geminiContextWindow = 1_048_576
 
 // ContextWindow returns the known hard context window (tokens) for a
 // (provider, model) pair. 0 means "unknown — probe the server or keep
@@ -42,6 +39,13 @@ func (r *ProviderRegistry) ResolveContextWindowCached(name, model string) int {
 	def, err := r.Parse(name)
 	if err == nil && def.ContextWindow > 0 {
 		return def.ContextWindow
+	}
+	// Documented route-specific limits beat generic API catalog entries;
+	// unknown models still use the catalog fallback.
+	if err == nil {
+		if window := routeContextWindow(def.AdapterType, model); window > 0 {
+			return window
+		}
 	}
 	if r.modelsDevSource != nil {
 		if entry, ok := r.modelsDevSource.LookupCached(name, model); ok && entry.ContextWindow > 0 {
@@ -79,6 +83,16 @@ func (r *ProviderRegistry) ResolveContextWindow(ctx context.Context, name, baseU
 	if err == nil && def.ContextWindow > 0 {
 		return def.ContextWindow
 	}
+	// Documented route-specific limits beat generic API catalog entries;
+	// unknown models still use the catalog fallback.
+	if err == nil {
+		if window := routeContextWindow(def.AdapterType, model); window > 0 {
+			return window
+		}
+	}
+	if baseURL == "" && err == nil {
+		baseURL = def.BaseURL
+	}
 	// A local server's configured runtime limit is stronger than the model's
 	// theoretical catalogue limit. Probe it before metadata/static fallbacks.
 	if id, parseErr := llm.ParseLLMProvider(name); parseErr == nil {
@@ -112,6 +126,17 @@ func (r *ProviderRegistry) ResolveContextWindow(ctx context.Context, name, baseU
 	return 0
 }
 
+func routeContextWindow(at AdapterType, model string) int {
+	switch at {
+	case AdapterTypes.OAUTHCLAUDECODE:
+		return claudecode.ContextWindowFor(model)
+	case AdapterTypes.GOOGLECOMPATIBLE, AdapterTypes.GOOGLEVERTEX:
+		return google.ContextWindowFor(model)
+	default:
+		return 0
+	}
+}
+
 func contextWindowForAdapter(at AdapterType, model string) int {
 	switch at {
 	case AdapterTypes.OPENAICOMPATIBLE:
@@ -122,7 +147,7 @@ func contextWindowForAdapter(at AdapterType, model string) int {
 	case AdapterTypes.ANTHROPICCOMPATIBLE:
 		return anthropic.ContextWindowFor(model)
 	case AdapterTypes.GOOGLECOMPATIBLE, AdapterTypes.GOOGLEVERTEX:
-		return geminiContextWindow
+		return google.ContextWindowFor(model)
 	case AdapterTypes.OAUTHOPENAICODEX:
 		return openaicodex.ContextWindowFor(model)
 	case AdapterTypes.OAUTHCLAUDECODE:

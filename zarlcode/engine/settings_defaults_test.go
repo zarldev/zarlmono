@@ -102,8 +102,8 @@ func TestApplicationModelTargetDefaultsAndInheritance(t *testing.T) {
 		want                  engine.ProviderSpec
 	}{
 		{prefs.KeyCompactProvider, prefs.KeyCompactModel, engine.ProviderSpec{Name: "openai-codex", Model: "gpt-6-sol"}},
-		{prefs.KeyJudgeProvider, prefs.KeyJudgeModel, engine.ProviderSpec{Name: "deepseek", Model: "deepseek-v4-flash"}},
-		{prefs.KeySpawnDefaultExploreProvider, prefs.KeySpawnDefaultExploreModel, engine.ProviderSpec{Name: "deepseek", Model: "deepseek-v4-flash"}},
+		{prefs.KeyJudgeProvider, prefs.KeyJudgeModel, engine.ProviderSpec{Name: "deepseek", Model: "deepseek-flash"}},
+		{prefs.KeySpawnDefaultExploreProvider, prefs.KeySpawnDefaultExploreModel, engine.ProviderSpec{Name: "deepseek", Model: "deepseek-flash"}},
 		{prefs.KeySpawnDefaultVerifyProvider, prefs.KeySpawnDefaultVerifyModel, engine.ProviderSpec{Name: "openai-codex", Model: "gpt-6-luna"}},
 		{prefs.KeySpawnDefaultImplementProvider, prefs.KeySpawnDefaultImplementModel, engine.ProviderSpec{Name: "openai-codex", Model: "gpt-6-sol"}},
 	} {

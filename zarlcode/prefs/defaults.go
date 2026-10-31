@@ -73,9 +73,9 @@ func ModelTargetDefault(providerKey string) (string, ModelSelection) {
 	case KeyCompactProvider:
 		return KeyCompactModel, ModelSelection{Provider: DefaultProvider, Model: "gpt-6-sol"}
 	case KeyJudgeProvider:
-		return KeyJudgeModel, ModelSelection{Provider: "deepseek", Model: "deepseek-v4-flash"}
+		return KeyJudgeModel, ModelSelection{Provider: "deepseek", Model: "deepseek-flash"}
 	case KeySpawnDefaultExploreProvider:
-		return KeySpawnDefaultExploreModel, ModelSelection{Provider: "deepseek", Model: "deepseek-v4-flash"}
+		return KeySpawnDefaultExploreModel, ModelSelection{Provider: "deepseek", Model: "deepseek-flash"}
 	case KeySpawnDefaultVerifyProvider:
 		return KeySpawnDefaultVerifyModel, ModelSelection{Provider: DefaultProvider, Model: "gpt-6-luna"}
 	case KeySpawnDefaultImplementProvider:

@@ -14,6 +14,7 @@ func TestResumeSavedTargetFailureRetainsCurrentSelection(t *testing.T) {
 	requireSetSelection(t, settings, prefs.ScopeWorkspace, oldSelection)
 	ui, live := newTargetUI(t, settings, oldSelection)
 	before := live.RunTarget()
+	beforeSession := ui.SessionIdentity()
 
 	const sessionID = "resume-invalid-target"
 	if err := settings.Store.SaveSessionDraft(t.Context(), db.SessionRecord{
@@ -27,26 +28,19 @@ func TestResumeSavedTargetFailureRetainsCurrentSelection(t *testing.T) {
 	}
 
 	cmd, requested, err := ui.ResumeSavedSessionTarget(t.Context(), sessionID)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "provider switch failed") {
+		t.Fatalf("resume error = %v, want provider switch failure", err)
 	}
-	if !requested {
-		t.Fatal("resume saved target did not request a target switch")
+	if !requested || cmd != nil {
+		t.Fatal("rejected saved target returned a command")
 	}
-	if cmd == nil {
-		t.Fatal("resume saved target returned no switch command")
-	}
-	step(t, ui, cmd())
 
 	requireSelection(t, settings, prefs.ScopeWorkspace, oldSelection)
 	got := live.RunTarget()
 	if got.Provider != before.Provider || got.Spec != before.Spec || got.Window != before.Window {
 		t.Fatalf("live target changed after resumed target failed: got=%+v before=%+v", got, before)
 	}
-	if toast := ui.ToastText(); !strings.Contains(toast, "provider switch failed") {
-		t.Fatalf("toast=%q, want provider switch failure", toast)
-	}
-	if got := ui.SessionIdentity(); got != sessionID {
-		t.Fatalf("resumed session id=%q, want=%q", got, sessionID)
+	if got := ui.SessionIdentity(); got != beforeSession {
+		t.Fatalf("rejected session published identity %q", got)
 	}
 }

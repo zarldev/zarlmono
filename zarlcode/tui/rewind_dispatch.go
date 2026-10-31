@@ -29,6 +29,7 @@ type beforeTurn struct {
 	attachments    []llm.ContentPart
 	reservation    *engine.RuntimeReservation
 	swarm          *engine.RecordedSwarmActivation
+	protectExact   bool
 	mu             sync.Mutex
 	stopping       bool
 	admitted       bool
@@ -127,7 +128,9 @@ func (m *UI) enqueueBeforeTurn(op liveTurnOperation, prompt string, attachments 
 		},
 		expectedActive: m.initialActive,
 		expectedSource: sourceVersion,
-		attachments:    llm.CloneContentParts(attachments), reservation: reservation,
+		attachments:    llm.CloneContentParts(attachments),
+		reservation:    reservation,
+		protectExact:   m.liveOperation.promotingExact,
 	}
 	before.sourceWritten = new(atomic.Pointer[sourceWrite])
 	m.liveOperation.source = &sourceObservation{version: sourceVersion.version,
@@ -189,6 +192,11 @@ func (b *beforeTurn) run(ctx, saveCtx context.Context, store *db.Store, snapshot
 	}
 	if err := b.save(saveCtx, store, snapshot); err != nil {
 		return nil, err
+	}
+	if b.protectExact {
+		if err := reservation.ProtectDurableExactContext(); err != nil {
+			return beforeTurnFailedMsg{prompt: b.input.Boundary.PromptText, attachments: b.attachments, err: err, checkpointSaved: true}, nil
+		}
 	}
 	input := b.input
 	if !b.admit() {

@@ -35,7 +35,7 @@ func (m *UI) resetSidebarForPlan(before code.Plan) {
 }
 
 func sidebarHeading(text string) string {
-	return palette.Fg.On("\x1b[1m" + text + "\x1b[22m")
+	return terminalChrome().PaneLabel(text, false)
 }
 
 func (s sidebarSection) heading() string {
@@ -155,7 +155,7 @@ func (m *UI) sidebarPlan(width int) sidebarSection {
 		glyph, _ := planStepDecor(step.Status)
 		style := palette.Muted.On
 		if step.Status == code.StepStatuses.INPROGRESS {
-			style = sidebarHeading
+			style = func(text string) string { return palette.Fg.On("\x1b[1m" + text + "\x1b[22m") }
 		}
 		section.rows = append(section.rows, renderPlain(width, step.Text,
 			withFirstPrefix(glyph+" ", "  "), withStyle(style))...)

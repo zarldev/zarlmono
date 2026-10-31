@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/db"
@@ -66,6 +67,27 @@ func (s sessionHistorySink) Request(ctx context.Context, request llm.CompletionR
 // checkpoint and lends store until the turn and persistence FIFO have drained.
 func (r *RuntimeReservation) RunRecordedTurn(ctx context.Context, prompt string, attachments []llm.ContentPart, store *db.Store, sessionID string) error {
 	return r.runTurn(ctx, prompt, attachments, r.owner.sessionRecordingOptions(store, sessionID)...)
+}
+
+// ProtectDurableExactContext activates exact-history semantics after the caller
+// has committed a qualified fresh conversation boundary. A failed call leaves
+// the context unchanged; callers retain the durable boundary and must report it.
+func (r *RuntimeReservation) ProtectDurableExactContext() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active || !r.dispatchOnly {
+		return ErrRuntimeBusy
+	}
+	if !r.owner.checkpointTargetSupported(r.owner.RunTarget()) {
+		return rewind.ErrTarget
+	}
+	r.owner.context.mu.Lock()
+	defer r.owner.context.mu.Unlock()
+	if len(r.owner.context.context) != 0 && !r.owner.context.exact {
+		return rewind.ErrTarget
+	}
+	r.owner.context.exact = true
+	return nil
 }
 
 // RunRecordedTurn records a session-owned turn when no BEFORE checkpoint can be

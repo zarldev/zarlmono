@@ -120,7 +120,7 @@ func (d *serviceDialog) lines(width int) []string {
 		"url        " + st.URL,
 		"files      " + st.Dir,
 		"installed  " + boolLabel(st.Installed),
-		"docker     " + boolLabel(st.Docker),
+		"runtime    " + st.Runtime,
 		"health     " + boolLabel(st.Healthy),
 	}
 	if st.Error != "" && !st.Healthy {
@@ -129,17 +129,13 @@ func (d *serviceDialog) lines(width int) []string {
 	lines = append(lines, "")
 	lines = append(lines, renderPlain(width, "zarlcode can manage this tool service because it backs web_search. Model servers stay external; configure those under Providers.", withStyle(palette.Muted.On))...)
 	lines = append(lines, "")
+	style := terminalChrome()
 	for i, row := range serviceDialogRows {
-		marker := "  "
-		label := palette.Subtle.On(row.label)
-		if i == d.selected {
-			marker = palette.Primary.On("▸ ")
-			label = palette.Assistant.On(row.label)
-		}
+		label := row.label
 		if d.busy == row.op {
-			label += palette.Muted.On(" …")
+			label += " …"
 		}
-		lines = append(lines, marker+label)
+		lines = append(lines, listRow(style, label, "", width, i == d.selected))
 	}
 	if d.message != "" && time.Since(d.messageAt) < settingsToastTTL {
 		lines = append(lines, "", palette.Muted.On(d.message))

@@ -19,7 +19,6 @@ import (
 // state only: activation execution is driven through the shared settlement FIFO.
 type foregroundSwarm struct {
 	goal       *engine.Swarm
-	cancel     context.CancelFunc
 	done       chan struct{}
 	generation uint64
 	stopping   bool
@@ -109,11 +108,11 @@ func (m *UI) startForegroundSwarm(assignment string) tea.Cmd {
 	}
 
 	runCtx, cancel := context.WithCancel(m.appContext())
-	owner.cancel = cancel
 	m.foreground = owner
 
 	go func() {
 		defer close(owner.done)
+		defer cancel()
 		_ = goal.Run(runCtx)
 	}()
 

@@ -8,7 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 )
 
 const fileMentionLimit = 20000
@@ -110,17 +109,14 @@ func (p *fileMentionPicker) draw(scr uv.Screen, area uv.Rectangle) {
 	w := min(84, max(30, area.Dx()-8))
 	h := min(24, max(8, area.Dy()-6))
 	r := uv.Rect(area.Min.X+(area.Dx()-w)/2, area.Min.Y+(area.Dy()-h)/2, w, h)
-	inner := drawPaneFrameColored(scr, r, "ATTACH @FILE", palette.Border, palette.Primary)
-	drawLine(scr, uv.Rect(inner.Min.X, inner.Min.Y, inner.Dx(), 1), palette.Fg.On("@"+p.query+"█"))
+	inner := drawPaneFrameColored(scr, r, "attach @file", palette.Border, palette.Primary)
+	drawLine(scr, uv.Rect(inner.Min.X, inner.Min.Y, inner.Dx(), 1), palette.Fg.On("@"+p.query+"▏"))
 	files := p.filtered()
 	p.cursor = min(p.cursor, max(0, len(files)-1))
 	start := max(0, p.cursor-(inner.Dy()-3)+1)
+	style := terminalChrome()
 	for row, path := range files[start:min(len(files), start+inner.Dy()-3)] {
-		prefix := "  "
-		if start+row == p.cursor {
-			prefix = "› "
-		}
-		drawLine(scr, uv.Rect(inner.Min.X, inner.Min.Y+1+row, inner.Dx(), 1), ansi.Truncate(prefix+path, inner.Dx(), "…"))
+		drawLine(scr, uv.Rect(inner.Min.X, inner.Min.Y+1+row, inner.Dx(), 1), listRow(style, path, "", inner.Dx(), start+row == p.cursor))
 	}
 	drawLine(scr, uv.Rect(inner.Min.X, inner.Max.Y-1, inner.Dx(), 1), palette.Muted.On("type to filter · ↑↓ select · enter attach · esc cancel"))
 }

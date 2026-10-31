@@ -202,8 +202,8 @@ func TestActivityLongNamesPreserveViewport(t *testing.T) {
 			ui.Update(teasink.ToolStartedMsg{TaskID: "turn", ToolID: "long", ToolName: strings.Repeat("LONG工具", 20)})
 			ui.Update(tea.WindowSizeMsg{Width: width, Height: 60})
 			out := ansi.Strip(ui.View().Content)
-			if width >= 104 && strings.Count(out, "⠋ running long") != 1 {
-				t.Fatalf("expected one lowercase composer activity indicator:\n%s", out)
+			if width >= 104 && strings.Count(out, "⠋ running LONG") != 1 {
+				t.Fatalf("expected one case-preserved composer activity indicator:\n%s", out)
 			}
 			for line := range strings.SplitSeq(out, "\n") {
 				if ansi.StringWidth(line) > width {

@@ -58,14 +58,17 @@ type Result struct {
 	Query       string
 	Hits        []Hit
 	Suggestions []string
-	Output      tools.OutputFormat
+	// Failures reports sanitized upstream failures alongside usable partial hits.
+	Failures []SourceFailure
+	Output   tools.OutputFormat
 }
 
 // compactResponse is the post-trim JSON payload shape.
 type compactResponse struct {
-	Query       string   `json:"query"`
-	Results     []Hit    `json:"results"`
-	Suggestions []string `json:"suggestions,omitempty"`
+	Query       string          `json:"query"`
+	Results     []Hit           `json:"results"`
+	Suggestions []string        `json:"suggestions,omitempty"`
+	Failures    []SourceFailure `json:"failures,omitempty"`
 }
 
 // String renders the model-facing form for the requested output mode.
@@ -75,13 +78,18 @@ func (r Result) String() string {
 			Query:       r.Query,
 			Results:     r.Hits,
 			Suggestions: r.Suggestions,
+			Failures:    r.Failures,
 		})
 		if err != nil {
 			return "{}"
 		}
 		return string(b)
 	}
-	return renderLabeled(r.Query, r.Hits, r.Suggestions)
+	text := renderLabeled(r.Query, r.Hits, r.Suggestions)
+	if len(r.Failures) > 0 {
+		text += "\nsearch degraded: " + failureSummary(r.Failures)
+	}
+	return text
 }
 
 // page is the normalized pre-render payload a backend fetch returns. The
@@ -91,6 +99,7 @@ type page struct {
 	query       string
 	hits        []Hit
 	suggestions []string
+	failures    []SourceFailure
 }
 
 // specFor builds the shared LLM-facing spec; backends differ only in the

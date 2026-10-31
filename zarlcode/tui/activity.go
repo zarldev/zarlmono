@@ -143,5 +143,5 @@ func (s *RunState) activityLabel() string {
 	if name == "" {
 		name = "tool"
 	}
-	return "running " + ansi.Truncate(strings.ToLower(name), 24, "…")
+	return "running " + ansi.Truncate(name, 24, "…")
 }

@@ -86,11 +86,11 @@ func TestSavedInspectionIsReadOnlyWithoutRuntime(t *testing.T) {
 		t.Fatal("missing safe diagnostic or private content leaked into diagnostic")
 	}
 	ui.Update(tea.KeyPressMsg{Code: 'v'})
-	if !strings.Contains(ansi.Strip(ui.View().Content), "READ-ONLY") {
+	if !strings.Contains(ansi.Strip(ui.View().Content), "read-only saved history") {
 		t.Fatal("history is not identified as read-only")
 	}
 	ui.Update(tea.KeyPressMsg{Code: 'r'}) // live rewind is disabled for saved history
-	if !strings.Contains(ansi.Strip(ui.View().Content), "READ-ONLY") {
+	if !strings.Contains(ansi.Strip(ui.View().Content), "read-only saved history") {
 		t.Fatal("saved reader invoked live rewind")
 	}
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -278,7 +278,7 @@ func TestSavedInspectionWithoutCheckpointKeepsHistoryAvailable(t *testing.T) {
 	}
 	ui.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	ui.Update(tea.KeyPressMsg{Code: 'v'})
-	if !strings.Contains(ansi.Strip(ui.View().Content), "READ-ONLY") {
+	if !strings.Contains(ansi.Strip(ui.View().Content), "read-only saved history") {
 		t.Fatal("history unavailable without checkpoint")
 	}
 	after, err := f.store.GetSessionResumeState(t.Context(), id)

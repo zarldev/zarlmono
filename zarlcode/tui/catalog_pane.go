@@ -302,15 +302,7 @@ func (p *catalogPane) deleteCur() action {
 // tabBar renders the agents/skills/hooks sub-tab row shown above the
 // inventory list.
 func (p *catalogPane) tabBar() []string {
-	parts := make([]string, len(catalogTabs))
-	for i, name := range catalogTabs {
-		if i == p.tab {
-			parts[i] = palette.Primary.On("[ " + name + " ]")
-		} else {
-			parts[i] = palette.Subtle.On(name)
-		}
-	}
-	return []string{strings.Join(parts, "  "), ""}
+	return []string{tabCluster(terminalChrome(), catalogTabs, p.tab), ""}
 }
 
 // detailLines renders the inventory: one row per entry (cursor-marked, meta
@@ -352,14 +344,11 @@ func (p *catalogPane) detailLines(width, height int) []string {
 	}
 
 	out := p.tabBar()
+	style := terminalChrome()
 	for i := start; i < len(p.rows); i++ {
 		r := p.rows[i]
 		sel := i == p.cursor
-		marker, name := "  ", palette.Subtle.On(r.name)
-		if sel {
-			marker, name = palette.Primary.On("▸ "), palette.Assistant.On(r.name)
-		}
-		left := marker + name
+		left := r.name
 		if r.desc != "" {
 			left += "  " + palette.Muted.On(r.desc)
 		}
@@ -367,7 +356,7 @@ func (p *catalogPane) detailLines(width, height int) []string {
 		if r.meta != "" {
 			right = palette.Subtle.On(r.meta)
 		}
-		out = append(out, rowLayout(left, right, width))
+		out = append(out, listRow(style, left, right, width, sel))
 		if sel && p.expanded {
 			out = append(out, p.bodyLines(r, width)...)
 		}

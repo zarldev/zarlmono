@@ -317,10 +317,6 @@ func codexRateLimitError(body string, header http.Header) *llm.RateLimitError {
 		if parsed.Error.ResetsInSeconds > 0 {
 			rle.RetryAfter = time.Duration(parsed.Error.ResetsInSeconds) * time.Second
 		}
-		// A usage-limit verdict with no reset window is a hard stop; one
-		// that resets is transient.
-		rle.Permanent = parsed.Error.Type == "usage_limit_reached" &&
-			rle.ResetAt.IsZero() && rle.RetryAfter == 0
 	}
 
 	if rle.RetryAfter == 0 {
@@ -333,6 +329,9 @@ func codexRateLimitError(body string, header http.Header) *llm.RateLimitError {
 			rle.ResetAt = parseRateLimitReset(rls)
 		}
 	}
+	// Unknown or missing reset timing does not make a usage limit permanent;
+	// only an explicit insufficient_quota response denotes permanent billing failure.
+	rle.Permanent = parsed.Error.Type == "insufficient_quota"
 	return rle
 }
 

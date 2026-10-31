@@ -550,15 +550,10 @@ func (d *providersDialog) modelPickerLines(width int) []string {
 		start = picker.cursor - listPickerVisible + 1
 	}
 	end := min(start+listPickerVisible, len(picker.items))
-	lines := []string{palette.Assistant.On(picker.title), ""}
+	lines := []string{terminalChrome().PaneLabel(picker.title, true), ""}
+	style := terminalChrome()
 	for i := start; i < end; i++ {
-		prefix := "  "
-		item := palette.Subtle.On(picker.items[i])
-		if i == picker.cursor {
-			prefix = palette.Primary.On("▸ ")
-			item = palette.Primary.On(picker.items[i])
-		}
-		lines = append(lines, ansi.Truncate(prefix+item, width, ""))
+		lines = append(lines, listRow(style, picker.items[i], "", width, i == picker.cursor))
 	}
 	return lines
 }
@@ -592,28 +587,17 @@ func (d *providersDialog) detailLines(width int) []string {
 		return d.signInLines(width)
 	}
 	lines := make([]string, 0, len(d.defs)+2)
+	style := terminalChrome()
 	for i, def := range d.defs {
-		marker := "  "
-		namecell := palette.Subtle.On(pad(def.Name, 16))
-		if i == d.cursor {
-			marker = palette.Primary.On("▸ ")
-			namecell = palette.Primary.On(pad(def.Name, 16))
-		}
 		if i == d.cursor && d.editing {
 			bullets := strings.Repeat("•", len(d.editor.value))
-			lines = append(lines, marker+namecell+"  key: "+bullets+palette.Primary.On("▏"))
+			lines = append(lines, listRow(style, pad(def.Name, 16)+"  key: "+bullets+palette.Primary.On("▏"), "", width, true))
 			continue
 		}
-		lines = append(lines, rowLayout(marker+namecell, d.tags(def), width))
+		lines = append(lines, listRow(style, pad(def.Name, 16), d.tags(def), width, i == d.cursor))
 	}
 	// "+ new provider" entry at the bottom of the list.
-	newMarker := "  "
-	newLabel := palette.Subtle.On(pad("+ new provider…", 16))
-	if d.cursor == len(d.defs) {
-		newMarker = palette.Primary.On("▸ ")
-		newLabel = palette.Primary.On(pad("+ new provider…", 16))
-	}
-	lines = append(lines, newMarker+newLabel)
+	lines = append(lines, listRow(style, pad("+ new provider…", 16), "", width, d.cursor == len(d.defs)))
 	return lines
 }
 

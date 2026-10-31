@@ -87,6 +87,21 @@ func (s *Service) SetModelSelection(ctx context.Context, scope Scope, selection 
 	return s.ApplySettings(ctx, scope, changes...)
 }
 
+// KeyActiveSession stores the workspace's selected durable conversation.
+const KeyActiveSession = "active_session"
+
+// SetSessionSelection atomically selects a workspace conversation and its saved
+// provider/model. A rejected write changes none of the three preferences.
+func (s *Service) SetSessionSelection(ctx context.Context, selection ModelSelection, sessionID string) error {
+	if selection.Provider == "" || selection.Model == "" || sessionID == "" {
+		return errors.New("settings: session selection requires provider, model and session")
+	}
+	return s.ApplySettings(ctx, ScopeWorkspace,
+		SettingChange{Key: KeyProvider, Value: selection.Provider},
+		SettingChange{Key: KeyModel, Value: selection.Model},
+		SettingChange{Key: KeyActiveSession, Value: sessionID})
+}
+
 const mcpAuthKeyPrefix = "mcp:"
 
 // MCPAuthKeyProvider returns the credential-row provider used for an MCP server.

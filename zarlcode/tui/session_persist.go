@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	activeSessionKey      = "active_session"
+	activeSessionKey      = prefs.KeyActiveSession
 	sessionSaveCommandTTL = 2 * time.Second
 )
 
@@ -148,8 +148,8 @@ func (m *UI) resumeSession(ctx context.Context, id string) error {
 		}
 		return nil
 	}
-	m.completeResumeSession(saved, false)
-	return nil
+	_, err = m.restoreSavedSession(saved, false)
+	return err
 }
 
 func (m *UI) resumeLatestSession(ctx context.Context) error {
@@ -510,31 +510,48 @@ func (m *UI) resumeTargetDiffers(s *savedSession) bool {
 }
 
 func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd {
-	if s != nil && s.exactHead != nil {
-		if err := m.resumeExactSession(m.appContext(), s); err != nil {
-			m.session.SetErrorToast("resume continuation: " + err.Error())
-		}
-		return m.toastExpiryCmd()
-	}
-	if m.liveOperation != nil || m.sessionRetry != nil {
-		m.session.SetErrorToast("wait for the current turn to settle before switching sessions")
-		return m.toastExpiryCmd()
-	}
 	if s == nil {
 		return nil
+	}
+	cmd, err := m.restoreSavedSession(s, useSavedTarget)
+	if err != nil {
+		m.session.SetErrorToast(err.Error())
+		return m.toastExpiryCmd()
+	}
+	return cmd
+}
+
+func (m *UI) restoreSavedSession(s *savedSession, useSavedTarget bool) (tea.Cmd, error) {
+	if s.exactHead != nil {
+		if err := m.resumeExactSession(m.appContext(), s); err != nil {
+			return nil, fmt.Errorf("resume continuation: %w", err)
+		}
+		return m.toastExpiryCmd(), nil
+	}
+	if m.liveOperation != nil || m.sessionRetry != nil {
+		return nil, fmt.Errorf("wait for the current turn to settle before switching sessions: %w", engine.ErrRuntimeBusy)
+	}
+	useSavedTarget = useSavedTarget && s.Provider != "" && s.Model != ""
+	var prepared engine.TargetUpdate
+	if useSavedTarget {
+		var err error
+		prepared, err = m.prepareOrdinarySessionTarget(s)
+		if err != nil {
+			return nil, fmt.Errorf("provider switch failed: %w", err)
+		}
 	}
 	if m.live != nil {
 		reservation, err := m.live.ReserveRuntime()
 		if err != nil {
-			m.session.SetErrorToast("resume session: " + err.Error())
-			return m.toastExpiryCmd()
+			return nil, fmt.Errorf("resume session: %w", err)
 		}
-		if err := reservation.RestoreSessionContext(s.Context, s.MCPActivations); err != nil {
+		if err := reservation.RestoreStoredSession(m.appContext(), engine.StoredSessionRestore{ID: s.ID, Context: s.Context, MCPActivations: s.MCPActivations, Target: prepared, UseSavedTarget: useSavedTarget}, m.settings.Svc); err != nil {
 			reservation.Release()
-			m.session.SetErrorToast("resume session: " + err.Error())
-			return m.toastExpiryCmd()
+			return nil, fmt.Errorf("resume session: %w", err)
 		}
 		defer reservation.Release()
+	} else if err := m.settings.Svc.SetSetting(m.appContext(), prefs.ScopeWorkspace, activeSessionKey, s.ID); err != nil {
+		return nil, fmt.Errorf("select saved session: %w", err)
 	}
 	m.intro = nil
 	m.resetSessionModeTarget(true)
@@ -575,17 +592,20 @@ func (m *UI) completeResumeSession(s *savedSession, useSavedTarget bool) tea.Cmd
 	} else {
 		m.session.SetSuccessToast(notice)
 	}
-	if m.settings.Svc != nil {
-		if err := m.settings.Svc.SetSetting(m.appContext(), prefs.ScopeWorkspace, activeSessionKey, s.ID); err != nil {
-			m.session.SetToastTone(notice+"; active session preference was not saved: "+err.Error(), toastWarn)
+	if useSavedTarget {
+		m.markManualTargetOverride()
+		m.session.SetActiveProviderSpec(prepared.Spec)
+		m.session.ApplyProviderCostBasis(prepared.Spec)
+		m.appliedReasoning, m.appliedWindow = activeProviderPolicy(m.settings, prepared.Spec.Name)
+		if prepared.Window > 0 {
+			m.session.SetContextWindow(prepared.Window)
+			m.SetPressureConfig(prepared.Window, m.session.Run.pressureReserve)
+		}
+		if m.settings.Registry != nil {
+			m.settings.Registry.SetActiveName(prepared.Spec.Name)
 		}
 	}
-	cmd := m.toastExpiryCmd()
-	if useSavedTarget && s.Provider != "" && s.Model != "" {
-		selection := prefs.ModelSelection{Provider: s.Provider, Model: s.Model}
-		cmd = tea.Batch(cmd, m.switchTarget(selection, nil))
-	}
-	return cmd
+	return m.toastExpiryCmd(), nil
 }
 
 type sessionSnapshot struct {

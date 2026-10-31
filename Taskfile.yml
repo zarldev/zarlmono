@@ -4,6 +4,7 @@ vars:
   BIN_DIR:
     sh: 'printf "%s" "${BIN_DIR:-$HOME/.local/bin}"'
   ZARLCODE: '{{.BIN_DIR}}/zarlcode'
+  ZARLOS: '{{.BIN_DIR}}/zarlos'
   SWEEVAL: '{{.BIN_DIR}}/sweeval'
   ZARLCODE_VERSION:
     sh: 'printf "%s+%s" "$(git describe --tags --match "zarlcode/v*" --dirty --always 2>/dev/null | sed "s#^zarlcode/##" || echo dev)" "$(date -u +%Y%m%d-%H%M%S)"'
@@ -110,10 +111,10 @@ tasks:
       - task: tools-test
 
   lint:
-    desc: Run golangci-lint for the root and CI-covered modules
+    desc: Run golangci-lint for root tooling and CI-covered modules
     cmds:
       - |
-        for pattern in ./... ./examples/... ./zkit/... ./zarlcode/... ./swebench-eval/...; do
+        for pattern in ./tools/... ./examples/... ./zkit/... ./zarlcode/... ./swebench-eval/...; do
           echo "==> golangci-lint ($pattern)"
           go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "$pattern"
         done
@@ -213,6 +214,18 @@ tasks:
     desc: Alias for zarlcode
     cmds:
       - task: zarlcode
+
+  zarlos:
+    desc: Build and install the zarlos system helper
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - GOAMD64="${GOAMD64:-v3}" go build -trimpath -ldflags='-s -w' -o {{.ZARLOS}} ./zarlos
+      - echo "installed{{":"}} {{.ZARLOS}}"
+
+  zarlos:install:
+    desc: Alias for zarlos
+    cmds:
+      - task: zarlos
 
   zarlcode:run:
     desc: Run zarlcode from source

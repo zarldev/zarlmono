@@ -360,6 +360,11 @@ func renderMarkdownContent(width int, b contentBlock) []string {
 }
 
 func renderCodeContent(width int, b contentBlock) []string {
+	if b.maxLines > 0 && len(b.text) > largeToolPreviewBytes {
+		// Tokenizing a huge source just to show a few rows can stall the event
+		// loop. An explicitly plain preview avoids misleading partial syntax.
+		return renderLargeToolPreview(renderContentWidth(width, b), b.text, b.maxLines)
+	}
 	md := fencedMarkdownCode(b.text, b.syntax)
 	raw := renderMarkdown(md, renderAvailableContentWidth(width, b))
 	lines := strings.Split(raw, "\n")
@@ -421,6 +426,16 @@ func renderToolResultContent(width int, b contentBlock) []string {
 	if lines := renderTypedToolResult(width, b); lines != nil {
 		return lines
 	}
+	if b.maxLines > 0 && len(b.text) > largeToolPreviewBytes {
+		cw := renderContentWidth(width, b)
+		// Shell/file/code output stays literal even when it happens to be JSON.
+		if toolResultRenderKind(b.toolName) == contentPlain {
+			if lines, ok := readableJSONResultPreview(cw, b.text, b.maxLines); ok {
+				return lines
+			}
+		}
+		return renderLargeToolPreview(cw, b.text, b.maxLines)
+	}
 	if lines := renderWebToolText(renderAvailableContentWidth(width, b), b.toolName, b.text); lines != nil {
 		return lines
 	}
@@ -433,7 +448,7 @@ func renderToolResultContent(width int, b contentBlock) []string {
 		}
 		return renderCodeContent(width, b)
 	default:
-		if lines, ok := readableJSONResultLines(renderAvailableContentWidth(width, b), b.text); ok {
+		if lines, ok := readableJSONResultPreview(renderAvailableContentWidth(width, b), b.text, b.maxLines); ok {
 			return lines
 		}
 		if isSearchTool(b.toolName) {

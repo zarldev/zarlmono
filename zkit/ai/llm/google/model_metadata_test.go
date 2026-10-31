@@ -9,8 +9,8 @@ import (
 func TestCurrentDefaultMetadataDoesNotBorrowOlderModelRates(t *testing.T) {
 	t.Parallel()
 	input, output, known := google.CostPer1k("gemini-3.8-flash")
-	if !known || input != 0.00075 || output != 0.00375 {
-		t.Fatalf("current standard estimate=%g/%g known=%v", input, output, known)
+	if !known || input != 0.0015 || output != 0.0075 {
+		t.Fatalf("current conservative estimate=%g/%g known=%v", input, output, known)
 	}
 	if !google.Capabilities("gemini-3.8-flash").SupportsThinking {
 		t.Fatal("current default lost thinking capability")

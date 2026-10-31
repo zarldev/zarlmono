@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -15,7 +16,8 @@ import (
 // searxngDescription is the LLM-facing description for the SearXNG backend.
 const searxngDescription = "Search the web via a local SearXNG instance. Returns labelled plaintext — numbered " +
 	"results with title, URL, and snippet rows; set output=\"json\" for {query, results:[{title,url,content}]} " +
-	"instead. Use this for current information, post-cutoff facts, or to verify uncertain claims."
+	"instead. Partial results include source failures; no hits with reported source failures is an unavailable search, not proof of no matches. " +
+	"Use this for current information, post-cutoff facts, or to verify uncertain claims."
 
 // NewSearxng returns the web_search tool backed by the SearXNG instance at
 // baseURL (e.g. "http://127.0.0.1:8080"). An empty baseURL is allowed at
@@ -24,9 +26,8 @@ const searxngDescription = "Search the web via a local SearXNG instance. Returns
 // startup.
 //
 // HTTP transport is zhttp.Client with the per-call request timeout applied —
-// retry on transient 5xx / 429 + connection errors keeps the agent loop
-// working when SearXNG is briefly restarting or rate-limiting one of its
-// upstream engines.
+// retry on transient HTTP 5xx / 429 and connection errors handles restarts.
+// Source failures inside an HTTP 200 response are reported without retrying.
 func NewSearxng(baseURL string) tools.Tool {
 	b := &searxngBackend{
 		baseURL: baseURL,
@@ -52,7 +53,7 @@ func (b *searxngBackend) search(ctx context.Context, args Args) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Query: p.query, Hits: p.hits, Suggestions: p.suggestions, Output: args.Output.Resolve()}, nil
+	return Result{Query: p.query, Hits: p.hits, Suggestions: p.suggestions, Failures: p.failures, Output: args.Output.Resolve()}, nil
 }
 
 // rawSearxngResponse mirrors the SearXNG JSON shape. Suggestions piggyback
@@ -60,10 +61,11 @@ func (b *searxngBackend) search(ctx context.Context, args Args) (Result, error) 
 // LLM can decide to retry. Results decode directly into Hit, the shared
 // normalized shape.
 type rawSearxngResponse struct {
-	Query           string   `json:"query"`
-	NumberOfResults int      `json:"number_of_results"`
-	Results         []Hit    `json:"results"`
-	Suggestions     []string `json:"suggestions,omitempty"`
+	Query               string          `json:"query"`
+	NumberOfResults     int             `json:"number_of_results"`
+	Results             []Hit           `json:"results"`
+	Suggestions         []string        `json:"suggestions,omitempty"`
+	UnresponsiveEngines json.RawMessage `json:"unresponsive_engines"`
 }
 
 // fetch runs the SearXNG round trip and returns the trimmed, normalized page.
@@ -87,14 +89,26 @@ func (b *searxngBackend) fetch(ctx context.Context, query string, maxResults int
 	if res.StatusCode != http.StatusOK {
 		return page{}, classifyStatus(res.StatusCode)
 	}
+	const maxResponseBytes = 1 << 20
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
+	if err != nil {
+		return page{}, tools.Transient(ToolName.String(), fmt.Errorf("read response: %w", err))
+	}
+	if len(body) > maxResponseBytes {
+		return page{}, tools.Fatal(ToolName.String(), errors.New("search response exceeds 1 MiB"))
+	}
 	var raw rawSearxngResponse
-	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return page{}, tools.Fatal(ToolName.String(), fmt.Errorf("decode response: %w", err))
 	}
 	if len(raw.Results) > maxResults {
 		raw.Results = raw.Results[:maxResults]
 	}
-	return page{query: raw.Query, hits: raw.Results, suggestions: raw.Suggestions}, nil
+	failures := sourceFailures(raw.UnresponsiveEngines)
+	if len(raw.Results) == 0 && len(failures) > 0 {
+		return page{}, tools.Fatal(ToolName.String(), fmt.Errorf("%w (%s)", ErrUnavailable, failureSummary(failures)))
+	}
+	return page{query: raw.Query, hits: raw.Results, suggestions: raw.Suggestions, failures: failures}, nil
 }
 
 // buildSearxngURL composes the search endpoint. SearXNG accepts q + format as

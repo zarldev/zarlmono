@@ -51,11 +51,15 @@ func readableObjectKeys(object map[string]any) []string {
 // readableFieldLines preserves every value, using bounded indentation rather
 // than a transport-shaped JSON dump. Deep subtrees retain a compact fallback.
 func readableFieldLines(width int, label string, value any, depth int) []string {
+	return readableFieldLinesLimited(width, label, value, depth, 0)
+}
+
+func readableFieldLinesLimited(width int, label string, value any, depth, limit int) []string {
 	indent := strings.Repeat("  ", depth)
 	label = escapeToolInputControls(label)
 	label = strings.ReplaceAll(strings.ReplaceAll(label, "\n", `\n`), "\t", `\t`)
 	if depth >= 6 {
-		return renderPlain(width, label+": "+readableScalar(value), withBodyPrefix(indent))
+		return renderReadableFieldText(width, indent, label+": "+readableScalar(value), limit)
 	}
 	var lines []string
 	switch value := value.(type) {
@@ -71,7 +75,14 @@ func readableFieldLines(width int, label string, value any, depth int) []string 
 			lines = renderPlain(width, label+":", withBodyPrefix(indent))
 		}
 		for _, key := range readableObjectKeys(value) {
-			lines = append(lines, readableFieldLines(width, key, value[key], depth+1)...)
+			if limit > 0 && len(lines) >= limit {
+				break
+			}
+			remaining := 0
+			if limit > 0 {
+				remaining = limit - len(lines)
+			}
+			lines = append(lines, readableFieldLinesLimited(width, key, value[key], depth+1, remaining)...)
 		}
 	case []any:
 		if len(value) == 0 {
@@ -85,10 +96,23 @@ func readableFieldLines(width int, label string, value any, depth int) []string 
 			lines = renderPlain(width, label+":", withBodyPrefix(indent))
 		}
 		for index, child := range value {
-			lines = append(lines, readableFieldLines(width, strconv.Itoa(index+1), child, depth+1)...)
+			if limit > 0 && len(lines) >= limit {
+				break
+			}
+			remaining := 0
+			if limit > 0 {
+				remaining = limit - len(lines)
+			}
+			lines = append(lines, readableFieldLinesLimited(width, strconv.Itoa(index+1), child, depth+1, remaining)...)
 		}
 	default:
 		text := readableScalar(value)
+		if limit > 0 && len(text) > largeToolPreviewBytes {
+			if label != "" {
+				text = label + ": " + text
+			}
+			return renderReadableFieldText(width, indent, text, limit)
+		}
 		if label == "" {
 			return renderPlain(width, text, withBodyPrefix(indent))
 		}
@@ -100,6 +124,13 @@ func readableFieldLines(width int, label string, value any, depth int) []string 
 		}
 	}
 	return lines
+}
+
+func renderReadableFieldText(width int, indent, text string, limit int) []string {
+	if limit > 0 && len(text) > largeToolPreviewBytes {
+		return prefixLines(renderLargeToolPreview(max(1, width-len(indent)), text, limit), indent)
+	}
+	return renderPlain(width, text, withBodyPrefix(indent))
 }
 
 func requestedPlan(value any) (code.Plan, bool) {
@@ -167,6 +198,10 @@ func readableToolInputLines(width int, name, text string) []string {
 }
 
 func readableJSONResultLines(width int, text string) ([]string, bool) {
+	return readableJSONResultPreview(width, text, 0)
+}
+
+func readableJSONResultPreview(width int, text string, limit int) ([]string, bool) {
 	trimmed := strings.TrimSpace(text)
 	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
 		return nil, false
@@ -175,7 +210,15 @@ func readableJSONResultLines(width int, text string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	return readableFieldLines(width, "", redactToolInputValue(value), 0), true
+	budget := 0
+	if limit > 0 {
+		budget = limit + 1 // Discover overflow without formatting the rest of the tree.
+	}
+	lines := readableFieldLinesLimited(width, "", redactToolInputValue(value), 0, budget)
+	if limit > 0 && len(lines) > limit {
+		lines = append(lines[:limit-1], palette.Muted.On("… additional result content not rendered"))
+	}
+	return lines, true
 }
 
 func readablePlanLines(width int, plan code.Plan) []string {

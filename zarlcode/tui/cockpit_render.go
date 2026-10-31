@@ -765,14 +765,9 @@ func (s *RunState) cacheUsageLines(_ int) []string {
 	return lines
 }
 
-// sectionHead renders a section header rule that joins into the left border:
-// ├─[label]────────────────────────────────
+// sectionHead keeps a single plain heading row; callers retain their own spacing.
 func sectionHead(label string, width int) string {
-	head := bracketed(palette.Primary.On(strings.ToLower(label)))
-	fill := max(
-		// ├─[ + label + ]
-		width-ansi.StringWidth(label)-4, 0)
-	return palette.Border.On("├─") + head + palette.Border.On(strings.Repeat("─", fill))
+	return terminalChrome().PaneTitle(strings.ToLower(label), width, false)
 }
 
 // contextHeadline is the dense one-row context summary: percent-full

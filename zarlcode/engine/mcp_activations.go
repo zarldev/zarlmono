@@ -2,11 +2,14 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 
+	"github.com/zarldev/zarlmono/zarlcode/prefs"
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/dynamic"
 )
@@ -84,24 +87,82 @@ func (r *RuntimeReservation) RestoreMCPActivations(state MCPActivations) error {
 	return r.owner.restoreMCPActivations(state)
 }
 
-// RestoreSessionContext publishes validated selection hints together with a
-// legacy session context while runtime admission is exclusively reserved.
+// RestoreSessionContext publishes legacy context and selection hints under the
+// active route. Unsupported context returns rewind.ErrTarget without publication.
 func (r *RuntimeReservation) RestoreSessionContext(messages []llm.Message, state MCPActivations) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.active || r.dispatchOnly {
+	return r.restoreOrdinarySession(messages, state, nil, func() error { return nil })
+}
+
+// StoredSessionRestore describes one ordinary conversation activation. Target is
+// used only when UseSavedTarget selects an already-constructed saved route.
+type StoredSessionRestore struct {
+	ID             string
+	Context        []llm.Message
+	MCPActivations MCPActivations
+	Target         TargetUpdate
+	UseSavedTarget bool
+}
+
+// RestoreStoredSession validates the selected route and commits its workspace
+// preferences before atomically publishing context, target and selection hints.
+// Any admission, validation or persistence error leaves live state unchanged.
+func (r *RuntimeReservation) RestoreStoredSession(ctx context.Context, session StoredSessionRestore, preferences *prefs.Service) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var target *TargetUpdate
+	if session.UseSavedTarget {
+		target = &session.Target
+	}
+	return r.restoreOrdinarySession(session.Context, session.MCPActivations, target, func() error {
+		if session.UseSavedTarget {
+			return preferences.SetSessionSelection(ctx, prefs.ModelSelection{Provider: session.Target.Spec.Name, Model: session.Target.Spec.Model}, session.ID)
+		}
+		return preferences.SetSetting(ctx, prefs.ScopeWorkspace, prefs.KeyActiveSession, session.ID)
+	})
+}
+
+func (r *RuntimeReservation) restoreOrdinarySession(messages []llm.Message, state MCPActivations, update *TargetUpdate, persist func() error) error {
+	if !r.active || r.dispatchOnly || (update != nil && !r.targetMutable) {
 		return ErrRuntimeBusy
 	}
+	r.owner.mu.Lock()
+	provider := r.owner.target.Spec.Name
+	exposure := r.owner.mcpExposure
+	r.owner.mu.Unlock()
+	if update != nil {
+		provider = update.Spec.Name
+	}
+	if err := rewind.ValidateLegacyContext(messages, provider); err != nil {
+		return fmt.Errorf("%w: saved context is incompatible with the selected route", rewind.ErrTarget)
+	}
+	if exposure == nil && len(state.refs) != 0 {
+		return fmt.Errorf("%w: MCP is not configured in this runtime", ErrMCPActivations)
+	}
+	context := llm.CloneMessages(messages)
 	r.owner.context.mu.Lock()
 	defer r.owner.context.mu.Unlock()
 	r.owner.publication.Lock()
 	defer r.owner.publication.Unlock()
-	if err := r.owner.restoreMCPActivations(state); err != nil {
-		return err
+	if err := persist(); err != nil {
+		return fmt.Errorf("select saved session: %w", err)
 	}
-	r.owner.context.context = llm.CloneMessages(messages)
+	if exposure != nil {
+		// MCPActivations is already validated by DecodeMCPActivations; Replace
+		// only rejects malformed references and cannot reject this semantic state.
+		_ = exposure.Replace(state.refs)
+	}
+	r.owner.context.context = context
 	r.owner.context.exact = false
 	r.owner.mu.Lock()
+	if update != nil {
+		r.owner.target.Provider, r.owner.target.Spec = update.Provider, update.Spec
+		r.owner.target.Model = update.Spec.Model
+		if update.Window > 0 {
+			r.owner.target.Window = update.Window
+		}
+	}
 	r.owner.rotateProgramOutputsLocked()
 	r.owner.mu.Unlock()
 	return nil

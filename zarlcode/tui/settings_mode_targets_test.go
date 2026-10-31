@@ -15,7 +15,7 @@ import (
 func TestSettingsShowsPlanAndBuildRouteRows(t *testing.T) {
 	ui := newSettingsLayoutUI(t, 160, 60)
 	view := ansi.Strip(ui.View().Content)
-	for _, label := range []string{"Plan provider", "Plan model", "Build provider", "Build model"} {
+	for _, label := range []string{"plan provider", "plan model", "build provider", "build model"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("model settings missing %q:\n%s", label, view)
 		}

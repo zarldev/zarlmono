@@ -48,7 +48,7 @@ func TestMainModeTargetProviderDefaultsAndCredentialIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := s.MainModeTarget(ctx, false, active)
-	if got.Name != "deepseek" || got.Model != "deepseek-chat" {
+	if got.Name != "deepseek" || got.Model != "deepseek-flash" {
 		t.Fatalf("provider-only Build route = %#v, want deepseek default model", got)
 	}
 	if got.BaseURL != "" || got.APIKey != "" {

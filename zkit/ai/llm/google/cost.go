@@ -6,30 +6,39 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
-// CostPer1k returns the published USD per-1k-token (input, output) rate for a
-// Gemini model, matched by family (pro / flash, by generation). ok=false for
-// unknown ids. Rates are approximate and drift as Google re-prices.
+// CostPer1k returns conservative standard USD per-1k-token estimates for
+// verified Gemini Developer API text models. It excludes promotional discounts
+// and uses the higher prompt-length tier where the API cannot express length.
+// Audio, cache storage, batch, Live and Vertex billing require separate inputs.
+// Unknown or retired model IDs return ok=false rather than family pricing.
+// Source: https://ai.google.dev/gemini-api/docs/pricing.
 func CostPer1k(model string) (float64, float64, bool) {
-	m := strings.ToLower(model)
-	switch {
-	case m == "gemini-3.8-flash":
-		// Standard paid-tier rates published for September–December 2026;
-		// deployments can override these estimates through registry metadata.
-		return 0.00075, 0.00375, true
-	case strings.Contains(m, "2.5-pro"):
-		return 0.00125, 0.010, true
-	case strings.Contains(m, "2.5-flash"):
-		return 0.0003, 0.0025, true
-	case strings.Contains(m, "1.5-pro"):
-		return 0.00125, 0.005, true
-	case strings.Contains(m, "1.5-flash"):
-		return 0.000075, 0.0003, true
+	switch strings.TrimPrefix(strings.ToLower(model), "models/") {
+	case "gemini-4-argon":
+		return 0.004, 0.020, true
+	case "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash":
+		return 0.00150, 0.00750, true
+	case "gemini-3.5-flash-lite":
+		return 0.00030, 0.00250, true
+	case "gemini-3.1-flash-lite":
+		return 0.00025, 0.00150, true
+	case "gemini-3-flash-preview":
+		return 0.00050, 0.00300, true
+	case "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools":
+		return 0.004, 0.018, true
+	case "gemini-2.5-pro":
+		return 0.00250, 0.015, true
+	case "gemini-2.5-flash":
+		return 0.00030, 0.00250, true
+	case "gemini-2.5-flash-lite":
+		return 0.00010, 0.00040, true
+	default:
+		return 0, 0, false
 	}
-	return 0, 0, false
 }
 
 // Capabilities reports what a Gemini model supports. Gemini is natively
-// multimodal; the 2.x line exposes thinking.
+// multimodal; the 2.x / 3.x / 4.x lines expose thinking.
 func Capabilities(model string) llm.ModelCapabilities {
 	m := strings.ToLower(model)
 	return llm.ModelCapabilities{
@@ -38,6 +47,6 @@ func Capabilities(model string) llm.ModelCapabilities {
 		SupportsSystem:    true,
 		SupportsVision:    true,
 		SupportsVideo:     true,
-		SupportsThinking:  strings.Contains(m, "2.5") || strings.Contains(m, "thinking") || m == "gemini-3.8-flash",
+		SupportsThinking:  strings.Contains(m, "2.5") || strings.Contains(m, "thinking") || strings.HasPrefix(m, "gemini-3") || strings.HasPrefix(m, "gemini-4"),
 	}
 }

@@ -37,8 +37,8 @@ func TestRegistryCost(t *testing.T) {
 	if in, out, ok := reg.Cost("anthropic", "claude-opus-4-7"); !ok || in != 0.005 || out != 0.025 {
 		t.Errorf("anthropic opus cost = %v/%v ok=%v, want 0.005/0.025 true", in, out, ok)
 	}
-	if in, _, ok := reg.Cost("gemini", "gemini-2.5-pro"); !ok || in != 0.00125 {
-		t.Errorf("gemini 2.5-pro input cost = %v ok=%v, want 0.00125 true", in, ok)
+	if in, out, ok := reg.Cost("gemini", "gemini-2.5-pro"); !ok || in != 0.0025 || out != 0.015 {
+		t.Errorf("gemini 2.5-pro cost = %v/%v ok=%v, want 0.0025/0.015 true", in, out, ok)
 	}
 	if _, _, ok := reg.Cost("openai", "gpt-4o-mini"); !ok {
 		t.Error("openai gpt-4o-mini should be metered")
@@ -82,8 +82,17 @@ func TestRegistryCapabilities(t *testing.T) {
 	if !reg.Capabilities("gemini", "gemini-2.5-pro").SupportsVision {
 		t.Error("gemini should support vision")
 	}
-	if reg.Capabilities("deepseek", "deepseek-chat").SupportsVision {
-		t.Error("deepseek is text-only — no vision")
+	flash := reg.Capabilities("deepseek", "deepseek-flash")
+	if !flash.SupportsVision || !flash.SupportsThinking || !flash.SupportsTools {
+		t.Errorf("deepseek-flash capabilities = %+v, want vision/thinking/tools", flash)
+	}
+	pro := reg.Capabilities("deepseek", "deepseek-v4-pro")
+	if pro.SupportsVision || !pro.SupportsThinking {
+		t.Errorf("deepseek-v4-pro capabilities = %+v, want thinking but no vision", pro)
+	}
+	chat := reg.Capabilities("deepseek", "deepseek-chat")
+	if chat.SupportsVision || chat.SupportsThinking {
+		t.Errorf("deepseek-chat capabilities = %+v, want text-only and non-reasoning", chat)
 	}
 	astra := reg.Capabilities("openai", "gpt-6-astra")
 	if !astra.SupportsThinking || !astra.SupportsVision || !astra.SupportsTools {

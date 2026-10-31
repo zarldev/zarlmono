@@ -74,7 +74,7 @@ defaults; upgrading does not rewrite saved settings.
 
 Compaction and implementation children default to `openai-codex/gpt-6-sol`;
 verification children use `openai-codex/gpt-6-luna`; exploration children and the
-judge use `deepseek/deepseek-v4-flash`. These routes require the corresponding
+judge use `deepseek/deepseek-flash`. These routes require the corresponding
 credentials. Provider-construction failures fall back to the active provider for
 compaction/judging, or normal planner/parent routing for children; authentication
 or model-access errors discovered during a request still surface as run errors.
@@ -209,6 +209,18 @@ same local key vault as model-provider keys. `web_fetch` reads page text and can
 fall back to a real browser for JavaScript-heavy pages. MCP servers can add extra
 tools to the same flat tool list once connected.
 
+The first managed start selects Docker Compose, or rootless Podman with a Compose
+provider such as `podman-compose` when Docker Compose is unavailable. The runtime
+is recorded so later stop/logs operations cannot silently switch engines.
+Service files live under `~/.zarlcode/services/`; the exact previous bundled
+manifest is upgraded for SELinux, while genuine customizations are preserved.
+Only `127.0.0.1:8080` is published. Use the service dialog to install/start/stop it;
+a successful start waits for a valid JSON search response.
+For a Podman-managed service, the equivalent stop command is
+`podman compose -f ~/.zarlcode/services/docker-compose.yml down`.
+This is a local service check, not a check of a custom remote search endpoint.
+Search endpoint preferences are persisted settings; `SEARXNG_URL` is not used.
+
 ### Keep large tasks manageable
 
 Sub-agents run focused child tasks in fresh context. `agent_spawn` returns a task
@@ -272,6 +284,25 @@ Common fixes for browser fallback warnings:
 ## TUI
 
 Keyboard-driven, mouse-aware. The timeline shows streaming responses, tool calls (expandable with `Enter`), diffs, and thinking blocks. A cockpit pane tracks tokens, compaction events, and active tools in real time.
+
+### Appearance
+
+`Ctrl+T` previews themes; `Esc` cancels, `Tab` chooses workspace/app/global
+scope, `Enter` saves at that scope, and `r` removes that scope's override to
+inherit. **Settings → appearance** offers the same scopes in its live-preview
+gallery. Both show the effective theme and source; legacy explicit zarlcode
+preferences remain valid, but a shared choice at the same scope wins. Without
+an override the shared `ansi-bbs` theme is used, with no appearance database
+created on read. A reset removes only the matching legacy theme preference,
+not credentials or other settings.
+
+Family selections live in the shared user-config `zarl/appearance.db`; the palette
+catalogue and custom theme files remain in the existing theme system. Inherited
+choices refresh on the owned UI heartbeat, without preference reads in drawing.
+The original Slant Relief intro uses shared logo framing, while working screens
+retain their compact layout and live spinner/activity, tok/s and elapsed time.
+`ZARLCODE_ASCII=1` and `NO_COLOR` affect common chrome only, not every legacy
+renderer or media surface. No terminal/desktop font or account data is changed.
 
 ### Keybindings
 

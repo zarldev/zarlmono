@@ -2,7 +2,7 @@
 name: security-reviewer
 description: Review zarlmono tool execution, filesystem and network boundaries, MCP, sandboxing, approval policy, and secret handling for evidence-backed security defects without editing files.
 provider: openai-codex
-model: gpt-5.6-sol
+model: gpt-6-astra-high
 mode: verify
 ---
 

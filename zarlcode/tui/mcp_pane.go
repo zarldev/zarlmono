@@ -261,14 +261,9 @@ func (d *mcpPane) detailLines(width int) []string {
 		return append(head, palette.Muted.On("no mcp servers configured — press n to add one."))
 	}
 	lines := head
+	style := terminalChrome()
 	for i, srv := range d.servers {
-		marker := "  "
-		namecell := palette.Subtle.On(pad(srv.Name, 16))
-		if i == d.cursor {
-			marker = palette.Primary.On("▸ ")
-			namecell = palette.Primary.On(pad(srv.Name, 16))
-		}
-		lines = append(lines, rowLayout(marker+namecell, d.tags(srv), width))
+		lines = append(lines, listRow(style, pad(srv.Name, 16), d.tags(srv), width, i == d.cursor))
 	}
 	return lines
 }

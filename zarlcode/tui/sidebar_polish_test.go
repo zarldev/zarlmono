@@ -43,8 +43,8 @@ func TestSidebarPolishHierarchyAndSpacing(t *testing.T) {
 					}
 					planY := row("1/3 complete")
 					activeY := row("Current refinement")
-					if canvas.CellAt(x, planY).Style.Attrs&uv.AttrBold == 0 || canvas.CellAt(x+2, activeY).Style.Attrs&uv.AttrBold == 0 {
-						t.Error("plan heading and current step must be bold")
+					if canvas.CellAt(x, planY).Style.Attrs&uv.AttrBold != 0 || canvas.CellAt(x+2, activeY).Style.Attrs&uv.AttrBold == 0 {
+						t.Error("plain plan heading or active step has incorrect emphasis")
 					}
 					progress := canvas.CellAt(x+7, planY)
 					footer := canvas.CellAt(x, row("ctrl+l more"))

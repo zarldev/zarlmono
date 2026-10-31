@@ -115,9 +115,13 @@ func (m *UI) buildModeTargetCmd(
 		if err != nil {
 			return providerRepointedMsg{route: true, routeGeneration: generation, modeGeneration: modeGeneration, sessionID: sessionID, plan: plan, spec: spec, err: err}
 		}
+		window := settings.ContextWindow(ctx, spec)
+		if window <= 0 {
+			window = engine.LiveContextWindow
+		}
 		return providerRepointedMsg{
 			route: true, routeGeneration: generation, modeGeneration: modeGeneration, sessionID: sessionID, plan: plan,
-			prov: prov, spec: spec, window: settings.ContextWindow(ctx, spec), reasoning: reasoning, defWindow: defWindow,
+			prov: prov, spec: spec, window: window, reasoning: reasoning, defWindow: defWindow,
 		}
 	}
 }

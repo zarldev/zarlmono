@@ -10,6 +10,7 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/tui"
+	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
 func TestSettingsUsesIndividualPaneHeaders(t *testing.T) {
@@ -68,10 +69,10 @@ func TestSettingsSectionsUseJoinedHeaderBars(t *testing.T) {
 		for _, section := range sections {
 			found := false
 			for _, line := range lines {
-				if strings.Contains(line, "├─["+section+"]") {
+				if strings.Contains(line, "│ "+section) || strings.Contains(line, "│"+section) {
 					found = true
-					if !strings.HasSuffix(line, "┤") || ansi.StringWidth(line) != 120 {
-						t.Fatalf("section %q should join both pane borders: %q", section, line)
+					if !strings.HasSuffix(line, "│") || ansi.StringWidth(line) != 120 {
+						t.Fatalf("section %q should remain in pane: %q", section, line)
 					}
 					break
 				}
@@ -117,4 +118,21 @@ func newSettingsLayoutUI(t *testing.T, width, height int) *tui.UI {
 	ui.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	ui.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	return ui
+}
+
+func TestSettingsSelectionSurvivesFocusMove(t *testing.T) {
+	tui.UseTheme(theme.DarkDefault())
+	defer tui.UseTheme(theme.Theme{})
+	ui := newSettingsLayoutUI(t, 120, 32)
+	before := surfaceCanvas(ui, 120, 32)
+	ui.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	after := surfaceCanvas(ui, 120, 32)
+	for _, x := range []int{2, 22} {
+		if !sameSurface(before.CellAt(x, 1).Style.Bg, after.CellAt(x, 1).Style.Bg) {
+			t.Errorf("selected row at x=%d changed surface with focus", x)
+		}
+	}
+	if sameSurface(before.CellAt(4, 0).Style.Fg, after.CellAt(4, 0).Style.Fg) {
+		t.Error("navigation heading did not yield focus")
+	}
 }

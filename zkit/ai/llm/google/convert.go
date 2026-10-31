@@ -27,7 +27,7 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 	var sys *genai.Content
 	var contents []*genai.Content
 	var sysParts []string
-	for _, m := range llm.ExpandToolResultParts(messages) {
+	for _, m := range messages {
 		switch m.Role {
 		case llm.RoleSystem:
 			if m.Content != "" {
@@ -35,7 +35,10 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 			}
 		case llm.RoleUser:
 			parts := []*genai.Part{}
-			if m.Content != "" {
+			// The runner projects the prompt into both Content and the first
+			// text part. Parts own that redundant text; Content remains the
+			// fallback for ordinary text-only and nonredundant direct requests.
+			if m.Content != "" && (len(m.Parts) == 0 || m.Parts[0].Type != llm.ContentTypeText || m.Parts[0].Text != m.Content) {
 				parts = append(parts, &genai.Part{Text: m.Content})
 			}
 			for _, p := range m.Parts {
@@ -145,6 +148,40 @@ func toolNameFromID(messages []llm.Message, id string) string {
 	return ""
 }
 
+func validateMessages(messages []llm.Message) error {
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			switch part.Type {
+			case llm.ContentTypeText:
+				continue
+			case llm.ContentTypeImage:
+				if message.Role != llm.RoleUser {
+					return fmt.Errorf("google: %w: media input is supported only in user messages", llm.ErrModelNotSupported)
+				}
+				if part.Image == nil || !validInlineMedia(part.Image.DataURI, part.Image.MIMEType, "image/") {
+					return fmt.Errorf("google: %w: image input requires a valid inline data URI", llm.ErrModelNotSupported)
+				}
+			case llm.ContentTypeVideo:
+				if message.Role != llm.RoleUser {
+					return fmt.Errorf("google: %w: media input is supported only in user messages", llm.ErrModelNotSupported)
+				}
+				if part.Video == nil || !validInlineMedia(part.Video.DataURI, part.Video.MIMEType, "video/") {
+					return fmt.Errorf("google: %w: video input requires a valid inline data URI", llm.ErrModelNotSupported)
+				}
+			default:
+				return fmt.Errorf("google: %w: unsupported input part", llm.ErrModelNotSupported)
+			}
+		}
+	}
+	return nil
+}
+
+func validInlineMedia(dataURI, mimeType, mediaPrefix string) bool {
+	header, _, ok := strings.Cut(dataURI, ";base64,")
+	return ok && strings.TrimPrefix(header, "data:") == mimeType &&
+		strings.HasPrefix(mimeType, mediaPrefix) && len(dataURIBytes(dataURI)) > 0
+}
+
 // convertPart maps an llm.ContentPart to a genai.Part. Unknown /
 // empty parts return nil so the caller can skip them.
 func convertPart(p llm.ContentPart) *genai.Part {
@@ -187,13 +224,15 @@ func convertPart(p llm.ContentPart) *genai.Part {
 // when the URI doesn't match the expected shape.
 func dataURIBytes(uri string) []byte {
 	const sep = ";base64,"
-	_, after, ok := strings.Cut(uri, sep)
-	if !ok {
+	if !strings.HasPrefix(uri, "data:") {
 		return nil
 	}
-	encoded := after
+	_, encoded, ok := strings.Cut(uri, sep)
+	if !ok || encoded == "" {
+		return nil
+	}
 	out, err := decodeBase64(encoded)
-	if err != nil {
+	if err != nil || len(out) == 0 {
 		return nil
 	}
 	return out

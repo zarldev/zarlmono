@@ -16,6 +16,12 @@ const (
 	providerAnthropic     = "anthropic"
 	providerOpenAI        = "openai"
 	providerCodex         = "openai-codex"
+	providerDeepSeek      = "deepseek"
+	providerLlamaCPP      = "llamacpp"
+	providerOllama        = "ollama"
+	providerGemini        = "gemini"
+	providerGoogleVertex  = "google-vertex"
+	providerClaudeCode    = "claude-code"
 )
 
 // ValidateContext rejects malformed exact-context representations without repair
@@ -100,10 +106,12 @@ func messageShapeValid(message llm.Message) bool {
 
 func indexValid(index *int) bool { return index == nil || *index >= 0 }
 
-// M1 admits only the shared text/image surface of the built-in replay routes.
+// Admit the text/image forms consumed by the supported ordinary replay routes.
 // Audio/video and custom routes require a separately verified adapter contract.
 func partValid(part llm.ContentPart, provider string) bool {
-	if provider != providerOpenAI && provider != providerAnthropic && provider != providerCodex {
+	switch provider {
+	case providerOpenAI, providerAnthropic, providerCodex, providerDeepSeek, providerLlamaCPP, providerOllama, providerGemini, providerGoogleVertex:
+	default:
 		return false
 	}
 	switch part.Type {
@@ -114,6 +122,9 @@ func partValid(part llm.ContentPart, provider string) bool {
 			return false
 		}
 		image := part.Image
+		if googleRoute(provider) && (image.URL != "" || image.Detail != "" || image.MIMEType == "") {
+			return false
+		}
 		if (image.URL == "") == (image.DataURI == "") || (provider == providerAnthropic && image.Detail != "") {
 			return false
 		}
@@ -137,6 +148,9 @@ func partValid(part llm.ContentPart, provider string) bool {
 }
 
 func continuationValid(item llm.ContinuationItem, provider string) bool {
+	if googleRoute(provider) {
+		return googleContinuationValid(item)
+	}
 	if item.Provider != provider || !indexValid(item.OutputIndex) {
 		return false
 	}

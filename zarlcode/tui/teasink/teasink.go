@@ -52,14 +52,10 @@ import (
 // runs synchronously on a parent tool-dispatch goroutine) and froze
 // the UI under sub-agent storms.
 //
-// The pump decouples the runner from bubbletea: dispatch pushes into
-// a deep buffered channel (`pumpBuffer`); a single pump goroutine
-// drains the channel into `tea.Program.Send` at whatever rate the
-// loop accepts. Short bursts ride in the buffer without ever stalling
-// the runner. Sustained overrun blocks dispatch (channel-full) — the
-// pump preserves event ordering and never silently drops, so a
-// genuine throughput problem surfaces as backpressure rather than
-// lost tool calls.
+// The pump decouples the runner from bubbletea through a bounded FIFO. Queued
+// cumulative previews can replace obsolete previews until an intervening event
+// fences them. Lifecycle/content events remain reliable and ordered; sustained
+// overrun applies backpressure rather than losing calls.
 type Sink struct {
 	runner.NopSink // future-proof: new event methods inherit no-op until we override
 
@@ -76,26 +72,20 @@ type Sink struct {
 	sealedToolOutputs  map[toolOutputKey]struct{}
 	sealedToolOrder    []toolOutputKey
 
-	// Pump state. msgs is the buffered hand-off channel; the pump
-	// goroutine reads from msgs and calls the current send function.
+	// Pump state. queue owns the bounded hand-off FIFO; the pump
+	// dequeues values and calls the current send function without a queue lock.
 	// stop signals the pump to exit. started gates pump creation
 	// done closes when the owned pump goroutine exits; closeOnce protects
 	// Close from double-close panic.
-	msgs      chan tea.Msg
+	queue     pumpQueue
 	stop      chan struct{}
 	done      chan struct{}
 	started   atomic.Bool
 	closeOnce sync.Once
 
-	// overflows counts how often dispatch found the pump channel
-	// full and had to fall back to a blocking send — the only path
-	// the runner goroutine can actually stall on after the pump
-	// rework. Events are never dropped (UI correctness depends on
-	// every ToolStarted/Completed reaching Update), so this is a
-	// pure diagnostic. Non-zero under normal use means the
-	// bubbletea loop has fallen behind enough that the
-	// [pumpBuffer]-deep channel filled — the signal the freeze fix
-	// was designed to make observable.
+	// overflows counts dispatches that had to wait for FIFO capacity. Lifecycle
+	// events are never dropped; superseded cumulative previews do not consume
+	// additional slots. A nonzero count indicates sustained consumer lag.
 	overflows atomic.Int64
 }
 
@@ -110,7 +100,7 @@ const coalesceWindow = 16 * time.Millisecond
 // It is exposed so callers can synchronize virtual-time tests with Sink behavior.
 func CoalesceWindow() time.Duration { return coalesceWindow }
 
-// pumpBuffer is the depth of the channel between dispatch and the
+// pumpBuffer is the capacity of the FIFO between dispatch and the
 // pump goroutine. Sized to absorb a multi-second sub-agent burst
 // without stalling the runner: at ~200 events/s across three
 // parallel sub-agents (each ~50 tool events / iteration for ~10
@@ -136,14 +126,14 @@ type pendingContent struct {
 type sendFunc func(tea.Msg)
 
 // New constructs a Sink. send may be nil — set later via SetSend.
-// Once SetSend has been called with a non-nil function, every
-// subsequent event delivers to that function via the pump goroutine.
+// Once SetSend has been called with a non-nil function, accepted events
+// deliver through the pump. Obsolete queued tool previews may be superseded.
 func New(send func(tea.Msg)) *Sink {
 	s := &Sink{
 		pending:            make(map[contentKey]pendingContent),
 		pendingToolOutputs: make(map[toolOutputKey]ToolOutputMsg),
 		sealedToolOutputs:  make(map[toolOutputKey]struct{}),
-		msgs:               make(chan tea.Msg, pumpBuffer),
+		queue:              newPumpQueue(),
 		stop:               make(chan struct{}),
 		done:               make(chan struct{}),
 	}
@@ -174,6 +164,7 @@ func (s *Sink) SetSend(send func(tea.Msg)) {
 func (s *Sink) Close() {
 	s.closeOnce.Do(func() {
 		close(s.stop)
+		s.queue.close()
 		if !s.started.Load() {
 			close(s.done)
 		}
@@ -188,18 +179,24 @@ func (s *Sink) startPump() {
 	go s.pump()
 }
 
-// pump drains s.msgs and forwards each msg to the current send
+// pump drains s.queue and forwards each msg to the current send
 // function. Exits on s.stop. A panic in send (send-on-closed-channel
 // during program teardown) is recovered so a single bad dispatch
 // can't kill the pump and back up subsequent events.
 func (s *Sink) pump() {
 	defer close(s.done)
-	for {
+	for !s.stopped() {
+		msg, changed := s.queue.pop()
+		if msg != nil {
+			if !s.stopped() {
+				s.deliver(msg)
+			}
+			continue
+		}
 		select {
 		case <-s.stop:
 			return
-		case msg := <-s.msgs:
-			s.deliver(msg)
+		case <-changed:
 		}
 	}
 }
@@ -251,30 +248,21 @@ func (s *Sink) dispatch(msg tea.Msg) {
 	if !s.started.Load() {
 		return
 	}
-	// Check stop first so post-Close dispatch is a clean no-op
-	// rather than blocking on a channel the pump's no longer
-	// reading.
-	select {
-	case <-s.stop:
-		return
-	default:
-	}
-	// Try non-blocking first. If the buffer has room, dispatch is
-	// fully decoupled from the bubbletea loop — the runner never
-	// stalls. If the buffer's full, the loop has fallen behind:
-	// count the overflow so operators can see it via [Overflows],
-	// then fall back to a blocking send so we don't drop the event
-	// (every ToolStarted / Completed is load-bearing for UI
-	// correctness; dropping would manifest as missing rows).
-	select {
-	case s.msgs <- msg:
-		return
-	default:
-	}
-	s.overflows.Add(1)
-	select {
-	case s.msgs <- msg:
-	case <-s.stop:
+	counted := false
+	for !s.stopped() {
+		accepted, changed := s.queue.tryPush(msg)
+		if accepted {
+			return
+		}
+		if !counted {
+			s.overflows.Add(1)
+			counted = true
+		}
+		select {
+		case <-s.stop:
+			return
+		case <-changed:
+		}
 	}
 }
 
@@ -343,27 +331,17 @@ func (s *Sink) OnThinking(ctx context.Context, e runner.Thinking) {
 // Idempotent; safe to call from any goroutine.
 func (s *Sink) Flush() { s.flush() }
 
-// Drain blocks until every message dispatched so far has been
-// delivered to the send function. Intended for tests and shutdown:
-// after Drain returns, the recording send is guaranteed to have
-// observed all prior events. Calls Flush first to push any pending
-// coalesced content into the pump.
-//
-// Implementation: enqueues a barrier sentinel via the same channel
-// the pump drains and waits on its ack. Because the channel is FIFO
-// and the pump processes one message at a time, the ack only fires
-// once every prior message has been delivered.
+// Drain flushes pending content and waits for all previously queued lifecycle
+// events and non-superseded previews to reach the send function (or for Close).
+// Its FIFO barrier prevents later previews from replacing earlier ones across
+// the drain boundary. Call before program teardown when delivery is required.
 func (s *Sink) Drain() {
 	s.Flush()
 	if !s.started.Load() {
 		return
 	}
 	ack := make(chan struct{})
-	select {
-	case s.msgs <- barrierMsg{ack: ack}:
-	case <-s.stop:
-		return
-	}
+	s.dispatch(barrierMsg{ack: ack})
 	select {
 	case <-ack:
 	case <-s.stop:

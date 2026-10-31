@@ -27,3 +27,13 @@ func TestHeaderPaneRightAlignsModel(t *testing.T) {
 		t.Errorf("model should use the quiet header's right edge: %q", line)
 	}
 }
+
+func TestHeaderPanePreservesReceivedModelCase(t *testing.T) {
+	ui := tui.New()
+	ui.SetWorkspace(t.TempDir(), "Claude-Opus4.6")
+	ui.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	line, _, _ := strings.Cut(ansi.Strip(ui.View().Content), "\n")
+	if !strings.Contains(line, "Claude-Opus4.6") {
+		t.Fatalf("model identifier lost casing: %q", line)
+	}
+}

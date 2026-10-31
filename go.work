@@ -7,5 +7,6 @@ use (
 	./examples
 	./swebench-eval
 	./zarlcode
+	./zarlos
 	./zkit
 )

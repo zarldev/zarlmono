@@ -668,6 +668,7 @@ func (tl *timeline) finishTool(executionID, toolID, result string, data any, dur
 		ref.tool.failKind = failKind
 		ref.tool.result = result
 		ref.tool.data = data
+		ref.tool.jsonResult = toolJSONPresentation{}
 		ref.tool.effect = firstEffectSummary(effects)
 		ref.tool.dur = dur
 		tl.bumpToolOwner(ref)
@@ -685,9 +686,10 @@ func (tl *timeline) finishTool(executionID, toolID, result string, data any, dur
 			ref.tool.failKind = failKind
 			ref.tool.result = result
 			ref.tool.data = data
+			ref.tool.jsonResult = toolJSONPresentation{}
 			ref.tool.effect = firstEffectSummary(effects)
 			ref.tool.dur = dur
-			ref.group.bump()
+			ref.tool.bump()
 			sa.bump()
 			return
 		}

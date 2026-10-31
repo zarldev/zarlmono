@@ -35,6 +35,8 @@ func (m *UI) openSettings() tea.Cmd {
 	}
 	m.captureSettingsTargetSnapshot()
 	d := newSettingsDialog(m.appContext(), m.settings)
+	d.gallery.workspace = m.session.WorkspaceDir
+	d.gallery.refresh()
 	m.overlay.push(d)
 	cmds := []tea.Cmd{settingsTick()} // toast heartbeat
 	if p := d.currentProvider(); p != "" {

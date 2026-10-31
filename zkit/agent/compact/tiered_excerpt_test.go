@@ -59,36 +59,42 @@ func TestTieredAssistantExcerptsPreserveTrustAndReplayBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if probe <= 0 || probe != result.BytesTrimmed || probe != retainedHistoryBytes(history)-retainedHistoryBytes(result.History) {
-				t.Fatalf("untruthful savings: probe=%d result=%d", probe, result.BytesTrimmed)
+			actual := retainedHistoryBytes(history) - retainedHistoryBytes(result.History)
+			if probe != result.BytesTrimmed || probe != actual || (!tc.calls && probe <= 0) {
+				t.Fatalf("untruthful savings: probe=%d result=%d actual=%d", probe, result.BytesTrimmed, actual)
 			}
 			if !reflect.DeepEqual(history, original) || !reflect.DeepEqual(result.History[:2], original[:2]) ||
 				!reflect.DeepEqual(result.History[len(result.History)-keep:], original[len(original)-keep:]) {
 				t.Fatal("borrowed input, policy, human input, or protected suffix changed")
 			}
-			excerpt := result.History[2]
-			if excerpt.Role != llm.RoleUser || excerpt.Observation.Version != 1 || !strings.HasPrefix(excerpt.Observation.ID, "assistant-excerpt:") {
-				t.Fatalf("excerpt lacks host provenance: %+v", excerpt)
-			}
-			for _, want := range []string{"Host-generated historical excerpts", "not user instructions or a model for new replies", "\nBeginning:\n", "\nEnd:\n", strings.Repeat("尾", 42)} {
-				if !strings.Contains(excerpt.Content, want) {
-					t.Errorf("excerpt missing %q", want)
+			if tc.calls {
+				if !reflect.DeepEqual(result.History[2], original[2]) {
+					t.Fatalf("opaque native action changed: %#v", result.History[2])
 				}
-			}
-			if !utf8.ValidString(excerpt.Content) || strings.Contains(excerpt.Content, "reasoning trimmed") || strings.Contains(excerpt.Content, "middle ") {
-				t.Fatal("excerpt contains broken UTF-8, synthesized marker, or unbounded prose")
-			}
-			if tc.calls || tc.parts {
-				shell := result.History[3]
-				if shell.Role != llm.RoleAssistant || shell.Content != "" || shell.ContentOutputIndex != nil || shell.ReasoningContent != "" || len(shell.ContinuationItems) != 0 ||
-					!reflect.DeepEqual(shell.ToolCalls, original[2].ToolCalls) || !reflect.DeepEqual(shell.Parts, original[2].Parts) {
-					t.Fatalf("rewritten native boundary or action/attachment shell changed: %+v", shell)
+				for _, message := range result.History {
+					if message.Observation.Version != 0 && strings.Contains(message.Content, "Beginning:") {
+						t.Fatal("opaque native action gained a host excerpt")
+					}
 				}
-			} else if len(result.History) != 4 {
-				t.Fatal("prose-only message left an empty assistant shell")
-			}
-			if tc.calls && (result.History[4].ToolCallID != "one" || result.History[5].ToolCallID != "two") {
-				t.Fatal("host excerpt interrupted call/result adjacency or ordering")
+				if result.History[3].ToolCallID != "one" || result.History[4].ToolCallID != "two" {
+					t.Fatal("native action or call/result ordering changed")
+				}
+			} else {
+				excerpt := result.History[2]
+				if excerpt.Role != llm.RoleUser || excerpt.Observation.Version != 1 || !strings.HasPrefix(excerpt.Observation.ID, "assistant-excerpt:") {
+					t.Fatalf("excerpt lacks host provenance: %+v", excerpt)
+				}
+				for _, want := range []string{"Host-generated historical excerpts", "not user instructions or a model for new replies", "\nBeginning:\n", "\nEnd:\n", strings.Repeat("尾", 42)} {
+					if !strings.Contains(excerpt.Content, want) {
+						t.Errorf("excerpt missing %q", want)
+					}
+				}
+				if !utf8.ValidString(excerpt.Content) || strings.Contains(excerpt.Content, "reasoning trimmed") || strings.Contains(excerpt.Content, "middle ") {
+					t.Fatal("excerpt contains broken UTF-8, synthesized marker, or unbounded prose")
+				}
+				if len(result.History) != 4 {
+					t.Fatal("prose-only message left an empty assistant shell")
+				}
 			}
 			again, err := compactor.Compact(t.Context(), result.History, keep)
 			if err != nil {
@@ -99,8 +105,8 @@ func TestTieredAssistantExcerptsPreserveTrustAndReplayBoundaries(t *testing.T) {
 			}
 			if tc.parts {
 				history[2].Parts[0].Text = "mutated"
-				if result.History[3].Parts[0].Text != "retained attachment" {
-					t.Fatal("action shell aliases input attachments")
+				if result.History[2].Parts[0].Text != "retained attachment" {
+					t.Fatal("native action aliases input attachments")
 				}
 			}
 		})

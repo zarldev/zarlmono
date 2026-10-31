@@ -20,8 +20,12 @@ import (
 )
 
 const (
-	defaultModel = anthropic.ModelClaudeSonnet4_6
+	defaultModel = "claude-sonnet-5-5"
 
+	modelClaudeFable51  = "claude-fable-5-1"
+	modelClaudeOpus55   = "claude-opus-5-5"
+	modelClaudeSonnet55 = "claude-sonnet-5-5"
+	modelClaudeHaiku55  = "claude-haiku-5-5"
 	modelClaudeOpus46   = "claude-opus-4-6"
 	modelClaudeOpus47   = "claude-opus-4-7"
 	modelClaudeSonnet46 = "claude-sonnet-4-6"

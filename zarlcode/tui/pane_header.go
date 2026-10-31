@@ -38,7 +38,7 @@ func (h *headerPane) Draw(scr uv.Screen, area uv.Rectangle) {
 
 	var right string
 	if h.session.Model != "" {
-		right = bracketed(palette.Subtle.On(strings.ToLower(h.session.Model)))
+		right = bracketed(palette.Subtle.On(h.session.Model))
 	}
 
 	// Lay out the left badges and the right-pinned model with an explicit

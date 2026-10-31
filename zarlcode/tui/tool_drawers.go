@@ -1,6 +1,9 @@
 package tui
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // toolViewController is carried through nested disclosure wrappers so the
 // selected call, not its container, owns its independent presentation state.
@@ -11,32 +14,49 @@ type toolDrawerPrefix struct {
 	argumentsRow, resultRow, viewRow int // item-local lines; -1 means absent
 }
 
-func (t *toolItem) resultJSON() (string, bool) {
+// The result is immutable between terminal updates. Discover JSON availability
+// once, and only allocate the sanitized pretty view when the user requests it.
+type toolJSONPresentation struct {
+	checked, available, sanitized bool
+	text, safe                    string
+}
+
+func (t *toolItem) hasJSONResult() bool {
+	if t.jsonResult.checked {
+		return t.jsonResult.available
+	}
+	t.jsonResult.checked = true
 	if t.name == "bash" || t.name == "read" {
-		return "", false
+		return false
 	}
 	if _, images := t.data.(toolResultPresentation); images {
-		return "", false
+		return false
 	}
 	text := t.result
 	if t.data != nil {
 		data, err := json.Marshal(t.data)
 		if err != nil {
-			return "", false
+			return false
 		}
 		text = string(data)
 	}
-	value, ok := readableJSONValue(text)
-	if !ok {
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') || !json.Valid([]byte(trimmed)) {
+		return false
+	}
+	t.jsonResult.text, t.jsonResult.available = text, true
+	return true
+}
+
+func (t *toolItem) resultJSON() (string, bool) {
+	if !t.hasJSONResult() {
 		return "", false
 	}
-	switch value.(type) {
-	case map[string]any, []any:
-		_, safe := presentToolCall("", nil, text)
-		return safe, true
-	default:
-		return "", false
+	if !t.jsonResult.sanitized {
+		_, t.jsonResult.safe = presentToolCall("", nil, t.jsonResult.text)
+		t.jsonResult.sanitized = true
 	}
+	return t.jsonResult.safe, true
 }
 
 func (t *toolItem) drawerPrefix(width int) toolDrawerPrefix {
@@ -45,7 +65,7 @@ func (t *toolItem) drawerPrefix(width int) toolDrawerPrefix {
 		return prefix
 	}
 	bodyWidth := max(1, width-t.depth*2)
-	_, jsonResult := t.resultJSON()
+	jsonResult := t.hasJSONResult()
 	if t.input != "" || jsonResult {
 		label := "view: readable"
 		if t.jsonView {
@@ -106,7 +126,7 @@ func (t *toolItem) applyToolViewKey(key string) bool {
 			t.resultCollapsed = !t.resultCollapsed
 		}
 	case "j":
-		_, jsonResult := t.resultJSON()
+		jsonResult := t.hasJSONResult()
 		if t.input == "" && !jsonResult {
 			return false
 		}

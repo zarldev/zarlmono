@@ -6,9 +6,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 
 	tea "charm.land/bubbletea/v2"
-	lg "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // transcriptReader is a full-screen, stable-width view over the current
@@ -193,12 +191,10 @@ func (r *transcriptReader) draw(scr uv.Screen, area uv.Rectangle) {
 	g := transcriptGeometry(uv.Rect(area.Min.X, area.Min.Y, area.Dx(), area.Dy()-1))
 	r.viewportWidth, r.viewportHeight = g.content.Dx(), g.content.Dy()
 	r.syncViewport()
-	header := lg.NewStyle().
-		Background(lgColor(palette.Highlight)).
-		Width(area.Dx()).
-		Render(palette.Primary.On("transcript") + "  " + palette.Info.On(r.view.viewportStateLabel()))
+	style := terminalChrome()
+	header := style.Strip(" "+style.PaneLabel("transcript", true), style.PaneLabel(r.view.viewportStateLabel(), false), area.Dx())
 	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y, area.Dx(), 1), header)
-	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y+1, area.Dx(), 1), palette.Border.On(strings.Repeat("─", area.Dx())))
+	drawLine(scr, uv.Rect(area.Min.X, area.Min.Y+1, area.Dx(), 1), style.Rule("", area.Dx(), false))
 
 	if r.initialTail {
 		_, _, total := r.view.layoutIndex(r.view.lwidth())
@@ -209,20 +205,15 @@ func (r *transcriptReader) draw(scr uv.Screen, area uv.Rectangle) {
 	r.view.drawRows(scr, g, lines, true)
 	footer := " [ / ] prompt · r preview rewind · ctrl+f search · Y copy · esc close"
 	if r.readOnly {
-		footer = " READ-ONLY saved history · [ / ] prompt · ctrl+f search · Y copy · esc back"
+		footer = " read-only saved history · [ / ] prompt · ctrl+f search · Y copy · esc back"
 	}
 	switch {
 	case r.searching:
-		footer = " search: " + r.query + "█"
+		footer = " search: " + r.query + "▏"
 	case r.query != "":
 		footer = " search: " + r.query + "  ·  n/N next/previous"
 	case r.view.selectionActive():
 		footer = " visual selection  ·  y copy range  ·  Y copy message  ·  esc cancel"
 	}
-	bar := lg.NewStyle().
-		Background(lgColor(palette.Highlight)).
-		Foreground(lgColor(palette.Subtle)).
-		Width(area.Dx()).
-		Render(ansi.Truncate(footer, area.Dx(), "…"))
-	drawLine(scr, uv.Rect(area.Min.X, area.Max.Y-1, area.Dx(), 1), bar)
+	drawLine(scr, uv.Rect(area.Min.X, area.Max.Y-1, area.Dx(), 1), style.Status(style.PaneLabel(footer, false), "", area.Dx()))
 }

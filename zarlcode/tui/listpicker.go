@@ -73,16 +73,13 @@ func (p *listPicker) draw(scr uv.Screen, area uv.Rectangle) {
 	drawPaddedLine(scr, uv.Rect(innerX, lay.Context.Min.Y, innerW, 1), overlayTopBar(p.title, nil, 0, fmt.Sprintf("%d choices", len(p.items)), innerW))
 	drawPaddedLine(scr, uv.Rect(innerX, lay.Body.Min.Y, innerW, 1), palette.Border.On(strings.Repeat("─", innerW)))
 	y := lay.Body.Min.Y + 1
+	style := terminalChrome()
 	for i := start; i < end && y < lay.Footer.Min.Y; i++ {
 		right := ""
 		if p.right != nil {
 			right = p.right(p.items[i])
 		}
-		if i == p.cursor {
-			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), rowLayout(palette.Primary.On("▸ "+p.items[i]), right, innerW))
-		} else {
-			drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), rowLayout("  "+palette.Subtle.On(p.items[i]), right, innerW))
-		}
+		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), listRow(style, p.items[i], right, innerW, i == p.cursor))
 		y++
 	}
 	hint := keyLegend(keyHint{"↑↓", "navigate"}, keyHint{"enter", "select"}, keyHint{"esc", "close"})

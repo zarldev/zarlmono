@@ -23,7 +23,7 @@ func TestTieredCompactionPreservesCheckpointAdmission(t *testing.T) {
 	}{
 		{name: "phase two native text", text: strings.Repeat("answer ", 200), phase3: 100, wantPhase: "phase 2", wantCount: 2},
 		{name: "phase three reasoning and tools", tool: true, phase3: .9, wantPhase: "phase 3", wantCount: 3},
-		{name: "phase three native text and tools", text: strings.Repeat("answer ", 200), tool: true, phase3: .3, wantPhase: "phase 3", wantCount: 4},
+		{name: "phase three native text and tools", text: strings.Repeat("answer ", 200), tool: true, phase3: .3, wantPhase: "phase 3", wantCount: 3},
 		{name: "phase three reasoning only", phase3: .9, wantPhase: "phase 3", wantCount: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,19 +68,19 @@ func TestTieredCompactionPreservesCheckpointAdmission(t *testing.T) {
 			if !strings.Contains(result.Warning, tc.wantPhase) || len(result.History) != tc.wantCount {
 				t.Fatalf("compaction: %s, messages=%d", result.Warning, len(result.History))
 			}
-			if predicted != result.BytesTrimmed || predicted <= 0 {
+			if predicted != result.BytesTrimmed || (!tc.tool && predicted <= 0) || (tc.tool && predicted != 0) {
 				t.Fatalf("probe=%d, saved=%d", predicted, result.BytesTrimmed)
 			}
 			if !reflect.DeepEqual(history, original) || !reflect.DeepEqual(result.History[len(result.History)-1], original[len(original)-1]) {
 				t.Fatal("compaction changed borrowed history or the protected recent message")
 			}
-			if tc.text != "" {
+			if tc.tool && !reflect.DeepEqual(result.History, original) {
+				t.Fatal("opaque native action turn was rewritten or advertised as prompt relief")
+			}
+			if tc.text != "" && !tc.tool {
 				excerpt := result.History[0]
 				if excerpt.Role != llm.RoleUser || excerpt.Observation.Version != 1 || excerpt.Observation.ID == "" {
 					t.Fatal("compacted prose is not attributed as host input")
-				}
-				if tc.tool && (result.History[1].Role != llm.RoleAssistant || result.History[1].Content != "" || result.History[2].ToolCallID != "call") {
-					t.Fatal("host excerpt interrupted the native tool-call shell and result")
 				}
 			}
 			encoded, err := rewind.EncodeResume(1, result.History, rewind.Target{Provider: "openai-codex", Model: "gpt-6-astra"}, "turn", 1, rewind.InitialContinuation{})

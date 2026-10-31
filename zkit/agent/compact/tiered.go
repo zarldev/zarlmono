@@ -47,16 +47,20 @@ const tieredAssistantCapsuleEdgeChars = tieredAssistantTruncateChars / 2
 // profitably elide their attachments. Assistant content is untouched.
 //
 // Phase 2 (>= 75% budget): Phase 1 + older assistant prose moved to bounded,
-// host-attributed historical excerpts. Assistant tool calls remain verbatim.
-// Changed prose replaces native continuations and their display reasoning;
-// retaining the original native text would bypass the compacted projection.
+// host-attributed historical excerpts.
+//
+// Assistant turns that combine tool calls with opaque native continuations are
+// cloned unchanged: their projected content, output positions, reasoning, calls,
+// attachments, and native items form one provider replay unit and claim no savings.
+// Plain action turns without native continuations may still move long prose to a
+// host excerpt while retaining reasoning and tool calls.
 //
 // Phase 3 (>= 90% budget): Phase 2 + tool result bodies replaced
 // with a single-line placeholder when that is smaller. The bounded
 // head-and-tail host excerpts, ToolCalls, and ToolCallIDs remain, preserving
-// operational state and provider-required tool pairing.
-// As an explicit native replay boundary, complete ContinuationItems and display
-// reasoning are dropped together from older messages (payloads are never truncated).
+// operational state and provider-required tool pairing. Complete ContinuationItems
+// and display reasoning are dropped together only from older non-action messages
+// (opaque payloads are never truncated).
 // Assistant messages with no remaining content or tool calls are removed.
 //
 // Below 60% budget Tiered preserves all message content and returns an owned copy.
@@ -156,16 +160,25 @@ func (t *Tiered) plan(history []llm.Message, keepRecent int) tieredPlan {
 				phase3Savings += max(tool.contentBytes-placeholderBytes, 0)
 			}
 		}
+		preserveNativeAction := msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 && len(msg.ContinuationItems) > 0
+		if preserveNativeAction {
+			continue
+		}
 		var nativeBytes int
 		for _, item := range msg.ContinuationItems {
 			nativeBytes += item.ByteLen()
 		}
 		if msg.Role == llm.RoleAssistant {
 			if saved := tieredAssistantSavings(msg.Content); saved > 0 {
-				phase2Savings += saved + nativeBytes + len(msg.ReasoningContent)
+				phase2Savings += saved + nativeBytes
+				if len(msg.ToolCalls) == 0 {
+					phase2Savings += len(msg.ReasoningContent)
+				}
 				continue // Phase 2 already establishes the projected replay boundary.
 			}
-			phase3Savings += len(msg.ReasoningContent)
+			if len(msg.ToolCalls) == 0 {
+				phase3Savings += len(msg.ReasoningContent)
+			}
 		}
 		phase3Savings += nativeBytes
 	}
@@ -197,6 +210,10 @@ func (t *Tiered) Compact(_ context.Context, history []llm.Message, keepRecent in
 			out = append(out, msg)
 			continue
 		}
+		if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 && len(msg.ContinuationItems) > 0 {
+			out = append(out, msg)
+			continue
+		}
 		if msg.Role == llm.RoleTool {
 			msg = tieredTrimTool(msg)
 		}
@@ -206,14 +223,18 @@ func (t *Tiered) Compact(_ context.Context, history []llm.Message, keepRecent in
 			// the assistant's action/attachment shell at this replay boundary.
 			msg.Content = ""
 			msg.ContentOutputIndex = nil
-			msg.ReasoningContent = ""
-			msg.ContinuationItems = nil
+			if len(msg.ToolCalls) == 0 {
+				msg.ReasoningContent = ""
+				msg.ContinuationItems = nil
+			}
 			if len(msg.ToolCalls) == 0 && len(msg.Parts) == 0 {
 				continue
 			}
 		}
 		if plan.phase == 3 {
-			msg.ContinuationItems = nil
+			if msg.Role != llm.RoleAssistant || len(msg.ToolCalls) == 0 {
+				msg.ContinuationItems = nil
+			}
 			switch msg.Role {
 			case llm.RoleTool:
 				placeholder := fmt.Sprintf("%s%d%s", tieredToolElisionStart, len(msg.Content), tieredToolElisionEnd)
@@ -221,7 +242,9 @@ func (t *Tiered) Compact(_ context.Context, history []llm.Message, keepRecent in
 					msg.Content = placeholder
 				}
 			case llm.RoleAssistant:
-				msg.ReasoningContent = ""
+				if len(msg.ToolCalls) == 0 {
+					msg.ReasoningContent = ""
+				}
 				if msg.Content == "" {
 					msg.ContentOutputIndex = nil
 					if len(msg.ToolCalls) == 0 && len(msg.Parts) == 0 {

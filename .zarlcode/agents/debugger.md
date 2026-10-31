@@ -2,7 +2,7 @@
 name: debugger
 description: Trace reported zarlmono failures to an evidence-backed root cause and recommend the smallest fix, using bounded local reproduction without editing files.
 provider: openai-codex
-model: gpt-5.6-terra
+model: gpt-6.1-sol-high
 mode: verify
 ---
 

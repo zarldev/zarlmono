@@ -18,7 +18,7 @@ const DefaultBaseURL = "https://api.deepseek.com"
 
 // DefaultModel is the hosted chat model used when callers do not
 // choose a model explicitly.
-const DefaultModel = "deepseek-chat"
+const DefaultModel = modelFlash
 
 // roleUser is the message role the schema directive is folded into.
 const roleUser = "user"

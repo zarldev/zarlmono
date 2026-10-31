@@ -28,6 +28,10 @@ func NewReducerFrom(thread Thread) *Reducer { return &Reducer{builder: NewBuilde
 // Thread returns the reducer's current canonical thread.
 func (r *Reducer) Thread() Thread { return r.builder.Thread() }
 
+// IsEmpty reports whether the current thread has no entries without allocating
+// a snapshot. Like Apply, it is called by the reducer's serial owner.
+func (r *Reducer) IsEmpty() bool { return r.builder.thread.IsEmpty() }
+
 // Change describes one accepted semantic event and its canonical effects.
 type Change struct {
 	BeforeRevision uint64
@@ -178,17 +182,25 @@ type SubagentSpawnFailed struct {
 // Apply reduces one semantic event into canonical state. Unknown event types are
 // rejected explicitly and never mutate the thread.
 func (r *Reducer) Apply(event any) (Change, error) {
-	before := r.builder.Thread().Revision()
+	// Apply owns the builder: inspect its revision without cloning history.
+	// Public Thread snapshots still copy, and RecordsSince owns its JSON bytes.
+	before := r.builder.thread.Revision()
 	change := Change{BeforeRevision: before, AfterRevision: before}
 
 	if err := validateEvent(event); err != nil {
 		return change, err
 	}
+	r.builder.collectChanges = true
+	r.builder.changed = r.builder.changed[:0]
+	defer func() {
+		r.builder.collectChanges = false
+		r.builder.changed = r.builder.changed[:0]
+	}()
 	change.Persistence = persistenceForEvent(event)
 	switch event := event.(type) {
 	case Clear:
 		r.builder.Clear()
-		change.AfterRevision = r.builder.Thread().Revision()
+		change.AfterRevision = r.builder.thread.Revision()
 		return change, nil
 	case UserSubmitted:
 		if event.EntryID != "" {
@@ -200,7 +212,10 @@ func (r *Reducer) Apply(event any) (Change, error) {
 		}
 		r.builder.AddUserWithAttachments(event.Text, event.Attachments)
 		if event.EntryID != "" {
-			r.builder.thread.entries[len(r.builder.thread.entries)-1].ID = event.EntryID
+			index := len(r.builder.thread.entries) - 1
+			delete(r.builder.positions, r.builder.thread.entries[index].ID)
+			r.builder.thread.entries[index].ID = event.EntryID
+			r.builder.positions[event.EntryID] = index
 			if number, ok := generatedEntryNumber(event.EntryID); ok && number > r.builder.nextID {
 				r.builder.nextID = number
 			}
@@ -265,12 +280,11 @@ func (r *Reducer) Apply(event any) (Change, error) {
 		return change, fmt.Errorf("%w: %T", ErrUnsupportedEvent, event)
 	}
 
-	after := r.builder.Thread()
-	change.AfterRevision = after.Revision()
+	change.AfterRevision = r.builder.thread.Revision()
 	if !change.Changed() {
 		return change, nil
 	}
-	records, err := after.RecordsSince(before)
+	records, err := r.builder.changedRecords()
 	if err != nil {
 		return Change{}, fmt.Errorf("reduce transcript event %T: %w", event, err)
 	}
