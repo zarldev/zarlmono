@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -54,15 +55,15 @@ func (s Style) PaneTitle(title string, width int, focused bool) string {
 // SelectionColors resolves the foreground and background used for selection.
 // Cell-based renderers can share Selection's palette roles without parsing SGR.
 // Plain returns unset colors; missing surfaces fall back to the primary accent.
-func (s Style) SelectionColors() (foreground, background theme.Color) {
+func (s Style) SelectionColors() (theme.Color, theme.Color) {
 	if s.Plain {
 		return "", ""
 	}
-	background = s.Theme.Selection
+	background := s.Theme.Selection
 	if background == "" {
 		background = s.Theme.Highlight
 	}
-	foreground = s.Theme.Fg
+	foreground := s.Theme.Fg
 	if background.BG() == "" {
 		background = ""
 		foreground = s.Theme.Primary

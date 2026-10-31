@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
 	"github.com/zarldev/zarlmono/zkit/tui/chrome"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )

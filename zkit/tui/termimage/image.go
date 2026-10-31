@@ -94,11 +94,11 @@ func Fallback(img image.Image, cols, rows int) []string {
 			return color.RGBA{30, 30, 30, 255}
 		}
 		r, g, b, _ := img.At(bounds.Min.X+(x-ox)*w/dw, bounds.Min.Y+(y-oy)*h/dh).RGBA()
-		return color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), 255}
+		return color.RGBA{uint8((r >> 8) & 0xff), uint8((g >> 8) & 0xff), uint8((b >> 8) & 0xff), 255}
 	}
 	for y := 0; y < rows*2; y += 2 {
 		var b strings.Builder
-		for x := 0; x < cols; x++ {
+		for x := range cols {
 			a, c := pixel(x, y), pixel(x, y+1)
 			fmt.Fprintf(&b, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀", a.R, a.G, a.B, c.R, c.G, c.B)
 		}

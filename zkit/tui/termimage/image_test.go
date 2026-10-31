@@ -1,10 +1,11 @@
 package termimage_test
 
 import (
-	"github.com/zarldev/zarlmono/zkit/tui/termimage"
 	"image"
 	"strings"
 	"testing"
+
+	"github.com/zarldev/zarlmono/zkit/tui/termimage"
 )
 
 func TestOwnedImages(t *testing.T) {
