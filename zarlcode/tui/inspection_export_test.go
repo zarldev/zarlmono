@@ -15,6 +15,19 @@ func InspectionCommandForTest(m *UI, load func(context.Context) InspectorSnapsho
 // InspectionPendingForTest reports whether the UI still owns an inspection.
 func InspectionPendingForTest(m *UI) bool { return m.inspectionOperation != nil }
 
+// CancelInspectionForTest cancels the owned advisory command before cleanup joins it.
+func CancelInspectionForTest(m *UI) {
+	if m.inspectionOperation != nil {
+		m.inspectionOperation.stop()
+	}
+}
+
+// AdvanceInspectionGenerationForTest simulates a newer live generation while an inspection drains.
+func AdvanceInspectionGenerationForTest(m *UI) { m.liveGeneration++ }
+
+// SwarmStoppedForTest returns the stop worker's completion signal.
+func SwarmStoppedForTest(m *UI) <-chan struct{} { return m.foreground.stopped }
+
 // InspectionPromptLinesForTest returns the actual cached prompt layout.
 func InspectionPromptLinesForTest(m *UI, width int) []string {
 	if m.overlay.active() {

@@ -22,6 +22,9 @@ func (m *UI) launchQueuedTurn() tea.Cmd {
 		m.showModeTargetBlocked(err, "; queued input retained")
 		return nil
 	}
+	if m.waitForInspection(foregroundInspectionQueue, "") {
+		return nil
+	}
 	if !m.durableDispatch() && m.modeTarget.prepared != nil {
 		queue := m.live.QueueSnapshot()
 		if len(queue) == 0 {

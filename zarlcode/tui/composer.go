@@ -686,6 +686,13 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 	if m.hasIdleQueuedTurn() {
 		return m.launchQueuedTurn(), false
 	}
+	kind := foregroundInspectionSubmit
+	if strings.TrimSpace(m.composer.text()) != text {
+		kind = foregroundInspectionDirect
+	}
+	if m.live != nil && m.waitForInspection(kind, text) {
+		return nil, false
+	}
 	m.generateFirstPromptLabel(text)
 	if m.live != nil {
 		attachments := m.attachmentParts()

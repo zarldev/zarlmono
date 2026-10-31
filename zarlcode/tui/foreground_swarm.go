@@ -20,6 +20,7 @@ import (
 type foregroundSwarm struct {
 	goal       *engine.Swarm
 	done       chan struct{}
+	stopped    chan struct{}
 	generation uint64
 	stopping   bool
 }
@@ -94,10 +95,13 @@ func (m *UI) startForegroundSwarm(assignment string) tea.Cmd {
 		return m.toastExpiryCmd()
 	}
 
+	if m.waitForInspection(foregroundInspectionSwarm, assignment) {
+		return nil
+	}
 	limits := swarm.DefaultLimits()
 	limits.Workers = 1
 	goal := engine.NewSwarm(assignment, swarm.WithLimits(limits))
-	owner := &foregroundSwarm{goal: goal, generation: m.liveGeneration + 1, done: make(chan struct{})}
+	owner := &foregroundSwarm{goal: goal, generation: m.liveGeneration + 1, done: make(chan struct{}), stopped: make(chan struct{})}
 
 	if _, err := goal.AddRecorded("foreground", m.live, assignment, func(ctx context.Context, a *engine.RecordedSwarmActivation) error {
 		return owner.execute(ctx, a, m)
@@ -146,6 +150,7 @@ func (m *UI) stopForegroundSwarm() tea.Cmd {
 		if m.liveSink != nil {
 			m.liveSink.AfterEvents(foregroundSwarmStoppedMsg{generation: owner.generation})
 		}
+		close(owner.stopped)
 	}()
 	m.session.SetToast("swarm stopping — let the current save settle")
 	return m.toastExpiryCmd()

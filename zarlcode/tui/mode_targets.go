@@ -149,6 +149,9 @@ func (m *UI) handleModeTargetRepoint(rp providerRepointedMsg) {
 		return
 	}
 	state.prepared = &rp
+	if m.waitForInspection(foregroundInspectionTarget, "") {
+		return
+	}
 	if err := m.applyPreparedModeTarget(nil); err != nil {
 		if errors.Is(err, engine.ErrRuntimeBusy) {
 			if state.launchQueue {

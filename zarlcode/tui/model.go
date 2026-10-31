@@ -52,6 +52,7 @@ type UI struct {
 	inspectionOperation *inspectionOperation
 	inspectionClosed    bool
 	inspectionVisible   *inspectionView
+	inspectionDemand    foregroundInspectionDemand
 	// sidebarScroll is a wrapped-row offset, independent of transcript browsing.
 	sidebarScroll    int
 	sidebarPlanCache sidebarPlanCache
@@ -438,8 +439,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if result, ok := msg.(inspectionLoadedMsg); ok {
-		m.receiveInspection(result)
-		return m, nil
+		cmd := m.receiveInspection(result)
+		return m, cmd
 	}
 	if _, ok := msg.(frameMsg); ok {
 		m.frame++
