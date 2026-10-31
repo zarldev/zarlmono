@@ -61,12 +61,21 @@ func (a *AsyncTool) Definition() tools.ToolSpec {
 // Execute validates and prepares a child using the same planner, depth, mode,
 // and policy rules as Tool, then starts it in the owned group.
 func (a *AsyncTool) Execute(ctx context.Context, call tools.ToolCall) (*tools.ToolResult, error) {
-	inv, failure := prepare(ctx, call, a.tool)
+	args, failure := validatePreparation(ctx, call, a.tool)
+	if failure != nil {
+		return failure, nil
+	}
+	ctx, reservation, err := a.group.reservePreparation(ctx)
+	if err != nil {
+		return tools.Failure(call.ID, spawnAdmissionError(err)), nil
+	}
+	defer a.group.releasePreparation(reservation)
+	inv, failure := prepare(ctx, call, a.tool, args)
 	if failure != nil {
 		return failure, nil
 	}
 	inv.executionID = call.ExecutionID
-	snapshot, err := a.group.Start(inv.ctx, inv)
+	snapshot, err := a.group.startPrepared(inv.ctx, inv, reservation)
 	if err != nil {
 		return tools.Failure(call.ID, spawnAdmissionError(err)), nil
 	}
