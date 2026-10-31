@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### workspace and other modules
+
+- Add opt-in SWE-bench static experiments and bounded one-round harness refinement, with isolated probes, private evidence receipts, score-blind projections and no automatic promotion of generated guidance.
+- Add a scripted swarm experiment example and report-only code-risk tooling; strengthen repository-local link confinement against symlink escape.
+- Update the documentation site to Astro 7.4.2 and Starlight 0.42.7. Building the site requires Node >=22.23.4.
+- Extract the zarlos helper from the monorepo workspace and install tasks. It is not part of the zkit or zarlcode release artifacts; examples and swebench-eval also retain their own release lifecycles.
+
+## [zarlcode/v0.23.0] — 2026-10-31
+
+### added
+
+- Add recorded foreground swarm activations with terminal start/stop control, durable BEFORE checkpoints and settled conversation history.
+- Account for swarm root, child, planner, judge and compactor inference through the shared scope, without double-counting task-local totals. Report compactor usage separately from the active model's context occupancy and prices.
+- Add asynchronous inspector snapshots and cached prompt layout, together with terminal performance and usage diagnostics that distinguish missing usage from reported zero.
+- Add shared workspace/app/global appearance selection, live preview, reset-to-inherit and the `ansi-bbs` default, while retaining explicit legacy theme preferences.
+- Add Podman Compose support for managed SearXNG, including rootless setups. Initial runtime selection falls back when the Docker Compose availability probe fails; subsequent operations retain the recorded owner and startup requires a valid JSON search response.
+
+### changed
+
+- Reuse shared terminal chrome and image helpers, and reduce repeated transcript copying, queued-output work and redraw overhead while retaining original visible output.
+- Keep recorded session cache routes stable across turns and resume without reusing execution task identities.
+- Use the owned pursuit supervisor for headless attempts and independently bounded Git observations; dependency cleanup waits for owned attempts and probes to finish.
+- Refresh terminal dependencies, including Bubble Tea 2.1.0, and use the shared ChromeDP v0.21 browser implementation.
+- Change the unconfigured exploration and judge model default from `deepseek-v4-flash` to `deepseek-flash`. Explicit saved selections remain authoritative.
+
+### fixed
+
+- Cancel and drain advisory inspection before ordinary, queued or swarm foreground admission, retaining the first pending request and rejecting stale session or generation results.
+- Cancel separately dispatched recorded swarm work when its owner closes, and durably settle unsuccessful activations without inventing success.
+- Restore provider/model selection atomically with the active session; prevent model inheritance across unrelated provider scopes and stale target changes during checkpoint admission.
+- Reset unknown restored-target context budgets instead of inheriting an unrelated larger window; respect explicit endpoint and registry context limits for root and child routes.
+- Preserve provider-native replay, Google continuation data and original transcript bytes through compaction, autosave, export and resume.
+- Surface SearXNG engine failures and availability diagnostics rather than presenting degraded searches as unqualified success; preserve customized service manifests and upgrade only the exact previous bundled manifest for SELinux.
+
+### upgrade notes
+
+- Requires **zkit v0.23.0**. Source consumers must use that published dependency rather than combining the new application with an older shared library.
+- Shared appearance choices use the user-config `zarl/appearance.db`. Shared workspace and app choices override the corresponding legacy theme preference; a legacy global theme still acts at app scope and takes precedence over a shared global choice. Reading defaults does not create the database. Reset-to-inherit also removes the matching legacy theme key, never credentials or unrelated settings.
+- Managed SearXNG remembers its Compose runtime under `~/.zarlcode/services/`; later stop/log operations use that owner rather than silently switching engines. These lifecycle changes do not automatically install or restart a host service during upgrade.
+- Keep backups of session state, credential-vault files and appearance data before upgrading or downgrading; do not assume older binaries understand newly persisted replay and diagnostic fields.
+- This remains a terminal release. Experimental desktop/workbench code is excluded, and no new Plan-mode shell permission is introduced.
+
+## [zkit/v0.23.0] — 2026-10-31
+
+### added
+
+- Add explicit `agent/inference` accounts and scopes for lazy provider-invocation admission, invocation-count caps, reported-token soft thresholds, aggregate usage and settlement on success, failure, cancellation or early stop. Unscoped calls remain outside the account.
+- Add a one-use `pursue.Supervisor` with registration-before-launch, Stop/Join, owned polling and detached late-attempt results, while retaining the standalone Drive contract.
+- Add compaction inference metadata and `CompactionSettled` events, including failure-time usage, with explicit attribution separate from runner task totals.
+- Add `runner.WithAdditionalToolGate` for intersecting inherited tool restrictions without changing the replacement behavior of `WithToolGate`.
+- Add reusable `tui/appearance`, `tui/chrome` and `tui/termimage` packages for scoped appearance, consistent terminal framing and bounded image presentation.
+- Add reasoning-token usage subtotals and a presence flag; expose supported provider thinking, verbosity, parallel-tool and prompt-cache controls without treating missing usage as zero.
+
+### changed
+
+- Reserve asynchronous spawn capacity and cancellation ownership before planner or resolver work, atomically transfer preparation to a child, and include preparations in parent/group drain and completion readiness.
+- Preserve complete recent tool exchanges during pressure compaction, along with native continuation/action boundaries and canonical observations. Host-generated excerpts remain request-only projections.
+- Migrate browser sessions, fetch extraction and workspace consumers to ChromeDP v0.21's typed action APIs.
+- Update the provider dependency graph to OpenAI Go v3.89.0 and Google Gen AI v1.76.0 while retaining the validated Anthropic v1.80.0 / jsonschema v0.14.0 pair.
+- Refresh model capabilities, context-window and billing-route metadata; improve Google media validation/output handling and provider quota/reset reporting.
+
+### fixed
+
+- Prevent planner, requested or authored child modes from widening an ancestor's mode or arbitrary tool gate, in synchronous and asynchronous delegation.
+- Retain pending automatic-completion evidence until admission, distinguish receiving enrollment from lifetime binding, and preserve useful results across timeout settlement.
+- Keep failed or cancelled compactor usage observable, avoid false provider attempts when inference admission is denied, and preserve per-task usage semantics under aggregate accounting.
+- Surface SearXNG engine and partial-search diagnostics; render numeric and Boolean program-schema enums as valid JSON without changing bounded-wave budgets or whole-batch policy checks.
+- Keep secret-redaction behavior compatible while avoiding unnecessary regular-expression passes on ordinary ASCII output.
+
+### upgrade notes
+
+- **Source compatibility:** `runner.CompactionSink` (and therefore `runner.EventSink`) now includes `OnCompactionSettled(context.Context, runner.CompactionSettled)`. Explicit sink implementations must handle it or deliberately embed `runner.NopSink`; adapters that consume compaction usage should forward it rather than silently discard it.
+- `llm.Usage.ReasoningTokens` is part of completion usage, not an additional token total. Check `ReasoningTokensReported` before interpreting zero; aggregate token limits are based on reported usage, not a hard cost or pre-reserved token budget.
+- A supervisor Join deadline bounds the caller's wait, not the lifetime of unfinished work. Keep dependencies alive until the owner has joined; arbitrary external watchers remain externally owned.
+- Direct ChromeDP callers must adapt to the selected v0.21 API. Upgrade the shared library before repinning application and example modules, and verify those consumers outside `go.work`.
+
 ## [zarlcode/v0.22.0] — 2026-10-23
 
 ### added
