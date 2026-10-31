@@ -48,7 +48,10 @@ type UI struct {
 	// contextView tracks the full-screen ctrl+l live-context surface: active tab,
 	// per-tab scroll offsets, and any tab-local cursors. It replaces the old
 	// single dashboardScroll field now that the context view is tabbed.
-	contextView contextViewState
+	contextView         contextViewState
+	inspectionOperation *inspectionOperation
+	inspectionClosed    bool
+	inspectionVisible   *inspectionView
 	// sidebarScroll is a wrapped-row offset, independent of transcript browsing.
 	sidebarScroll    int
 	sidebarPlanCache sidebarPlanCache
@@ -164,8 +167,9 @@ const (
 var contextViewTabNames = []string{"overview", "context", "prompt", "tools", "events"}
 
 type contextViewState struct {
-	tab    contextViewTab
-	scroll [contextViewTabCount]int
+	tab        contextViewTab
+	scroll     [contextViewTabCount]int
+	inspection *inspectionView
 }
 
 func (s *contextViewState) activeScroll() int {
@@ -413,6 +417,7 @@ func (m *UI) Init() tea.Cmd {
 // messages) are handled here too.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	cmd = tea.Batch(cmd, m.inspectionCmd())
 	if persist := m.transcriptPersistenceCmd(); persist != nil {
 		cmd = tea.Batch(cmd, persist)
 	}
@@ -432,6 +437,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if result, ok := msg.(inspectionLoadedMsg); ok {
+		m.receiveInspection(result)
+		return m, nil
+	}
 	if _, ok := msg.(frameMsg); ok {
 		m.frame++
 		if m.session.Run.Running {

@@ -114,7 +114,11 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 }
 
 func (m *UI) contextPromptLines(width int) []string {
-	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
+	view := m.contextView.inspection
+	if view == nil || !view.ready {
+		return append([]string{sidebarHeading("prompt"), ""}, inspectionLoadingLines()...)
+	}
+	snap := view.snapshot
 	out := []string{sidebarHeading("prompt")}
 	stackLines := promptStackSummaryLines(snap.PromptStack)
 	if len(stackLines) == 0 {
@@ -163,7 +167,11 @@ func promptPreviewLines(prompt string, width int) []string {
 }
 
 func (m *UI) contextToolsLines(width int) []string {
-	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
+	view := m.contextView.inspection
+	if view == nil || !view.ready {
+		return append([]string{sidebarHeading("tools"), ""}, inspectionLoadingLines()...)
+	}
+	snap := view.snapshot
 	available, hidden := groupContextTools(snap.Tools, snap.PlanMode)
 	out := []string{sidebarHeading("tools")}
 	out = append(out, palette.Muted.On(fmt.Sprintf("%d available now · %d hidden", len(available), len(hidden))))
@@ -206,10 +214,10 @@ func renderToolSpecRows(specs []tools.ToolSpec) []string {
 }
 
 func (m *UI) contextEventsLines(_ int) []string {
-	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
-	groups := groupContextEvents(snap.EventLog)
+	events := m.session.EventLog.Snapshot()
+	groups := groupContextEvents(events)
 	out := []string{sidebarHeading("events")}
-	if len(snap.EventLog) == 0 {
+	if len(events) == 0 {
 		return append(out, palette.Muted.On("no events recorded yet"))
 	}
 	for _, g := range groups {

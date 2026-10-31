@@ -803,7 +803,14 @@ func (m *UI) sessionDeletionPending() bool {
 // FlushSessionPersistence completes queued writes in FIFO order, then writes
 // the final resumable snapshot. It is called after the Bubble Tea loop stops,
 // when no command can concurrently mutate the queue.
-func (m *UI) FlushSessionPersistence(ctx context.Context) error {
+func (m *UI) FlushSessionPersistence(ctx context.Context) (result error) {
+	// Cancel inspection immediately, but spend the shutdown budget on durable
+	// writes before joining advisory UI work. Retain join ownership on timeout.
+	m.inspectionClosed = true
+	if op := m.inspectionOperation; op != nil {
+		op.stop()
+	}
+	defer func() { result = errors.Join(result, m.closeInspection(ctx)) }()
 	var firstErr error
 	// A recorded swarm activation must not block its worker past shutdown.
 	m.resolveSwarmSettle(m.liveOperation, errSwarmShutdown)

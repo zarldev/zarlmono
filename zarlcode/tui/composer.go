@@ -257,7 +257,7 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case "ctrl+o":
-		m.overlay.push(newInspector(BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)))
+		m.overlay.push(newInspector())
 		return nil, true
 	case "ctrl+b":
 		m.session.StateSidebarHidden = !m.session.StateSidebarHidden
@@ -327,6 +327,9 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 
 func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
+	case "r":
+		m.contextView.inspection = nil
+		return nil
 	case "tab", "right":
 		m.contextView.nextTab()
 		return nil

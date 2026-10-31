@@ -77,7 +77,7 @@ type InspectorSnapshot struct {
 }
 
 type inspector struct {
-	snapshot      InspectorSnapshot
+	*inspectionView
 	cursor        int // sidebar cursor; index into inspectorTabNames
 	processCursor int
 	status        string
@@ -89,13 +89,17 @@ func inspectorSummary(s InspectorSnapshot) string {
 	return fmt.Sprintf("%d tools · %d events · %d processes", len(s.Tools), len(s.EventLog), len(s.Processes))
 }
 
-func newInspector(snapshot InspectorSnapshot) *inspector {
-	return &inspector{snapshot: snapshot}
+func newInspector() *inspector {
+	return &inspector{inspectionView: &inspectionView{}}
 }
 
 func (d *inspector) fullScreen() bool { return true }
 
 func (d *inspector) handleKey(msg tea.KeyPressMsg) action {
+	if msg.String() == "r" {
+		d.inspectionView = &inspectionView{}
+		return actionNone{}
+	}
 	if inspectorTab(d.cursor) == inspectorTabProcesses {
 		switch msg.String() {
 		case "up", "k":
@@ -214,9 +218,15 @@ func (d *inspector) scrollLines(n int) {
 }
 
 func (d *inspector) contentLines(width int) []string {
+	if !d.ready {
+		return inspectionLoadingLines()
+	}
 	switch inspectorTab(d.cursor) {
 	case inspectorTabPrompt:
-		return d.promptLines(width)
+		if d.prompt.lines == nil || d.prompt.width != width || d.prompt.theme != themeGen {
+			d.prompt = inspectionLines{width: width, theme: themeGen, lines: d.promptLines(width)}
+		}
+		return d.prompt.lines
 	case inspectorTabTools:
 		return d.toolLines(width)
 	case inspectorTabRuntime:
@@ -513,7 +523,7 @@ func (d *inspector) drawFooter(scr uv.Screen, r uv.Rectangle) {
 	if inspectorTab(d.cursor) == inspectorTabProcesses {
 		hints = []keyHint{{"↑↓/jk", "select process"}, {"x", "kill"}, {"tab/←→", "switch tab"}, {"pgup/pgdn", "page"}}
 	}
-	hints = append(hints, keyHint{"esc", "close"})
+	hints = append(hints, keyHint{"r", "refresh snapshot"}, keyHint{"esc", "close"})
 	footer := compactFooterHints(hints...)
 	drawPaneRow(scr, r, palette.Subtle.On(" "+footer), "")
 }
