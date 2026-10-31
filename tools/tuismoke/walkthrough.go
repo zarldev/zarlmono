@@ -55,7 +55,7 @@ func (h *harness) walkthrough(ctx context.Context) error {
 		// Wait between Escapes; a burst can decode as Alt+Escape.
 		{"esc done", []string{keyEscape}},
 		{composerPrompt, []string{keyEscape}},
-		{"session  overview", []string{"C-l"}},
+		{"session  [ overview ]", []string{"C-l"}},
 		// The dashboard retains the composer; wait for the main header to return.
 		{"New session", []string{keyEscape}},
 		{"no structured plan yet", []string{"C-p"}},

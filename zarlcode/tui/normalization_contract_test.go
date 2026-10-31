@@ -15,6 +15,7 @@ import (
 	lg "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -190,7 +191,7 @@ func writeNormalizationGallery(t *testing.T, canvas uv.ScreenBuffer, palette, sc
 		return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
 	}
 	for y := range canvas.Height() {
-		for x := 0; x < canvas.Width(); x++ {
+		for x := range canvas.Width() {
 			cell := canvas.CellAt(x, y)
 			if cell.Width == 0 {
 				continue

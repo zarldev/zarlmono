@@ -39,7 +39,7 @@ func assertDetailChrome(t *testing.T, canvas uv.ScreenBuffer, title, active stri
 	if !sameSurface(canvas.CellAt(x, y).Style.Bg, canvas.CellAt(0, 0).Style.Bg) {
 		t.Error("detail title uses a different surface")
 	}
-	x, y = detailTextPosition(t, canvas, active, 0, 1)
+	detailTextPosition(t, canvas, active, 0, 1)
 	if !strings.Contains(screenRegion(canvas, 0, 0, width, 1), "[ "+active+" ]") {
 		t.Errorf("active %s tab lacks a selection surface", active)
 	}
