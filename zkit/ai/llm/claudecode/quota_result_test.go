@@ -14,11 +14,10 @@ import (
 )
 
 func TestUnsuccessfulResultQuotaIsTypedAndSanitized(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name   string
 		script string
+		binary string
 	}{
 		{
 			name: "result message",
@@ -41,17 +40,19 @@ exit 1
 		},
 	}
 
+	// Keep fixture writes and subprocess execution serial. Quota classification
+	// does not require executable creation to race another child fork.
+	for i := range tests {
+		tests[i].binary = filepath.Join(t.TempDir(), "claude")
+		if err := os.WriteFile(tests[i].binary, []byte(tests[i].script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			binary := filepath.Join(t.TempDir(), "claude")
-			if err := os.WriteFile(binary, []byte(tc.script), 0o700); err != nil {
-				t.Fatal(err)
-			}
 			provider := claudecode.NewProvider(
 				claudecode.StaticTokenSource{T: claudecode.Token{Access: "fixture-token"}},
-				claudecode.WithBinaryPath(binary),
+				claudecode.WithBinaryPath(tc.binary),
 			)
 
 			var got error
@@ -65,7 +66,7 @@ exit 1
 
 			limit, ok := errors.AsType[*llm.RateLimitError](got)
 			if !ok {
-				t.Fatalf("got %T, want quota error", got)
+				t.Fatalf("got %T (%v), want quota error", got, got)
 			}
 			if limit.Permanent || limit.Retryable {
 				t.Fatalf("permanent=%v retryable=%v, want both false", limit.Permanent, limit.Retryable)
