@@ -38,6 +38,9 @@ type RecordedSwarmActivation struct {
 	run         bool
 	released    bool
 	result      runner.TaskResult
+	// context is owned by this callback-scoped activation and canceled before
+	// release. Host dispatch contexts may carry different values and lifetimes.
+	context context.Context
 }
 
 // RunRecorded dispatches this activation through the borrowed reservation with
@@ -52,7 +55,22 @@ func (a *RecordedSwarmActivation) RunRecorded(ctx context.Context, store *db.Sto
 		return runner.TaskResult{ID: a.activation.Spec.ID, Reason: runner.TerminalError, Err: ErrRuntimeBusy}
 	}
 	a.run = true
-	result := a.Reservation.runSwarmActivation(ctx, a.activation, a.coordinator, a.live.sessionRecordingOptions(store, sessionID)...)
+	runCtx, cancel := context.WithCancelCause(ctx)
+	cancelled := make(chan struct{})
+	stop := context.AfterFunc(a.context, func() {
+		cancel(context.Cause(a.context))
+		close(cancelled)
+	})
+	defer func() {
+		if !stop() {
+			<-cancelled
+		}
+		cancel(nil)
+	}()
+	if a.context.Err() != nil {
+		cancel(context.Cause(a.context))
+	}
+	result := a.Reservation.runSwarmActivation(runCtx, a.activation, a.coordinator, a.live.sessionRecordingOptions(store, sessionID)...)
 	a.result = result
 	return result
 }
@@ -78,15 +96,19 @@ func (s *Swarm) runRecorded(ctx context.Context, live *LiveRunner, activation sw
 	spec := activation.Spec
 	spec.Context = llm.CloneMessages(spec.Context)
 	spec.Attachments = llm.CloneContentParts(spec.Attachments)
+	activationCtx, cancelActivation := context.WithCancel(ctx)
+	defer cancelActivation()
 	handle := &RecordedSwarmActivation{
 		Reservation: reservation,
 		Spec:        spec,
 		activation:  activation,
 		coordinator: s.coordinator,
 		live:        live,
+		context:     activationCtx,
 	}
 
 	hostErr := execute(ctx, handle)
+	cancelActivation()
 
 	handle.mu.Lock()
 	ran := handle.run

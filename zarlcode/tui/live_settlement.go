@@ -143,7 +143,10 @@ func (m *UI) handleSettledLiveTurn(msg settledLiveTurnMsg) tea.Cmd {
 	if op == nil || op.sessionID != msg.sessionID || op.generation != msg.generation || m.session.ID != msg.sessionID {
 		return nil
 	}
-	if failed, ok := msg.result.(beforeTurnFailedMsg); ok {
+	// A recorded swarm can return an unsuccessful result after executing. Its
+	// applied start event distinguishes that terminal outcome from admission
+	// failure; executed turns still require the normal durable settlement.
+	if failed, ok := msg.result.(beforeTurnFailedMsg); ok && (op.swarmSettle == nil || op.turnID == "") {
 		isSwarm := op.swarmSettle != nil
 		if errors.Is(failed.err, db.ErrCheckpointConflict) {
 			m.sourceConflict = true
