@@ -6,22 +6,38 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"slices"
 
 	"github.com/zarldev/zarlmono/swebench-eval/evalconfig"
+	"github.com/zarldev/zarlmono/swebench-eval/harness"
 	"github.com/zarldev/zarlmono/swebench-eval/task"
 	"github.com/zarldev/zarlmono/swebench-eval/version"
 )
 
 type runManifest struct {
-	FormatVersion int               `json:"format_version"`
-	Build         buildIdentity     `json:"build"`
-	Tasks         []task.Spec       `json:"tasks"`
-	TasksSHA256   string            `json:"tasks_sha256"`
-	Drivers       []string          `json:"drivers"`
-	Requested     requestedSettings `json:"requested"`
+	FormatVersion            int               `json:"format_version"`
+	EvaluationPromptRevision string            `json:"evaluation_prompt_revision"`
+	Build                    buildIdentity     `json:"build"`
+	Tasks                    []task.Spec       `json:"tasks"`
+	TasksSHA256              string            `json:"tasks_sha256"`
+	Drivers                  []string          `json:"drivers"`
+	Requested                requestedSettings `json:"requested"`
+	HarnessTrials            []harness.Trial   `json:"harness_trials,omitempty"`
+	EvidenceNamespace        string            `json:"evidence_namespace,omitempty"`
+	Refinement               *refinementPolicy `json:"refinement,omitempty"`
+}
+
+type refinementPolicy struct {
+	MaxSolverRollouts     int    `json:"max_solver_rollouts"`
+	MaxImproverCalls      int    `json:"max_improver_calls"`
+	ImproverTimeout       string `json:"improver_timeout"`
+	RequestBytes          int    `json:"request_bytes"`
+	ResponseBytes         int    `json:"response_bytes"`
+	RequestedOutputTokens int    `json:"requested_output_tokens"`
+	EvidenceProfile       string `json:"evidence_profile"`
 }
 
 type buildIdentity struct {
@@ -95,11 +111,12 @@ func Marshal(cfg evalconfig.Config, specs []task.Spec, drivers []string) ([]byte
 	}
 	z := cfg.Zarlcode
 	m := runManifest{
-		FormatVersion: 1,
-		Build:         currentBuild(),
-		Tasks:         specs,
-		TasksSHA256:   fmt.Sprintf("%x", sha256.Sum256(tasksJSON)),
-		Drivers:       drivers,
+		FormatVersion:            1,
+		EvaluationPromptRevision: harness.EvaluationPromptRevision,
+		Build:                    currentBuild(),
+		Tasks:                    specs,
+		TasksSHA256:              fmt.Sprintf("%x", sha256.Sum256(tasksJSON)),
+		Drivers:                  drivers,
 		Requested: requestedSettings{
 			Languages: cfg.Input.Languages, Sample: cfg.Input.Sample, Ablations: cfg.Input.AblationSpec,
 			Provider: z.Provider, Model: z.Model, CodexEffort: z.CodexEffort,
@@ -113,6 +130,20 @@ func Marshal(cfg evalconfig.Config, specs []task.Spec, drivers []string) ([]byte
 			AllowRemoteResetURL: z.AllowRemoteResetURL, KeepWorktrees: cfg.Worktrees.Keep,
 			CloneCache: cfg.Worktrees.CloneCache != "", TranscriptCapture: z.TranscriptDir != "",
 		},
+	}
+	if trials := cfg.Experiment.Trials(); len(trials) > 0 {
+		m.FormatVersion = 2
+		m.HarnessTrials = trials
+		m.EvidenceNamespace = filepath.Base(cfg.Persistence.EvidenceDir)
+	}
+	if cfg.Refinement.Enabled {
+		m.FormatVersion = 3
+		m.EvidenceNamespace = filepath.Base(cfg.Persistence.EvidenceDir)
+		m.Refinement = &refinementPolicy{
+			MaxSolverRollouts: 4, MaxImproverCalls: 2, ImproverTimeout: cfg.Refinement.ImproverTimeout.String(),
+			RequestBytes: harness.ImproverRequestLimit, ResponseBytes: harness.ImproverResponseLimit,
+			RequestedOutputTokens: harness.ImproverOutputTokens, EvidenceProfile: "metadata-v1",
+		}
 	}
 	data, err := json.Marshal(m)
 	if err != nil {

@@ -17,6 +17,14 @@ Usage of eval:
     \tpath to .env loaded before provider construction (carries per-backend URL/key knobs)
   -export-run string
     \texport an existing run as JSON to stdout without executing tasks (use --db to select the database)
+  -harness-evidence-dir string
+    \trequired private artifact directory for harness experiments
+  -harness-experiment string
+    \tversioned JSON prompt-guidance candidates (includes unchanged baseline)
+  -harness-improver-timeout duration
+    \tper-improver-call timeout for --harness-refine (maximum 2m) (default 2m0s)
+  -harness-refine
+    \trun one bounded score-blind Propose-Probe-Compose round per task
   -keep-worktrees
     \tleave worktrees on disk after the run for post-hoc inspection
   -languages string

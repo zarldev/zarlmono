@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -157,6 +159,12 @@ type ZarlcodeDriver struct {
 	// the existing per-driver comparison machinery does the grouping.
 	Ablation Ablation
 
+	// Trial selects immutable prompt-only guidance; zero preserves normal runs.
+	Trial Trial
+	// EvidenceDir and ExperimentRunID identify required experiment artifacts.
+	EvidenceDir     string
+	ExperimentRunID string
+
 	// once guards lazy provider construction; the provider + its backing
 	// state.db/vault outlive individual tasks.
 	once     sync.Once
@@ -171,6 +179,9 @@ type ZarlcodeDriver struct {
 // only allow [a-zA-Z0-9][a-zA-Z0-9_.-] — a colon made container creation
 // fail for every arm instance, so arm patches were never evaluated.
 func (d *ZarlcodeDriver) Name() string {
+	if name := d.Trial.DriverName(); name != "" {
+		return name
+	}
 	if d.Ablation.Name == "" || d.Ablation.Name == "baseline" {
 		return "zarlcode"
 	}
@@ -270,6 +281,26 @@ func (d *ZarlcodeDriver) Close() {
 // surfaces as a successful Run with a terminal reason and a diff the
 // SWE-bench evaluator subsequently scores.
 func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
+	if d.Trial.DriverName() == "" {
+		return d.run(ctx, t, nil)
+	}
+	evidence, err := OpenTrialEvidence(d.EvidenceDir, d.ExperimentRunID, d.Trial, t)
+	if err != nil {
+		return Result{Err: err}
+	}
+	defer evidence.Close()
+	result := d.run(ctx, t, evidence)
+	result.EvidenceFile = evidence.receipt.File
+	finishErr := evidence.Finish(result)
+	result.Err = errors.Join(result.Err, finishErr)
+	if finishErr == nil {
+		result.Evidence = evidence.receipt
+		result.Evidence.SHA256 = hex.EncodeToString(evidence.digest.Sum(nil))
+	}
+	return result
+}
+
+func (d *ZarlcodeDriver) run(ctx context.Context, t Task, history runner.HistorySink) Result {
 	start := time.Now()
 
 	if err := d.ensureProvider(); err != nil {
@@ -324,15 +355,16 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 	if d.Ablation.Judge {
 		deps.DecomposeJudge = guardrails.NewLLMVerdictJudge(d.prov)
 	}
-	source, _, err := coderunner.GuardedSource(reg, deps, sourcechain.Pipeline{})
+	source, activeGuardrails, err := coderunner.GuardedSource(reg, deps, sourcechain.Pipeline{})
 	if err != nil {
 		return Result{Err: fmt.Errorf("arm guardrails: %w", err), Duration: time.Since(start)}
 	}
 
-	prompt, err := RenderSystemPrompt(root, reg)
+	prompt, err := RenderEvaluationPrompt(root, reg, activeGuardrails)
 	if err != nil {
 		return Result{Err: fmt.Errorf("render system prompt: %w", err), Duration: time.Since(start)}
 	}
+	prompt = d.Trial.Prompt(prompt)
 
 	ctxWindow := d.ContextWindow
 	if ctxWindow <= 0 {
@@ -374,6 +406,9 @@ func (d *ZarlcodeDriver) Run(ctx context.Context, t Task) Result {
 		runner.WithCompletionGate(runner.RequireWork{MaxCorrections: 2}),
 	)
 	opts = append(opts, runner.WithTools(source))
+	if history != nil {
+		opts = append(opts, runner.WithHistorySink(history))
+	}
 	r := runner.New(runner.ClientFromProvider(d.prov), opts...)
 
 	// Snapshot pre-run untracked files so the captured diff attributes

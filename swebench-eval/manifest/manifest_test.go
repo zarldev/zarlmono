@@ -43,17 +43,21 @@ func TestManifestPreservesSelectedInputsAndExcludesPrivateConfiguration(t *testi
 		t.Fatal("manifest copied private configuration")
 	}
 	var got struct {
-		FormatVersion int            `json:"format_version"`
-		Tasks         []task.Spec    `json:"tasks"`
-		TasksSHA256   string         `json:"tasks_sha256"`
-		Drivers       []string       `json:"drivers"`
-		Requested     map[string]any `json:"requested"`
-		Build         struct {
+		FormatVersion            int            `json:"format_version"`
+		EvaluationPromptRevision string         `json:"evaluation_prompt_revision"`
+		Tasks                    []task.Spec    `json:"tasks"`
+		TasksSHA256              string         `json:"tasks_sha256"`
+		Drivers                  []string       `json:"drivers"`
+		Requested                map[string]any `json:"requested"`
+		Build                    struct {
 			GoVersion string `json:"go_version"`
 		} `json:"build"`
 	}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
+	}
+	if got.EvaluationPromptRevision != "test-file-policy-v1" {
+		t.Fatalf("evaluation prompt revision = %q", got.EvaluationPromptRevision)
 	}
 	if got.FormatVersion != 1 || len(got.Tasks) != 2 || got.Tasks[0] != specs[0] || got.Tasks[1] != specs[1] {
 		t.Fatalf("selected tasks changed: %+v", got.Tasks)
