@@ -61,6 +61,7 @@ func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now
 		s.Run.Running = true
 		effect.Attachments = s.TakeSubmittedAttachments()
 		s.Run.activeTopLevel = e.TaskID
+		s.Run.performance = PerformanceDiagnostics{TaskID: e.TaskID, Provider: e.Provider, Model: e.Model}
 	case e.Depth > 0:
 		if e.Depth > s.Run.maxDepth {
 			s.Run.maxDepth = e.Depth
@@ -184,6 +185,7 @@ func (s *Session) applyPlanUpdated(e teasink.PlanUpdatedMsg) {
 }
 
 func (s *Session) applyIterationCompleted(e teasink.IterationCompletedMsg) {
+	s.observeIterationTiming(e)
 	if s.Run.acceptsActivity(e.TaskID, e.Depth) {
 		s.Run.activity.phase = ActivityPhases.ACTIVITYWORKING
 	}
@@ -206,6 +208,9 @@ func (s *Session) applyCompactionApplied(e teasink.CompactionAppliedMsg) {
 	s.logEvent("compaction", fmt.Sprintf("%d→%d msgs engine=%s", e.MessagesBefore, e.MessagesAfter, e.Engine))
 	if e.Depth == 0 {
 		s.Run.foldCompaction(e.MessagesBefore, e.MessagesAfter, e.BytesTrimmed, e.Engine)
+		if task, ok := s.Run.tasks[e.TaskID]; ok && task.depth == 0 && s.Run.performance.TaskID == e.TaskID {
+			s.Run.performance.Compactions++
+		}
 	}
 }
 
@@ -229,6 +234,13 @@ func (s *Session) applyConversationEnded(e teasink.ConversationEndedMsg, now tim
 	}
 	if e.Depth == 0 {
 		s.Run.foldTurnComplete(e.TotalUsage, e.Duration, e.Iterations, task.price)
+		p := &s.Run.performance
+		p.Settled, p.Duration = true, e.Duration
+		p.UsageReported = e.TotalUsage != nil
+		p.ReportedCompletionTokens = 0
+		if e.TotalUsage != nil {
+			p.ReportedCompletionTokens = e.TotalUsage.CompletionTokens
+		}
 		s.Run.activeTopLevel = ""
 	} else {
 		s.Run.foldSubAgentUsage(e.TotalUsage, task.price)

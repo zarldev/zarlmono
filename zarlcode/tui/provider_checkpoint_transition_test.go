@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -46,6 +47,49 @@ func TestExactSessionRejectsCustomTargetBeforePersistence(t *testing.T) {
 			t.Fatal("rejected switch changed live route")
 		}
 		settleRewindTurn(t, f, "still works on original route")
+	})
+}
+
+func TestFreshExactSessionRejectsSupportedTargetChangeWithoutMutation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newBeforeFixture(t)
+		f.ui.SetStartupReady(true)
+		settings := engine.NewSettings(f.store, nil, nil, f.ws.Root())
+		settings.Registry = backends.NewRegistry(backends.WithSettingsService(sessionFixtureKeys{}))
+		f.ui.SetSettings(settings)
+		selection := prefs.ModelSelection{Provider: "openai", Model: "saved-model"}
+		requireSetSelection(t, settings, prefs.ScopeWorkspace, selection)
+		f.provider.check = func(context.Context) {}
+		settleRewindTurn(t, f, "fresh exact history")
+
+		sessionID := f.ui.SessionIdentity()
+		beforeContext := f.live.ContextSnapshot()
+		beforeTarget := f.live.RunTarget()
+		beforeHead, err := f.store.GetSessionResumeState(t.Context(), sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		driveBeforeCommand(f, f.ui.SwitchTarget(prefs.ModelSelection{Provider: "openai", Model: "other-supported-model"}))
+
+		if !strings.Contains(f.ui.ToastText(), "start a new conversation") {
+			t.Fatalf("missing exact target rejection: %s", f.ui.ToastText())
+		}
+		requireSelection(t, settings, prefs.ScopeWorkspace, selection)
+		if f.ui.SessionIdentity() != sessionID {
+			t.Fatal("rejected switch changed session identity")
+		}
+		afterHead, err := f.store.GetSessionResumeState(t.Context(), sessionID)
+		if err != nil || !reflect.DeepEqual(afterHead, beforeHead) {
+			t.Fatalf("rejected switch changed durable head: %v", err)
+		}
+		if !reflect.DeepEqual(f.live.ContextSnapshot(), beforeContext) {
+			t.Fatal("rejected switch changed live context")
+		}
+		afterTarget := f.live.RunTarget()
+		if afterTarget.Provider != beforeTarget.Provider || afterTarget.Spec != beforeTarget.Spec || afterTarget.Window != beforeTarget.Window {
+			t.Fatal("rejected switch changed live target")
+		}
 	})
 }
 

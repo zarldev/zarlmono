@@ -169,3 +169,30 @@ func TestSessionHeaderKeepsViewportWithJoinedEmoji(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicUIRetainsMixedCaseModelAndToolWithLiveMetrics(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ui := tui.New()
+		ui.SetWorkspace(t.TempDir(), "Claude-Opus4.6")
+		ui.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+		ui.Update(teasink.ConversationStartedMsg{TaskID: "turn", Prompt: "work"})
+		time.Sleep(65 * time.Second)
+		usage := &llm.Usage{CompletionTokens: 23 * 65}
+		ui.Update(teasink.IterationCompletedMsg{TaskID: "turn", Iter: 1, Usage: usage, Delta: usage})
+		ui.Update(teasink.ToolStartedMsg{TaskID: "turn", ToolID: "call", ToolName: "ReadFile"})
+		canvas := surfaceCanvas(ui, 100, 30)
+		header := transcriptScreenRow(canvas, 0)
+		activity := transcriptScreenRow(canvas, 27)
+		if !strings.Contains(header, "Claude-Opus4.6") {
+			t.Fatalf("model identifier lost casing: %q", header)
+		}
+		for _, want := range []string{"running ReadFile", "23 tok/s", "1:05"} {
+			if !strings.Contains(activity, want) {
+				t.Fatalf("activity lost %q: %q", want, activity)
+			}
+		}
+		if !strings.ContainsAny(activity, "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏") {
+			t.Fatalf("activity spinner lost: %q", activity)
+		}
+	})
+}

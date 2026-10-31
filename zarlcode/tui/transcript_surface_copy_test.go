@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/tui/chrome"
 	"github.com/zarldev/zarlmono/zkit/tui/theme"
 )
 
@@ -51,7 +53,9 @@ func TestRailFreeCopyPreservesAuthoredIndentationAndPipes(t *testing.T) {
 }
 
 func TestTranscriptSurfacesPreserveWideCellsAndSelection(t *testing.T) {
-	tui.UseTheme(theme.DarkDefault())
+	palette := theme.DarkDefault()
+	palette.Highlight = "#652143"
+	tui.UseTheme(palette)
 	defer tui.UseTheme(theme.Theme{})
 	ui := tui.New()
 	ui.Update(tea.WindowSizeMsg{Width: 60, Height: 30})
@@ -73,6 +77,13 @@ func TestTranscriptSurfacesPreserveWideCellsAndSelection(t *testing.T) {
 	selected := canvas.CellAt(0, row).Style.Bg
 	if selected == nil || sameSurface(selected, color.RGBA{33, 41, 58, 255}) {
 		t.Fatal("selection did not override role background")
+	}
+	fg, bg := (chrome.Style{Theme: palette}).SelectionColors()
+	if !sameSurface(selected, lg.Color(string(bg))) || !sameSurface(canvas.CellAt(2, row).Style.Fg, lg.Color(string(fg))) {
+		t.Fatal("wide-cell selection differs from the family selection role")
+	}
+	if canvas.CellAt(2, row).Width != 2 || canvas.CellAt(3, row).Width != 0 {
+		t.Fatal("selection damaged a wide-cell continuation")
 	}
 	for x := range 59 {
 		c := canvas.CellAt(x, row)

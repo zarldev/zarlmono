@@ -1,0 +1,588 @@
+[
+  {
+    "spec": {
+      "name": "bash",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "background": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "workspace_access": "write",
+      "affects_workspace": true
+    },
+    "scope_paths": null,
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "computer_act",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "additionalProperties": false,
+            "properties": {
+              "delta": {
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "navigate",
+                  "click",
+                  "fill",
+                  "press",
+                  "scroll"
+                ],
+                "type": "string"
+              },
+              "target": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "locator": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "position": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "url": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "until": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "visible",
+                  "hidden",
+                  "focused",
+                  "text_present",
+                  "value_equals",
+                  "url_matches",
+                  "navigation_complete",
+                  "surface_stable"
+                ],
+                "type": "string"
+              },
+              "target": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "locator": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "position": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "text": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "when": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "visible",
+                  "hidden",
+                  "focused",
+                  "text_present",
+                  "value_equals",
+                  "url_matches",
+                  "navigation_complete",
+                  "surface_stable"
+                ],
+                "type": "string"
+              },
+              "target": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "locator": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "position": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "text": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "affects_workspace": true
+    },
+    "scope_paths": null,
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "computer_observe",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "include_raw": {
+            "type": "boolean"
+          },
+          "include_screenshot": {
+            "type": "boolean"
+          },
+          "include_targets": {
+            "type": "boolean"
+          },
+          "include_text": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "workspace_access": "none"
+    },
+    "scope_paths": null,
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "edit",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "edits": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "end_hash": {
+                  "type": "string"
+                },
+                "end_line": {
+                  "type": "integer"
+                },
+                "mode": {
+                  "enum": [
+                    "replace",
+                    "delete",
+                    "insert_before",
+                    "insert_after"
+                  ],
+                  "type": "string"
+                },
+                "new_string": {
+                  "type": "string"
+                },
+                "start_hash": {
+                  "type": "string"
+                },
+                "start_line": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start_line",
+                "start_hash"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "edits"
+        ],
+        "type": "object"
+      },
+      "mutates": true
+    },
+    "scope_paths": [
+      "contract.go"
+    ],
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "instruction_load",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "workspace_access": "read"
+    },
+    "scope_paths": [
+      "contract.go"
+    ],
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "save_plan",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      },
+      "workspace_access": "write"
+    },
+    "scope_paths": [
+      ".zarlcode/plans"
+    ],
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "save_plan_append",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "content"
+        ],
+        "type": "object"
+      },
+      "workspace_access": "write"
+    },
+    "scope_paths": [
+      ".zarlcode/plans"
+    ],
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "skill_create",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "instructions"
+        ],
+        "type": "object"
+      },
+      "mutates": true,
+      "workspace_access": "write"
+    },
+    "scope_paths": null,
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "skill_load",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "workspace_access": "read"
+    },
+    "scope_paths": null,
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "update_plan",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "explanation": {
+            "type": "string"
+          },
+          "plan": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "completed"
+                  ],
+                  "type": "string"
+                },
+                "step": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "step",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "type": "object"
+      },
+      "workspace_access": "none"
+    },
+    "scope_paths": null,
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "write",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      },
+      "mutates": true
+    },
+    "scope_paths": [
+      "contract.go"
+    ],
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "program",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "script": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script"
+        ],
+        "type": "object"
+      }
+    },
+    "scope_paths": null,
+    "dispatch_barrier": false
+  },
+  {
+    "spec": {
+      "name": "set_mode",
+      "description": "",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "plan",
+              "build"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "workspace_access": "none"
+    },
+    "scope_paths": null,
+    "dispatch_barrier": true
+  }
+]

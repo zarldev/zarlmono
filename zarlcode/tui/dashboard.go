@@ -44,6 +44,9 @@ func (m *UI) drawDashboard(scr uv.Screen, r uv.Rectangle) {
 	if innerW >= 64 {
 		hints = "Ctrl+L / esc close · ←→ / tab views · ↑↓ scroll"
 	}
+	if m.contextView.tab == contextViewTabPrompt || m.contextView.tab == contextViewTabTools {
+		hints = "esc close · ←→ tabs · ↑↓ scroll · r refresh snapshot"
+	}
 	position := ""
 	if maxScroll > 0 {
 		position = helpScrollPosition(scroll, contentH, len(contentLines))
@@ -111,7 +114,14 @@ func (m *UI) activeContextViewLines(width int) []string {
 	case contextViewTabContext:
 		return wrapDashboardLines(m.contextPaneLines(width, 0), width)
 	case contextViewTabPrompt:
-		return wrapDashboardLines(m.contextPromptLines(width), width)
+		view := m.contextView.inspection
+		if view == nil || !view.ready {
+			return m.contextPromptLines(width)
+		}
+		if view.prompt.lines == nil || view.prompt.width != width || view.prompt.theme != themeGen {
+			view.prompt = inspectionLines{width: width, theme: themeGen, lines: wrapDashboardLines(m.contextPromptLines(width), width)}
+		}
+		return view.prompt.lines
 	case contextViewTabTools:
 		return wrapDashboardLines(m.contextToolsLines(width), width)
 	case contextViewTabEvents:

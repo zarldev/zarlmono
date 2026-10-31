@@ -115,10 +115,6 @@ func (a *agentActivityScreen) draw(scr uv.Screen, area uv.Rectangle) {
 		lines := agentActivityDetailLines(agents[a.cursor], cw)
 		a.scroll = clampScrollOffset(a.scroll, len(lines), l.Detail.Dy())
 		for i := a.scroll; i < len(lines) && i-a.scroll < l.Detail.Dy(); i++ {
-			if strings.HasPrefix(ansi.Strip(lines[i]), "├") {
-				drawSectionRule(scr, l.Detail, l.Detail.Min.Y+i-a.scroll, lines[i])
-				continue
-			}
 			drawLine(scr, uv.Rect(l.Detail.Min.X, l.Detail.Min.Y+i-a.scroll, cw, 1), ansi.Truncate(lines[i], cw, ""))
 		}
 		drawPaneScrollbar(scr, l.Detail.Max.X-1, l.Detail.Min.Y, l.Detail.Dy(), len(lines), a.scroll)

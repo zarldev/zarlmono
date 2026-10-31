@@ -529,6 +529,7 @@ func (p *introPane) sessionLines() []string {
 		start = p.cursor - introVisibleSessions + 1
 	}
 	end := min(start+introVisibleSessions, len(p.matches))
+	style := terminalChrome()
 	for displayIndex := start; displayIndex < end; displayIndex++ {
 		s := p.sessions[p.matches[displayIndex]]
 		label := introSessionDisplayLabel(s)
@@ -546,11 +547,7 @@ func (p *introPane) sessionLines() []string {
 
 		metadata := introSessionMetadata(s)
 		row := fmt.Sprintf("%-42s  %s", label, metadata)
-		if displayIndex == p.cursor && p.focus == introFocusSessions {
-			out = append(out, palette.Primary.On("▶ "+row))
-		} else {
-			out = append(out, palette.Subtle.On("  "+row))
-		}
+		out = append(out, listRow(style, row, "", ansi.StringWidth(row)+2, displayIndex == p.cursor))
 	}
 	return out
 }

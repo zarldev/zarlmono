@@ -27,12 +27,20 @@ type chromedpPage struct{ ctx context.Context }
 // per-tool timeout / Ctrl-C). p.ctx is the browser; callCtx is the
 // runner's tool context — context.AfterFunc bridges a cancel of the
 // latter into a cancel of the bounded action context.
-func (p *chromedpPage) run(callCtx context.Context, actions ...chromedp.Action) error {
+func (p *chromedpPage) run(callCtx context.Context, actions ...chromedp.Action[chromedp.Void]) error {
 	actx, cancel := context.WithTimeout(p.ctx, actionTimeout)
 	defer cancel()
 	stop := context.AfterFunc(callCtx, cancel)
 	defer stop()
-	return chromedp.Run(actx, actions...)
+	return chromedp.Do(actx, actions...)
+}
+
+func pageValue[T any](p *chromedpPage, callCtx context.Context, action chromedp.Action[T]) (T, error) {
+	actx, cancel := context.WithTimeout(p.ctx, actionTimeout)
+	defer cancel()
+	stop := context.AfterFunc(callCtx, cancel)
+	defer stop()
+	return chromedp.Run(actx, action)
 }
 
 func (p *chromedpPage) Goto(ctx context.Context, url string) error {
@@ -40,39 +48,36 @@ func (p *chromedpPage) Goto(ctx context.Context, url string) error {
 }
 
 func (p *chromedpPage) Click(ctx context.Context, sel string) error {
-	return p.run(ctx, chromedp.Click(sel, chromedp.ByQuery))
+	return p.run(ctx, chromedp.Click(chromedp.CSS(sel)))
 }
 
 func (p *chromedpPage) Fill(ctx context.Context, sel, val string) error {
-	return p.run(ctx, chromedp.SendKeys(sel, val, chromedp.ByQuery))
+	return p.run(ctx, chromedp.SendKeys(chromedp.CSS(sel), val))
 }
 
 // WaitVisible blocks until sel is present and visible — riding out any
 // navigation the prior action triggered (e.g. the login POST + redirect).
 // Returns an error if it doesn't appear within the bounded action timeout.
 func (p *chromedpPage) WaitVisible(ctx context.Context, sel string) error {
-	return p.run(ctx, chromedp.WaitVisible(sel, chromedp.ByQuery))
+	return p.run(ctx, chromedp.WaitVisible(chromedp.CSS(sel)))
 }
 
 // Eval runs a JavaScript boolean expression and returns its value. Used
 // to read state the visibility waits can't — e.g. an element's computed
 // visibility:hidden, which WaitNotVisible misses.
 func (p *chromedpPage) Eval(ctx context.Context, js string) (bool, error) {
-	var b bool
-	err := p.run(ctx, chromedp.Evaluate(js, &b))
+	b, err := pageValue(p, ctx, chromedp.Evaluate[bool](js))
 	return b, err
 }
 
 // Text reads the visible text of the first node matching sel.
 func (p *chromedpPage) Text(ctx context.Context, sel string) (string, error) {
-	var s string
-	err := p.run(ctx, chromedp.Text(sel, &s, chromedp.ByQuery))
+	s, err := pageValue(p, ctx, chromedp.Text(chromedp.CSS(sel)))
 	return s, err
 }
 
 func (p *chromedpPage) URL(ctx context.Context) (string, error) {
-	var u string
-	err := p.run(ctx, chromedp.Location(&u))
+	u, err := pageValue(p, ctx, chromedp.Location())
 	return u, err
 }
 
@@ -105,7 +110,7 @@ func newChromedp(parent context.Context, headless bool) (Page, context.CancelFun
 	cancel := func() { cancelCtx(); cancelAlloc() }
 	// Warm the browser so a missing/broken Chrome fails here, not on the
 	// first tool action mid-run.
-	if err := chromedp.Run(ctx); err != nil {
+	if err := chromedp.Do(ctx); err != nil {
 		cancel()
 		return nil, nil, fmt.Errorf("start chrome: %w", err)
 	}

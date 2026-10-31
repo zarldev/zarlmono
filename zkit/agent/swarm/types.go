@@ -34,15 +34,22 @@ var (
 )
 
 // Limits is trusted host policy. Supply positive members, workers, activations,
-// and runtime. ReportedTokens is optional (zero disables it); providers may omit
-// usage, and already running turns can overshoot this admission-time ceiling.
+// and runtime. ReportedTokens is optional (zero disables it). By default it is
+// an admission-time ceiling over direct activation-result totals. With
+// WithInferenceAccounting, it instead becomes a settlement threshold over all
+// explicitly scoped provider calls, including auxiliary and descendant
+// consumption. Providers may omit usage, and in-flight work can overshoot either
+// threshold.
 type Limits struct {
 	Members        int
 	Workers        int
 	Activations    int
 	Runtime        time.Duration
 	ReportedTokens int
-	Board          board.Limits
+	// Invocations limits provider-stream calls when WithInferenceAccounting is enabled.
+	// Zero disables it. Token accounting then includes every explicitly scoped call.
+	Invocations int
+	Board       board.Limits
 }
 
 // DefaultLimits bounds a local experiment to 16 members, four simultaneous turns,

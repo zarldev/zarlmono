@@ -197,8 +197,10 @@ type IterationCompletedMsg struct {
 	Delta  *llm.Usage
 	// Context is the per-role composition of the working history at this
 	// iteration — drives the cockpit's context graph. Nil when unreported.
-	Context     *runner.ContextBreakdown
-	ToolSurface runner.ToolSurface
+	Context                    *runner.ContextBreakdown
+	ToolSurface                runner.ToolSurface
+	RequestPreparationDuration time.Duration
+	ToolDispatchDuration       time.Duration
 }
 
 // PlanUpdatedMsg carries the structured plan the agent maintains via the

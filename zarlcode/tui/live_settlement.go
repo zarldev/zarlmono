@@ -33,6 +33,7 @@ type liveTurnOperation struct {
 	saving         bool
 	promotingExact bool
 	source         *sourceObservation // trusted BEFORE receipt retained through model execution
+	swarmSettle    chan error
 }
 
 type settledLiveTurnMsg struct {
@@ -142,14 +143,23 @@ func (m *UI) handleSettledLiveTurn(msg settledLiveTurnMsg) tea.Cmd {
 	if op == nil || op.sessionID != msg.sessionID || op.generation != msg.generation || m.session.ID != msg.sessionID {
 		return nil
 	}
-	if failed, ok := msg.result.(beforeTurnFailedMsg); ok {
+	// A recorded swarm can return an unsuccessful result after executing. Its
+	// applied start event distinguishes that terminal outcome from admission
+	// failure; executed turns still require the normal durable settlement.
+	if failed, ok := msg.result.(beforeTurnFailedMsg); ok && (op.swarmSettle == nil || op.turnID == "") {
+		isSwarm := op.swarmSettle != nil
 		if errors.Is(failed.err, db.ErrCheckpointConflict) {
 			m.sourceConflict = true
 		}
 		if op.promotingExact && !failed.checkpointSaved {
 			m.exactResume = false
 		}
+		m.resolveSwarmSettle(op, failed.err)
 		m.liveOperation = nil
+		if isSwarm {
+			m.session.SetErrorToast("swarm activation failed: " + failed.err.Error())
+			return m.toastExpiryCmd()
+		}
 		if op.queuedID != 0 {
 			m.session.SetErrorToast("queued turn not dispatched; input remains queued: " + failed.err.Error())
 			return m.toastExpiryCmd()
@@ -220,6 +230,7 @@ func (m *UI) finishSettledLiveTurn(msg sessionPersistedMsg) tea.Cmd {
 	recoveredSave := m.unsavedTurnError != nil
 	m.unsavedTurnError = nil
 	m.completedBoundary = nil
+	m.resolveSwarmSettle(op, nil)
 	m.liveOperation = nil
 	m.settledTurnID = op.turnID
 	m.settledWatermark = msg.revision
@@ -251,6 +262,7 @@ func (m *UI) finishSettledLiveTurn(msg sessionPersistedMsg) tea.Cmd {
 func (m *UI) failLiveSettlement(err error) tea.Cmd {
 	// Each failed attempt is consumed here once. An earlier unsaved turn must
 	// not suppress the diagnostic for a later, potentially different failure.
+	op := m.liveOperation
 	slog.ErrorContext(m.appContext(), "turn settlement save", "err", err)
 	m.unsavedTurnError = err
 	if errors.Is(err, db.ErrCheckpointConflict) || errors.Is(err, db.ErrTranscriptConflict) {
@@ -258,6 +270,7 @@ func (m *UI) failLiveSettlement(err error) tea.Cmd {
 	}
 	// Runtime completion and durability are separate. Keep the last exact
 	// head, but release UI turn ownership so the next prompt can run in memory.
+	m.resolveSwarmSettle(op, err)
 	m.liveOperation = nil
 	m.session.SetErrorToast("Not saved — " + m.sessionSaveFailureSummary() + "; you can continue in memory, but restart loses unsaved turns. Ctrl+q: recovery.")
 	return nil // persistent warning; queued input remains explicitly dispatchable

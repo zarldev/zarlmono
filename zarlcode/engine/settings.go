@@ -21,8 +21,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/vault"
 )
 
-// DefaultSearxngURL is where a self-hosted SearXNG conventionally listens
-// (docker/searxng/). 8080 is the SearXNG port — llama-server sits on 8081.
+// DefaultSearxngURL is the loopback endpoint published by the bundled service.
+// SearXNG uses port 8080; llama-server conventionally uses 8081.
 const DefaultSearxngURL = "http://127.0.0.1:8080"
 
 // Settings bundles the persistence layer the TUI reads its configuration
@@ -531,11 +531,10 @@ func (s *Settings) Setting(ctx context.Context, key, def string) string {
 	return s.setting(ctx, key, def)
 }
 
-// SearxngURL resolves the web_search tool's SearXNG endpoint, mirroring the
-// v1 precedence: the search_searxng_url setting (effective scope) → the
-// SEARXNG_URL env var → the conventional local default. Never empty, so
-// web_search is always wired; an unreachable endpoint fails the call with a
-// friendly error rather than hiding the tool.
+// SearxngURL resolves the web_search endpoint from the effective persisted
+// search_searxng_url setting, falling back to the conventional local default.
+// Ambient SEARXNG_URL is not consulted. The tool remains registered when the
+// endpoint is unreachable so its error is visible rather than hiding the tool.
 func (s *Settings) SearxngURL(ctx context.Context) string {
 	return s.setting(ctx, prefs.KeySearxngURL, DefaultSearxngURL)
 }

@@ -33,15 +33,15 @@ func assertDetailChrome(t *testing.T, canvas uv.ScreenBuffer, title, active stri
 	t.Helper()
 	width, height := canvas.Bounds().Dx(), canvas.Bounds().Dy()
 	x, y := detailTextPosition(t, canvas, title, 0, 1)
-	if x != 2 || canvas.CellAt(x, y).Style.Attrs&uv.AttrBold == 0 {
-		t.Errorf("%s title must be bold at the two-cell inset", title)
+	if x != 2 {
+		t.Errorf("%s title must start at the two-cell inset", title)
 	}
 	if !sameSurface(canvas.CellAt(x, y).Style.Bg, canvas.CellAt(0, 0).Style.Bg) {
 		t.Error("detail title uses a different surface")
 	}
-	x, y = detailTextPosition(t, canvas, active, 0, 1)
-	if canvas.CellAt(x, y).Style.Attrs&uv.AttrBold == 0 {
-		t.Errorf("active %s tab is not emphasized", active)
+	detailTextPosition(t, canvas, active, 0, 1)
+	if !strings.Contains(screenRegion(canvas, 0, 0, width, 1), "[ "+active+" ]") {
+		t.Errorf("active %s tab lacks a selection surface", active)
 	}
 	// The context gauge's ┤ threshold marker is data, not a frame junction.
 	if strings.ContainsAny(screenRegion(canvas, 0, 0, width, height), "┌┐└┘├") {
@@ -63,9 +63,9 @@ func TestDetailViewsShareMainSurface(t *testing.T) {
 					canvas := surfaceCanvas(ui, width, height)
 					assertDetailChrome(t, canvas, "session", tab)
 					if tab != "overview" {
-						x, y := detailTextPosition(t, canvas, tab, 2, height-4)
-						if x != 2 || canvas.CellAt(x, y).Style.Attrs&uv.AttrBold == 0 {
-							t.Errorf("%s section heading is not aligned/bold", tab)
+						x, _ := detailTextPosition(t, canvas, tab, 2, height-4)
+						if x < 2 || x > 3 {
+							t.Errorf("%s section heading is not aligned", tab)
 						}
 					}
 					detailTextPosition(t, canvas, "esc close", height-4, height-3)
@@ -76,10 +76,11 @@ func TestDetailViewsShareMainSurface(t *testing.T) {
 				canvas := surfaceCanvas(ui, width, height)
 				assertDetailChrome(t, canvas, "plan", "live")
 				x, y := detailTextPosition(t, canvas, "Current refinement", 2, height-1)
-				if canvas.CellAt(x, y).Style.Attrs&uv.AttrBold == 0 {
-					t.Error("current plan step is not emphasized")
-				}
+				activeColor := canvas.CellAt(x, y).Style.Fg
 				x, y = detailTextPosition(t, canvas, "Finished investigation", 2, height-1)
+				if sameSurface(activeColor, canvas.CellAt(x, y).Style.Fg) {
+					t.Error("current plan step lacks distinct warning emphasis")
+				}
 				if canvas.CellAt(x, y).Style.Attrs&uv.AttrBold != 0 {
 					t.Error("completed work competes with the current step")
 				}

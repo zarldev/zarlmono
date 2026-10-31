@@ -2,15 +2,19 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
 
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/db"
+	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // sessionHistorySink borrows the store until the turn and persistence FIFO drain.
@@ -62,10 +66,28 @@ func (s sessionHistorySink) Request(ctx context.Context, request llm.CompletionR
 // separately stored prepared model input. The caller first commits its BEFORE
 // checkpoint and lends store until the turn and persistence FIFO have drained.
 func (r *RuntimeReservation) RunRecordedTurn(ctx context.Context, prompt string, attachments []llm.ContentPart, store *db.Store, sessionID string) error {
-	target := r.owner.RunTarget()
-	return r.runTurn(ctx, prompt, attachments, runner.WithHistorySink(sessionHistorySink{
-		store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model, buffer: r.owner.historyBuffer(sessionID), live: r.owner,
-	}))
+	return r.runTurn(ctx, prompt, attachments, r.owner.sessionRecordingOptions(store, sessionID)...)
+}
+
+// ProtectDurableExactContext activates exact-history semantics after the caller
+// has committed a qualified fresh conversation boundary. A failed call leaves
+// the context unchanged; callers retain the durable boundary and must report it.
+func (r *RuntimeReservation) ProtectDurableExactContext() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active || !r.dispatchOnly {
+		return ErrRuntimeBusy
+	}
+	if !r.owner.checkpointTargetSupported(r.owner.RunTarget()) {
+		return rewind.ErrTarget
+	}
+	r.owner.context.mu.Lock()
+	defer r.owner.context.mu.Unlock()
+	if len(r.owner.context.context) != 0 && !r.owner.context.exact {
+		return rewind.ErrTarget
+	}
+	r.owner.context.exact = true
+	return nil
 }
 
 // RunRecordedTurn records a session-owned turn when no BEFORE checkpoint can be
@@ -75,10 +97,26 @@ func (l *LiveRunner) RunRecordedTurn(ctx context.Context, prompt string, attachm
 		return l.admission.rejection()
 	}
 	defer l.admission.leave()
+	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {}, l.sessionRecordingOptions(store, sessionID)...)
+}
+
+// Session IDs survive resume and change on forks/new sessions. Hashing keeps
+// caller-supplied session names out of provider routing keys and Codex headers.
+func sessionPromptCacheKey(sessionID string) string {
+	sum := sha256.Sum256([]byte("zarlcode:prompt-cache:" + sessionID))
+	return hex.EncodeToString(sum[:])
+}
+
+// sessionRecordingOptions returns the shared prompt-cache and history-capture
+// options for one recorded turn against store/sessionID.
+func (l *LiveRunner) sessionRecordingOptions(store *db.Store, sessionID string) []options.Option[runner.Runner] {
 	target := l.RunTarget()
-	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {}, runner.WithHistorySink(sessionHistorySink{
-		store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model, buffer: l.historyBuffer(sessionID), live: l,
-	}))
+	return []options.Option[runner.Runner]{
+		runner.WithPromptCacheKey(sessionPromptCacheKey(sessionID)),
+		runner.WithHistorySink(sessionHistorySink{
+			store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model, buffer: l.historyBuffer(sessionID), live: l,
+		}),
+	}
 }
 
 // sessionHistoryBuffer owns serialized batches, never runner aliases. No writer

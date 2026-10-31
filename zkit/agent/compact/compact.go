@@ -49,17 +49,21 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
-// collectContent drains a completion stream synchronously and returns trimmed
-// visible content. Reference-backed chunk state is consumed within each yield.
-func collectContent(stream llm.CompletionStream, operation string) (string, error) {
+// collectContent keeps the final reported usage snapshot, including on failure.
+// Provider streams report cumulative usage, not additive per-chunk deltas.
+func collectContent(stream llm.CompletionStream, operation string) (string, *llm.Usage, error) {
 	var content strings.Builder
+	var usage *llm.Usage
 	for chunk, err := range stream {
 		if err != nil {
-			return "", fmt.Errorf("compact.%s: stream: %w", operation, err)
+			return "", usage, fmt.Errorf("compact.%s: stream: %w", operation, err)
+		}
+		if chunk.UsageReported {
+			usage = new(chunk.Usage)
 		}
 		content.WriteString(chunk.Content)
 	}
-	return strings.TrimSpace(content.String()), nil
+	return strings.TrimSpace(content.String()), usage, nil
 }
 
 // Engine labels for the built-in compactors, as reported on
@@ -92,6 +96,9 @@ type Result struct {
 	Warning      string
 	Engine       string
 	BytesTrimmed int
+	// Inference is present only when an LLM was invoked, also on failure.
+	// It is separate from the task model's usage and must not be priced as it.
+	Inference *Inference
 }
 
 // Compactor is the interface the shell consults for every compaction.

@@ -25,21 +25,54 @@ type childBlock struct {
 // version is the invalidation boundary: child toggles and runner events bump the
 // inline-rendering owner, while width/theme changes invalidate presentation.
 type childBlockCache struct {
-	width int
-	ver   uint64
-	gen   uint64
-	block childBlock
-	valid bool
+	width    int
+	ver      uint64
+	gen      uint64
+	block    childBlock
+	valid    bool
+	children []childRenderEntry
 }
 
 func (c *childBlockCache) render(children []item, width int, ver uint64) childBlock {
 	if c.valid && c.width == width && c.ver == ver && c.gen == themeGen {
 		return c.block
 	}
+	if c.width != width || c.gen != themeGen {
+		clear(c.children)
+	}
+	if len(c.children) > len(children) {
+		clear(c.children[len(children):])
+		c.children = c.children[:len(children)]
+	}
+	for len(c.children) < len(children) {
+		c.children = append(c.children, childRenderEntry{})
+	}
+	block := childBlock{offsets: make([]int, 0, len(children)), sizes: make([]int, 0, len(children))}
+	for i, child := range children {
+		entry := c.children[i]
+		if entry.item != child || entry.version != child.version() {
+			raw := child.render(width)
+			entry = childRenderEntry{item: child, version: child.version(), raw: raw, indented: prefixLines(raw, childIndent)}
+			c.children[i] = entry
+		}
+		block.offsets = append(block.offsets, 1+len(block.rawLines))
+		block.sizes = append(block.sizes, len(entry.raw))
+		block.rawLines = append(block.rawLines, entry.raw...)
+		block.lines = append(block.lines, entry.indented...)
+	}
 	c.width, c.ver, c.gen = width, ver, themeGen
-	c.block = renderChildBlock(children, width)
+	c.block = block
 	c.valid = true
 	return c.block
+}
+
+// Child entries belong to this container, not a global cache. Removed or hidden
+// children release their rendered rows; identity protects reordered insertions.
+type childRenderEntry struct {
+	item     item
+	version  uint64
+	raw      []string
+	indented []string
 }
 
 // renderChildBlock renders children at childWidth, prefixes each line with the

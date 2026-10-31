@@ -20,7 +20,7 @@ type commandPaletteEntry struct {
 var commandPaletteEntries = []commandPaletteEntry{
 	{id: CommandIDs.COMMANDHELP, label: "Open help", description: "Show keyboard shortcuts", aliases: []string{"keys", "shortcuts"}, shortcut: "ctrl+g", run: func(m *UI) tea.Cmd { m.overlay.push(m.newHelpDialog()); return nil }},
 	{id: CommandIDs.COMMANDSETTINGS, label: "Open settings", description: "Configure zarlcode", aliases: []string{"preferences"}, shortcut: "ctrl+s", available: func(m *UI) bool { return m.settings != nil }, run: func(m *UI) tea.Cmd { return m.openSettings() }},
-	{id: CommandIDs.COMMANDTHEME, label: "Choose theme", description: "Change the interface theme", aliases: []string{"appearance", "colors"}, shortcut: "ctrl+t", run: func(m *UI) tea.Cmd { m.overlay.push(newThemePicker()); return nil }},
+	{id: CommandIDs.COMMANDTHEME, label: "Choose theme", description: "Preview and save global, app, or workspace appearance", aliases: []string{"appearance", "colors"}, shortcut: "ctrl+t", run: func(m *UI) tea.Cmd { m.openThemePicker(); return nil }},
 	{id: CommandIDs.COMMANDMODELS, label: "Choose model", description: "Switch provider and model", aliases: []string{"provider"}, shortcut: "ctrl+e", run: func(m *UI) tea.Cmd { return m.openModelQuickPick() }},
 	{id: CommandIDs.COMMANDNAMESESSION, label: "Name session", description: "Set a memorable session name", aliases: []string{"rename", "title"}, shortcut: "ctrl+n", run: func(m *UI) tea.Cmd { m.openSessionNameDialog(); return nil }},
 	{id: CommandIDs.COMMANDPLAN, label: "Open plan", description: "Inspect the current plan", aliases: []string{"steps"}, shortcut: "ctrl+p", run: func(m *UI) tea.Cmd {
@@ -111,18 +111,10 @@ func (p *commandPalette) draw(scr uv.Screen, area uv.Rectangle) {
 	if len(p.matches) == 0 {
 		lines = append(lines, palette.Muted.On("No matching commands"))
 	}
+	style := terminalChrome()
 	for displayIndex, match := range p.matches {
 		entry := p.entries[match]
-		row := entry.label
-		if entry.shortcut != "" {
-			row += "  " + palette.Muted.On(entry.shortcut)
-		}
-		if displayIndex == p.cursor {
-			row = palette.Primary.On("▶ " + row)
-		} else {
-			row = "  " + row
-		}
-		lines = append(lines, row, palette.Muted.On("    "+entry.description))
+		lines = append(lines, listRow(style, entry.label, palette.Muted.On(entry.shortcut), 78, displayIndex == p.cursor), palette.Muted.On("    "+entry.description))
 	}
 	drawActionDialog(scr, area, "command palette", "search actions", lines, keyLegend(keyHint{"enter", "run"}, keyHint{"esc", "close"}), 82)
 }

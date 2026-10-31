@@ -58,17 +58,27 @@ func drawFrame(scr uv.Screen, r uv.Rectangle, style frameStyle) uv.Rectangle {
 	if labelCol == "" {
 		labelCol = palette.Primary
 	}
+	lineGlyph, vertical := "─", "│"
+	tl, tr, bl, br := "┌", "┐", "└", "┘"
+	chrome := terminalChrome()
+	if chrome.ASCII {
+		lineGlyph, vertical = "-", "|"
+		tl, tr, bl, br = "+", "+", "+", "+"
+	}
+	if chrome.Plain {
+		border, labelCol = "", ""
+	}
 	for y := range h {
 		var line string
 		switch {
 		case h == 1:
-			line = strings.Repeat("─", w)
+			line = strings.Repeat(lineGlyph, w)
 		case y == 0:
-			line = "┌" + strings.Repeat("─", w-2) + "┐"
+			line = tl + strings.Repeat(lineGlyph, w-2) + tr
 		case y == h-1:
-			line = "└" + strings.Repeat("─", w-2) + "┘"
+			line = bl + strings.Repeat(lineGlyph, w-2) + br
 		default:
-			line = "│" + strings.Repeat(" ", w-2) + "│"
+			line = vertical + strings.Repeat(" ", w-2) + vertical
 		}
 		drawLine(scr, uv.Rect(r.Min.X, r.Min.Y+y, w, 1), border.On(line))
 	}

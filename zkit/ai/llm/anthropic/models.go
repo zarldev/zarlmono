@@ -13,8 +13,9 @@ import (
 // provider implementation and replaces the heuristic with an
 // explicit table.
 //
-// Claude Opus 4.6/4.7 and Sonnet 4.6 have a native 1M context window.
-// Recognized legacy picker suffixes are aliases, not arbitrary capacity hints.
+// Claude Opus 5.5 / Sonnet 5.5 / Haiku 5.5 / Fable 5.1 and Opus 4.6/4.7 /
+// Sonnet 4.6 have a native 1M context window. Recognized legacy picker suffixes
+// are aliases, not arbitrary capacity hints.
 //
 // Unknown ids return 0 ("unknown") so the caller's probe /
 // fallback chain stays in charge. The previous behaviour of
@@ -25,7 +26,8 @@ func ContextWindowFor(model string) int {
 		return 0
 	}
 	switch wireModelID(model) {
-	case modelClaudeOpus47, modelClaudeOpus46, modelClaudeSonnet46:
+	case modelClaudeFable51, modelClaudeOpus55, modelClaudeSonnet55, modelClaudeHaiku55,
+		modelClaudeOpus47, modelClaudeOpus46, modelClaudeSonnet46:
 		return 1_000_000
 	case "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5":
 		return 200_000
@@ -53,6 +55,14 @@ func ContextWindowFor(model string) int {
 func CostPer1k(model string) (float64, float64, bool) {
 	m := wireModelID(strings.ToLower(model))
 	switch m {
+	case modelClaudeFable51:
+		return 0.010, 0.050, true
+	case modelClaudeOpus55:
+		return 0.004, 0.020, true
+	case modelClaudeSonnet55:
+		return 0.002, 0.010, true
+	case modelClaudeHaiku55:
+		return 0.0001, 0.0005, true
 	case modelClaudeOpus47, modelClaudeOpus46, "claude-opus-4-5":
 		return 0.005, 0.025, true
 	case "claude-3-opus-20240229", "claude-3-opus-latest":

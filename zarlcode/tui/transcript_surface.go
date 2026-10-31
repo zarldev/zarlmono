@@ -46,12 +46,16 @@ func surfaceColor(c theme.Color) color.Color {
 }
 
 // drawRows composes defaults on cells, not ANSI strings. It touches only visible
-// rows, leaves explicit code/image backgrounds intact, and never pads item caches.
+// rows and never pads item caches. Explicit code/image backgrounds survive on
+// unselected rows; selected rows intentionally use the family's selection colors.
 func (tl *timeline) drawRows(scr uv.Screen, g transcriptPaneGeometry, lines []string, keepEmoji bool) {
 	userBg, assistantBg := palette.ConversationBackgrounds()
 	user, assistant := surfaceColor(userBg), surfaceColor(assistantBg)
 	queued := surfaceColor(queuedUserBackground)
-	neutral, highlight := surfaceColor(palette.Bg), surfaceColor(palette.Highlight)
+	neutral := surfaceColor(palette.Bg)
+	style := terminalChrome()
+	selectionFg, selectionBg := style.SelectionColors()
+	selectedFg, selectedBg := surfaceColor(selectionFg), surfaceColor(selectionBg)
 	lo, hi := tl.selectionRange()
 	if tl.selectionActive() {
 		// The trailing content buffer is padding, not selectable message text.
@@ -68,11 +72,16 @@ func (tl *timeline) drawRows(scr uv.Screen, g transcriptPaneGeometry, lines []st
 		if index >= 0 {
 			bg = transcriptBackground(tl.items[index], user, assistant, queued)
 		}
-		selected := tl.selectionActive() && tl.scrollTop+row >= lo && tl.scrollTop+row <= hi
+		cursor := tl.browsing && !tl.selectionActive() && index == tl.sel && tl.visLocal[row] == tl.selLocal
+		selected := cursor || (tl.selectionActive() && tl.scrollTop+row >= lo && tl.scrollTop+row <= hi)
+		surface.foreground = nil
 		if selected {
-			bg = highlight
+			surface.foreground = selectedFg
+			if selectedBg != nil {
+				bg = selectedBg
+			}
 		}
-		surface.background, surface.selected = bg, selected
+		surface.background, surface.selected = bg, selected && selectedBg != nil
 		// Resolve resets as cells are written, without a second content pass.
 		x := g.content.Min.X
 		if index >= 0 && tl.visLocal[row] == 0 {
@@ -82,11 +91,11 @@ func (tl *timeline) drawRows(scr uv.Screen, g transcriptPaneGeometry, lines []st
 			}
 		}
 		drawLine(&surface, uv.Rect(x, y, g.content.Max.X-x, 1), line)
-		if tl.browsing && !tl.selectionActive() && index == tl.sel && tl.visLocal[row] == tl.selLocal {
-			drawLine(&surface, uv.Rect(g.surface.Min.X, y, 1, 1), palette.Primary.On("▎"))
+		if cursor {
+			drawLine(&surface, uv.Rect(g.surface.Min.X, y, 1, 1), style.PaneLabel(style.Marker(true, false), true))
 		}
-		paintTranscriptBackground(scr, uv.Rect(g.surface.Min.X, y, g.content.Min.X-g.surface.Min.X, 1), bg, selected)
-		paintTranscriptBackground(scr, uv.Rect(g.content.Max.X, y, g.surface.Max.X-g.content.Max.X, 1), bg, selected)
+		paintTranscriptBackground(scr, uv.Rect(g.surface.Min.X, y, g.content.Min.X-g.surface.Min.X, 1), bg, selected && selectedBg != nil)
+		paintTranscriptBackground(scr, uv.Rect(g.content.Max.X, y, g.surface.Max.X-g.content.Max.X, 1), bg, selected && selectedBg != nil)
 	}
 }
 
@@ -95,12 +104,13 @@ func (tl *timeline) drawRows(scr uv.Screen, g transcriptPaneGeometry, lines []st
 type transcriptSurfaceScreen struct {
 	uv.Screen
 	background color.Color
+	foreground color.Color
 	selected   bool
 	cell       uv.Cell
 }
 
 func (s *transcriptSurfaceScreen) SetCell(x, y int, cell *uv.Cell) {
-	if s.background == nil {
+	if s.background == nil && s.foreground == nil {
 		s.Screen.SetCell(x, y, cell)
 		return
 	}
@@ -109,8 +119,11 @@ func (s *transcriptSurfaceScreen) SetCell(x, y int, cell *uv.Cell) {
 	} else {
 		s.cell = *cell
 	}
-	if s.selected || s.cell.Style.Bg == nil {
+	if s.background != nil && (s.selected || s.cell.Style.Bg == nil) {
 		s.cell.Style.Bg = s.background
+	}
+	if s.foreground != nil {
+		s.cell.Style.Fg = s.foreground
 	}
 	s.Screen.SetCell(x, y, &s.cell)
 }

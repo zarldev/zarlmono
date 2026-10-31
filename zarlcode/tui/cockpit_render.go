@@ -27,6 +27,10 @@ func (m *UI) cockpitLines(width int) []string {
 	// --- LLM/session overview ---------------------------------------------
 	add(sidebarHeading("session"))
 	add(m.llmStateLines()...)
+	if lines := m.performanceLines(width); len(lines) > 0 {
+		add("", sidebarHeading("performance"))
+		add(lines...)
+	}
 
 	add("")
 
@@ -114,7 +118,11 @@ func (m *UI) contextPaneLines(width, _ int) []string {
 }
 
 func (m *UI) contextPromptLines(width int) []string {
-	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
+	view := m.contextView.inspection
+	if view == nil || !view.ready {
+		return append([]string{sidebarHeading("prompt"), ""}, inspectionLoadingLines()...)
+	}
+	snap := view.snapshot
 	out := []string{sidebarHeading("prompt")}
 	stackLines := promptStackSummaryLines(snap.PromptStack)
 	if len(stackLines) == 0 {
@@ -163,7 +171,11 @@ func promptPreviewLines(prompt string, width int) []string {
 }
 
 func (m *UI) contextToolsLines(width int) []string {
-	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
+	view := m.contextView.inspection
+	if view == nil || !view.ready {
+		return append([]string{sidebarHeading("tools"), ""}, inspectionLoadingLines()...)
+	}
+	snap := view.snapshot
 	available, hidden := groupContextTools(snap.Tools, snap.PlanMode)
 	out := []string{sidebarHeading("tools")}
 	out = append(out, palette.Muted.On(fmt.Sprintf("%d available now · %d hidden", len(available), len(hidden))))
@@ -206,10 +218,10 @@ func renderToolSpecRows(specs []tools.ToolSpec) []string {
 }
 
 func (m *UI) contextEventsLines(_ int) []string {
-	snap := BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)
-	groups := groupContextEvents(snap.EventLog)
+	events := m.session.EventLog.Snapshot()
+	groups := groupContextEvents(events)
 	out := []string{sidebarHeading("events")}
-	if len(snap.EventLog) == 0 {
+	if len(events) == 0 {
 		return append(out, palette.Muted.On("no events recorded yet"))
 	}
 	for _, g := range groups {
@@ -723,6 +735,9 @@ func (s *RunState) cacheUsageLines(_ int) []string {
 		}
 		head := palette.Fg.On(label) + palette.Muted.On(" · "+d.BillingClass+" · ") +
 			palette.Subtle.On(itoa(d.SettledTasks)+" settled")
+		if d.CompactorCalls > 0 {
+			head += palette.Subtle.On(" · " + itoa(d.CompactorCalls) + " compactor calls")
+		}
 		if d.BillingClass == billingClassLocal || d.BillingClass == billingClassSubscription {
 			head += palette.Muted.On(" · unmetered")
 		} else {
@@ -738,6 +753,10 @@ func (s *RunState) cacheUsageLines(_ int) []string {
 			usage += palette.Muted.On(" (" + fmt.Sprintf("%.0f", d.CacheReadShare*100) + "%)")
 		}
 		usage += palette.Muted.On(" · create ") + palette.Fg.On(fmtCount(d.CacheCreationTokens))
+		if d.ReasoningReportedSettlements > 0 {
+			usage += palette.Muted.On(" · reasoning subtotal ") + palette.Fg.On(fmtCount(d.ReasoningTokens)) +
+				palette.Muted.On(" (reported "+itoa(d.ReasoningReportedSettlements)+"/"+itoa(d.SettledTasks+d.CompactorCalls)+" settlements)")
+		}
 		coverage := make([]string, 0, 5)
 		if d.PricingTierUnknownTasks > 0 {
 			coverage = append(coverage, "prompt pricing tier unavailable "+itoa(d.PricingTierUnknownTasks)+" (base-rate estimate incomplete)")
@@ -765,14 +784,9 @@ func (s *RunState) cacheUsageLines(_ int) []string {
 	return lines
 }
 
-// sectionHead renders a section header rule that joins into the left border:
-// ├─[label]────────────────────────────────
+// sectionHead keeps a single plain heading row; callers retain their own spacing.
 func sectionHead(label string, width int) string {
-	head := bracketed(palette.Primary.On(strings.ToLower(label)))
-	fill := max(
-		// ├─[ + label + ]
-		width-ansi.StringWidth(label)-4, 0)
-	return palette.Border.On("├─") + head + palette.Border.On(strings.Repeat("─", fill))
+	return terminalChrome().PaneTitle(strings.ToLower(label), width, false)
 }
 
 // contextHeadline is the dense one-row context summary: percent-full

@@ -407,9 +407,10 @@ func (r *ProviderRegistry) FetchModels(ctx context.Context, name string) ([]stri
 	return models, ferr
 }
 
-// fetchLive probes the provider's /models endpoint for the adapter type,
-// resolving the API key internally. Google and OAuth providers have no
-// usable live probe, so they return their seed list directly.
+// fetchLive probes the provider's model-list endpoint, resolving credentials
+// internally. Gemini API discovery is filtered to generateContent-capable
+// models; routes without usable generic discovery use their route-specific
+// fallback catalogue.
 func (r *ProviderRegistry) fetchLive(ctx context.Context, def ProviderDefinition) ([]string, error) {
 	key, err := r.resolveAPIKey(ctx, def)
 	if err != nil {
@@ -428,9 +429,11 @@ func (r *ProviderRegistry) fetchLive(ctx context.Context, def ProviderDefinition
 		return fetchOpenAICompatModels(ctx, def.BaseURL, key)
 	case anthropicCompatible:
 		return fetchAnthropicModels(ctx, def.BaseURL, key)
+	case googleCompatible:
+		return fetchGoogleModels(ctx, def.BaseURL, key)
 	default:
-		// googleCompatible curates its list; OAuth backends need a TokenSource
-		// the generic registry does not own, so they return seeds here.
+		// Vertex discovery requires route-specific ADC/project configuration;
+		// OAuth backends require a TokenSource the generic registry does not own.
 		return def.SeedModels, nil
 	}
 }

@@ -61,9 +61,11 @@ type Stats struct {
 
 // Limits bounds one program invocation.
 type Limits struct {
-	MaxScriptBytes     int
-	MaxExecutionSteps  uint64
-	MaxToolCalls       int
+	MaxScriptBytes    int
+	MaxExecutionSteps uint64
+	// MaxToolCalls bounds the whole invocation; batches may run in bounded waves.
+	MaxToolCalls int
+	// MaxParallelCalls bounds simultaneous calls, independently of batch length.
 	MaxParallelCalls   int
 	MaxToolResultBytes int
 	MaxOutputBytes     int
@@ -230,14 +232,13 @@ func schemaSignature(schema llm.Schema) string {
 		}
 		property := schema.Properties[name]
 		typeName := property.Type
-		if len(property.Enum) > 0 {
-			values := make([]string, 0, len(property.Enum))
-			for _, value := range property.Enum {
-				values = append(values, fmt.Sprintf("%q", value))
-			}
-			typeName = "[" + strings.Join(values, ",") + "]"
-		} else if typeName == "" {
+		if typeName == "" {
 			typeName = "value"
+		}
+		if len(property.Enum) > 0 {
+			if encoded, err := json.Marshal(property.Enum); err == nil {
+				typeName = string(encoded)
+			}
 		}
 		field += ": " + typeName
 		if value, ok := property.Extra["default"]; ok {

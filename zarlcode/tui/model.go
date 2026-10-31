@@ -28,6 +28,7 @@ import (
 type UI struct {
 	width            int
 	height           int
+	canvas           uv.ScreenBuffer // owned by the serial Update/View loop; reused at a stable size
 	layout           uiLayout
 	timeline         *timeline
 	graphics         *terminalGraphics
@@ -47,7 +48,11 @@ type UI struct {
 	// contextView tracks the full-screen ctrl+l live-context surface: active tab,
 	// per-tab scroll offsets, and any tab-local cursors. It replaces the old
 	// single dashboardScroll field now that the context view is tabbed.
-	contextView contextViewState
+	contextView         contextViewState
+	inspectionOperation *inspectionOperation
+	inspectionClosed    bool
+	inspectionVisible   *inspectionView
+	inspectionDemand    foregroundInspectionDemand
 	// sidebarScroll is a wrapped-row offset, independent of transcript browsing.
 	sidebarScroll    int
 	sidebarPlanCache sidebarPlanCache
@@ -70,6 +75,7 @@ type UI struct {
 	live                *engine.LiveRunner
 	liveSink            *teasink.Sink
 	liveOperation       *liveTurnOperation
+	foreground          *foregroundSwarm
 	liveGeneration      uint64
 	unsavedTurnError    error // persistence failure does not retain turn admission
 	completedBoundary   *completedSessionBoundary
@@ -162,8 +168,9 @@ const (
 var contextViewTabNames = []string{"overview", "context", "prompt", "tools", "events"}
 
 type contextViewState struct {
-	tab    contextViewTab
-	scroll [contextViewTabCount]int
+	tab        contextViewTab
+	scroll     [contextViewTabCount]int
+	inspection *inspectionView
 }
 
 func (s *contextViewState) activeScroll() int {
@@ -403,7 +410,7 @@ func New() *UI {
 // Init implements tea.Model. Non-critical startup work runs as Bubble Tea
 // commands so the first frame is not blocked by external services.
 func (m *UI) Init() tea.Cmd {
-	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd, m.transcriptPersistenceCmd(), m.initialModeTarget())
+	return tea.Batch(m.fetchPRCmd(), m.startupCmd, m.startupMCPCmd, m.transcriptPersistenceCmd(), m.initialModeTarget(), m.appearanceTick())
 }
 
 // Update implements tea.Model. Resize recomputes the layout rects; esc stops
@@ -411,6 +418,7 @@ func (m *UI) Init() tea.Cmd {
 // messages) are handled here too.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	cmd = tea.Batch(cmd, m.inspectionCmd())
 	if persist := m.transcriptPersistenceCmd(); persist != nil {
 		cmd = tea.Batch(cmd, persist)
 	}
@@ -430,6 +438,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if result, ok := msg.(inspectionLoadedMsg); ok {
+		cmd := m.receiveInspection(result)
+		return m, cmd
+	}
 	if _, ok := msg.(frameMsg); ok {
 		m.frame++
 		if m.session.Run.Running {
@@ -444,6 +456,13 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.overlay.coversScreen() {
 			return m, settingsTick()
 		}
+		return m, nil
+	}
+	if _, ok := msg.(appearanceTickMsg); ok {
+		return m, tea.Batch(m.appearanceRefreshCmd(), m.appearanceTick())
+	}
+	if value, ok := msg.(appearancePollResult); ok {
+		m.receiveAppearance(value)
 		return m, nil
 	}
 	if cmd, ok := m.handleDraftPersistenceMsg(msg); ok {
@@ -465,6 +484,11 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
+	case foregroundSwarmActivationMsg:
+		return m, m.handleForegroundSwarmActivation(msg)
+	case foregroundSwarmStoppedMsg:
+		m.handleForegroundSwarmStopped(msg)
+		return m, m.toastExpiryCmd()
 	case settledLiveTurnMsg:
 		return m, m.handleSettledLiveTurn(msg)
 	case liveTurnFinishedMsg:
@@ -587,7 +611,7 @@ func (m *UI) recomputeLayout() {
 	)
 }
 
-// View implements tea.Model. It allocates a screen buffer, paints the
+// View implements tea.Model. It reuses an owned screen buffer, paints the
 // pane rects into it via Draw, and hands the flattened content back to
 // bubbletea. Alt-screen and mouse mode are set on the View — bubbletea
 // v2 has no WithAltScreen program option; per-View fields replace it.
@@ -602,10 +626,14 @@ func (m *UI) View() tea.View {
 		}
 		return v
 	}
-	canvas := uv.NewScreenBuffer(m.width, m.height)
-	canvas.Method = m.widthMethod // match the renderer's negotiated width method
-	m.Draw(canvas, canvas.Bounds())
-	v.Content = strings.ReplaceAll(canvas.Render(), "\r\n", "\n")
+	if m.canvas.RenderBuffer == nil || m.canvas.Width() != m.width || m.canvas.Height() != m.height {
+		m.canvas = uv.NewScreenBuffer(m.width, m.height)
+	} else {
+		m.canvas.Clear()
+	}
+	m.canvas.Method = m.widthMethod // match the renderer's negotiated width method
+	m.Draw(m.canvas, m.canvas.Bounds())
+	v.Content = strings.ReplaceAll(m.canvas.Render(), "\r\n", "\n")
 	if m.graphics != nil {
 		frame := m.timelineGraphics
 		if m.overlay.active() {

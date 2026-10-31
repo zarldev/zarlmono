@@ -118,8 +118,8 @@ func BuiltinDefinitions() []ProviderDefinition {
 			DisplayName:    "DeepSeek",
 			AdapterType:    AdapterTypes.DEEPSEEKCOMPATIBLE,
 			BaseURL:        deepseek.DefaultBaseURL,
-			DefaultModel:   "deepseek-chat",
-			SeedModels:     []string{"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"},
+			DefaultModel:   "deepseek-flash",
+			SeedModels:     []string{"deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-chat", "deepseek-reasoner"},
 			APIKeyRequired: true,
 			Builtin:        true,
 			Enabled:        true,
@@ -149,11 +149,11 @@ func BuiltinDefinitions() []ProviderDefinition {
 			DisplayName:  "Anthropic",
 			AdapterType:  AdapterTypes.ANTHROPICCOMPATIBLE,
 			BaseURL:      "",
-			DefaultModel: "claude-sonnet-4-6",
+			DefaultModel: "claude-sonnet-5-5",
 			SeedModels: []string{
-				"claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
-				"claude-sonnet-4-6", "claude-sonnet-4-5",
-				"claude-haiku-4-5",
+				"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+				"claude-opus-4-7", "claude-opus-4-6",
+				"claude-sonnet-4-6", "claude-haiku-4-5",
 			},
 			APIKeyRequired: true,
 			Builtin:        true,
@@ -166,9 +166,9 @@ func BuiltinDefinitions() []ProviderDefinition {
 			BaseURL:      "",
 			DefaultModel: defaultGeminiModel,
 			SeedModels: []string{
-				"gemini-2.5-pro", defaultGeminiModel, "gemini-2.5-flash-lite",
-				"gemini-2.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite",
-				"gemini-1.5-pro", "gemini-1.5-flash",
+				"gemini-4-argon", defaultGeminiModel, "gemini-3.6-flash",
+				"gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview",
+				"gemini-2.5-pro", "gemini-2.5-flash-lite",
 			},
 			APIKeyRequired: true,
 			Builtin:        true,
@@ -180,10 +180,10 @@ func BuiltinDefinitions() []ProviderDefinition {
 			AdapterType:  AdapterTypes.GOOGLEVERTEX,
 			BaseURL:      "",
 			DefaultModel: defaultGeminiModel,
-			SeedModels: []string{
-				"gemini-2.5-pro", defaultGeminiModel, "gemini-2.5-flash-lite",
-				"gemini-2.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite",
-			},
+			// Vertex availability is project and region specific. Do not borrow the
+			// Gemini Developer API fallback catalogue when live Vertex discovery is
+			// unavailable.
+			SeedModels: nil,
 			// No API key at all: Vertex authenticates via Application
 			// Default Credentials, with project/location from the
 			// GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION environment

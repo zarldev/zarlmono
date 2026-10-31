@@ -27,6 +27,7 @@ type providerRepointedMsg struct {
 	defWindow       int                  // the def's declared window (change-detection baseline)
 	selection       prefs.ModelSelection
 	persist         bool
+	manual          bool
 	done            func(error)
 	seq             uint64
 	err             error
@@ -76,7 +77,6 @@ func (m *UI) maybeRepoint() tea.Cmd {
 	if snapshot := m.takeSettingsTargetSnapshot(); snapshot != nil {
 		primary := settings.ActiveProvider(ctx, fallback)
 		if primary != snapshot.primary {
-			m.markManualTargetOverride()
 			reasoning, defWindow := activeProviderPolicy(settings, primary.Name)
 			seq := atomic.AddUint64(&m.repointSeq, 1)
 			return m.buildProviderTargetCmd(seq, primary, reasoning, defWindow, prefs.ModelSelection{}, false, nil)
@@ -101,7 +101,6 @@ func (m *UI) maybeRepoint() tea.Cmd {
 	if !providerMissing && spec == active && reasoning == m.appliedReasoning && defWindow == m.appliedWindow {
 		return m.maybeModeTarget()
 	}
-	m.markManualTargetOverride()
 	seq := atomic.AddUint64(&m.repointSeq, 1)
 	return m.buildProviderTargetCmd(seq, spec, reasoning, defWindow, prefs.ModelSelection{}, false, nil)
 }
@@ -118,12 +117,20 @@ func (m *UI) switchTarget(selection prefs.ModelSelection, done func(error)) tea.
 		m.session.SetErrorToast(err.Error())
 		return nil
 	}
-	m.markManualTargetOverride()
+	if m.isSwarmOpen() {
+		err := errors.New("stop the swarm goal before changing providers")
+		if done != nil {
+			done(err)
+		}
+		m.session.SetErrorToast(err.Error())
+		return nil
+	}
 	fb, _ := m.session.ProviderContext()
 	spec := engine.ProviderSpec{Name: selection.Provider, Model: selection.Model}
 	if spec.Model == "" {
 		spec.Model = m.settings.DefaultModelSelection(spec.Name).Model
-		if global, err := m.settings.Svc.GetSetting(m.appContext(), prefs.ScopeGlobal, prefs.KeyModel); err == nil && global.Value != "" {
+		provider, providerErr := m.settings.Svc.GetSetting(m.appContext(), prefs.ScopeGlobal, prefs.KeyProvider)
+		if global, err := m.settings.Svc.GetSetting(m.appContext(), prefs.ScopeGlobal, prefs.KeyModel); providerErr == nil && (provider.Value == spec.Name || (provider.Value == "" && spec.Name == fb.Name)) && err == nil && global.Value != "" {
 			spec.Model = global.Value
 		}
 	}
@@ -157,10 +164,14 @@ func (m *UI) buildProviderTargetCmd(
 			return providerRepointedMsg{seq: seq, spec: spec, selection: selection, persist: persist, done: done, err: err}
 		}
 		window := settings.ContextWindow(ctx, spec)
+		if window <= 0 {
+			window = engine.LiveContextWindow
+		}
 		return providerRepointedMsg{
 			seq: seq, prov: prov, spec: spec, window: window,
 			reasoning: reasoning, defWindow: defWindow,
 			selection: selection, persist: persist, done: done,
+			manual: true,
 		}
 	}
 }
@@ -227,32 +238,27 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 		return true
 	}
 	defer reservation.Release()
-	if rp.persist {
-		if m.settings == nil || m.settings.Svc == nil {
-			err := errors.New("provider switch persistence unavailable")
-			if rp.done != nil {
-				rp.done(err)
-			}
-			m.session.SetErrorToast(err.Error())
-			return true
-		}
-		if err := m.settings.Svc.SetModelSelection(m.appContext(), prefs.ScopeWorkspace, rp.selection); err != nil {
-			if rp.done != nil {
-				rp.done(err)
-			}
-			m.session.SetErrorToast("provider switch persistence: " + err.Error())
-			return true
-		}
-		if m.settings.Registry != nil {
-			m.settings.Registry.SetActiveName(rp.spec.Name)
-		}
+	if rp.window <= 0 {
+		rp.window = engine.LiveContextWindow
 	}
-	if err := reservation.ApplyTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}); err != nil {
+	update := engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}
+	if rp.persist {
+		err = reservation.ApplyTargetSelection(m.appContext(), update, m.settings.Svc, rp.selection)
+	} else {
+		err = reservation.ApplyTarget(update)
+	}
+	if err != nil {
 		if rp.done != nil {
 			rp.done(err)
 		}
 		m.session.SetErrorToast("provider switch apply: " + err.Error())
 		return true
+	}
+	if rp.persist && m.settings.Registry != nil {
+		m.settings.Registry.SetActiveName(rp.spec.Name)
+	}
+	if rp.manual {
+		m.markManualTargetOverride()
 	}
 	m.appliedReasoning = rp.reasoning
 	m.appliedWindow = rp.defWindow

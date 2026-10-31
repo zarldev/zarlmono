@@ -422,11 +422,11 @@ func (d *settingsDialog) handleGallery(msg tea.KeyPressMsg) action {
 	case "ctrl+s":
 		d.gallery.leave()
 		return actionClose{}
-	case "esc", "q", "tab":
+	case "esc", "q":
 		reverted := d.gallery.isPreviewing()
 		d.gallery.leave()
 		if reverted {
-			d.setStatus("theme preview reverted to " + d.gallery.origin)
+			d.setStatus("theme preview reverted")
 		}
 		d.focusRows = false
 		return actionNone{}
@@ -435,7 +435,11 @@ func (d *settingsDialog) handleGallery(msg tea.KeyPressMsg) action {
 		d.gallery.enter() // first interaction — capture the revert point
 	}
 	if d.gallery.handleKey(msg) {
-		d.setStatus("theme kept: " + palette.Name)
+		if msg.String() == "r" {
+			d.setStatus("theme inherited: " + palette.Name)
+		} else {
+			d.setStatus("theme saved (" + d.gallery.scope + "): " + palette.Name)
+		}
 		d.refresh(d.ctx)
 	}
 	return actionNone{}

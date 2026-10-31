@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
@@ -36,10 +37,12 @@ const SummaryDefaultMaxTokens = 4096
 // Model is the model name passed in [llm.CompletionRequest]; an empty
 // Model uses the provider's default.
 type Summary struct {
-	Provider     llm.Provider
-	Model        string
-	SystemPrompt string // optional override; falls back to SummaryDefaultSystemPrompt
-	MaxTokens    int    // optional override; falls back to SummaryDefaultMaxTokens
+	// InferenceScope optionally accounts this compactor's model calls.
+	InferenceScope inference.Scope
+	Provider       llm.Provider
+	Model          string
+	SystemPrompt   string // optional override; falls back to SummaryDefaultSystemPrompt
+	MaxTokens      int    // optional override; falls back to SummaryDefaultMaxTokens
 }
 
 // NewSummary returns a Summary compactor bound to provider. model is
@@ -125,12 +128,12 @@ func (s *Summary) Compact(ctx context.Context, history []llm.Message, keepRecent
 		Temperature: 0.2,
 		Stream:      true,
 	}
-	body, err := collectContent(s.Provider.Complete(ctx, req), "Summary")
+	body, inference, err := collectInference(ctx, s.Provider, s.Model, req, EngineSummary, s.InferenceScope)
 	if err != nil {
-		return Result{}, err
+		return Result{Inference: inference}, err
 	}
 	if body == "" {
-		return Result{}, errors.New("compact.Summary: model returned empty summary")
+		return Result{Inference: inference}, errors.New("compact.Summary: model returned empty summary")
 	}
 
 	out := make([]llm.Message, 0, len(leading)+1+len(recent))
@@ -160,7 +163,7 @@ func (s *Summary) Compact(ctx context.Context, history []llm.Message, keepRecent
 	trimmed := max(olderBytes-len(body), 0)
 	warning := fmt.Sprintf("compacted via summary: %d older msgs → 1 summary msg (~%d chars); %d recent kept verbatim",
 		len(older), len(body), len(recent))
-	return Result{History: out, Warning: warning, Engine: EngineSummary, BytesTrimmed: trimmed}, nil
+	return Result{History: out, Warning: warning, Engine: EngineSummary, BytesTrimmed: trimmed, Inference: inference}, nil
 }
 
 // splitForSummary carves history into (leading, older, recent) where

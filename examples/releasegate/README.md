@@ -35,7 +35,7 @@ go run -C examples ./releasegate -provider anthropic -model claude-sonnet-4-6
 
 # DeepSeek
 export DEEPSEEK_API_KEY=...
-go run -C examples ./releasegate -provider deepseek -model deepseek-chat
+go run -C examples ./releasegate -provider deepseek -model deepseek-flash
 
 # Local providers; no API key required
 go run -C examples ./releasegate -provider ollama -model qwen3:8b

@@ -117,6 +117,12 @@ func checkComposePolicy(t *testing.T, dir string) {
 		t.Fatalf("read compose file: %v", err)
 	}
 	compose := string(data)
+	if !strings.Contains(compose, "./searxng/settings.yml:/etc/searxng/settings.yml:ro,Z") {
+		t.Error("compose config mount must be read-only with private SELinux relabeling")
+	}
+	if strings.Contains(compose, "label=disable") || strings.Contains(compose, "privileged:") {
+		t.Error("compose must not disable container security")
+	}
 	if !strings.Contains(compose, `"127.0.0.1:8080:8080"`) {
 		t.Error("compose file does not bind SearXNG to loopback")
 	}

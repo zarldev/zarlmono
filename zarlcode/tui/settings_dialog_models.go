@@ -20,7 +20,7 @@ func (d *settingsDialog) activateEnum(dir int) action {
 	r := d.curRow()
 	switch r.key {
 	case prefs.KeyTheme:
-		return actionPush{d: newThemePickerFor(func(name string) { d.commit(prefs.KeyTheme, name) })}
+		return actionPush{d: newScopedThemePicker(d.ctx, d.s.Svc, d.gallery.workspace)}
 	case prefs.KeyProvider:
 		items := providerNames(d.s)
 		sel := r.value

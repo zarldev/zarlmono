@@ -4,5 +4,5 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro,Z
     restart: unless-stopped

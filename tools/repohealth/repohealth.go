@@ -26,18 +26,25 @@ type frontmatter struct {
 }
 
 // Check validates repository-local skills, agents, and local Markdown links.
+// Local link targets must resolve within root, including through symlinks.
 func Check(root string) error {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("resolve repository root: %w", err)
 	}
 
+	boundary, err := os.OpenRoot(absRoot)
+	if err != nil {
+		return fmt.Errorf("open repository root: %w", err)
+	}
+	defer boundary.Close()
+
 	var problems []error
 	skills, skillFiles := checkSkills(absRoot, &problems)
 	checkAgents(absRoot, &problems)
 	guidanceFiles := append(listInstructionFiles(absRoot, &problems), skillFiles...)
 	for _, path := range guidanceFiles {
-		checkLinks(absRoot, path, &problems)
+		checkLinks(absRoot, boundary, path, &problems)
 	}
 	checkSkillRouting(absRoot, skills, &problems)
 	return errors.Join(problems...)
@@ -172,7 +179,7 @@ func listInstructionFiles(root string, problems *[]error) []string {
 	return files
 }
 
-func checkLinks(root, source string, problems *[]error) {
+func checkLinks(root string, boundary *os.Root, source string, problems *[]error) {
 	body, err := os.ReadFile(source)
 	if err != nil {
 		*problems = append(*problems, fmt.Errorf("read %s: %w", relative(root, source), err))
@@ -200,7 +207,7 @@ func checkLinks(root, source string, problems *[]error) {
 			*problems = append(*problems, fmt.Errorf("%s: local link %q escapes the repository", relative(root, source), raw))
 			continue
 		}
-		if _, err := os.Stat(target); err != nil {
+		if _, err := boundary.Stat(rel); err != nil {
 			*problems = append(*problems, fmt.Errorf("%s: local link %q does not resolve: %w", relative(root, source), raw, err))
 		}
 	}

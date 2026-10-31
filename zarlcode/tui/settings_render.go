@@ -28,11 +28,17 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	}
 	navW := min(settingsNavW+2, area.Dx()/3)
 	paneH := area.Dy() - 1
+	navLabel, detailLabel := palette.Primary, palette.Subtle
+	if d.focusRows {
+		navLabel, detailLabel = detailLabel, navLabel
+	}
 	nav := drawFrame(scr, uv.Rect(area.Min.X, area.Min.Y, navW, paneH), frameStyle{
-		Label: ansi.Truncate("settings", navW-4, "…"),
+		Label:  ansi.Truncate("settings", navW-4, "…"),
+		Border: palette.Border, LabelColor: navLabel,
 	})
 	detail := drawFrame(scr, uv.Rect(area.Min.X+navW, area.Min.Y, area.Dx()-navW, paneH), frameStyle{
-		Label: ansi.Truncate(d.cats[d.cat].name, area.Dx()-navW-4, "…"),
+		Label:  ansi.Truncate(d.cats[d.cat].name, area.Dx()-navW-4, "…"),
+		Border: palette.Border, LabelColor: detailLabel,
 	})
 	footer := uv.Rect(area.Min.X, area.Max.Y-1, area.Dx(), 1)
 	detailW := min(detail.Dx(), settingsDetailMax)
@@ -40,19 +46,14 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 
 	// Nav rail.
 	catStart, catEnd := windowAroundCursor(d.cat, len(d.cats), nav.Dy())
+	style := terminalChrome()
 	for i, c := range d.cats[catStart:catEnd] {
 		catIndex := catStart + i
 		if i >= nav.Dy() {
 			break
 		}
 		selected := catIndex == d.cat
-		label := palette.Subtle.On(c.name)
-		if selected && !d.focusRows {
-			label = palette.Primary.On(c.name)
-		} else if selected {
-			label = palette.Assistant.On(c.name)
-		}
-		drawListRow(scr, uv.Rect(nav.Min.X, nav.Min.Y+i, nav.Dx(), 1), label, selected, !d.focusRows)
+		drawLine(scr, uv.Rect(nav.Min.X, nav.Min.Y+i, nav.Dx(), 1), listRow(style, c.name, "", nav.Dx(), selected))
 	}
 
 	// Detail: Providers and Appearance render their own inline panels; every
@@ -78,7 +79,7 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 			if i == d.row {
 				selectedLine = len(lines)
 			}
-			lines = append(lines, d.renderRow(row, d.focusRows && i == d.row, detailW))
+			lines = append(lines, d.renderRow(row, i == d.row, detailW))
 		}
 		if len(lines) > bodyH {
 			start, end := windowAroundCursor(selectedLine, len(lines), bodyH)
@@ -88,10 +89,6 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	for i, ln := range lines {
 		if i >= bodyH {
 			break
-		}
-		if strings.HasPrefix(ansi.Strip(ln), "├") {
-			drawSectionRule(scr, detail, detail.Min.Y+i, ln)
-			continue
 		}
 		drawLine(scr, uv.Rect(detail.Min.X, detail.Min.Y+i, detailW, 1), ln)
 	}
@@ -104,16 +101,16 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 			if hy+i >= detail.Max.Y {
 				break
 			}
-			if strings.HasPrefix(ansi.Strip(ln), "├") {
-				drawSectionRule(scr, detail, hy+i, ln)
-				continue
-			}
 			drawLine(scr, uv.Rect(detail.Min.X, hy+i, detailW, 1), ln)
 		}
 	}
 
 	// Single footer: stable keymap left, transient toast right.
-	drawPaneRow(scr, footer, " "+d.footerHint(), d.toast()+" ")
+	if toast := d.toast(); toast != "" {
+		drawPaneRow(scr, footer, " "+toast, "")
+	} else {
+		drawPaneRow(scr, footer, " "+d.footerHint(), "")
+	}
 }
 
 // helpLines is the description + default + resolved-source block for the
@@ -127,11 +124,11 @@ func (d *settingsDialog) helpLines(width int) []string {
 		return []string{helpHead, palette.Subtle.On("manage providers — api keys, oauth sign-in, custom openai-compatible backends.")}
 	case cat.gallery:
 		name, scope := d.themeSource()
-		if d.gallery != nil && d.gallery.isPreviewing() {
-			return []string{helpHead, palette.Warning.On("previewing "+d.gallery.selectedName()) +
-				palette.Muted.On(" · enter keeps it · esc restores "+d.gallery.origin)}
+		line := "effective: " + name + " (" + scope + ") · save scope: " + d.gallery.scope
+		if d.gallery.isPreviewing() {
+			line += " · previewing " + d.gallery.selectedName()
 		}
-		return []string{helpHead, palette.Subtle.On("kept theme ") + palette.Muted.On(name+" · "+scope)}
+		return []string{helpHead, palette.Subtle.On(line)}
 	case cat.catalog:
 		return []string{helpHead, palette.Subtle.On("discovered agents / skills / hooks (read-only) — [ and ] switch between them.")}
 	case cat.mcp:
@@ -165,12 +162,10 @@ func (d *settingsDialog) rowSourceLabel(r *settingsRow) string {
 
 // themeSource returns the persisted theme name + the scope it resolved from.
 func (d *settingsDialog) themeSource() (string, string) {
-	if d.s != nil && d.s.Svc != nil {
-		if v, err := d.s.Svc.GetSetting(d.ctx, prefs.ScopeEffective, prefs.KeyTheme); err == nil && v.Value != "" {
-			return v.Value, v.Source.String()
-		}
+	if d.gallery.effective.Name != "" {
+		return d.gallery.effective.Name, d.gallery.effective.Scope
 	}
-	return palette.Name, "default"
+	return palette.Name, "unavailable"
 }
 
 // footerHint is the context-sensitive key legend: the focused pane and its
@@ -182,7 +177,7 @@ func (d *settingsDialog) footerHint() string {
 	case d.cats[d.cat].providers && d.focusRows:
 		return d.providers.footerHint()
 	case d.cats[d.cat].gallery && d.focusRows:
-		return keyLegend(keyHint{"↑↓←→", "preview"}, keyHint{"enter", "keep"}, keyHint{"esc", "revert"})
+		return keyLegend(keyHint{"arrows", "preview"}, keyHint{"tab", "scope"}, keyHint{"enter", "save"}, keyHint{"r", "inherit"}, keyHint{"esc", "revert"})
 	case d.cats[d.cat].catalog && d.focusRows:
 		return d.catalogPane.footerHint()
 	case d.cats[d.cat].mcp && d.focusRows:
@@ -238,7 +233,7 @@ func (d *settingsDialog) toast() string {
 // edited the inline editor stands in for the value.
 func (d *settingsDialog) renderRow(row settingsRow, sel bool, width int) string {
 	const labelW = 22
-	label := pad(row.label, labelW)
+	label := pad(strings.ToLower(row.label), labelW)
 
 	var value, right string
 	switch {
@@ -268,11 +263,7 @@ func (d *settingsDialog) renderRow(row settingsRow, sel bool, width int) string 
 		value = palette.Subtle.On(row.def)
 	}
 
-	marker, labelStyled := "  ", palette.Subtle.On(label)
-	if sel {
-		marker, labelStyled = palette.Primary.On("▸ "), palette.Assistant.On(label)
-	}
-	return rowLayout(marker+labelStyled+value, right, width)
+	return listRow(terminalChrome(), label+value, right, width, sel)
 }
 
 func pad(s string, w int) string {

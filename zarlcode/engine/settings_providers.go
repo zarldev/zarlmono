@@ -14,10 +14,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/oauth/codex"
 )
 
-// ActiveProvider resolves the active ProviderSpec from settings, falling
-// back to fb (caller's env-derived defaults) for any unset field. The env
-// BaseURL/APIKey overrides only apply to the fallback provider itself; for
-// any other backend they'd be wrong (e.g. a local llama.cpp URL leaking onto
+// ActiveProvider resolves the active provider/model pair from settings, falling
+// back to fb (caller's env-derived defaults). Provider and model inheritance is
+// paired by scope so an inherited model cannot cross onto a different provider.
+// The env BaseURL/APIKey overrides only apply to the fallback provider itself;
+// for any other backend they'd be wrong (e.g. a local llama.cpp URL leaking onto
 // openai), so other providers resolve those through the registry chain.
 func (s *Settings) ActiveProvider(ctx context.Context, fb ProviderSpec) ProviderSpec {
 	name := s.resolveProvider(ctx, fb.Name)
@@ -25,13 +26,48 @@ func (s *Settings) ActiveProvider(ctx context.Context, fb ProviderSpec) Provider
 	if name != fb.Name {
 		model = s.DefaultModelSelection(name).Model
 	}
+	if s != nil && s.Svc != nil {
+		read := func(scope prefs.Scope, key string) (prefs.SettingValue, bool) {
+			value, err := s.Svc.GetSetting(ctx, scope, key)
+			return value, err == nil && value.Value != ""
+		}
+		workspaceProvider, hasWorkspaceProvider := read(prefs.ScopeWorkspace, prefs.KeyProvider)
+		globalProvider, hasGlobalProvider := read(prefs.ScopeGlobal, prefs.KeyProvider)
+		workspaceModel, hasWorkspaceModel := read(prefs.ScopeWorkspace, prefs.KeyModel)
+		globalModel, hasGlobalModel := read(prefs.ScopeGlobal, prefs.KeyModel)
+		switch {
+		case hasWorkspaceProvider && workspaceProvider.Value == name:
+			switch {
+			case hasWorkspaceModel:
+				model = workspaceModel.Value
+			case hasGlobalProvider && globalProvider.Value == name && hasGlobalModel:
+				model = globalModel.Value
+			case !hasGlobalProvider && name == fb.Name && hasGlobalModel:
+				model = globalModel.Value
+			}
+		case !hasWorkspaceProvider && hasGlobalProvider && globalProvider.Value == name:
+			if hasWorkspaceModel {
+				model = workspaceModel.Value
+			} else if hasGlobalModel {
+				model = globalModel.Value
+			}
+		case !hasWorkspaceProvider && !hasGlobalProvider && name == fb.Name:
+			// Preserve legacy model-only settings when the effective provider is
+			// still the caller's fallback route.
+			if hasWorkspaceModel {
+				model = workspaceModel.Value
+			} else if hasGlobalModel {
+				model = globalModel.Value
+			}
+		}
+	}
 	effort := fb.CodexEffort
 	if effort == "" {
 		effort = prefs.DefaultCodexEffort
 	}
 	spec := ProviderSpec{
 		Name:        name,
-		Model:       s.setting(ctx, prefs.KeyModel, model),
+		Model:       model,
 		CodexEffort: s.setting(ctx, prefs.KeyCodexEffort, effort),
 	}
 	if spec.Name == fb.Name {
@@ -80,8 +116,15 @@ func (s *Settings) BuildActive(ctx context.Context, fb ProviderSpec) (llm.Provid
 // available; fall back to the registry's static table when the probe fails so
 // startup and provider switching never block on it.
 func (s *Settings) ContextWindow(ctx context.Context, spec ProviderSpec) int {
+	// Explicit registry context caps take priority before the account probe.
+	if s != nil && s.Registry != nil {
+		if def, err := s.Registry.Parse(spec.Name); err == nil && def.ContextWindow > 0 {
+			return def.ContextWindow
+		}
+	}
 	if id, _ := llm.ParseLLMProvider(spec.Name); s != nil && s.Svc != nil && id == backends.NameOpenAICodex {
-		if cw, err := openaicodex.FetchContextWindow(ctx, codex.NewTokenSource(s.Svc), spec.BaseURL, spec.Model); err == nil && cw > 0 {
+		// Codex construction uses its default account endpoint; the metadata probe must use the same endpoint, not spec/registry overrides.
+		if cw, err := openaicodex.FetchContextWindow(ctx, codex.NewTokenSource(s.Svc), "", spec.Model); err == nil && cw > 0 {
 			return cw
 		}
 	}

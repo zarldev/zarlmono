@@ -45,6 +45,12 @@ func renderWebSearchResult(width int, r search.Result) []string {
 	if len(r.Suggestions) > 0 {
 		out = append(out, webResultLines(width, "Suggestions: "+strings.Join(r.Suggestions, ", "), palette.Muted.On)...)
 	}
+	if len(r.Failures) > 0 {
+		out = append(out, webResultLines(width, "search degraded:", palette.Warning.On)...)
+		for _, failure := range r.Failures {
+			out = append(out, webResultLines(width, failure.Source+": "+failure.Reason, palette.Warning.On)...)
+		}
+	}
 	return out
 }
 
@@ -126,10 +132,11 @@ func renderWebToolText(width int, name, text string) []string {
 		return out
 	case "web_search":
 		var r struct {
-			Query       *string         `json:"query"`
-			Results     json.RawMessage `json:"results"`
-			Hits        json.RawMessage `json:"hits"`
-			Suggestions []string        `json:"suggestions"`
+			Query       *string                `json:"query"`
+			Results     json.RawMessage        `json:"results"`
+			Hits        json.RawMessage        `json:"hits"`
+			Suggestions []string               `json:"suggestions"`
+			Failures    []search.SourceFailure `json:"failures"`
 		}
 		if json.Unmarshal([]byte(text), &r) != nil || r.Query == nil || r.Results == nil && r.Hits == nil {
 			return nil
@@ -142,7 +149,7 @@ func renderWebToolText(width int, name, text string) []string {
 		if json.Unmarshal(payload, &hits) != nil {
 			return nil
 		}
-		return renderWebSearchResult(width, search.Result{Query: *r.Query, Hits: hits, Suggestions: r.Suggestions})
+		return renderWebSearchResult(width, search.Result{Query: *r.Query, Hits: hits, Suggestions: r.Suggestions, Failures: r.Failures})
 	case "computer_observe", "computer_act":
 		var r struct {
 			computer.Observation

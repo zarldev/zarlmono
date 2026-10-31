@@ -19,12 +19,14 @@ func drawSplash(scr uv.Screen, area uv.Rectangle, logoCol theme.Color, infoBlock
 		return
 	}
 
-	logo := strings.Trim(introLogoLarge, "\n")
-	logoBlock := make([]string, 0, len(strings.Split(logo, "\n"))+1)
-	for l := range strings.SplitSeq(logo, "\n") {
-		logoBlock = append(logoBlock, logoCol.On(l))
+	style := terminalChrome()
+	style.Theme.Primary = logoCol
+	logoBlock := style.Logo(introLogoLarge, w, h-len(infoBlock)-1)
+	if len(logoBlock) > 0 {
+		logoBlock = append(logoBlock, palette.Muted.On(appDisplayName+" "+version.String()))
+	} else if h > len(infoBlock) {
+		logoBlock = []string{logoCol.On(ansi.Truncate(appDisplayName+" "+version.String(), w, ""))}
 	}
-	logoBlock = append(logoBlock, palette.Muted.On(appDisplayName+" "+version.String()))
 
 	infoW := 0
 	for _, l := range infoBlock {

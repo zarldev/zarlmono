@@ -77,7 +77,7 @@ func (s *Session) act(ctx context.Context, action computer.Action) error {
 		if action.Delta != nil {
 			delta = *action.Delta
 		}
-		if err := s.run(ctx, chromedp.Evaluate(fmt.Sprintf(`window.scrollBy(%d, %d)`, delta.X, delta.Y), nil)); err != nil {
+		if err := s.run(ctx, chromedp.Evaluate[chromedp.Void](fmt.Sprintf(`window.scrollBy(%d, %d)`, delta.X, delta.Y))); err != nil {
 			return fmt.Errorf("scroll browser surface: %w", err)
 		}
 		return nil

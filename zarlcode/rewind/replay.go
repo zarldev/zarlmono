@@ -11,9 +11,8 @@ import (
 // providerMessageValid checks the fields the selected outbound adapter actually
 // consumes. Keeping a field in storage is not evidence it survives replay.
 func providerMessageValid(message llm.Message, provider string) bool {
-	// Display reasoning needs a supported native continuation, not necessarily
-	// an identical summary: Responses also streams raw reasoning text.
-	if message.ReasoningContent != "" && !nativeReasoningReplayValid(message, provider) {
+	// Preserve display reasoning under the selected adapter's live replay policy.
+	if message.ReasoningContent != "" && !reasoningReplayValid(message, provider) {
 		return false
 	}
 	if message.Role == llm.RoleUser {
@@ -33,10 +32,18 @@ func providerMessageValid(message llm.Message, provider string) bool {
 }
 
 func outputOrderValid(message llm.Message, provider string) bool {
+	if googleRoute(provider) && !googleOutputsPaired(message) {
+		return false
+	}
 	indexes := make([]*int, 0, len(message.ContinuationItems)+len(message.ToolCalls)+1)
 	var nativeText []llm.ContinuationItem
 	for _, item := range message.ContinuationItems {
-		indexes = append(indexes, item.OutputIndex)
+		// Google retains a signed native part and a projected call at the
+		// same position. Pairing above proves they are one logical output;
+		// count only the projection, without relaxing any other collisions.
+		if !googleRoute(provider) {
+			indexes = append(indexes, item.OutputIndex)
+		}
 		if (provider == providerAnthropic && item.Kind == continuationText) ||
 			((provider == providerOpenAI || provider == providerCodex) && item.Kind == "message") {
 			nativeText = append(nativeText, item)
@@ -48,7 +55,12 @@ func outputOrderValid(message llm.Message, provider string) bool {
 			return false
 		}
 	case message.Content != "":
-		indexes = append(indexes, message.ContentOutputIndex)
+		// Google's live converter always emits projected visible text before
+		// calls and historically captured no text index. That deterministic
+		// fallback is ordinary replay, not a missing native output position.
+		if !googleRoute(provider) || message.ContentOutputIndex != nil {
+			indexes = append(indexes, message.ContentOutputIndex)
+		}
 	case message.ContentOutputIndex != nil:
 		return false
 	}

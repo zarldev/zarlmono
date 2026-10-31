@@ -116,10 +116,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		return nil, fmt.Errorf("seed workspace extensions: %w", err)
 	}
 
-	// Peek at the persisted theme so the pre-settings splash (vault unlock)
-	// matches the user's chosen palette, not just the env/default. The
-	// full settings path below replaces this wholesale, so the peek is
-	// only for the startup screen.
+	// Apply the same effective resolution before and after vault unlock.
 	UseTheme(peekTheme(ctx, root))
 
 	settings, err := engine.OpenSettings(ctx, root, vaultPassphraseFunc(ctx, !p.Headless))
@@ -216,7 +213,20 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	sink := teasink.New(nil)
 	_ = app.AddCloser("sink", closerFunc(func() error { sink.Close(); return nil }))
 
-	UseTheme(selectThemeByName(settings.Theme(ctx, "catppuccin-mocha")))
+	var appearanceErr error
+	if store, e := appearanceStore(); e == nil {
+		choice, resolveErr := themeChoice(ctx, store, settings.Svc, root)
+		if resolveErr == nil {
+			UseTheme(choice.Theme)
+		}
+		appearanceErr = resolveErr
+		if resolveErr != nil {
+			slog.WarnContext(ctx, "appearance resolution", "error", resolveErr)
+		}
+	} else {
+		appearanceErr = e
+		slog.WarnContext(ctx, "appearance path", "error", e)
+	}
 
 	// Use static provider metadata immediately. Interactive launches defer network
 	// probes (local server props and Codex account limits) until Bubble Tea can
@@ -235,6 +245,9 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	m.SetProvider(spec.Name)
 	m.SetContextWindow(ctxWindow)
 	m.SetSettings(settings) // ctrl+s settings overlay
+	if appearanceErr != nil {
+		m.session.SetErrorToast("appearance: " + appearanceErr.Error())
+	}
 	m.SetProviderContext(fallback, spec)
 	m.appliedReasoning, m.appliedWindow = activeProviderPolicy(settings, spec.Name) // baseline for maybeRepoint
 
@@ -612,15 +625,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// selectThemeByName resolves a theme name to a builtin theme, falling back to
-// the dark default when the name doesn't match.
-func selectThemeByName(name string) theme.Theme {
-	if t, ok := theme.ByName(name); ok {
-		return t
-	}
-	return theme.DarkDefault()
-}
-
 // peekTheme reads the persisted theme from the shared db so the startup
 // splash (vault unlock) can match the user's chosen palette. A brief
 // connection is opened and closed before the long-lived settings store
@@ -628,17 +632,26 @@ func selectThemeByName(name string) theme.Theme {
 // ensures the flash screen carries the right colours. On any failure the
 // theme uses the application default; a missing setting is not an error.
 func peekTheme(ctx context.Context, wsRoot string) theme.Theme {
-	store, err := db.Open(ctx, "")
+	store, err := appearanceStore()
 	if err != nil {
-		return selectThemeByName("catppuccin-mocha")
+		return palette
 	}
-	defer store.Close()
-	svc := prefs.NewService(store, nil, wsRoot)
-	setting, err := svc.GetSetting(ctx, prefs.ScopeEffective, prefs.KeyTheme)
-	if err == nil && setting.Value != "" {
-		return selectThemeByName(setting.Value)
+	legacy, err := db.Open(ctx, "")
+	if err != nil {
+		choice, resolveErr := themeChoice(ctx, store, nil, wsRoot)
+		if resolveErr != nil {
+			slog.WarnContext(ctx, "appearance startup", "error", resolveErr)
+			return palette
+		}
+		return choice.Theme
 	}
-	return selectThemeByName("catppuccin-mocha")
+	defer legacy.Close()
+	choice, resolveErr := themeChoice(ctx, store, prefs.NewService(legacy, nil, wsRoot), wsRoot)
+	if resolveErr != nil {
+		slog.WarnContext(ctx, "appearance startup", "error", resolveErr)
+		return palette
+	}
+	return choice.Theme
 }
 
 // setupLaunchLogging redirects slog and the stdlib log away from stderr

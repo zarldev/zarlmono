@@ -8,11 +8,17 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
-// Native reasoning is required for replay. Responses streams may expose raw
-// reasoning or a partial summary on the display channel, independently of the
-// completed encrypted item's summary. Preserve both without equating them.
-// Anthropic's display thinking is a projection of its signed thinking block.
-func nativeReasoningReplayValid(message llm.Message, provider string) bool {
+// reasoningReplayValid follows each adapter's live reasoning representation.
+// Responses may expose raw reasoning or a partial display summary independently
+// of the encrypted item. Anthropic's thinking projects its signed block.
+func reasoningReplayValid(message llm.Message, provider string) bool {
+	// Ordinary replay follows the adapter's live policy: local adapters rewrap
+	// inline thinking, DeepSeek strips or trims it by model/request, and Google
+	// and Claude Code keep it display-only. Never erase the stored projection.
+	switch provider {
+	case providerDeepSeek, providerLlamaCPP, providerOllama, providerGemini, providerGoogleVertex, providerClaudeCode:
+		return true
+	}
 	var items []llm.ContinuationItem
 	for _, item := range message.ContinuationItems {
 		if (item.Kind == continuationReasoning || item.Kind == continuationThinking) && continuationValid(item, provider) {

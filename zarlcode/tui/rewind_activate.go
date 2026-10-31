@@ -35,6 +35,9 @@ func (m *UI) rewindReady() error {
 	if m.live == nil || m.settings == nil || m.settings.Store == nil {
 		return errors.New("live session storage unavailable")
 	}
+	if m.isSwarmOpen() {
+		return errors.New("stop the swarm goal before rewinding")
+	}
 	if m.sourceConflict {
 		return errors.New(sourceConflictNotice)
 	}

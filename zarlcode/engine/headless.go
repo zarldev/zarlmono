@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +18,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/options"
+	"github.com/zarldev/zarlmono/zkit/zexec"
 )
 
 // RunHeadless executes one task to completion without a TUI, returning the
@@ -85,7 +85,8 @@ func (l *LiveRunner) runHeadlessTurn(ctx context.Context, spec runner.TaskSpec) 
 	// iteration cap. The watcher is a stop-hint; the bare Drive still trusts
 	// the terminal reason as its verdict.
 	var reqOpts []pursue.RequestOption
-	if w := l.earlyStopWatcher(); w != nil {
+	supervisor := pursue.NewSupervisor()
+	if w := l.earlyStopWatcher(supervisor); w != nil {
 		reqOpts = append(reqOpts, pursue.WithWatcher(w))
 	}
 
@@ -116,7 +117,7 @@ func (l *LiveRunner) runHeadlessTurn(ctx context.Context, spec runner.TaskSpec) 
 			rec.attempt(ctx, report)
 		}))
 	}
-	result := driveHeadless(ctx, turn.runner, spec, reqOpts, driveOpts...)
+	result := driveHeadlessOwned(ctx, supervisor, turn.runner, spec, reqOpts, driveOpts...)
 	turn.close(ctx)
 	rec.complete(ctx, result)
 	return result
@@ -126,7 +127,7 @@ func (l *LiveRunner) runHeadlessTurn(ctx context.Context, spec runner.TaskSpec) 
 // nil when none is set (the no-early-stop case). The probe runs the command
 // in the workspace root, diff-gated and bounded so a periodic check stays
 // cheap, and fires when it exits zero.
-func (l *LiveRunner) earlyStopWatcher() pursue.Watcher {
+func (l *LiveRunner) earlyStopWatcher(supervisor *pursue.Supervisor) pursue.Watcher {
 	l.mu.Lock()
 	cmd := append([]string(nil), l.earlyStopCommand...)
 	l.mu.Unlock()
@@ -139,7 +140,7 @@ func (l *LiveRunner) earlyStopWatcher() pursue.Watcher {
 		cmd,
 		coderunner.ProbeOpts{PerRunTimeout: 2 * time.Minute, MaxRuns: 20, MinInterval: 10 * time.Second},
 	)
-	return pursue.PollWatcher(probe, 3*time.Second)
+	return supervisor.PollWatcher(probe, 3*time.Second)
 }
 
 // gitWorktreeState is the cheap diff snapshot CommandProbe gates on: the
@@ -147,69 +148,45 @@ func (l *LiveRunner) earlyStopWatcher() pursue.Watcher {
 // Best-effort — a git failure yields an empty string, which just means the
 // gate can't suppress a run.
 func gitWorktreeState(root string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	var b strings.Builder
 	for _, args := range [][]string{
-		{"-C", root, "diff"},
+		{"-C", root, "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"},
 		{"-C", root, "status", "--porcelain"},
 	} {
-		// No ctx reaches this probe callback; these are quick local git reads
-		// and the surrounding CommandProbe enforces its own per-run timeout.
-		if out, err := exec.CommandContext(context.Background(), "git", args...).Output(); err == nil {
+		if out, err := gitOutput(ctx, args...); err == nil {
 			b.Write(out)
 		}
 	}
 	return b.String()
 }
 
-// driveHeadless runs the headless attempts and recovers runner panics as terminal
-// errors. The turn owner joins children before recording the final result.
-func driveHeadless(ctx context.Context, r *runner.Runner, spec runner.TaskSpec, reqOpts []pursue.RequestOption, driveOpts ...options.Option[pursue.Config]) runner.TaskResult {
-	var res runner.TaskResult
-	// Drive's watcher may stop waiting before an attempt exits. Serialize access
-	// and seal admission before leaving, joining active work and rejecting any
-	// callback scheduled only after the driver returned.
-	var attemptMu sync.Mutex
-	var attempts sync.WaitGroup
-	sealed := false
-	var settled runner.TaskResult
-	settledOK := false
-	attempt := func(ctx context.Context, attemptSpec runner.TaskSpec) runner.TaskResult {
-		attemptMu.Lock()
-		if sealed {
-			attemptMu.Unlock()
-			return runner.TaskResult{ID: attemptSpec.ID, Reason: runner.TerminalError, Err: context.Canceled}
-		}
-		attempts.Add(1) // Admission and sealing are atomic under attemptMu.
-		attemptMu.Unlock()
-		defer attempts.Done()
+func gitOutput(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	zexec.StartProcessGroup(cmd)
+	cmd.Cancel = func() error { return zexec.KillProcessGroup(cmd) }
+	cmd.WaitDelay = time.Second
+	defer func() { _ = zexec.KillProcessGroup(cmd) }()
+	return cmd.Output()
+}
 
+func driveHeadlessOwned(ctx context.Context, supervisor *pursue.Supervisor, r *runner.Runner, spec runner.TaskSpec, reqOpts []pursue.RequestOption, driveOpts ...options.Option[pursue.Config]) runner.TaskResult {
+	var res runner.TaskResult
+	attempt := func(ctx context.Context, attemptSpec runner.TaskSpec) runner.TaskResult {
 		var result runner.TaskResult
 		func() {
 			defer func() {
 				if p := recover(); p != nil {
 					slog.ErrorContext(ctx, "headless attempt panicked", "panic", p, "stack", string(debug.Stack()))
-					result = runner.TaskResult{
-						ID:     attemptSpec.ID,
-						Reason: runner.TerminalError,
-						Err:    fmt.Errorf("headless attempt panicked: %v", p),
-					}
+					result = runner.TaskResult{ID: attemptSpec.ID, Reason: runner.TerminalError, Err: fmt.Errorf("headless attempt panicked: %v", p)}
 				}
 			}()
 			result = r.Run(ctx, attemptSpec)
 		}()
-		attemptMu.Lock()
-		settled = result
-		settledOK = true
-		attemptMu.Unlock()
 		return result
 	}
-	sealAndJoin := func() {
-		attemptMu.Lock()
-		sealed = true
-		attemptMu.Unlock()
-		attempts.Wait()
-	}
-	defer sealAndJoin()
 
 	var out pursue.Outcome
 	drove := false
@@ -226,21 +203,20 @@ func driveHeadless(ctx context.Context, r *runner.Runner, spec runner.TaskSpec, 
 				}
 			}
 		}()
-		out = pursue.Drive(ctx, pursue.NewRequest(attempt, spec, reqOpts...), driveOpts...)
+		out = supervisor.Drive(ctx, pursue.NewRequest(attempt, spec, reqOpts...), driveOpts...)
 		drove = true
 	}()
-	sealAndJoin()
+	_ = supervisor.Join(context.WithoutCancel(ctx))
+	settled, settledOK := supervisor.LastResult()
 	if !drove {
 		return res
 	}
 
 	res = out.Result
 	if err := out.Err(); err != nil {
-		attemptMu.Lock()
 		if settledOK {
 			res = settled
 		}
-		attemptMu.Unlock()
 		res.ID = spec.ID
 		res.Reason = runner.TerminalError
 		res.Err = err

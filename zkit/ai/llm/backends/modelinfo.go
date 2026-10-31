@@ -131,6 +131,12 @@ func (r *ProviderRegistry) ResolveCost(ctx context.Context, name, model string) 
 	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
 		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
 	}
+	if def.AdapterType == AdapterTypes.GOOGLEVERTEX {
+		return 0, 0, false
+	}
+	if def.AdapterType == AdapterTypes.GOOGLECOMPATIBLE || def.AdapterType == AdapterTypes.DEEPSEEKCOMPATIBLE {
+		return costForAdapter(def.AdapterType, model)
+	}
 	// 2. Live models.dev lookup.
 	if r.modelsDevSource != nil {
 		if e, ok := r.modelsDevSource.Lookup(ctx, name, model); ok && (e.InputCostPerMTok > 0 || e.OutputCostPerMTok > 0) {
@@ -154,6 +160,12 @@ func (r *ProviderRegistry) ResolveCostForPrompt(ctx context.Context, name, model
 	}
 	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
 		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
+	}
+	if def.AdapterType == AdapterTypes.GOOGLEVERTEX {
+		return 0, 0, false
+	}
+	if def.AdapterType == AdapterTypes.GOOGLECOMPATIBLE || def.AdapterType == AdapterTypes.DEEPSEEKCOMPATIBLE {
+		return costForAdapter(def.AdapterType, model)
 	}
 	if r.modelsDevSource != nil {
 		if entry, ok := r.modelsDevSource.Lookup(ctx, name, model); ok && (entry.InputCostPerMTok > 0 || entry.OutputCostPerMTok > 0) {
@@ -183,6 +195,13 @@ func (r *ProviderRegistry) ResolveCostCached(name, model string) (float64, float
 	}
 	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
 		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
+	}
+	// Shared intrinsic metadata does not establish route/account billing.
+	if def.AdapterType == AdapterTypes.GOOGLEVERTEX {
+		return 0, 0, false
+	}
+	if def.AdapterType == AdapterTypes.GOOGLECOMPATIBLE || def.AdapterType == AdapterTypes.DEEPSEEKCOMPATIBLE {
+		return costForAdapter(def.AdapterType, model)
 	}
 	if r.modelsDevSource != nil {
 		if entry, ok := r.modelsDevSource.LookupCached(name, model); ok && (entry.InputCostPerMTok > 0 || entry.OutputCostPerMTok > 0) {
@@ -221,6 +240,7 @@ func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model 
 	// and not tracked by models.dev.
 	caps.SupportsStreaming = true
 	caps.SupportsSystem = true
+	constrainCapabilitiesForAdapter(&caps, def.AdapterType)
 	return caps
 }
 
@@ -243,6 +263,7 @@ func (r *ProviderRegistry) ResolveCapabilitiesCached(name, model string) llm.Mod
 	}
 	caps.SupportsStreaming = true
 	caps.SupportsSystem = true
+	constrainCapabilitiesForAdapter(&caps, def.AdapterType)
 	return caps
 }
 
@@ -258,6 +279,16 @@ func mergeCapabilities(caps *llm.ModelCapabilities, intrinsic modelsdev.Intrinsi
 	}
 	if intrinsic.SupportsVideo {
 		caps.SupportsVideo = true
+	}
+}
+
+// constrainCapabilitiesForAdapter applies transport restrictions after generic
+// model metadata enrichment so intrinsic capabilities cannot advertise inputs
+// the selected route will reject.
+func constrainCapabilitiesForAdapter(caps *llm.ModelCapabilities, at AdapterType) {
+	if at == AdapterTypes.OAUTHCLAUDECODE {
+		caps.SupportsVision = false
+		caps.SupportsVideo = false
 	}
 }
 

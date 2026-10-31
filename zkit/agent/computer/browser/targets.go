@@ -42,8 +42,8 @@ if (op === 'fill') {
 throw new Error('unsupported target operation: ' + op);
 })()`, browserJSLibrary(), targetJSON(target), jsString(op), jsString(value))
 
-	var ok bool
-	if err := s.run(ctx, chromedp.Evaluate(script, &ok)); err != nil {
+	ok, err := runValue(s, ctx, chromedp.Evaluate[bool](script))
+	if err != nil {
 		return err
 	}
 	if !ok {

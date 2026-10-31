@@ -59,7 +59,9 @@ func TestCompactionKeepPolicy(t *testing.T) {
 				runner.WithCompactKeepRecent(6),
 				runner.WithTokenPressureCompact(100, 0.8),
 			},
-			wantKeep: 1,
+			// Pressure requests one message, but the pending assistant+result
+			// exchange must stay intact until the next model invocation.
+			wantKeep: 2,
 		},
 		{
 			name:  "pressure falls back to total tokens",
@@ -68,7 +70,7 @@ func TestCompactionKeepPolicy(t *testing.T) {
 				runner.WithCompactKeepRecent(6),
 				runner.WithTokenPressureCompact(100, 0.8),
 			},
-			wantKeep: 1,
+			wantKeep: 2,
 		},
 		{
 			name:  "disabled pressure leaves keep",

@@ -81,6 +81,7 @@ func TestParseRepresentativeFullArgs(t *testing.T) {
 		Scoring:     evalconfig.ScoringConfig{Enabled: true, Dataset: "dataset", Workers: 7, WorkDir: "scores", Python: "python"},
 		Persistence: evalconfig.PersistenceConfig{DBPath: "eval.db", RunID: "run-1", Notes: "notes"},
 		Version:     true,
+		Refinement:  evalconfig.RefinementConfig{ImproverTimeout: 2 * time.Minute},
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("Parse full args =\n%+v\nwant:\n%+v", cfg, want)

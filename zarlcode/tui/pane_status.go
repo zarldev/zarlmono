@@ -43,18 +43,13 @@ func (s *statusPane) Draw(scr uv.Screen, area uv.Rectangle) {
 	if content.Dx() == 0 {
 		return
 	}
-	if toast == "" {
-		drawLine(scr, content, hint)
-		return
+	message := toast
+	if message == "" {
+		message = hint
+	} else if hint != "" && ansi.StringWidth(message)+2+ansi.StringWidth(hint) <= content.Dx() {
+		message += "  " + hint
 	}
-
-	// Feedback always starts at the text inset. Command guidance uses spare
-	// space after it, and yields entirely when the row is too narrow.
-	drawLine(scr, content, toast)
-	toastWidth := ansi.StringWidth(toast)
-	if hint != "" && toastWidth+2+ansi.StringWidth(hint) <= content.Dx() {
-		drawLine(scr, uv.Rect(content.Min.X+toastWidth+2, content.Min.Y, content.Dx()-toastWidth-2, 1), hint)
-	}
+	drawLine(scr, content, terminalChrome().Status(message, "", content.Dx()))
 }
 
 // Update implements Pane. Status bar is read-only.

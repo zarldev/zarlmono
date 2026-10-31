@@ -21,3 +21,8 @@ func (n *named) Complete(ctx context.Context, req CompletionRequest) CompletionS
 }
 
 func (n *named) Name() string { return n.name }
+
+// Unwrap returns the adapter whose behavior Named preserves. Consumers can
+// inspect adapter capabilities without mistaking a configured route name for
+// an implementation guarantee.
+func (n *named) Unwrap() Provider { return n.inner }

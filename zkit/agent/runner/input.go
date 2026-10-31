@@ -33,6 +33,7 @@ type ReadyInputs struct {
 // admitted. One Run owns admission for each parent ID. Lifecycle binding stays
 // with the composition owner, outside this interface. Implementations must not
 // retain request contexts.
+// Ready may enroll receiving interest; Run calls it before provider/tool dispatch.
 type InputSource interface {
 	Ready(taskscope.ID) ReadyInputs
 	Admit(taskscope.ID, []tools.AdmissionReference) []tools.AdmissionReference

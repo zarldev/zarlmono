@@ -19,6 +19,7 @@ var slashCommands = []slashCommand{
 	{name: "/init", desc: "create or update AGENTS.md"},
 	{name: "/export", desc: "export Markdown"},
 	{name: "/name", desc: "name this session"},
+	{name: "/swarm", desc: "run a goal"},
 }
 
 func slashStatusHint(input string) string {
@@ -65,6 +66,9 @@ func (m *UI) handleSlashSubmit(text string) tea.Cmd {
 		}
 		m.session.SetErrorToast("session not ready — run a turn first")
 		return m.toastExpiryCmd()
+	case "/swarm":
+		assignment := strings.TrimSpace(strings.TrimPrefix(text, name[0]))
+		return m.StartSwarm(assignment)
 	default:
 		m.session.SetErrorToast("unknown slash command: " + name[0])
 		return m.toastExpiryCmd()

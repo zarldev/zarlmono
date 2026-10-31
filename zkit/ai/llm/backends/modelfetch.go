@@ -8,16 +8,29 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/zhttp"
 )
 
-// modelsClient is the shared client for /models probes. zhttp's
-// defaults match what we want: short whole-request timeout (model lists
-// are small + fast), transport-level dial / TLS / header bounds, and
-// retry with Retry-After honouring on 408 / 429 / 5xx.
+// modelsClient is the shared client for unauthenticated and bearer-authenticated
+// /models probes. zhttp's defaults match what we want: short whole-request
+// timeout, bounded transport operations, and transient-response retries.
 var modelsClient = zhttp.NewClient()
+
+// googleModelsClient is separate because Google discovery carries an API key in
+// a custom header, which net/http may preserve across cross-origin redirects.
+// Rejecting every redirect keeps that credential bound to the configured origin.
+var googleModelsClient = newGoogleModelsClient()
+
+func newGoogleModelsClient() *zhttp.Client {
+	client := zhttp.NewClient()
+	client.HTTPClient().CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return client
+}
 
 // fetchOpenAICompatModels GETs /models on baseURL and decodes either
 // shape commonly seen there:
@@ -62,6 +75,77 @@ func fetchAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]string
 		"x-api-key":         []string{apiKey},
 		"anthropic-version": []string{"2023-06-01"},
 	}, "after_id", true)
+}
+
+func fetchGoogleModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
+	if apiKey == "" {
+		return nil, errors.New("google API key not set")
+	}
+	endpoint := googleModelsEndpoint(baseURL)
+	ids := make([]string, 0)
+	seen := make(map[string]bool)
+	pageToken := ""
+	for range maxModelListPages {
+		reqURL, err := modelListURL(endpoint, "pageToken", pageToken, false)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build Google models request: %w", err)
+		}
+		req.Header.Set("X-Goog-Api-Key", apiKey)
+		resp, err := googleModelsClient.Do(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("GET Google models: %w", err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read Google models body: %w", readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close Google models body: %w", closeErr)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("google models status %d", resp.StatusCode)
+		}
+		var result struct {
+			Models []struct {
+				Name                       string   `json:"name"`
+				SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+				SupportedActions           []string `json:"supportedActions"`
+			} `json:"models"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("decode Google models: %w", err)
+		}
+		for _, model := range result.Models {
+			if !slices.Contains(model.SupportedGenerationMethods, "generateContent") && !slices.Contains(model.SupportedActions, "generateContent") {
+				continue
+			}
+			id := strings.TrimPrefix(model.Name, "models/")
+			if id != "" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+		if result.NextPageToken == "" || result.NextPageToken == pageToken {
+			return ids, nil
+		}
+		pageToken = result.NextPageToken
+	}
+	return ids, nil
+}
+
+func googleModelsEndpoint(baseURL string) string {
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com"
+	}
+	// The pinned GenAI SDK treats BaseURL as an unversioned prefix and appends
+	// its Gemini API default version before the operation path.
+	return strings.TrimRight(baseURL, "/") + "/v1beta/models"
 }
 
 // openaiCompatGet is the shared transport for /v1/models style

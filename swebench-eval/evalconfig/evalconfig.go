@@ -18,6 +18,8 @@ type Config struct {
 	Scoring     ScoringConfig
 	Persistence PersistenceConfig
 	Version     bool
+	Experiment  harness.Experiment
+	Refinement  RefinementConfig
 }
 
 // InputConfig selects tasks and evaluation arms.
@@ -94,11 +96,18 @@ type PersistenceConfig struct {
 	Notes  string
 	// ExportRun selects an existing run for JSON output without task execution.
 	ExportRun string
+	// EvidenceDir is required for prompt-guidance experiments, outside task workspaces.
+	EvidenceDir string
 }
 
 // Parse registers the eval command's flags on fs and parses args.
 func Parse(fs *flag.FlagSet, args []string) (Config, error) {
 	var cfg Config
+	var experimentPath string
+	fs.StringVar(&experimentPath, "harness-experiment", "", "versioned JSON prompt-guidance candidates (includes unchanged baseline)")
+	fs.StringVar(&cfg.Persistence.EvidenceDir, "harness-evidence-dir", "", "required private artifact directory for harness experiments")
+	fs.BoolVar(&cfg.Refinement.Enabled, "harness-refine", false, "run one bounded score-blind Propose-Probe-Compose round per task")
+	fs.DurationVar(&cfg.Refinement.ImproverTimeout, "harness-improver-timeout", 2*time.Minute, "per-improver-call timeout for --harness-refine (maximum 2m)")
 
 	fs.StringVar(&cfg.Input.Tasks, "tasks", "", "path to SWE-bench JSONL or Parquet task file (required)")
 	fs.StringVar(&cfg.Input.Drivers, "drivers", "zarlcode", "comma-separated list of drivers to run (zarlcode)")
@@ -142,6 +151,11 @@ func Parse(fs *flag.FlagSet, args []string) (Config, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	if !cfg.Version && cfg.Persistence.ExportRun == "" {
+		if err := loadExperiment(&cfg, experimentPath); err != nil {
+			return Config{}, err
+		}
 	}
 	return cfg, nil
 }

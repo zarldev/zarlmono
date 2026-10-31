@@ -544,7 +544,7 @@ func compatibleTranscriptPrefix(durable, pending []db.TranscriptEntry, revision 
 }
 
 func (m *UI) scheduleTranscriptPersist() tea.Cmd {
-	if m.settings == nil || m.settings.Store == nil || m.session.ID == "" || m.timeline.transcriptThread().IsEmpty() {
+	if m.settings == nil || m.settings.Store == nil || m.session.ID == "" || m.timeline.thread.IsEmpty() {
 		return nil
 	}
 	m.transcriptGeneration++

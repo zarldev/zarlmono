@@ -20,9 +20,34 @@ var toolInputAuthorization = regexp.MustCompile(`(?i)((?:proxy[_-]?)?authorizati
 var toolInputURLCredentials = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@`)
 
 func redactToolInputText(text string) string {
-	text = toolInputAuthorization.ReplaceAllString(text, `${1}[REDACTED]`)
-	text = toolInputURLCredentials.ReplaceAllString(text, `${1}[REDACTED]@`)
-	return tools.RedactSecrets(toolInputAssignments.ReplaceAllString(text, `${1}"[REDACTED]"`))
+	// These mandatory literals avoid whole-preview regex scans on ordinary
+	// command output. Authorization contains no non-ASCII simple-fold variants.
+	if strings.Contains(strings.ToLower(text), "authorization") {
+		text = toolInputAuthorization.ReplaceAllString(text, `${1}[REDACTED]`)
+	}
+	if strings.Contains(text, "://") {
+		text = toolInputURLCredentials.ReplaceAllString(text, `${1}[REDACTED]@`)
+	}
+	if possibleToolInputAssignment(text) {
+		text = toolInputAssignments.ReplaceAllString(text, `${1}"[REDACTED]"`)
+	}
+	return tools.RedactSecrets(text)
+}
+
+func possibleToolInputAssignment(text string) bool {
+	// Keep Unicode folding (including long-s and Kelvin sign) in the regexp.
+	for i := range len(text) {
+		if text[i] >= 0x80 {
+			return true
+		}
+	}
+	lower := strings.ToLower(text)
+	for _, marker := range []string{"password", "passphrase", "key", "token", "secret"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func escapeToolInputControls(text string) string {

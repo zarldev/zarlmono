@@ -6,9 +6,8 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 )
 
-// The Vertex builtin's public contract: it is present in the catalogue,
-// routes through the Vertex adapter type, uses ADC rather than an API key,
-// and provides models for the picker.
+// TestVertexBuiltinWiring verifies the Vertex route uses ADC, retains an
+// explicit default, and does not borrow the Gemini API fallback catalogue.
 func TestVertexBuiltinWiring(t *testing.T) {
 	t.Parallel()
 
@@ -22,7 +21,10 @@ func TestVertexBuiltinWiring(t *testing.T) {
 	if def.UsesAPIKey() {
 		t.Fatal("vertex must not offer an API key field — ADC only")
 	}
-	if len(def.SeedModels) == 0 || def.DefaultModel == "" {
-		t.Fatal("vertex builtin needs seed models and a default for the picker")
+	if def.DefaultModel == "" {
+		t.Fatal("vertex builtin needs a default model")
+	}
+	if len(def.SeedModels) != 0 {
+		t.Fatalf("vertex seed models = %v, want no cross-surface fallback catalogue", def.SeedModels)
 	}
 }

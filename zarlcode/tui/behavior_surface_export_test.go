@@ -25,6 +25,9 @@ import (
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
+// SetApplicationContext supplies the launch-owned context for lifecycle tests.
+func (m *UI) SetApplicationContext(ctx context.Context) { m.ctx = ctx }
+
 // SetupLaunchLogging exposes the launch logger lifecycle for external tests.
 func SetupLaunchLogging() (string, io.Closer) { return setupLaunchLogging() }
 
@@ -123,12 +126,9 @@ func (m *UI) ResumeSavedSessionTarget(ctx context.Context, id string) (tea.Cmd, 
 	if err != nil {
 		return nil, false, err
 	}
-	m.completeResumeSession(saved, false)
-	if saved.Provider == "" || saved.Model == "" {
-		return nil, false, nil
-	}
-	selection := prefs.ModelSelection{Provider: saved.Provider, Model: saved.Model}
-	return m.switchTarget(selection, nil), true, nil
+	requested := saved.Provider != "" && saved.Model != ""
+	cmd, err := m.restoreSavedSession(saved, requested)
+	return cmd, requested, err
 }
 
 // ActiveProviderSpec returns the provider target currently shown by the session.

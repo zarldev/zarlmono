@@ -83,6 +83,8 @@ type Group struct {
 	closed          bool
 	tasks           map[TaskID]task
 	parents         map[taskscope.ID]parentState
+	preparations    map[uint64]preparation
+	nextPreparation uint64
 	order           []TaskID
 	wg              sync.WaitGroup
 	maxConcurrent   int
@@ -97,15 +99,15 @@ type Group struct {
 // NewGroup constructs an idle task owner. It starts no goroutines; the caller
 // must close the group before releasing dependencies borrowed by its children.
 func NewGroup(opts ...options.Option[Group]) *Group {
-	g := &Group{tasks: make(map[TaskID]task), parents: make(map[taskscope.ID]parentState), maxObserved: 32, completionBytes: 16 << 10, joined: make(chan struct{})}
+	g := &Group{tasks: make(map[TaskID]task), parents: make(map[taskscope.ID]parentState), preparations: make(map[uint64]preparation), maxObserved: 32, completionBytes: 16 << 10, joined: make(chan struct{})}
 	for _, opt := range opts {
 		opt(g)
 	}
 	return g
 }
 
-// WithMaxConcurrent caps simultaneously running children in a group. Zero or
-// negative values leave concurrency unbounded.
+// WithMaxConcurrent caps children and their in-progress preparation together.
+// Zero or negative values leave concurrency unbounded.
 func WithMaxConcurrent(n int) options.Option[Group] {
 	return func(g *Group) { g.maxConcurrent = n }
 }
@@ -125,6 +127,15 @@ func WithMaxRuntime(timeout time.Duration) options.Option[Group] {
 
 // Start records inv as RUNNING before starting its owned goroutine.
 func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error) {
+	ctx, reservation, err := g.reservePreparation(ctx)
+	if err != nil {
+		return TaskSnapshot{}, err
+	}
+	defer g.releasePreparation(reservation)
+	return g.startPrepared(ctx, inv, reservation)
+}
+
+func (g *Group) startPrepared(ctx context.Context, inv invocation, reservation uint64) (TaskSnapshot, error) {
 	id := TaskID(inv.spec.ID)
 
 	g.mu.Lock()
@@ -142,9 +153,6 @@ func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error)
 	}
 	if _, exists := g.tasks[id]; exists {
 		return TaskSnapshot{}, fmt.Errorf("%w: %q", ErrTaskIDExists, id)
-	}
-	if g.maxConcurrent > 0 && g.running >= g.maxConcurrent {
-		return TaskSnapshot{}, fmt.Errorf("%w (%d); await or stop a running task before spawning another", ErrMaxConcurrent, g.maxConcurrent)
 	}
 
 	// Dispatch owns policy-bearing values, not the child lifetime. The group
@@ -183,7 +191,9 @@ func (g *Group) Start(ctx context.Context, inv invocation) (TaskSnapshot, error)
 	}
 	g.tasks[id] = t
 	g.order = append(g.order, id)
-	g.running++
+	p := g.preparations[reservation]
+	p.promoted = true
+	g.preparations[reservation] = p
 	g.signalLocked(parentID)
 	g.wg.Add(1)
 	go g.run(runCtx, inv, scope, cancel)
@@ -446,6 +456,9 @@ func (g *Group) Close(ctx context.Context) error {
 			cancels = append(cancels, t.cancel)
 		}
 	}
+	for _, p := range g.preparations {
+		cancels = append(cancels, p.cancel)
+	}
 	g.mu.Unlock()
 	for _, cancel := range cancels {
 		cancel(context.Canceled)
@@ -595,26 +608,30 @@ func terminalToolError(op string, reason runner.TerminalReason, iterations int, 
 	}
 }
 
-func prepare(ctx context.Context, call tools.ToolCall, t *Tool) (invocation, *tools.ToolResult) {
-	args, derr := tools.DecodeArgs[Args](call.Arguments)
-	if derr != nil {
-		return invocation{}, tools.Failure(call.ID, derr)
+func validatePreparation(ctx context.Context, call tools.ToolCall, t *Tool) (Args, *tools.ToolResult) {
+	args, err := tools.DecodeArgs[Args](call.Arguments)
+	if err != nil {
+		return Args{}, tools.Failure(call.ID, err)
 	}
-	depth := taskscope.DepthFrom(ctx)
-	if depth >= t.maxDepth {
-		return invocation{}, tools.Failure(call.ID, tools.Budget("agent_spawn", fmt.Sprintf("max recursion depth %d reached — flatten the work or stop calling tools", t.maxDepth)))
+	if taskscope.DepthFrom(ctx) >= t.maxDepth {
+		return Args{}, tools.Failure(call.ID, tools.Budget("agent_spawn", fmt.Sprintf("max recursion depth %d reached — flatten the work or stop calling tools", t.maxDepth)))
 	}
 	args.Prompt = strings.TrimSpace(args.Prompt)
 	if args.Prompt == "" {
-		return invocation{}, tools.Failure(call.ID, tools.Validation("agent_spawn", "prompt is required"))
+		return Args{}, tools.Failure(call.ID, tools.Validation("agent_spawn", "prompt is required"))
 	}
 	if args.MaxIterations < 0 {
-		return invocation{}, tools.Failure(call.ID, tools.Validation("agent_spawn", "max_iterations must be non-negative"))
+		return Args{}, tools.Failure(call.ID, tools.Validation("agent_spawn", "max_iterations must be non-negative"))
 	}
+	if argsModeExplicit(call.Arguments) && strings.TrimSpace(args.Mode) != "" && !normalizeMode(args.Mode).Valid() {
+		return Args{}, tools.Failure(call.ID, tools.Validation("agent_spawn", fmt.Sprintf("mode %q is invalid; use explore, verify, or implement", args.Mode)))
+	}
+	return args, nil
+}
+
+func prepare(ctx context.Context, call tools.ToolCall, t *Tool, args Args) (invocation, *tools.ToolResult) {
+	depth := taskscope.DepthFrom(ctx)
 	explicitMode := argsModeExplicit(call.Arguments)
-	if explicitMode && strings.TrimSpace(args.Mode) != "" && !normalizeMode(args.Mode).Valid() {
-		return invocation{}, tools.Failure(call.ID, tools.Validation("agent_spawn", fmt.Sprintf("mode %q is invalid; use explore, verify, or implement", args.Mode)))
-	}
 	t.applyDefaultAgent(&args)
 	plannerNote := ""
 	if t.fallback == FallbackPlanner {
@@ -634,14 +651,14 @@ func prepare(ctx context.Context, call tools.ToolCall, t *Tool) (invocation, *to
 	if target == nil {
 		return invocation{}, tools.Failure(call.ID, tools.Fatal("agent_spawn", errors.New("parent runner is nil")))
 	}
-	mode := t.effectiveMode(args, profileMode, explicitMode)
+	mode := t.effectiveMode(ctx, args, profileMode, explicitMode)
 	runCtx := ctx
 	if mode != "" {
 		if wm, err := taskscope.ParseWorkMode(string(mode)); err == nil {
 			runCtx = taskscope.WithWorkMode(runCtx, wm)
 		}
 		if t.modePolicy != nil {
-			runCtx = runner.WithToolGate(runCtx, func(spec tools.ToolSpec) bool { return t.modePolicy(mode, spec) })
+			runCtx = runner.WithAdditionalToolGate(runCtx, func(spec tools.ToolSpec) bool { return t.modePolicy(mode, spec) })
 		}
 	}
 	return invocation{target: target, ctx: runCtx, spec: runner.TaskSpec{ID: taskscope.ID(uuid.NewString()), Prompt: childPromptWithMode(args.Prompt, mode), MaxIterations: t.spawnMaxIterations(mode, args.MaxIterations), Depth: depth + 1, ParentToolCallID: call.ID.String(), AgentName: func() string {

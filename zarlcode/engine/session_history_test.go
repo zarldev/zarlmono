@@ -3,8 +3,12 @@ package engine_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"testing"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
+	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -116,5 +120,65 @@ func TestRecordedHistorySnapshotRetryAndAcknowledgment(t *testing.T) {
 	}
 	if len(provider.requests) != 2 {
 		t.Fatal("history read/save regenerated responses")
+	}
+}
+
+func TestDurableExactProtectionRequiresFreshBoundaryAndRejectsTargetChange(t *testing.T) {
+	t.Parallel()
+	provider := &requestRecordingProvider{}
+	live := reservationRunner(t, provider)
+	reservation, err := live.ReserveTurn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reservation.ProtectDurableExactContext(); err != nil {
+		t.Fatal(err)
+	}
+	// A durable boundary survives cancellation before dispatch. The next turn
+	// inherits exact protection rather than silently becoming ordinary.
+	reservation.Release()
+	reservation, err = live.ReserveTurn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reservation.RunTurn(t.Context(), "fresh exact turn", nil); err != nil {
+		t.Fatal(err)
+	}
+	beforeContext := live.ContextSnapshot()
+	beforeTarget := live.RunTarget()
+	reservation, err = live.ReserveRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = reservation.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "openai", Model: "other-supported-model"}, Window: beforeTarget.Window})
+	reservation.Release()
+	if !errors.Is(err, rewind.ErrTarget) {
+		t.Fatalf("exact target change error = %v, want ErrTarget", err)
+	}
+	if !reflect.DeepEqual(live.ContextSnapshot(), beforeContext) || live.RunTarget().Spec != beforeTarget.Spec {
+		t.Fatal("rejected exact target change mutated runtime")
+	}
+
+	ordinary := reservationRunner(t, &requestRecordingProvider{})
+	if err := ordinary.RunTurn(t.Context(), "ordinary turn"); err != nil {
+		t.Fatal(err)
+	}
+	reservation, err = ordinary.ReserveTurn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reservation.ProtectDurableExactContext(); !errors.Is(err, rewind.ErrTarget) {
+		reservation.Release()
+		t.Fatalf("non-fresh protection error = %v, want ErrTarget", err)
+	}
+	reservation.Release()
+	reservation, err = ordinary.ReserveRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = reservation.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "openai", Model: "ordinary-target"}})
+	reservation.Release()
+	if err != nil {
+		t.Fatalf("failed protection marked ordinary context exact: %v", err)
 	}
 }

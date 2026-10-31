@@ -148,8 +148,17 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
 	// Request conversion remains inside iterator invocation: Complete itself is
 	// side-effect free and does not acquire an SDK stream.
+	expandedMessages := llm.ExpandToolResultParts(req.Messages)
+	if err := validateMessages(expandedMessages); err != nil {
+		yield(llm.CompletionChunk{}, err)
+		return
+	}
 	config := p.buildConfig(req)
-	sys, contents := convertMessages(req.Messages)
+	if err := p.applyThinkingOptions(config, req); err != nil {
+		yield(llm.CompletionChunk{}, err)
+		return
+	}
+	sys, contents := convertMessages(expandedMessages)
 	if sys != nil {
 		config.SystemInstruction = sys
 	}
@@ -232,10 +241,12 @@ func (p *Provider) runStream(
 		}
 		if resp.UsageMetadata != nil {
 			usage = llm.Usage{
-				PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
-				CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount) + int(resp.UsageMetadata.ThoughtsTokenCount),
-				TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
-				CachedTokens:     int(resp.UsageMetadata.CachedContentTokenCount),
+				PromptTokens:            int(resp.UsageMetadata.PromptTokenCount),
+				CompletionTokens:        int(resp.UsageMetadata.CandidatesTokenCount) + int(resp.UsageMetadata.ThoughtsTokenCount),
+				TotalTokens:             int(resp.UsageMetadata.TotalTokenCount),
+				CachedTokens:            int(resp.UsageMetadata.CachedContentTokenCount),
+				ReasoningTokens:         int(resp.UsageMetadata.ThoughtsTokenCount),
+				ReasoningTokensReported: resp.UsageMetadata.ThoughtsTokenCount > 0,
 			}
 			usageReported = true
 		}
@@ -250,6 +261,10 @@ func (p *Provider) runStream(
 			continue
 		}
 		for _, part := range candidate.Content.Parts {
+			if part != nil && (part.InlineData != nil || part.FileData != nil) {
+				return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted,
+					fmt.Errorf("google: %w: media output is unsupported", llm.ErrModelNotSupported), true
+			}
 			if !emitPart(part, partIndex, callsByID, capturedByID, &order, &accepted, yield) {
 				return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, nil, false
 			}

@@ -116,8 +116,8 @@ func TestSidebarGeometryThemeAndToggle(t *testing.T) {
 						}
 					}
 					heading := canvas.CellAt(x+2, 0)
-					if heading.Content != "s" || heading.Style.Attrs&uv.AttrBold == 0 {
-						t.Fatalf("heading = %+v", heading)
+					if heading.Content != "s" || heading.Style.Attrs&uv.AttrBold != 0 {
+						t.Fatalf("plain heading = %+v", heading)
 					}
 					if !sameSurface(heading.Style.Bg, canvas.CellAt(width-1, 0).Style.Bg) {
 						t.Error("heading uses a separate surface")

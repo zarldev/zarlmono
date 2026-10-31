@@ -35,17 +35,9 @@ func drawDetailView(scr uv.Screen, area uv.Rectangle, title string, tabs []strin
 }
 
 func detailViewTabs(title string, tabs []string, active, width int) string {
-	parts := []string{sidebarHeading(title)}
-	for i, tab := range tabs {
-		if i == active {
-			parts = append(parts, palette.Primary.On("\x1b[1m"+tab+"\x1b[22m"))
-		} else {
-			parts = append(parts, palette.Subtle.On(tab))
-		}
-	}
-	bar := strings.Join(parts, "  ")
-	if ansi.StringWidth(bar) > width {
-		bar = sidebarHeading(title) + "  " + palette.Primary.On("\x1b[1m"+tabs[active]+"\x1b[22m")
+	bar := sidebarHeading(title) + "  " + tabCluster(terminalChrome(), tabs, active)
+	if ansi.StringWidth(bar) > width && active >= 0 && active < len(tabs) {
+		bar = sidebarHeading(title) + "  " + tabCluster(terminalChrome(), []string{tabs[active]}, 0)
 	}
 	return ansi.Truncate(bar, width, "…")
 }

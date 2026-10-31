@@ -73,6 +73,30 @@ tasks:
           go test -C "$m" -count=1 ./...
         done
 
+  code-risk:
+    desc: Collect a report-only function complexity and coverage baseline (all Go modules)
+    cmds:
+      - |
+        set -eu
+        mkdir -p coverage/coderisk
+        run=$(mktemp -d "$(pwd)/coverage/coderisk/run.XXXXXX")
+        echo "Collection: $run"
+        go env -json GOOS GOARCH GOVERSION GOFLAGS CGO_ENABLED > "$run/environment.json"
+        for name in root examples zkit zarlcode swebench-eval; do
+          module="$name"
+          pattern=./...
+          if [ "$name" = root ]; then module=.; pattern=./tools/...; fi
+          echo "==> coverage ($name); log: $run/$name.test.log"
+          go -C "$module" list -json "$pattern" > "$run/$name.packages.json"
+          if ! go -C "$module" test -count=1 -timeout=10m -covermode=atomic -coverprofile="$run/$name.cover" "$pattern" > "$run/$name.test.log" 2>&1; then
+            tail -n 60 "$run/$name.test.log"
+            echo "Collection incomplete; no report generated. See $run" >&2
+            exit 1
+          fi
+        done
+        touch "$run/complete"
+        go run ./tools/coderisk/cmd/coderisk -input "$run" {{.CLI_ARGS}}
+
   test-policy:
     desc: Enforce external-package, internal-test, and test-context policies
     cmds:
@@ -110,10 +134,10 @@ tasks:
       - task: tools-test
 
   lint:
-    desc: Run golangci-lint for the root and CI-covered modules
+    desc: Run golangci-lint for root tooling and CI-covered modules
     cmds:
       - |
-        for pattern in ./... ./examples/... ./zkit/... ./zarlcode/... ./swebench-eval/...; do
+        for pattern in ./tools/... ./examples/... ./zkit/... ./zarlcode/... ./swebench-eval/...; do
           echo "==> golangci-lint ($pattern)"
           go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run "$pattern"
         done

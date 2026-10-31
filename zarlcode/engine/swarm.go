@@ -34,6 +34,7 @@ type Swarm struct {
 // NewSwarm assembles an opt-in goal owner without launching work. Configure each
 // member LiveRunner's provider, permissions, limits and sink before Add.
 func NewSwarm(goal string, opts ...options.Option[swarm.Swarm]) *Swarm {
+	opts = append(opts, swarm.WithInferenceAccounting())
 	return &Swarm{goal: swarm.New(goal, opts...), coordinator: tools.NewWorkspaceCoordinator(),
 		members: make(map[*LiveRunner]swarm.AgentID)}
 }
@@ -42,6 +43,14 @@ func NewSwarm(goal string, opts ...options.Option[swarm.Swarm]) *Swarm {
 // conversation is retained. One runtime cannot belong to two members of this
 // owner, and all members must share the same workspace root.
 func (s *Swarm) Add(id swarm.AgentID, live *LiveRunner, assignment string) (swarm.Member, error) {
+	return s.register(id, live, assignment, func(ctx context.Context, activation swarm.Activation) runner.TaskResult {
+		return live.runSwarmActivation(ctx, activation, s.coordinator)
+	})
+}
+
+// register admits one member under the shared membership and workspace checks,
+// delegating activation execution to the supplied synchronous host capability.
+func (s *Swarm) register(id swarm.AgentID, live *LiveRunner, assignment string, execute swarm.Execute) (swarm.Member, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.members[live]; exists {
@@ -51,10 +60,9 @@ func (s *Swarm) Add(id swarm.AgentID, live *LiveRunner, assignment string) (swar
 		return swarm.Member{}, ErrSwarmWorkspace
 	}
 	member, err := s.goal.Add(swarm.Agent{ID: id,
-		Task: runner.TaskSpec{Prompt: assignment, Context: live.ContextSnapshot()},
-		Execute: func(ctx context.Context, activation swarm.Activation) runner.TaskResult {
-			return live.runSwarmActivation(ctx, activation, s.coordinator)
-		}})
+		Task:    runner.TaskSpec{Prompt: assignment, Context: live.ContextSnapshot()},
+		Execute: execute,
+	})
 	if err != nil {
 		return swarm.Member{}, err
 	}
@@ -111,26 +119,42 @@ func (l *LiveRunner) runSwarmActivation(ctx context.Context, activation swarm.Ac
 		return result
 	}
 	defer reservation.Release()
-	reservation.mu.Lock()
-	defer reservation.mu.Unlock()
+	return reservation.runSwarmActivation(ctx, activation, coordinator)
+}
 
+// runSwarmActivation dispatches one activation through a caller-held reservation,
+// preserving activation identity, context transition, inputs/accounting, shared
+// coordinator and descendant drain. The reservation is consumed on successful
+// setup; on earlier failure the caller still owns it and must Release.
+func (r *RuntimeReservation) runSwarmActivation(ctx context.Context, activation swarm.Activation, coordinator *tools.WorkspaceCoordinator, historyOptions ...options.Option[runner.Runner]) runner.TaskResult {
+	result := runner.TaskResult{ID: activation.Spec.ID, Reason: runner.TerminalError}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active {
+		result.Err = ErrRuntimeBusy
+		return result
+	}
+	if err := ctx.Err(); err != nil {
+		result.Err = err
+		return result
+	}
 	converted := false
 	var finish func()
-	err = l.context.transition(ctx, activation.Spec, func() (func(runner.TaskSpec) runner.TaskResult, error) {
-		runCtx, end, setupErr := l.beginTurn(ctx)
+	err := r.owner.context.transition(ctx, activation.Spec, func() (func(runner.TaskSpec) runner.TaskResult, error) {
+		runCtx, end, setupErr := r.owner.beginTurn(ctx)
 		if setupErr != nil {
 			return nil, setupErr
 		}
 		finish = end
-		turn, setupErr := l.buildTurn(runCtx, l.source, &swarmTurn{activation: activation, coordinator: coordinator}, runner.WithContextBreakdown())
+		turn, setupErr := r.owner.buildTurn(runCtx, r.owner.source, &swarmTurn{activation: activation, coordinator: coordinator}, append(historyOptions, runner.WithContextBreakdown())...)
 		if setupErr != nil {
 			return nil, setupErr
 		}
-		l.admission.mu.Lock()
-		l.admission.active++
-		l.admission.reserved = false
-		l.admission.mu.Unlock()
-		reservation.active = false
+		r.owner.admission.mu.Lock()
+		r.owner.admission.active++
+		r.owner.admission.reserved = false
+		r.owner.admission.mu.Unlock()
+		r.active = false
 		converted = true
 		return func(spec runner.TaskSpec) runner.TaskResult {
 			defer turn.close(runCtx)
@@ -151,7 +175,7 @@ func (l *LiveRunner) runSwarmActivation(ctx context.Context, activation swarm.Ac
 			finish()
 		}
 		if converted {
-			l.admission.leave()
+			r.owner.admission.leave()
 		}
 	})
 	if err != nil {

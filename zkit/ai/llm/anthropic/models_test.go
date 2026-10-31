@@ -14,6 +14,10 @@ func TestContextWindowFor(t *testing.T) {
 	}{
 		// Explicit contemporary native windows, not family-wide guesses.
 		{"claude-opus-4-7", 1_000_000},
+		{"claude-fable-5-1", 1_000_000},
+		{"claude-opus-5-5", 1_000_000},
+		{"claude-sonnet-5-5", 1_000_000},
+		{"claude-haiku-5-5", 1_000_000},
 		{"claude-opus-4-6", 1_000_000},
 		{"claude-opus-4-5", 200_000},
 		{"claude-sonnet-4-6", 1_000_000},

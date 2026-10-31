@@ -24,28 +24,32 @@ const (
 // estimate containing only fresh input/output components whose rates are known;
 // cache charges and prompt-length tiers may make the estimate incomplete.
 type CacheTargetDiagnostics struct {
-	Provider                   string  `json:"provider"`
-	Model                      string  `json:"model"`
-	BillingClass               string  `json:"billing_class"`
-	SettledTasks               int     `json:"settled_tasks"`
-	RootTasks                  int     `json:"root_tasks,omitempty"`
-	ChildTasks                 int     `json:"child_tasks,omitempty"`
-	MissingUsageTasks          int     `json:"missing_usage_tasks,omitempty"`
-	ReportedZeroUsageTasks     int     `json:"reported_zero_usage_tasks,omitempty"`
-	PromptTokens               int     `json:"prompt_tokens,omitempty"`
-	CompletionTokens           int     `json:"completion_tokens,omitempty"`
-	CacheReadTokens            int     `json:"cache_read_tokens,omitempty"`
-	CacheCreationTokens        int     `json:"cache_creation_tokens,omitempty"`
-	CacheCreation5mTokens      int     `json:"cache_creation_5m_tokens,omitempty"`
-	CacheCreation1hTokens      int     `json:"cache_creation_1h_tokens,omitempty"`
-	CacheCreationUnknownTTL    int     `json:"cache_creation_unknown_ttl,omitempty"`
-	CacheReadShare             float64 `json:"cache_read_share,omitempty"`
-	CacheReadShareKnown        bool    `json:"cache_read_share_known,omitempty"`
-	KnownCostUSD               float64 `json:"known_cost_usd,omitempty"`
-	BaseRateUnknownTasks       int     `json:"base_rate_unknown_tasks,omitempty"`
-	PricingTierUnknownTasks    int     `json:"pricing_tier_unknown_tasks,omitempty"`
-	CacheReadRateUnknownTasks  int     `json:"cache_read_rate_unknown_tasks,omitempty"`
-	CacheWriteRateUnknownTasks int     `json:"cache_write_rate_unknown_tasks,omitempty"`
+	Provider                     string  `json:"provider"`
+	Model                        string  `json:"model"`
+	BillingClass                 string  `json:"billing_class"`
+	SettledTasks                 int     `json:"settled_tasks"`
+	CompactorCalls               int     `json:"compactor_calls,omitempty"`
+	CompactorDurationNanos       int64   `json:"compactor_duration_nanos,omitempty"`
+	RootTasks                    int     `json:"root_tasks,omitempty"`
+	ChildTasks                   int     `json:"child_tasks,omitempty"`
+	MissingUsageTasks            int     `json:"missing_usage_tasks,omitempty"`
+	ReportedZeroUsageTasks       int     `json:"reported_zero_usage_tasks,omitempty"`
+	PromptTokens                 int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens             int     `json:"completion_tokens,omitempty"`
+	ReasoningTokens              int     `json:"reasoning_tokens,omitempty"`
+	ReasoningReportedSettlements int     `json:"reasoning_reported_settlements,omitempty"`
+	CacheReadTokens              int     `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens          int     `json:"cache_creation_tokens,omitempty"`
+	CacheCreation5mTokens        int     `json:"cache_creation_5m_tokens,omitempty"`
+	CacheCreation1hTokens        int     `json:"cache_creation_1h_tokens,omitempty"`
+	CacheCreationUnknownTTL      int     `json:"cache_creation_unknown_ttl,omitempty"`
+	CacheReadShare               float64 `json:"cache_read_share,omitempty"`
+	CacheReadShareKnown          bool    `json:"cache_read_share_known,omitempty"`
+	KnownCostUSD                 float64 `json:"known_cost_usd,omitempty"`
+	BaseRateUnknownTasks         int     `json:"base_rate_unknown_tasks,omitempty"`
+	PricingTierUnknownTasks      int     `json:"pricing_tier_unknown_tasks,omitempty"`
+	CacheReadRateUnknownTasks    int     `json:"cache_read_rate_unknown_tasks,omitempty"`
+	CacheWriteRateUnknownTasks   int     `json:"cache_write_rate_unknown_tasks,omitempty"`
 }
 
 type cacheTargetKey struct {
@@ -63,18 +67,22 @@ func (p usagePrice) billingClass() string {
 	}
 }
 
-func (s *RunState) foldCacheTarget(price usagePrice, u *llm.Usage, root bool) {
+func (s *RunState) foldCacheTarget(price usagePrice, u *llm.Usage, root, compactor bool) {
 	if s.cacheTargets == nil {
 		s.cacheTargets = make(map[cacheTargetKey]CacheTargetDiagnostics)
 	}
 	key := cacheTargetKey{provider: price.provider, model: price.model, billingClass: price.billingClass()}
 	d := s.cacheTargets[key]
 	d.Provider, d.Model, d.BillingClass = key.provider, key.model, key.billingClass
-	d.SettledTasks++
-	if root {
-		d.RootTasks++
+	if compactor {
+		d.CompactorCalls++
 	} else {
-		d.ChildTasks++
+		d.SettledTasks++
+		if root {
+			d.RootTasks++
+		} else {
+			d.ChildTasks++
+		}
 	}
 	if u == nil {
 		d.MissingUsageTasks++
@@ -86,6 +94,10 @@ func (s *RunState) foldCacheTarget(price usagePrice, u *llm.Usage, root bool) {
 	}
 	d.PromptTokens += u.PromptTokens
 	d.CompletionTokens += u.CompletionTokens
+	if u.ReasoningTokensReported {
+		d.ReasoningTokens += u.ReasoningTokens
+		d.ReasoningReportedSettlements++
+	}
 	d.CacheReadTokens += u.CachedTokens
 	d.CacheCreationTokens += u.CacheCreationTokens
 	d.CacheCreation5mTokens += u.CacheCreation5mTokens

@@ -231,26 +231,12 @@ func (r *RuntimeReservation) PersistenceSnapshot() ([]llm.Message, rewind.Target
 	return r.owner.context.snapshot(), checkpointTarget(target), r.owner.checkpointTargetSupported(target), nil
 }
 
-// ApplyTarget publishes a prebuilt provider target while this reservation owns
-// exclusive mutable-runtime admission. It returns an error rather than silently
-// dropping a route when the reservation is no longer valid.
+// ApplyTarget validates retained history before publishing a target update.
+// Unknown target windows use the standard conservative runtime budget.
 func (r *RuntimeReservation) ApplyTarget(update TargetUpdate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.active || !r.targetMutable {
-		return ErrRuntimeBusy
-	}
-	r.owner.publication.Lock()
-	defer r.owner.publication.Unlock()
-	r.owner.mu.Lock()
-	r.owner.target.Provider = update.Provider
-	r.owner.target.Model = update.Spec.Model
-	r.owner.target.Spec = update.Spec
-	if update.Window > 0 {
-		r.owner.target.Window = update.Window
-	}
-	r.owner.mu.Unlock()
-	return nil
+	return r.applyTarget(update, func() error { return nil })
 }
 
 // PlanSnapshot returns independently owned historical plan intent under the reservation.

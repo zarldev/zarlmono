@@ -14,8 +14,15 @@ func (m *UI) launchQueuedTurn() tea.Cmd {
 	if m.live == nil || m.runFn == nil {
 		return nil
 	}
+	if m.isSwarmOpen() {
+		m.session.SetErrorToast("stop the swarm goal before dispatching queued input")
+		return m.toastExpiryCmd()
+	}
 	if err := m.modeTargetSubmitBlocked(); err != nil {
 		m.showModeTargetBlocked(err, "; queued input retained")
+		return nil
+	}
+	if m.waitForInspection(foregroundInspectionQueue, "") {
 		return nil
 	}
 	if !m.durableDispatch() && m.modeTarget.prepared != nil {

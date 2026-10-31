@@ -243,6 +243,13 @@ func WithModelOptions(opts llm.ModelOptions) options.Option[Runner] {
 	}
 }
 
+// WithPromptCacheKey routes root-task requests using a conversation-scoped key
+// without changing task IDs. Empty keys and delegated tasks use their task ID.
+// The route is a provider hint, not a cache-hit guarantee or an authority boundary.
+func WithPromptCacheKey(key string) options.Option[Runner] {
+	return func(r *Runner) { r.promptCacheKey = key }
+}
+
 // WithThinkingBudget cuts an iteration that has streamed only reasoning
 // (thinking) tokens past byteBudget without yet emitting any visible
 // content or tool call — the degenerate "stuck thinking" loop. The cut is
@@ -353,7 +360,8 @@ func WithAdaptiveKeepRecent(targetTokens, minKeep, maxKeep int) options.Option[R
 // WithTokenPressureCompact installs a force-compact threshold keyed to the
 // provider's reported prompt-token usage. When the previous turn's
 // PromptTokens ÷ budget ≥ fraction, the runner skips the Prober gate,
-// shrinks keepRecent to 1, and calls Compact unconditionally.
+// reduces the age-based keep tail to one message, and calls Compact. The
+// complete newest tool exchange remains protected until the model consumes it.
 //
 // This complements (does not replace) the engine-side byte-pressure
 // thresholds. Engines that estimate "no work to do" from raw bytes can
@@ -362,14 +370,11 @@ func WithAdaptiveKeepRecent(targetTokens, minKeep, maxKeep int) options.Option[R
 // bytes look fine. The provider's tokenizer is the only reliable signal that
 // we've crossed the *effective* coherent window; this turns it into a trim.
 //
-// On force-compact the runner shrinks keepRecent to 1 — just the latest
-// message survives — so the latest (often huge) tool result is itself
-// eligible for the engine's most aggressive trim (Tiered's Phase-3
-// placeholdering) on the next iteration. Trimming only the older slice while a
-// fresh oversized result sits inside the keep window would leave net prompt
-// size unchanged; dropping to 1 breaks that equilibrium. The assistant
-// tool_call metadata pointing at the result survives, so the model still sees
-// what it asked for.
+// Force-compaction makes older messages eligible for aggressive trimming, but
+// expands the keep boundary over the latest assistant tool call and all its
+// results, including subsequently admitted input. It must not discard fresh
+// evidence before the next inference. Oversized fresh output remains the
+// tool-result truncator's responsibility; compaction handles consumed history.
 //
 // Two ways to express the trigger:
 //   - window-relative: budget = the model's context window, fraction = the

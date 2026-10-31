@@ -27,6 +27,9 @@ func (g *Group) Finish(parentID taskscope.ID) bool {
 	if !bound || parent.sealed {
 		return true
 	}
+	if g.preparingLocked(parentID) {
+		return false
+	}
 	for _, id := range g.order {
 		t := g.tasks[id]
 		if t.parent == parentID && (t.snapshot.State == AgentTaskStates.RUNNING || !t.snapshot.Admitted) {

@@ -34,6 +34,13 @@ func (c *composer) backspace() {
 	c.cursor--
 }
 
+func (c *composer) deleteForward() {
+	if c.cursor == len(c.value) {
+		return
+	}
+	c.value = append(c.value[:c.cursor], c.value[c.cursor+1:]...)
+}
+
 func (c *composer) left() {
 	if c.cursor > 0 {
 		c.cursor--
@@ -81,7 +88,8 @@ func (c *composer) displayLineCount(width int) int {
 }
 
 func (c *composer) draw(scr uv.Screen, r uv.Rectangle, planMode bool) {
-	// Keep the mode cue on the separator, prompt and cursor without a frame.
+	// Keep live activity, rate and elapsed time on the established separator;
+	// its overlay and prompt share this row without taking space from input.
 	border, accent := palette.BorderFocus, palette.Primary
 	if border == "" {
 		border = palette.Primary
@@ -249,7 +257,7 @@ func (m *UI) handleGlobalShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case "ctrl+o":
-		m.overlay.push(newInspector(BuildInspectorSnapshot(m.appContext(), m.session, m.live, nil)))
+		m.overlay.push(newInspector())
 		return nil, true
 	case "ctrl+b":
 		m.session.StateSidebarHidden = !m.session.StateSidebarHidden
@@ -300,7 +308,7 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case "ctrl+t":
-		m.overlay.push(newThemePicker())
+		m.openThemePicker()
 		return nil, true
 	case "ctrl+s":
 		if m.settings != nil {
@@ -319,6 +327,9 @@ func (m *UI) handleCommonShortcut(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 
 func (m *UI) handleDashboardKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
+	case "r":
+		m.contextView.inspection = nil
+		return nil
 	case "tab", "right":
 		m.contextView.nextTab()
 		return nil
@@ -451,6 +462,9 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch msg.String() {
 	case "esc":
+		if m.isSwarmOpen() {
+			return m.stopForegroundSwarm()
+		}
 		if m.session.Run.Running && m.live != nil && m.live.CancelTurn() {
 			if m.liveOperation != nil {
 				m.liveOperation.cancelled = true
@@ -494,6 +508,9 @@ func (m *UI) handleComposerKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case "backspace":
 		m.composer.backspace()
+		m.resetInputHistoryBrowse()
+	case "delete", "shift+delete":
+		m.composer.deleteForward()
 		m.resetInputHistoryBrowse()
 	case "left":
 		m.composer.left()
@@ -637,6 +654,10 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 	if m.liveOperation != nil && (!m.session.Run.Running || m.liveOperation.cancelled) {
 		return m.blockUnsettledSubmit(), false
 	}
+	if m.isSwarmOpen() {
+		m.session.SetErrorToast("a swarm goal is open; stop it before submitting")
+		return m.toastExpiryCmd(), false
+	}
 	if strings.HasPrefix(text, "/") {
 		return m.handleSlashSubmit(text), true
 	}
@@ -664,6 +685,13 @@ func (m *UI) acceptSubmit(text string) (tea.Cmd, bool) {
 	}
 	if m.hasIdleQueuedTurn() {
 		return m.launchQueuedTurn(), false
+	}
+	kind := foregroundInspectionSubmit
+	if strings.TrimSpace(m.composer.text()) != text {
+		kind = foregroundInspectionDirect
+	}
+	if m.live != nil && m.waitForInspection(kind, text) {
+		return nil, false
 	}
 	m.generateFirstPromptLabel(text)
 	if m.live != nil {

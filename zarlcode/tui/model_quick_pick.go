@@ -344,12 +344,7 @@ func (p *modelQuickPick) draw(scr uv.Screen, area uv.Rectangle) {
 	for i := start; i < end; i++ {
 		model := models[i]
 		meta := p.meta.summary(p.activeProvider(), model)
-		var line string
-		if i == p.cursor {
-			line = rowLayout(palette.Primary.On("▸ "+model), meta, innerW)
-		} else {
-			line = rowLayout("  "+palette.Subtle.On(model), meta, innerW)
-		}
+		line := listRow(terminalChrome(), model, meta, innerW, i == p.cursor)
 		drawPaddedLine(scr, uv.Rect(innerX, y, innerW, 1), line)
 		y++
 	}
@@ -375,15 +370,7 @@ func (p *modelQuickPick) drawTabs(scr uv.Screen, x, y, width int) {
 	if len(p.providers) == 0 {
 		return
 	}
-	var parts []string
-	for i, name := range p.providers {
-		if i == p.provCur {
-			parts = append(parts, palette.Primary.On("[ "+name+" ]"))
-		} else {
-			parts = append(parts, palette.Subtle.On(name))
-		}
-	}
-	drawPaddedLine(scr, uv.Rect(x, y, width, 1), strings.Join(parts, "  "))
+	drawPaddedLine(scr, uv.Rect(x, y, width, 1), tabCluster(terminalChrome(), p.providers, p.provCur))
 }
 
 const modelQuickPickMinWidth = 60
@@ -392,11 +379,7 @@ func (p *modelQuickPick) providerTabsWidth() int {
 	if len(p.providers) == 0 {
 		return 0
 	}
-	w := 0
-	for _, name := range p.providers {
-		w += ansi.StringWidth("[ " + name + " ]  ")
-	}
-	return w
+	return ansi.StringWidth(tabCluster(terminalChrome(), p.providers, p.provCur))
 }
 
 func (p *modelQuickPick) drawFallback(scr uv.Screen, area uv.Rectangle) {

@@ -364,6 +364,7 @@ type SteerSink interface {
 // the size delta to the user.
 type CompactionSink interface {
 	OnCompactionApplied(context.Context, CompactionApplied)
+	OnCompactionSettled(context.Context, CompactionSettled)
 }
 
 // DiagnosticSink observes non-terminal recovery decisions.

@@ -18,7 +18,7 @@ func TestSettingsDisplaysApplicationDefaults(t *testing.T) {
 		nil, nil,
 		{"reserve tokens": "5120", "tool result max kb": "512", "tool result max lines": "3500", "model": "gpt-6-sol"},
 		{"max iterations": "900", "spawn max iterations": "300", "max concurrent": "20", "program parallel calls": "16", "explore provider": "deepseek", "verify model": "gpt-6-luna"},
-		{"shell policy": "off", "sandbox": "off", "sudo askpass": "on", "read before write": "off", "judge model": "deepseek-v4-flash"},
+		{"shell policy": "off", "sandbox": "off", "sudo askpass": "on", "read before write": "off", "judge model": "deepseek-flash"},
 		{"mcp schema exposure": "deferred"},
 	} {
 		if category > 0 {

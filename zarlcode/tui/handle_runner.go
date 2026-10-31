@@ -44,6 +44,8 @@ func terminalNotice(reason runner.TerminalReason, iterations int) string {
 // subAgentItem instead of rendering as flat indented notices.
 func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	switch event := msg.(type) {
+	case teasink.CompactionSettledMsg:
+		m.session.applyCompactionSettled(event)
 	case teasink.RequestControlRecordedMsg:
 		m.handleRequestControlRecorded(event)
 	case teasink.ToolOutputMsg:

@@ -163,19 +163,12 @@ func drawDialogPane(scr uv.Screen, area uv.Rectangle, label string, w, h int, bo
 
 // overlayTopBar renders the shared full-screen overlay top strip: a left title/
 // summary cluster and an optional right-side hint cluster, with active tabs
-// bracketed in the primary tone and passive tabs muted.
+// selected with the family surface and passive tabs muted.
 func overlayTopBar(title string, tabs []string, active int, summary string, width int) string {
-	parts := []string{palette.Muted.On(title)}
+	style := terminalChrome()
+	parts := []string{style.PaneLabel(title, false)}
 	if len(tabs) > 0 {
-		tabParts := make([]string, 0, len(tabs))
-		for i, tab := range tabs {
-			if i == active {
-				tabParts = append(tabParts, palette.Primary.On("[ "+tab+" ]"))
-			} else {
-				tabParts = append(tabParts, palette.Subtle.On(tab))
-			}
-		}
-		parts = append(parts, strings.Join(tabParts, "  "))
+		parts = append(parts, tabCluster(style, tabs, active))
 	}
 	if summary != "" {
 		parts = append(parts, palette.Subtle.On("· ")+palette.Muted.On(summary))
@@ -232,29 +225,13 @@ func drawPaneRow(scr uv.Screen, r uv.Rectangle, left, right string) {
 	drawLine(scr, uv.Rect(r.Min.X, r.Min.Y, r.Dx(), 1), rowLayout(left, right, r.Dx()))
 }
 
-// drawListRow paints the standard selectable row used by full-screen split-pane
-// nav rails. Focused selections get the primary marker and highlight fill;
-// unfocused selections keep their place with the assistant marker only.
-func drawListRow(scr uv.Screen, r uv.Rectangle, label string, selected, focused bool) {
-	w := r.Dx()
-	if w < 1 || r.Dy() < 1 {
+// drawListRow paints a family selection row in a split-pane navigation rail.
+// Selection survives focus changes; the pane heading/boundary identifies focus.
+func drawListRow(scr uv.Screen, r uv.Rectangle, label string, selected, _ bool) {
+	if r.Dx() < 1 || r.Dy() < 1 {
 		return
 	}
-	marker := "  "
-	if selected {
-		if focused {
-			marker = palette.Primary.On("▸ ")
-		} else {
-			marker = palette.Subtle.On("▸ ")
-		}
-	}
-	line := ansi.Truncate(marker+label, w, "")
-	if selected && focused {
-		if bg := palette.Highlight.BG(); bg != "" {
-			line = bg + ansi.Truncate(padStyled(line, w), w, "") + "\x1b[0m"
-		}
-	}
-	drawLine(scr, r, line)
+	drawLine(scr, r, listRow(terminalChrome(), label, "", r.Dx(), selected))
 }
 
 // drawBoxColored is drawBox with explicit border + label colours, so panes

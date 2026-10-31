@@ -46,13 +46,17 @@ func TestTieredLiveTimelinePreservesOriginalOutputThroughAutosaveAndResume(t *te
 	client := runnertest.NewClient([][]llm.CompletionChunk{
 		{{Content: first, UsageReported: true, Usage: llm.Usage{PromptTokens: 64000, TotalTokens: 64000}},
 			runnertest.ChunkToolCall("inspect", "program", `{"script":"emit(call(\"ls\", {}))"}`)},
+		// Complete-exchange retention protects the first tool batch until a
+		// newer batch makes that historical narrative eligible for reduction.
+		{{UsageReported: true, Usage: llm.Usage{PromptTokens: 64000, TotalTokens: 64000}},
+			runnertest.ChunkToolCall("inspect-again", "program", `{"script":"emit(call(\"ls\", {}))"}`)},
 		{runnertest.ChunkText(answer)},
 		{runnertest.ChunkText(quoted)},
 	})
 	calls, sawExcerpt := 0, false
 	provider := tieredLiveProvider{client: client, check: func(request llm.CompletionRequest) {
 		calls++
-		if calls != 2 {
+		if calls != 3 {
 			return
 		}
 		for _, message := range request.Messages {
@@ -64,7 +68,7 @@ func TestTieredLiveTimelinePreservesOriginalOutputThroughAutosaveAndResume(t *te
 			}
 		}
 		// The real sink must already have delivered the complete first response
-		// before the compacted second model request, not just at terminal save.
+		// before the compacted third model request, not just at terminal save.
 		f.sink.Drain()
 		f.mu.Lock()
 		var streamed strings.Builder
@@ -80,7 +84,7 @@ func TestTieredLiveTimelinePreservesOriginalOutputThroughAutosaveAndResume(t *te
 	}}
 	f.live.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "openai", Model: "saved-model"}, Window: 64000})
 	settleRewindTurn(t, f, "first question")
-	if !sawExcerpt || calls != 2 {
+	if !sawExcerpt || calls != 3 {
 		t.Fatalf("production compaction did not run: calls=%d excerpt=%v", calls, sawExcerpt)
 	}
 	assertTieredLiveText(t, f.ui, first+answer)

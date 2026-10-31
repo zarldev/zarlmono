@@ -67,6 +67,10 @@ func (m *UI) requestModeTarget(plan bool, modeGeneration uint64) tea.Cmd {
 	if m.live == nil || m.settings == nil {
 		return nil
 	}
+	if m.isSwarmOpen() {
+		m.session.SetErrorToast("stop the swarm goal before changing targets")
+		return m.toastExpiryCmd()
+	}
 	m.modeTarget.manualOverride = false
 	m.modeTarget.generation++
 	generation := m.modeTarget.generation
@@ -111,9 +115,13 @@ func (m *UI) buildModeTargetCmd(
 		if err != nil {
 			return providerRepointedMsg{route: true, routeGeneration: generation, modeGeneration: modeGeneration, sessionID: sessionID, plan: plan, spec: spec, err: err}
 		}
+		window := settings.ContextWindow(ctx, spec)
+		if window <= 0 {
+			window = engine.LiveContextWindow
+		}
 		return providerRepointedMsg{
 			route: true, routeGeneration: generation, modeGeneration: modeGeneration, sessionID: sessionID, plan: plan,
-			prov: prov, spec: spec, window: settings.ContextWindow(ctx, spec), reasoning: reasoning, defWindow: defWindow,
+			prov: prov, spec: spec, window: window, reasoning: reasoning, defWindow: defWindow,
 		}
 	}
 }
@@ -141,6 +149,9 @@ func (m *UI) handleModeTargetRepoint(rp providerRepointedMsg) {
 		return
 	}
 	state.prepared = &rp
+	if m.waitForInspection(foregroundInspectionTarget, "") {
+		return
+	}
 	if err := m.applyPreparedModeTarget(nil); err != nil {
 		if errors.Is(err, engine.ErrRuntimeBusy) {
 			if state.launchQueue {

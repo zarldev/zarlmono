@@ -184,22 +184,26 @@ func (p Payload) TextSegments() []string {
 
 // Builder mutates one Thread while maintaining stable semantic identities.
 type Builder struct {
-	thread       Thread
-	nextID       int
-	turnResponse map[string]string
-	turnReason   map[string]string
-	turnSkills   map[string]string
-	tools        map[string]string
-	legacyTools  map[string][]string
-	subagents    map[string]string
-	spawnAgents  map[string]string
-	legacySpawns map[string][]string
-	currentPlan  string
+	thread         Thread
+	nextID         int
+	turnResponse   map[string]string
+	turnReason     map[string]string
+	turnSkills     map[string]string
+	tools          map[string]string
+	legacyTools    map[string][]string
+	subagents      map[string]string
+	spawnAgents    map[string]string
+	legacySpawns   map[string][]string
+	currentPlan    string
+	positions      map[string]int
+	collectChanges bool
+	changed        []int
 }
 
 // NewBuilder creates an empty canonical thread builder.
 func NewBuilder() *Builder {
 	return &Builder{
+		positions:    make(map[string]int),
 		turnResponse: make(map[string]string),
 		turnReason:   make(map[string]string),
 		turnSkills:   make(map[string]string),
@@ -216,7 +220,8 @@ func NewBuilderFrom(thread Thread) *Builder {
 	builder := NewBuilder()
 	builder.thread = Thread{revision: thread.Revision(), entries: thread.Entries()}
 	activeTurnSegments := zsync.NewSet[string]()
-	for _, entry := range builder.thread.entries {
+	for index, entry := range builder.thread.entries {
+		builder.positions[entry.ID] = index
 		if number, ok := generatedEntryNumber(entry.ID); ok && number > builder.nextID {
 			builder.nextID = number
 		}
@@ -280,9 +285,11 @@ func (b *Builder) Clear() { *b = *NewBuilder() }
 
 func (b *Builder) append(kind EntryKind, parentID, turnID string, payload Payload) string {
 	b.nextID++
-	b.thread.revision++
 	id := fmt.Sprintf("e%d", b.nextID)
-	b.thread.entries = append(b.thread.entries, Entry{ID: id, ParentID: parentID, TurnID: turnID, Kind: kind, Revision: b.thread.revision, Payload: payload})
+	b.thread.entries = append(b.thread.entries, Entry{ID: id, ParentID: parentID, TurnID: turnID, Kind: kind, Payload: payload})
+	index := len(b.thread.entries) - 1
+	b.positions[id] = index
+	b.touch(index)
 	return id
 }
 
@@ -307,11 +314,13 @@ func (b *Builder) recordControl(turnID string, control runner.ReplayControl) (st
 	if number, ok := generatedEntryNumber(control.ID); ok && number > b.nextID {
 		b.nextID = number
 	}
-	b.thread.revision++
 	b.thread.entries = append(b.thread.entries, Entry{
 		ID: control.ID, TurnID: turnID, Kind: EntryKinds.ENTRYCONTROLCHANGE,
-		Revision: b.thread.revision, Payload: Payload{Control: control.Clone()},
+		Payload: Payload{Control: control.Clone()},
 	})
+	index := len(b.thread.entries) - 1
+	b.positions[control.ID] = index
+	b.touch(index)
 	return control.ID, nil
 }
 
@@ -322,13 +331,19 @@ func encodeControl(control runner.ReplayControl) ([]byte, error) {
 }
 
 func (b *Builder) update(id string, update func(*Entry)) {
-	for i := range b.thread.entries {
-		if b.thread.entries[i].ID == id {
-			b.thread.revision++
-			update(&b.thread.entries[i])
-			b.thread.entries[i].Revision = b.thread.revision
-			return
-		}
+	if index, ok := b.positions[id]; ok {
+		update(&b.thread.entries[index])
+		b.touch(index)
+	}
+}
+
+// touch is the only runtime revision-stamping boundary. Reducers collect entry
+// positions for one event; standalone builders do not retain a mutation log.
+func (b *Builder) touch(index int) {
+	b.thread.revision++
+	b.thread.entries[index].Revision = b.thread.revision
+	if b.collectChanges {
+		b.changed = append(b.changed, index)
 	}
 }
 
@@ -387,31 +402,22 @@ func (b *Builder) AppendAssistant(turnID, parentID, delta string) {
 // FinishAssistantSegment records the end of a non-empty assistant Markdown source
 // segment without closing the turn or any other turn-owned stream.
 func (b *Builder) FinishAssistantSegment(turnID string) {
-	id := b.turnResponse[turnID]
-	if id == "" {
+	index, ok := b.positions[b.turnResponse[turnID]]
+	if !ok {
 		return
 	}
-	for i := range b.thread.entries {
-		entry := b.thread.entries[i]
-		if entry.ID != id {
-			continue
-		}
-		// JSON replaces invalid UTF-8 bytes; offsets after such bytes would
-		// no longer identify the same position after persistence. Preserve the
-		// opaque text without introducing an unsafe presentation boundary.
-		if !utf8.ValidString(entry.Payload.Text) {
-			return
-		}
-		end := len(entry.Payload.Text)
-		if end == 0 || len(entry.Payload.TextBreaks) > 0 && entry.Payload.TextBreaks[len(entry.Payload.TextBreaks)-1] == end {
-			return
-		}
-		b.thread.revision++
-		entry.Payload.TextBreaks = append(entry.Payload.TextBreaks, end)
-		entry.Revision = b.thread.revision
-		b.thread.entries[i] = entry
+	entry := b.thread.entries[index]
+	// JSON replaces invalid UTF-8; do not persist unsafe source offsets.
+	if !utf8.ValidString(entry.Payload.Text) {
 		return
 	}
+	end := len(entry.Payload.Text)
+	if end == 0 || len(entry.Payload.TextBreaks) > 0 && entry.Payload.TextBreaks[len(entry.Payload.TextBreaks)-1] == end {
+		return
+	}
+	entry.Payload.TextBreaks = append(entry.Payload.TextBreaks, end)
+	b.thread.entries[index] = entry
+	b.touch(index)
 }
 
 // AppendReasoning accumulates streamed reasoning for turnID.
@@ -511,24 +517,18 @@ func (b *Builder) UpdateToolOutputPreview(executionID, toolID, output string) {
 	if executionID == "" {
 		return
 	}
-	id := b.tools[executionID]
-	if id == "" {
+	index, ok := b.positions[b.tools[executionID]]
+	if !ok {
 		return
 	}
-	for i := range b.thread.entries {
-		entry := &b.thread.entries[i]
-		if entry.ID != id {
-			continue
-		}
-		if entry.Payload.ExecutionID != executionID || entry.Payload.ToolID != toolID ||
-			entry.Payload.ToolState != ToolRunning || entry.Payload.ToolOutputPreview == output {
-			return
-		}
-		b.thread.revision++
-		entry.Payload.ToolOutputPreview = output
-		entry.Revision = b.thread.revision
+	entry := b.thread.entries[index]
+	if entry.Payload.ExecutionID != executionID || entry.Payload.ToolID != toolID ||
+		entry.Payload.ToolState != ToolRunning || entry.Payload.ToolOutputPreview == output {
 		return
 	}
+	entry.Payload.ToolOutputPreview = output
+	b.thread.entries[index] = entry
+	b.touch(index)
 }
 
 // FinishTool records one legacy tool call's durable terminal facts.

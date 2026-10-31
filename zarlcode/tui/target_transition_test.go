@@ -98,12 +98,12 @@ func TestClearMainModelAppliesSameDefaultAsRestart(t *testing.T) {
 	for _, global := range []string{"", "global-model"} {
 		t.Run("global="+global, func(t *testing.T) {
 			settings := newTestSettings(t)
+			old := prefs.ModelSelection{Provider: "openai-codex", Model: "gpt-5.6-sol"}
 			if global != "" {
-				if err := settings.Svc.SetSetting(t.Context(), prefs.ScopeGlobal, prefs.KeyModel, global); err != nil {
+				if err := settings.Svc.SetModelSelection(t.Context(), prefs.ScopeGlobal, prefs.ModelSelection{Provider: old.Provider, Model: global}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			old := prefs.ModelSelection{Provider: "openai-codex", Model: "gpt-5.6-sol"}
 			requireSetSelection(t, settings, prefs.ScopeWorkspace, old)
 			ui, live := newTargetUI(t, settings, old)
 			cmd := ui.SwitchTarget(prefs.ModelSelection{Provider: old.Provider})

@@ -11,6 +11,7 @@ import (
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/diffrecorder"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
 	"github.com/zarldev/zarlmono/zkit/agent/sourcechain"
@@ -31,6 +32,7 @@ import (
 // the verifiers, fan-out caps, and test-edit policy. source() wires these into
 // the chain and the inspector reports them from the same place, so a change
 // here can't drift from what the inspector shows.
+// Scoped inference remains disabled outside an opted-in swarm goal.
 func (l *LiveRunner) guardrailDeps(ctx context.Context) guardrails.Deps {
 	return l.guardrailDepsFor(ctx, false)
 }
@@ -40,6 +42,10 @@ func (l *LiveRunner) headlessGuardrailDeps(ctx context.Context) guardrails.Deps 
 }
 
 func (l *LiveRunner) guardrailDepsFor(ctx context.Context, headless bool) guardrails.Deps {
+	return l.scopedGuardrailDeps(ctx, headless, inference.Scope{})
+}
+
+func (l *LiveRunner) scopedGuardrailDeps(ctx context.Context, headless bool, scope inference.Scope) guardrails.Deps {
 	var testEdit guardrails.Guardrail
 	switch {
 	case headless:
@@ -59,7 +65,7 @@ func (l *LiveRunner) guardrailDepsFor(ctx context.Context, headless bool) guardr
 	// when the decompose_judge setting is on; nil keeps the deterministic path.
 	deps := coderunner.StandardGuardrailDeps(l.ws.Root(), testEdit)
 	deps.SkillLookup = l.catalog
-	deps.DecomposeJudge = l.decomposeJudge(ctx)
+	deps.DecomposeJudge = l.decomposeJudge(ctx, scope)
 	deps.DecomposeIgnoredTools = append(deps.DecomposeIgnoredTools,
 		spawn.ToolNameAgentSpawn,
 		spawn.ToolNameAgentAwait,
@@ -130,7 +136,7 @@ func (l *LiveRunner) guardrailDepsFor(ctx context.Context, headless bool) guardr
 // takes effect on the next turn without a restart. nil — judge off, no
 // settings handle, or no provider to run it on — keeps the guardrail's
 // deterministic advisory path.
-func (l *LiveRunner) decomposeJudge(ctx context.Context) guardrails.VerdictJudge {
+func (l *LiveRunner) decomposeJudge(ctx context.Context, scope inference.Scope) guardrails.VerdictJudge {
 	l.mu.Lock()
 	settings := l.settings
 	active := l.target.Provider
@@ -143,7 +149,7 @@ func (l *LiveRunner) decomposeJudge(ctx context.Context) guardrails.VerdictJudge
 	if prov == nil {
 		return nil
 	}
-	return guardrails.NewLLMVerdictJudge(prov)
+	return guardrails.NewLLMVerdictJudge(prov, guardrails.WithVerdictInferenceScope(scope, ""))
 }
 
 // source registers the standard tools and arms the production guardrail
@@ -452,6 +458,13 @@ func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(cont
 }
 
 func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), collaboration *swarmTurn, extraOpts ...options.Option[runner.Runner]) (*turn, error) {
+	var scope inference.Scope
+	if collaboration != nil {
+		scope = collaboration.activation.InferenceScope()
+		sourceFn = func(ctx context.Context, web tools.Tool) (tools.Source, *tools.Registry, error) {
+			return l.sourceWithDeps(ctx, web, l.scopedGuardrailDeps(ctx, false, scope))
+		}
+	}
 	policy := l.resolveTurnPolicy(ctx)
 	if collaboration != nil && !receivesAutomaticCompletion(policy.target.Provider) {
 		return nil, ErrSwarmReceiver
@@ -479,14 +492,18 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 	var visible tools.Source
 	automaticCompletion := receivesAutomaticCompletion(policy.target.Provider)
 	opts = append(opts,
+		runner.WithInferenceScope(scope),
 		runner.WithSteerer(l.queue),
 		runner.WithResultTruncator(l.truncator),
 		runner.WithTemperature(policy.temperature),
 		runner.WithModelOptions(policy.modelOptions),
 	)
+	if scope.Account != nil {
+		opts = append(opts, runner.WithModelIdentity(policy.target.Provider.Name(), policy.target.Model))
+	}
 	if policy.autoCompact {
 		opts = append(opts, runner.WithCompactor(coderunner.StandardCompactor(
-			buildLiveCompactor(policy.compactEngine, policy.target.Window, policy.compactProvider, policy.compactModel, l, l.ws.Root()), policy.target.Window, policy.reserve)))
+			buildScopedCompactor(policy.compactEngine, policy.target.Window, policy.compactProvider, policy.compactModel, l, l.ws.Root(), scope), policy.target.Window, policy.reserve)))
 	}
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
@@ -543,7 +560,7 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 	r := runner.New(runner.ClientFromProvider(policy.target.Provider), opts...)
 	// Late-register spawn onto the base registry now that the parent runner exists
 	// (the registry enumerates lazily, so it is visible to this turn's schema).
-	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter, boardAccess...)
+	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter, scope, boardAccess...)
 	return &turn{runner: r, thinking: policy.thinking, group: group, coordinator: coordinator,
 		ownsCoordinator: collaboration == nil, inputs: inputs}, nil
 }

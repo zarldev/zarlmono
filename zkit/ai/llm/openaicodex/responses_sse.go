@@ -90,10 +90,13 @@ type sseResponse struct {
 }
 
 type sseUsage struct {
-	InputTokens        int                       `json:"input_tokens"`
-	OutputTokens       int                       `json:"output_tokens"`
-	TotalTokens        int                       `json:"total_tokens"`
-	InputTokensDetails sseUsageInputTokenDetails `json:"input_tokens_details"`
+	InputTokens         int                       `json:"input_tokens"`
+	OutputTokens        int                       `json:"output_tokens"`
+	TotalTokens         int                       `json:"total_tokens"`
+	InputTokensDetails  sseUsageInputTokenDetails `json:"input_tokens_details"`
+	OutputTokensDetails struct {
+		ReasoningTokens *int `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 type sseUsageInputTokenDetails struct {
@@ -442,6 +445,10 @@ func (s *sseState) dispatch(payload string, yield func(llm.CompletionChunk, erro
 				CompletionTokens: ev.Response.Usage.OutputTokens,
 				TotalTokens:      ev.Response.Usage.TotalTokens,
 				CachedTokens:     ev.Response.Usage.InputTokensDetails.CachedTokens,
+			}
+			if reasoning := ev.Response.Usage.OutputTokensDetails.ReasoningTokens; reasoning != nil {
+				chunk.Usage.ReasoningTokens = *reasoning
+				chunk.Usage.ReasoningTokensReported = true
 			}
 			chunk.UsageReported = true
 		}

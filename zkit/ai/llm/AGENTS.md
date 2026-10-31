@@ -60,7 +60,7 @@ Messages carry `Content` (visible answer) and separate `ReasoningContent` (the d
 | `templates/` | utility | chat-template metadata + thinking-tag split |
 | `providertest/` | harness | `Scenario` + `Suite` + canonical assertions for provider conformance |
 
-The verified SDK pins are Anthropic `v1.80.0`, OpenAI `v3.78.0`, and Google Gen AI `v1.74.0`. Anthropic's paired JSON Schema dependency is `v0.14.0`; keep that pair aligned as required by the root guidance.
+The verified SDK pins are Anthropic `v1.80.0`, OpenAI `v3.89.0`, and Google Gen AI `v1.76.0`. Anthropic's paired JSON Schema dependency is `v0.14.0`; keep that pair aligned as required by the root guidance.
 
 llama.cpp is the **default zarlcode provider** when no provider is configured.
 

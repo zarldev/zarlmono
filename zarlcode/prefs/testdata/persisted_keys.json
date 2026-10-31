@@ -2,6 +2,7 @@
   "baseline_revision": "a74518f892da9893e47f97a201898afdad7eb88c",
   "notes": "Extracted from zkit/prefs/keys.go at the baseline revision. KeyTextVerbosity and KeyComputerBrowserVisible were active workspace additions preserved by the extraction. The legacy KeyVaultPrompt identifier moved to private zkit migration metadata and is intentionally not part of the application catalogue.",
   "keys": {
+    "KeyActiveSession": "active_session",
     "KeyAgent": "agent",
     "KeyChromeBinPath": "chrome_bin_path",
     "KeyCodexEffort": "codex_reasoning_effort",
