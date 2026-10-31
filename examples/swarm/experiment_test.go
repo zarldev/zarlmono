@@ -22,7 +22,7 @@ func TestEvidenceChainAndIdleReactivation(t *testing.T) {
 				limits.Workers = workers
 				report, err := experiment.RunExperiment(t.Context(), limits, runner.NopSink{})
 				if err != nil {
-					t.Fatal(err)
+					t.Fatalf("run experiment: %v; report: %+v", err, report)
 				}
 				if !report.Complete || !report.InitiallyIdle || !report.ShutdownJoined || report.Handoffs != 3 || report.DuplicateContributions != 0 {
 					t.Fatalf("incomplete protocol evidence: %+v", report)
@@ -56,7 +56,7 @@ func TestEvidenceChainAndIdleReactivation(t *testing.T) {
 				// and potentially different concurrent activation timing.
 				again, err := experiment.RunExperiment(t.Context(), limits, runner.NopSink{})
 				if err != nil {
-					t.Fatal(err)
+					t.Fatalf("repeat experiment: %v; report: %+v", err, again)
 				}
 				if !slices.Equal(report.Findings, again.Findings) {
 					t.Fatalf("non-reproducible evidence: %+v vs %+v", report.Findings, again.Findings)
