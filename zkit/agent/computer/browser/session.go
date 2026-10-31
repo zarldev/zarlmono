@@ -106,7 +106,7 @@ func New(ctx context.Context, opts ...Option) (*Session, error) {
 	s.ctx = browserCtx
 	s.cancel = browserCancel
 
-	if err := chromedp.Run(browserCtx); err != nil {
+	if err := chromedp.Do(browserCtx); err != nil {
 		_ = s.Close()
 		return nil, fmt.Errorf("start chrome at %q: %w%s", resolvedChrome, err, s.chromeFailureSuffix())
 	}
@@ -174,12 +174,20 @@ func (s *Session) Close() error {
 	return nil
 }
 
-func (s *Session) run(ctx context.Context, actions ...chromedp.Action) error {
+func (s *Session) run(ctx context.Context, actions ...chromedp.Action[chromedp.Void]) error {
 	actx, cancel := context.WithTimeout(s.ctx, s.actionTimeout)
 	defer cancel()
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
-	return chromedp.Run(actx, actions...)
+	return chromedp.Do(actx, actions...)
+}
+
+func runValue[T any](s *Session, ctx context.Context, action chromedp.Action[T]) (T, error) {
+	actx, cancel := context.WithTimeout(s.ctx, s.actionTimeout)
+	defer cancel()
+	stop := context.AfterFunc(ctx, cancel)
+	defer stop()
+	return chromedp.Run(actx, action)
 }
 
 func (s *Session) chromeFailureSuffix() string {

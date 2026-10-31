@@ -15,8 +15,8 @@ import (
 // text, target descriptors, screenshot, and backend raw metadata requested by
 // req.
 func (s *Session) Observe(ctx context.Context, req computer.ObserveRequest) (computer.Observation, error) {
-	var state pageState
-	if err := s.run(ctx, chromedp.Evaluate(observeScript(req.IncludeTargets, req.IncludeRaw), &state)); err != nil {
+	state, err := runValue(s, ctx, chromedp.Evaluate[pageState](observeScript(req.IncludeTargets, req.IncludeRaw)))
+	if err != nil {
 		return computer.Observation{}, fmt.Errorf("observe browser surface: %w", err)
 	}
 
@@ -42,8 +42,8 @@ func (s *Session) Observe(ctx context.Context, req computer.ObserveRequest) (com
 		}
 	}
 	if req.IncludeScreenshot {
-		var png []byte
-		if err := s.run(ctx, chromedp.FullScreenshot(&png, 100)); err != nil {
+		png, err := runValue(s, ctx, chromedp.FullScreenshot(100))
+		if err != nil {
 			return computer.Observation{}, fmt.Errorf("capture browser screenshot: %w", err)
 		}
 		obs.Screenshot = &computer.ObservationImage{

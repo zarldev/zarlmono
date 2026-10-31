@@ -36,7 +36,6 @@ func (s *Session) waitForTrigger(ctx context.Context, trigger computer.Trigger) 
 }
 
 func (s *Session) checkTrigger(ctx context.Context, trigger computer.Trigger) (bool, error) {
-	var ok bool
 	var script string
 
 	switch trigger.Kind {
@@ -65,7 +64,8 @@ func (s *Session) checkTrigger(ctx context.Context, trigger computer.Trigger) (b
 		return false, fmt.Errorf("unsupported browser trigger kind %q", trigger.Kind.String())
 	}
 
-	if err := s.run(ctx, chromedp.Evaluate(script, &ok)); err != nil {
+	ok, err := runValue(s, ctx, chromedp.Evaluate[bool](script))
+	if err != nil {
 		return false, fmt.Errorf("check trigger %q: %w", trigger.Kind.String(), err)
 	}
 	return ok, nil

@@ -174,7 +174,7 @@ func newRenderer(ctx context.Context, opts ...rendererOption) (*renderer, error)
 	r.allocCancel = allocCancel
 	r.browserCtx, r.browserCancel = chromedp.NewContext(allocCtx)
 
-	if err := chromedp.Run(r.browserCtx); err != nil {
+	if err := chromedp.Do(r.browserCtx); err != nil {
 		cleanupErr := r.Close()
 		return nil, errors.Join(chromeFailure("start chrome", resolvedChrome, r.chromeOut.String(), err), cleanupErr)
 	}
@@ -215,7 +215,7 @@ func (r *renderer) render(ctx context.Context, request renderRequest) (renderedP
 	if request.SettleWait > 0 {
 		wait = request.SettleWait
 	}
-	if err := chromedp.Run(actionCtx,
+	if err := chromedp.Do(actionCtx,
 		chromedp.Navigate(request.URL),
 		chromedp.WaitReady("body"),
 		chromedp.Sleep(wait),
@@ -224,22 +224,23 @@ func (r *renderer) render(ctx context.Context, request renderRequest) (renderedP
 	}
 
 	page := renderedPage{}
-	if err := chromedp.Run(actionCtx,
-		chromedp.Location(&page.URL),
-		chromedp.Title(&page.Title),
-	); err != nil {
+	var err error
+	page.URL, err = chromedp.Run(actionCtx, chromedp.Location())
+	if err == nil {
+		page.Title, err = chromedp.Run(actionCtx, chromedp.Title())
+	}
+	if err != nil {
 		return renderedPage{}, r.pageFailure(ctx, "extract page metadata", request.URL, err)
 	}
 
-	var err error
 	if request.Selector != "" {
-		err = chromedp.Run(actionCtx, chromedp.Text(request.Selector, &page.Text, chromedp.ByQuery))
+		page.Text, err = chromedp.Run(actionCtx, chromedp.Text(chromedp.CSS(request.Selector)))
 		if err != nil {
 			return renderedPage{}, r.pageFailure(ctx, fmt.Sprintf("extract selector %q", request.Selector), request.URL, err)
 		}
 	} else {
-		err = chromedp.Run(actionCtx, chromedp.Evaluate(
-			`document.body ? document.body.innerText : document.documentElement.innerText`, &page.Text,
+		page.Text, err = chromedp.Run(actionCtx, chromedp.Evaluate[string](
+			`document.body ? document.body.innerText : document.documentElement.innerText`,
 		))
 		if err != nil {
 			return renderedPage{}, r.pageFailure(ctx, "extract body text", request.URL, err)
