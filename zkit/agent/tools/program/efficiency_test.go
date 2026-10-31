@@ -92,6 +92,8 @@ func TestProgramSignatureEnumsDefaultsAndReadLimits(t *testing.T) {
 	inner := &fakeSource{tools: map[tools.ToolName]fakeTool{
 		"search": {spec: tools.ToolSpec{Name: "search", Parameters: llm.Schema{Properties: map[string]llm.Schema{
 			"output":      {Type: "string", Enum: []any{"labeled", "json"}, Extra: map[string]any{"default": "labeled"}},
+			"retries":     {Type: "integer", Enum: []any{1, 2}},
+			"enabled":     {Type: "boolean", Enum: []any{false, true}},
 			"max_results": {Type: "integer", Extra: map[string]any{"default": 100}},
 			"offset":      {Type: "integer", Description: "Zero-based line offset."},
 			"pattern":     {Type: "string"},
@@ -103,7 +105,7 @@ func TestProgramSignatureEnumsDefaultsAndReadLimits(t *testing.T) {
 	}
 	for tool := range src.Tools(t.Context()) {
 		description := tool.Definition().Description
-		for _, want := range []string{`output?: ["labeled","json"] = "labeled"`, `pattern: string`, `max_results?: integer = 100`, `offset?: integer (Zero-based line offset.)`} {
+		for _, want := range []string{`output?: ["labeled","json"] = "labeled"`, `retries?: [1,2]`, `enabled?: [false,true]`, `pattern: string`, `max_results?: integer = 100`, `offset?: integer (Zero-based line offset.)`} {
 			if !strings.Contains(description, want) {
 				t.Errorf("missing %q in %s", want, description)
 			}
