@@ -32,5 +32,9 @@ func (m *UI) prepareOrdinarySessionTarget(saved *savedSession) (engine.TargetUpd
 	if err != nil {
 		return engine.TargetUpdate{}, errors.New("saved provider/model unavailable with current credentials")
 	}
-	return engine.TargetUpdate{Provider: provider, Spec: spec, Window: m.settings.ContextWindow(ctx, spec)}, nil
+	window := m.settings.ContextWindow(ctx, spec)
+	if window <= 0 {
+		window = engine.LiveContextWindow
+	}
+	return engine.TargetUpdate{Provider: provider, Spec: spec, Window: window}, nil
 }

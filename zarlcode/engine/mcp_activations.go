@@ -159,8 +159,9 @@ func (r *RuntimeReservation) restoreOrdinarySession(messages []llm.Message, stat
 	if update != nil {
 		r.owner.target.Provider, r.owner.target.Spec = update.Provider, update.Spec
 		r.owner.target.Model = update.Spec.Model
-		if update.Window > 0 {
-			r.owner.target.Window = update.Window
+		r.owner.target.Window = update.Window
+		if r.owner.target.Window <= 0 {
+			r.owner.target.Window = LiveContextWindow
 		}
 	}
 	r.owner.rotateProgramOutputsLocked()
