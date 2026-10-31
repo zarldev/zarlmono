@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/repair"
@@ -177,14 +178,17 @@ iterations:
 		// ctx — no-op wrapper.
 		iterCtx, cancelIter := iterationContext(ctx, r.timeouts.iteration)
 		streamCtx, cancelStream := context.WithCancelCause(iterCtx)
-		t.attempt++
-		stream := r.client.Complete(streamCtx, req)
-		stream = withStreamIdle(cancelStream, r.timeouts.streamIdle, stream)
-
-		// Drain synchronously. The idle wrapper observes only upstream-controlled
-		// time and joins its watchdog before returning.
-		sr := r.drainStream(ctx, streamCtx, cancelStream, spec, stream)
+		var sr streamResult
+		admissionErr := r.inference.Invoke(streamCtx, inference.Call{Operation: "runner", Provider: r.providerName, Model: r.modelName}, r.client, req, func(stream llm.CompletionStream) {
+			t.attempt++
+			stream = withStreamIdle(cancelStream, r.timeouts.streamIdle, stream)
+			// Drain synchronously; the idle wrapper joins its watchdog on return.
+			sr = r.drainStream(ctx, streamCtx, cancelStream, spec, stream)
+		})
 		cancelIter()
+		if admissionErr != nil {
+			return t.errored(ctx, admissionErr)
+		}
 		toolCalls := sr.toolCalls
 		toolCallOrder := sr.toolCallOrder
 		streamErr := sr.err
@@ -459,6 +463,12 @@ func addUsage(base, add *llm.Usage) *llm.Usage {
 	acc.CacheCreationTokens += add.CacheCreationTokens
 	acc.CacheCreation5mTokens += add.CacheCreation5mTokens
 	acc.CacheCreation1hTokens += add.CacheCreation1hTokens
+	acc.ReasoningTokensReported = base.ReasoningTokensReported && add.ReasoningTokensReported
+	if acc.ReasoningTokensReported {
+		acc.ReasoningTokens += add.ReasoningTokens
+	} else {
+		acc.ReasoningTokens = 0
+	}
 	return &acc
 }
 

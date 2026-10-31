@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
@@ -30,12 +31,14 @@ type HandoverWriter func(ctx context.Context, doc string) (path string, err erro
 //
 // keepRecent is ignored: a partial keep would defeat the point (a clean reseed).
 type Handover struct {
-	Provider     llm.Provider
-	Model        string
-	State        StateProvider
-	Writer       HandoverWriter
-	SystemPrompt string // optional override; defaults to HandoverDefaultSystemPrompt
-	MaxTokens    int    // optional override; defaults to HandoverDefaultMaxTokens
+	// InferenceScope optionally accounts this compactor's model calls.
+	InferenceScope inference.Scope
+	Provider       llm.Provider
+	Model          string
+	State          StateProvider
+	Writer         HandoverWriter
+	SystemPrompt   string // optional override; defaults to HandoverDefaultSystemPrompt
+	MaxTokens      int    // optional override; defaults to HandoverDefaultMaxTokens
 }
 
 // NewHandover constructs a Handover compactor. provider + model drive the
@@ -102,12 +105,12 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 		Temperature: 0.2,
 		Stream:      true,
 	}
-	doc, err := collectContent(h.Provider.Complete(ctx, req), "Handover")
+	doc, inference, err := collectInference(ctx, h.Provider, h.Model, req, EngineHandover, h.InferenceScope)
 	if err != nil {
-		return Result{}, err
+		return Result{Inference: inference}, err
 	}
 	if doc == "" {
-		return Result{}, errors.New("compact.Handover: model returned an empty document")
+		return Result{Inference: inference}, errors.New("compact.Handover: model returned an empty document")
 	}
 	doc = composeHandover(plan, files, toolUsage, verification, failures, doc)
 
@@ -135,7 +138,7 @@ func (h *Handover) Compact(ctx context.Context, history []llm.Message, _ int) (R
 	// immediately on the wipe rather than waiting for the next usage sample.
 	trimmed := max(olderBytes-len(seed), 0)
 	warning := fmt.Sprintf("handover: cleared %d message(s) and reseeded from a %d-char handover document", len(older), len(doc))
-	return Result{History: out, Warning: warning, Engine: EngineHandover, BytesTrimmed: trimmed}, nil
+	return Result{History: out, Warning: warning, Engine: EngineHandover, BytesTrimmed: trimmed, Inference: inference}, nil
 }
 
 // composeHandover prepends mechanical state sections (eliding empty sections)

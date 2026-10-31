@@ -231,6 +231,9 @@ func TestCanonicalHistoryKeepsTieredHostExcerptsRequestOnly(t *testing.T) {
 		{{Content: first, ContentOutputIndex: llm.OutputPosition(0), CompletedItems: []llm.ContinuationItem{{Provider: "openai-codex", Format: "responses.reasoning.v1", Kind: "message", Data: native}}}, runnertest.ChunkToolCall("one", "echo", "{}")},
 		{runnertest.ChunkText(second), runnertest.ChunkToolCall("two", "echo", "{}")},
 		{runnertest.ChunkText(quoted)},
+		// A second run needs a tool iteration before finalizing: the preceding
+		// exchange stays protected until a newer assistant response consumes it.
+		{runnertest.ChunkToolCall("three", "echo", "{}")},
 		{runnertest.ChunkText(followup)},
 	})
 	registry := tools.NewRegistry()

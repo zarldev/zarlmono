@@ -52,6 +52,12 @@ inherited history again. Cost is an estimate using the task's model/price basis;
 unknown usage or pricing cannot be invented. This is not a crash-complete billing
 ledger.
 
+## Layer contract
+
+`zkit/agent/inference` is an explicitly allowed runner import for optional
+aggregate provider accounting. Enabling it does not change task-local usage or
+attempt timing; those retain their own-only meanings.
+
 ## Capture lifecycle
 
 The application history sink first owns serialized batches in memory. Request

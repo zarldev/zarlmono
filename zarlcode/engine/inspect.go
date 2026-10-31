@@ -7,6 +7,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/home"
 	"github.com/zarldev/zarlmono/zarlcode/prompts"
 	"github.com/zarldev/zarlmono/zkit/agent/guardrails"
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -98,7 +99,7 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	group := spawn.NewGroup()
 	visible := newModeControlSource(NewModeFilteredSource(src, l.isPlan), &modeTransition{live: l, group: group})
 	dummy := runner.New(inspectorClient{}, runner.WithTools(visible), runner.WithPrompt(runner.StaticPrompt("")), runner.WithSink(runner.NopSink{}))
-	l.registerSpawnTools(ctx, reg, dummy, group, nil, ins.SpawnDepth, ins.SpawnMaxIter)
+	l.registerSpawnTools(ctx, reg, dummy, group, nil, ins.SpawnDepth, ins.SpawnMaxIter, inference.Scope{})
 
 	for t := range visible.Tools(ctx) {
 		ins.Tools = append(ins.Tools, t.Definition())

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
 	"github.com/zarldev/zarlmono/zkit/options"
@@ -27,11 +28,19 @@ import (
 //	judge := guardrails.NewLLMVerdictJudge(provider)
 //	g := guardrails.NewDecomposeGuardrail(0, guardrails.WithDecomposeJudge(judge))
 type LLMVerdictJudge struct {
+	inference inference.Scope
+	model     string
 	provider  llm.Provider
 	maxTokens int
 }
 
 type LLMVerdictJudgeOption = options.Option[LLMVerdictJudge]
+
+// WithVerdictInferenceScope includes judge inference in the supplied account.
+// model identifies the configured judge model; empty means unknown.
+func WithVerdictInferenceScope(scope inference.Scope, model string) LLMVerdictJudgeOption {
+	return func(j *LLMVerdictJudge) { j.inference, j.model = scope, model }
+}
 
 // WithVerdictMaxTokens overrides the per-verdict token cap. Non-positive
 // values leave the default unchanged.
@@ -88,7 +97,7 @@ func (j *LLMVerdictJudge) Judge(ctx context.Context, in VerdictInput) (Verdict, 
 		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
-	chunks := j.provider.Complete(ctx, req)
+	chunks := j.inference.Complete(ctx, inference.Call{Operation: "judge", Provider: j.provider.Name(), Model: j.model}, j.provider, req)
 
 	var body strings.Builder
 	for chunk, cerr := range chunks {

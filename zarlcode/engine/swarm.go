@@ -34,6 +34,7 @@ type Swarm struct {
 // NewSwarm assembles an opt-in goal owner without launching work. Configure each
 // member LiveRunner's provider, permissions, limits and sink before Add.
 func NewSwarm(goal string, opts ...options.Option[swarm.Swarm]) *Swarm {
+	opts = append(opts, swarm.WithInferenceAccounting())
 	return &Swarm{goal: swarm.New(goal, opts...), coordinator: tools.NewWorkspaceCoordinator(),
 		members: make(map[*LiveRunner]swarm.AgentID)}
 }

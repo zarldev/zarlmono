@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zarldev/zarlmono/zkit/agent/board"
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -46,6 +47,8 @@ type Swarm struct {
 	cancel      context.CancelCauseFunc
 	activations int
 	tokens      int
+	accounted   bool
+	account     *inference.Account
 }
 
 // New assembles a goal owner. Call Run once and Close to stop/join it. Goal is a
@@ -57,6 +60,9 @@ func New(goal string, opts ...options.Option[Swarm]) *Swarm {
 		opt(s)
 	}
 	s.board = board.New(s.limits.Board)
+	if s.accounted {
+		s.account = inference.New(inference.WithLimits(inference.Limits{Invocations: s.limits.Invocations, Tokens: s.limits.ReportedTokens}))
+	}
 	return s
 }
 
@@ -119,6 +125,15 @@ func (s *Swarm) Run(ctx context.Context) error {
 	defer cancel(ErrClosed)
 
 	var workers sync.WaitGroup
+	if s.accounted {
+		workers.Go(func() {
+			select {
+			case <-s.account.Exhausted():
+				cancel(ErrBudget)
+			case <-runCtx.Done():
+			}
+		})
+	}
 	for range s.limits.Workers {
 		workers.Go(func() { s.work(runCtx) })
 	}
@@ -151,7 +166,7 @@ func (s *Swarm) work(ctx context.Context) {
 			s.mu.Unlock()
 			continue
 		}
-		if s.activations >= s.limits.Activations || (s.limits.ReportedTokens > 0 && s.tokens >= s.limits.ReportedTokens) {
+		if s.activations >= s.limits.Activations || (!s.accounted && s.limits.ReportedTokens > 0 && s.tokens >= s.limits.ReportedTokens) {
 			s.cancel(ErrBudget)
 			s.mu.Unlock()
 			continue
@@ -184,7 +199,7 @@ func (s *Swarm) work(ctx context.Context) {
 		if len(result.Messages) != 0 {
 			entry.messages = llm.CloneMessages(result.Messages)
 		}
-		if result.TotalUsage != nil {
+		if !s.accounted && result.TotalUsage != nil {
 			s.tokens += max(result.TotalUsage.TotalTokens, result.TotalUsage.PromptTokens+result.TotalUsage.CompletionTokens)
 		}
 		if entry.state != States.STOPPED && !s.closed {

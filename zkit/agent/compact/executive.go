@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
@@ -99,11 +100,13 @@ type extendedStateProvider interface {
 //   - Loses raw tool result bodies (same as Summary); the agent
 //     re-runs the tool if needed.
 type Executive struct {
-	Provider     llm.Provider
-	Model        string
-	State        StateProvider
-	SystemPrompt string // optional override; defaults to ExecutiveDefaultSystemPrompt
-	MaxTokens    int    // optional override; defaults to ExecutiveDefaultMaxTokens
+	// InferenceScope optionally accounts this compactor's model calls.
+	InferenceScope inference.Scope
+	Provider       llm.Provider
+	Model          string
+	State          StateProvider
+	SystemPrompt   string // optional override; defaults to ExecutiveDefaultSystemPrompt
+	MaxTokens      int    // optional override; defaults to ExecutiveDefaultMaxTokens
 }
 
 // NewExecutive constructs an Executive compactor. provider + model
@@ -194,9 +197,9 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 		Temperature: 0.2,
 		Stream:      true,
 	}
-	narrativeBody, err := collectContent(e.Provider.Complete(ctx, req), "Executive")
+	narrativeBody, inference, err := collectInference(ctx, e.Provider, e.Model, req, EngineExecutive, e.InferenceScope)
 	if err != nil {
-		return Result{}, err
+		return Result{Inference: inference}, err
 	}
 	if narrativeBody == "" {
 		// Briefing without a narrative is still useful (structured
@@ -222,7 +225,7 @@ func (e *Executive) Compact(ctx context.Context, history []llm.Message, keepRece
 		len(briefing),
 		len(recent),
 	)
-	return Result{History: out, Warning: warning, Engine: EngineExecutive}, nil
+	return Result{History: out, Warning: warning, Engine: EngineExecutive, Inference: inference}, nil
 }
 
 // composeBriefing assembles the final briefing message from the

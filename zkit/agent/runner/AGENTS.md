@@ -147,7 +147,7 @@ Three independent budgets, each resetting on any successful iteration:
 
 - **Don't add ctx-planted state.** `keyDepth` and `keyTaskID` are the only context values the runner plants — for spawn-agent recursion tracking and task-scoped caching. Adding more reintroduces the implicit, hard-to-trace lookups this package deliberately avoids. New state goes on `TaskSpec` (per-task), `Runner` fields (per-runner), or closure captures (per-tool).
 - **Don't grow `TaskSpec`.** It's the input to `Run`; every field is a public commitment. Tool-specific data goes on the tool instance.
-- **Don't import outside the allow-list:** `zkit/agent/compact`, `zkit/agent/taskscope`, `zkit/ai/llm`, `zkit/ai/llm/repair`, `zkit/ai/llm/templates`, `zkit/ai/tools`, `zkit/cache`, `zkit/options`, `golang.org/x/sync/errgroup`, and the standard library. The runner's import graph is its most public commitment, and new consumers depend on this list staying minimal.
+- **Don't import outside the allow-list:** `zkit/agent/compact`, `zkit/agent/inference` (explicit optional aggregate accounting), `zkit/agent/taskscope`, `zkit/ai/llm`, `zkit/ai/llm/repair`, `zkit/ai/llm/templates`, `zkit/ai/tools`, `zkit/cache`, `zkit/options`, `golang.org/x/sync/errgroup`, and the standard library. The runner's import graph is its most public commitment, and new consumers depend on this list staying minimal.
 - **Don't reach into `*Runner` from outside the package.** Tools and guardrails that need task-scoped buckets use `taskscope.IDFrom` / `taskscope.DepthFrom` directly.
 - **Don't return errors consumers can't switch on.** Sentinels (`ErrCancelled`, `ErrCompact`, `ErrEmptyStream`, …) wrap real failures; consumers `errors.Is` against them. A new terminal failure path needs a sentinel.
 

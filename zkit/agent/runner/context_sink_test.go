@@ -75,6 +75,9 @@ func (s callbackContextSink) OnSteerInjected(ctx context.Context, e runner.Steer
 func (s callbackContextSink) OnCompactionApplied(ctx context.Context, e runner.CompactionApplied) {
 	s.observe(ctx, "CompactionApplied", e.TaskID)
 }
+func (s callbackContextSink) OnCompactionSettled(ctx context.Context, e runner.CompactionSettled) {
+	s.observe(ctx, "CompactionSettled", e.TaskID)
+}
 
 func (s callbackContextSink) OnDiagnostic(ctx context.Context, e runner.Diagnostic) {
 	s.observe(ctx, "Diagnostic", e.TaskID)

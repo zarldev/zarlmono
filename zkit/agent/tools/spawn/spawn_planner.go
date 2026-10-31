@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
 	"github.com/zarldev/zarlmono/zkit/options"
@@ -41,11 +42,19 @@ const (
 // that adds an agent at runtime can simply re-wire WithSpawnPlanner
 // with the updated slice — no per-planner cache to invalidate.
 type LLMSpawnPlanner struct {
+	inference inference.Scope
+	model     string
 	provider  llm.Provider
 	maxTokens int
 }
 
 type LLMSpawnPlannerOption = options.Option[LLMSpawnPlanner]
+
+// WithPlannerInferenceScope includes routing inference in the supplied account.
+// model identifies the configured planner model; empty means unknown.
+func WithPlannerInferenceScope(scope inference.Scope, model string) LLMSpawnPlannerOption {
+	return func(p *LLMSpawnPlanner) { p.inference, p.model = scope, model }
+}
 
 // WithPlannerMaxTokens overrides the per-plan token cap. Non-positive values
 // leave the default unchanged.
@@ -105,7 +114,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
-	chunks := p.provider.Complete(ctx, req)
+	chunks := p.inference.Complete(ctx, inference.Call{Operation: "planner", Provider: p.provider.Name(), Model: p.model}, p.provider, req)
 
 	var body strings.Builder
 	for chunk, cerr := range chunks {

@@ -11,6 +11,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/catalog"
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	boardtools "github.com/zarldev/zarlmono/zkit/agent/tools/board"
 	"github.com/zarldev/zarlmono/zkit/agent/tools/spawn"
@@ -38,7 +39,7 @@ type spawnTargets struct {
 	explore, verify, implement spawnTarget
 }
 
-func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int, boardAccess ...boardtools.Board) {
+func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int, scope inference.Scope, boardAccess ...boardtools.Board) {
 	if maxDepth <= 0 {
 		return
 	}
@@ -54,19 +55,19 @@ func (l *LiveRunner) registerSpawnTools(ctx context.Context, reg *tools.Registry
 	// before a single task can run. These runners are shared within this turn,
 	// just as they are shared by sibling tasks; taskscope enforces actual depth.
 	targets := spawnTargets{
-		explore:   l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Explore, boardAccess...),
-		verify:    l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Verify, boardAccess...),
-		implement: l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Implement, boardAccess...),
+		explore:   l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Explore, scope, boardAccess...),
+		verify:    l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Verify, scope, boardAccess...),
+		implement: l.buildDefaultSpawnTarget(ctx, group, coordinator, modes.Implement, scope, boardAccess...),
 	}
-	l.registerSpawnTargets(ctx, reg, parent, group, coordinator, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
+	l.registerSpawnTargets(ctx, reg, parent, group, coordinator, maxDepth, spawnMaxIter, modes, targets, scope, boardAccess...)
 	for _, target := range [...]spawnTarget{targets.explore, targets.verify, targets.implement} {
 		if target.runner != nil {
-			l.registerSpawnTargets(ctx, target.registry, target.runner, group, coordinator, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
+			l.registerSpawnTargets(ctx, target.registry, target.runner, group, coordinator, maxDepth, spawnMaxIter, modes, targets, scope, boardAccess...)
 		}
 	}
 }
 
-func (l *LiveRunner) registerSpawnTargets(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int, modes SpawnModesConfig, targets spawnTargets, boardAccess ...boardtools.Board) {
+func (l *LiveRunner) registerSpawnTargets(ctx context.Context, reg *tools.Registry, parent *runner.Runner, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, maxDepth, spawnMaxIter int, modes SpawnModesConfig, targets spawnTargets, scope inference.Scope, boardAccess ...boardtools.Board) {
 	awaitTimeout := 30 * time.Second
 	awaitMaxTimeout := 5 * time.Minute
 	if l.settings != nil {
@@ -86,9 +87,10 @@ func (l *LiveRunner) registerSpawnTargets(ctx context.Context, reg *tools.Regist
 	var planner spawn.SpawnPlanner
 	var candidates []spawn.AgentCandidate
 	var plannerProv llm.Provider
+	var plannerModel string
 	if l != nil {
 		l.mu.Lock()
-		plannerProv = l.target.Provider
+		plannerProv, plannerModel = l.target.Provider, l.target.Model
 		l.mu.Unlock()
 	}
 	if l != nil && plannerProv != nil && l.catalog != nil {
@@ -100,13 +102,13 @@ func (l *LiveRunner) registerSpawnTargets(ctx context.Context, reg *tools.Regist
 			})
 		}
 		if len(candidates) > 0 {
-			planner = spawn.NewLLMSpawnPlanner(plannerProv)
+			planner = spawn.NewLLMSpawnPlanner(plannerProv, spawn.WithPlannerInferenceScope(scope, plannerModel))
 		}
 	}
 	launch := spawn.NewAsync(parent, group,
 		spawn.WithMaxDepth(maxDepth),
 		spawn.WithAgentResolver(func(name string) (*runner.Runner, error) {
-			return l.resolveAgentRunner(ctx, group, coordinator, name, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
+			return l.resolveAgentRunner(ctx, group, coordinator, name, maxDepth, spawnMaxIter, modes, targets, scope, boardAccess...)
 		}),
 		spawn.WithSpawnPlannerCandidates(planner, candidates),
 		spawn.WithSpawnMaxIterations(spawnMaxIter),
@@ -125,14 +127,14 @@ func (l *LiveRunner) registerSpawnTargets(ctx context.Context, reg *tools.Regist
 	launch.Register(reg, spawn.WithAwaitTimeout(awaitTimeout), spawn.WithAwaitMaxTimeout(awaitMaxTimeout))
 }
 
-func (l *LiveRunner) buildDefaultSpawnTarget(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, mode SpawnModeConfig, boardAccess ...boardtools.Board) spawnTarget {
+func (l *LiveRunner) buildDefaultSpawnTarget(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, mode SpawnModeConfig, scope inference.Scope, boardAccess ...boardtools.Board) spawnTarget {
 	if mode.DefaultAgent != "" || mode.DefaultTarget.Name == "" && mode.DefaultTarget.Model == "" {
 		return spawnTarget{}
 	}
 	target, err := l.buildAgentRunner(ctx, group, coordinator, catalog.Agent{
 		Provider: mode.DefaultTarget.Name,
 		Model:    mode.DefaultTarget.Model,
-	}, boardAccess...)
+	}, scope, boardAccess...)
 	if err != nil {
 		slog.WarnContext(ctx, "spawn: default mode target unavailable", "provider", mode.DefaultTarget.Name, "model", mode.DefaultTarget.Model, "err", err)
 		return spawnTarget{}
@@ -140,7 +142,7 @@ func (l *LiveRunner) buildDefaultSpawnTarget(ctx context.Context, group *spawn.G
 	return target
 }
 
-func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, name string, maxDepth, spawnMaxIter int, modes SpawnModesConfig, targets spawnTargets, boardAccess ...boardtools.Board) (*runner.Runner, error) {
+func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, name string, maxDepth, spawnMaxIter int, modes SpawnModesConfig, targets spawnTargets, scope inference.Scope, boardAccess ...boardtools.Board) (*runner.Runner, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("empty agent name")
@@ -156,15 +158,15 @@ func (l *LiveRunner) resolveAgentRunner(ctx context.Context, group *spawn.Group,
 	if !ok {
 		return nil, fmt.Errorf("unknown agent %q", name)
 	}
-	target, err := l.buildAgentRunner(ctx, group, coordinator, agent, boardAccess...)
+	target, err := l.buildAgentRunner(ctx, group, coordinator, agent, scope, boardAccess...)
 	if err != nil {
 		return nil, err
 	}
-	l.registerSpawnTargets(ctx, target.registry, target.runner, group, coordinator, maxDepth, spawnMaxIter, modes, targets, boardAccess...)
+	l.registerSpawnTargets(ctx, target.registry, target.runner, group, coordinator, maxDepth, spawnMaxIter, modes, targets, scope, boardAccess...)
 	return target.runner, nil
 }
 
-func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, agent catalog.Agent, boardAccess ...boardtools.Board) (spawnTarget, error) {
+func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, coordinator *tools.WorkspaceCoordinator, agent catalog.Agent, scope inference.Scope, boardAccess ...boardtools.Board) (spawnTarget, error) {
 	l.mu.Lock()
 	parentProv, parentModel, parentSpec := l.target.Provider, l.target.Model, l.target.Spec
 	window, webSearch := l.target.Window, l.target.WebSearch
@@ -227,11 +229,12 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	opts = append(opts,
 		spawnRunnerPromptOption(l, agent, func() tools.Source { return visible }, automaticCompletion),
 		runner.WithModelIdentity(prov.Name(), model),
+		runner.WithInferenceScope(scope),
 		runner.WithCompactor(coderunner.StandardCompactor(
 			// Empty wsRoot: a sub-agent handover reseeds its own context but
 			// does not write a file (sub-agents run unattended and would spam
 			// the handovers dir).
-			buildLiveCompactor(engine, window, compactProv, compactModel, l, ""), window, reserve)),
+			buildScopedCompactor(engine, window, compactProv, compactModel, l, "", scope), window, reserve)),
 		runner.WithResultTruncator(l.truncator),
 		// Sub-agent iterations feed the same cockpit context graph.
 		runner.WithContextBreakdown(),
@@ -244,7 +247,7 @@ func (l *LiveRunner) buildAgentRunner(ctx context.Context, group *spawn.Group, c
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
 	}
-	src, reg, err := l.sourceWithExposure(ctx, webSearch, l.guardrailDeps(ctx), l.childMCPExposure())
+	src, reg, err := l.sourceWithExposure(ctx, webSearch, l.scopedGuardrailDeps(ctx, false, scope), l.childMCPExposure())
 	if err != nil {
 		return spawnTarget{}, err
 	}

@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
+	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/templates"
@@ -75,6 +76,7 @@ type Runner struct {
 	modelName    string
 
 	// optional plumbing
+	inference       inference.Scope
 	sink            EventSink
 	convLock        *ConversationLock
 	prompt          PromptSource
