@@ -10,6 +10,8 @@ import (
 type taskAccounting struct {
 	depth           int
 	attempt         int
+	iterationSeen   bool
+	iteration       int
 	provider, model string
 	price           usagePrice
 }
@@ -85,6 +87,7 @@ func (s *Session) applyProviderAttemptSettled(e teasink.ProviderAttemptSettledMs
 		s.Run.activity.phase = ActivityPhases.ACTIVITYWORKING
 	}
 	if e.Depth == 0 {
+		s.Run.observeAttemptTiming(e)
 		s.Run.foldUsage(e.Usage, e.Usage)
 	}
 }

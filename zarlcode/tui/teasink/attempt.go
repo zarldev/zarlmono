@@ -2,6 +2,7 @@ package teasink
 
 import (
 	"context"
+	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -10,11 +11,15 @@ import (
 // ProviderAttemptSettledMsg carries live all-attempt usage without booking spend.
 // Session spend is folded only from ConversationEndedMsg.TotalUsage.
 type ProviderAttemptSettledMsg struct {
-	TaskID  string
-	Depth   int
-	Attempt int
-	Usage   *llm.Usage
-	Reason  runner.TerminalReason
+	TaskID           string
+	Depth            int
+	Attempt          int
+	Usage            *llm.Usage
+	Reason           runner.TerminalReason
+	Duration         time.Duration
+	CallbackDuration time.Duration
+	// TimeToFirstOutput is nil if no meaningful output was observed.
+	TimeToFirstOutput *time.Duration
 }
 
 // OnProviderAttemptSettled forwards an owned usage snapshot after buffered text.
@@ -25,6 +30,11 @@ func (s *Sink) OnProviderAttemptSettled(ctx context.Context, e runner.ProviderAt
 	if e.Usage != nil {
 		usage = new(*e.Usage)
 	}
+	var firstOutput *time.Duration
+	if e.TimeToFirstOutput != nil {
+		firstOutput = new(*e.TimeToFirstOutput)
+	}
 	s.dispatch(ProviderAttemptSettledMsg{TaskID: string(e.TaskID), Depth: e.Depth,
-		Attempt: e.Attempt, Usage: usage, Reason: e.Reason})
+		Attempt: e.Attempt, Usage: usage, Reason: e.Reason,
+		Duration: e.Duration, CallbackDuration: e.CallbackDuration, TimeToFirstOutput: firstOutput})
 }

@@ -520,13 +520,15 @@ func (s *Sink) OnConversationEnded(ctx context.Context, e runner.ConversationEnd
 func (s *Sink) OnIterationCompleted(ctx context.Context, e runner.IterationCompleted) {
 	s.flush()
 	s.dispatch(IterationCompletedMsg{
-		TaskID:      string(e.TaskID),
-		Depth:       e.Depth,
-		Iter:        e.Iter,
-		Usage:       e.Usage,
-		Delta:       e.Delta,
-		Context:     e.Context,
-		ToolSurface: e.ToolSurface,
+		TaskID:                     string(e.TaskID),
+		Depth:                      e.Depth,
+		Iter:                       e.Iter,
+		Usage:                      e.Usage,
+		Delta:                      e.Delta,
+		Context:                    e.Context,
+		ToolSurface:                e.ToolSurface,
+		RequestPreparationDuration: e.RequestPreparationDuration,
+		ToolDispatchDuration:       e.ToolDispatchDuration,
 	})
 }
 

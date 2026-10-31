@@ -50,6 +50,7 @@ type RunState struct {
 	Running        bool
 	activeTopLevel string
 	tasks          map[string]taskAccounting
+	performance    PerformanceDiagnostics
 	activity       runActivity
 	iterations     int
 	tools          int // completed tool calls this turn
@@ -334,6 +335,7 @@ func (s *RunState) reset() {
 	s.maxDepth = 0
 	s.turnStartedAt = time.Now()
 	s.iterationStartedAt = s.turnStartedAt
+	s.performance = PerformanceDiagnostics{}
 	s.turnOutBytes = 0
 	s.turnCompletionTokens = 0
 	if s.startedAt.IsZero() {
@@ -489,7 +491,7 @@ func (s *RunState) foldTurnComplete(u *llm.Usage, dur time.Duration, iters int, 
 	} else {
 		s.lastIter = s.iterations
 	}
-	s.foldCacheTarget(price, u, true)
+	s.foldCacheTarget(price, u, true, false)
 	if u != nil {
 		// Session totals use the cumulative TotalUsage — added once per turn,
 		// this correctly reflects the full spend of the Run (including every
@@ -528,7 +530,12 @@ func (s *RunState) foldTurnComplete(u *llm.Usage, dur time.Duration, iters int, 
 // top-level context gauge or last-turn figures.
 func (s *RunState) foldSubAgentUsage(u *llm.Usage, price usagePrice) {
 	defer s.bumpRevision()
-	s.foldCacheTarget(price, u, false)
+	s.foldCacheTarget(price, u, false, false)
+	s.foldAuxiliaryUsage(u, price)
+}
+
+// foldAuxiliaryUsage settles non-root inference without changing context occupancy.
+func (s *RunState) foldAuxiliaryUsage(u *llm.Usage, price usagePrice) {
 	if u == nil {
 		return
 	}

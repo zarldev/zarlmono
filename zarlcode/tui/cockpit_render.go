@@ -27,6 +27,10 @@ func (m *UI) cockpitLines(width int) []string {
 	// --- LLM/session overview ---------------------------------------------
 	add(sidebarHeading("session"))
 	add(m.llmStateLines()...)
+	if lines := m.performanceLines(width); len(lines) > 0 {
+		add("", sidebarHeading("performance"))
+		add(lines...)
+	}
 
 	add("")
 
@@ -731,6 +735,9 @@ func (s *RunState) cacheUsageLines(_ int) []string {
 		}
 		head := palette.Fg.On(label) + palette.Muted.On(" · "+d.BillingClass+" · ") +
 			palette.Subtle.On(itoa(d.SettledTasks)+" settled")
+		if d.CompactorCalls > 0 {
+			head += palette.Subtle.On(" · " + itoa(d.CompactorCalls) + " compactor calls")
+		}
 		if d.BillingClass == billingClassLocal || d.BillingClass == billingClassSubscription {
 			head += palette.Muted.On(" · unmetered")
 		} else {
@@ -746,6 +753,10 @@ func (s *RunState) cacheUsageLines(_ int) []string {
 			usage += palette.Muted.On(" (" + fmt.Sprintf("%.0f", d.CacheReadShare*100) + "%)")
 		}
 		usage += palette.Muted.On(" · create ") + palette.Fg.On(fmtCount(d.CacheCreationTokens))
+		if d.ReasoningReportedSettlements > 0 {
+			usage += palette.Muted.On(" · reasoning subtotal ") + palette.Fg.On(fmtCount(d.ReasoningTokens)) +
+				palette.Muted.On(" (reported "+itoa(d.ReasoningReportedSettlements)+"/"+itoa(d.SettledTasks+d.CompactorCalls)+" settlements)")
+		}
 		coverage := make([]string, 0, 5)
 		if d.PricingTierUnknownTasks > 0 {
 			coverage = append(coverage, "prompt pricing tier unavailable "+itoa(d.PricingTierUnknownTasks)+" (base-rate estimate incomplete)")
