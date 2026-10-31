@@ -7,6 +7,11 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
+const (
+	promptCacheRetentionMemory = "in-memory"
+	promptCacheRetention24h    = "24h"
+)
+
 // requestPlan is the sealed interface for endpoint-specific plans.
 // Only chatCompletionPlan and responsesPlan implement it.
 type requestPlan interface {
@@ -136,7 +141,7 @@ func planRequest(model string, req llm.CompletionRequest, responsesAPI bool, def
 		if cacheKey := requestOptionString(req.Options, "prompt_cache_key"); cacheKey != "" {
 			plan.promptCacheKey = cacheKey
 		}
-		if retention := requestOptionString(req.Options, "prompt_cache_retention"); retention == "in-memory" || retention == "24h" {
+		if retention := requestOptionString(req.Options, "prompt_cache_retention"); retention == promptCacheRetentionMemory || retention == promptCacheRetention24h {
 			plan.promptCacheRetention = retention
 		}
 		plan.includeEncryptedReasoning = plan.reasoning != nil || hasOpenAIContinuationItems(req.Messages)

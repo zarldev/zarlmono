@@ -711,6 +711,10 @@ type Usage struct {
 	CacheCreationTokens   int
 	CacheCreation5mTokens int
 	CacheCreation1hTokens int
+	// ReasoningTokens is a subtotal of CompletionTokens, not additional usage.
+	// ReasoningTokensReported distinguishes unknown from reported zero.
+	ReasoningTokens         int
+	ReasoningTokensReported bool
 }
 
 // Model represents an available LLM model.

@@ -44,7 +44,7 @@ type responsesRequest struct {
 	Text              *textConfig      `json:"text,omitempty"`
 	Include           []string         `json:"include,omitempty"`
 	Store             bool             `json:"store"`
-	ParallelToolCalls bool             `json:"parallel_tool_calls,omitempty"`
+	ParallelToolCalls bool             `json:"parallel_tool_calls"`
 	PromptCacheKey    string           `json:"prompt_cache_key,omitempty"`
 	ServiceTier       string           `json:"service_tier,omitempty"`
 }
@@ -189,7 +189,7 @@ func buildRequest(req llm.CompletionRequest, model, instructions string, suppres
 	} else if (len(suppressDefaultEffort) == 0 || !suppressDefaultEffort[0]) && defaultReasoningEffort(model) != "" {
 		rr.Reasoning = &reasoningConfig{Effort: defaultReasoningEffort(model)}
 		if supportsReasoningSummary(model) {
-			rr.Reasoning.Summary = "detailed"
+			rr.Reasoning.Summary = optionStringOr(req.Options, "reasoning_summary", "detailed")
 		}
 	}
 	if verb := optionString(req.Options, "text_verbosity"); validTextVerbosity(verb) {

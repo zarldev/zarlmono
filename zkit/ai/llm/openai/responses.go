@@ -180,6 +180,9 @@ type responseUsage struct {
 	InputTokensDetails struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"input_tokens_details"`
+	OutputTokensDetails struct {
+		ReasoningTokens *int `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 type responseCompleted struct {
@@ -582,6 +585,10 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			chunk.Usage = llm.Usage{
 				PromptTokens: ev.Response.Usage.InputTokens, CompletionTokens: ev.Response.Usage.OutputTokens,
 				TotalTokens: ev.Response.Usage.TotalTokens, CachedTokens: ev.Response.Usage.InputTokensDetails.CachedTokens,
+			}
+			if reasoning := ev.Response.Usage.OutputTokensDetails.ReasoningTokens; reasoning != nil {
+				chunk.Usage.ReasoningTokens = *reasoning
+				chunk.Usage.ReasoningTokensReported = true
 			}
 		}
 		if len(toolCalls) > 0 {

@@ -735,6 +735,11 @@ func convertToolsToSDK(tools []llm.Tool) []anthropic.ToolUnionParam {
 			toolParam.InputSchema = param.Override[anthropic.ToolInputSchemaParam](tool.Function.Parameters)
 		}
 
+		// Keep tool definitions cached independently of changing system prompts.
+		if i == len(tools)-1 {
+			toolParam.CacheControl = staticCacheControl()
+		}
+
 		// Wrap in the union type
 		sdkTools[i] = anthropic.ToolUnionParam{
 			OfTool: &toolParam,

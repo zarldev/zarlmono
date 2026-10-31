@@ -154,6 +154,10 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		return
 	}
 	config := p.buildConfig(req)
+	if err := p.applyThinkingOptions(config, req); err != nil {
+		yield(llm.CompletionChunk{}, err)
+		return
+	}
 	sys, contents := convertMessages(expandedMessages)
 	if sys != nil {
 		config.SystemInstruction = sys
@@ -237,10 +241,12 @@ func (p *Provider) runStream(
 		}
 		if resp.UsageMetadata != nil {
 			usage = llm.Usage{
-				PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
-				CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount) + int(resp.UsageMetadata.ThoughtsTokenCount),
-				TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
-				CachedTokens:     int(resp.UsageMetadata.CachedContentTokenCount),
+				PromptTokens:            int(resp.UsageMetadata.PromptTokenCount),
+				CompletionTokens:        int(resp.UsageMetadata.CandidatesTokenCount) + int(resp.UsageMetadata.ThoughtsTokenCount),
+				TotalTokens:             int(resp.UsageMetadata.TotalTokenCount),
+				CachedTokens:            int(resp.UsageMetadata.CachedContentTokenCount),
+				ReasoningTokens:         int(resp.UsageMetadata.ThoughtsTokenCount),
+				ReasoningTokensReported: resp.UsageMetadata.ThoughtsTokenCount > 0,
 			}
 			usageReported = true
 		}

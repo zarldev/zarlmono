@@ -66,6 +66,8 @@ type Provider struct {
 	responsesAPI         bool
 	responsesAPIExplicit bool
 	responsesDefaults    responsesPlan
+	// promptCacheExplicit opts custom Chat endpoints into hosted cache fields.
+	promptCacheExplicit bool
 }
 
 const (
@@ -357,12 +359,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 
 	metadata := llm.CompletionChunk{FinishReason: semanticFinishReason(finishReason)}
 	if usageSeen {
-		metadata.Usage = llm.Usage{
-			PromptTokens:     int(finalUsage.PromptTokens),
-			CompletionTokens: int(finalUsage.CompletionTokens),
-			TotalTokens:      int(finalUsage.TotalTokens),
-			CachedTokens:     int(finalUsage.PromptTokensDetails.CachedTokens),
-		}
+		metadata.Usage = chatUsage(finalUsage)
 		metadata.UsageReported = true
 	}
 	if metadata.FinishReason != llm.FinishReasons.UNKNOWN || metadata.UsageReported {
@@ -646,16 +643,11 @@ func (p *Provider) nonStreamCompletion(
 			result := toolparse.ParseArtifact(choice.Message.Content)
 			if result.HighConfidence {
 				if !yield(llm.CompletionChunk{
-					Content:      result.RemainingContent,
-					Thinking:     extractReasoningFromMessage(choice.Message),
-					FinishReason: semanticFinishReason(choice.FinishReason),
-					ToolCalls:    result.Calls,
-					Usage: llm.Usage{
-						PromptTokens:     int(completion.Usage.PromptTokens),
-						CompletionTokens: int(completion.Usage.CompletionTokens),
-						TotalTokens:      int(completion.Usage.TotalTokens),
-						CachedTokens:     int(completion.Usage.PromptTokensDetails.CachedTokens),
-					},
+					Content:       result.RemainingContent,
+					Thinking:      extractReasoningFromMessage(choice.Message),
+					FinishReason:  semanticFinishReason(choice.FinishReason),
+					ToolCalls:     result.Calls,
+					Usage:         chatUsage(completion.Usage),
 					UsageReported: usageReported,
 				}, nil) {
 					return
@@ -665,16 +657,11 @@ func (p *Provider) nonStreamCompletion(
 		}
 
 		if !yield(llm.CompletionChunk{
-			Content:      choice.Message.Content,
-			Thinking:     extractReasoningFromMessage(choice.Message),
-			FinishReason: semanticFinishReason(choice.FinishReason),
-			ToolCalls:    toolCalls,
-			Usage: llm.Usage{
-				PromptTokens:     int(completion.Usage.PromptTokens),
-				CompletionTokens: int(completion.Usage.CompletionTokens),
-				TotalTokens:      int(completion.Usage.TotalTokens),
-				CachedTokens:     int(completion.Usage.PromptTokensDetails.CachedTokens),
-			},
+			Content:       choice.Message.Content,
+			Thinking:      extractReasoningFromMessage(choice.Message),
+			FinishReason:  semanticFinishReason(choice.FinishReason),
+			ToolCalls:     toolCalls,
+			Usage:         chatUsage(completion.Usage),
 			UsageReported: usageReported,
 		}, nil) {
 			return
@@ -720,7 +707,7 @@ func applyChatTokenLimit(params *openai.ChatCompletionNewParams, field TokenLimi
 // Returns the option slice the callers spread into their
 // NewStreaming/New variadics.
 func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestOption {
-	var opts []option.RequestOption
+	opts := p.chatControlOptions(req)
 	if p.cachePrompt {
 		opts = append(opts, option.WithJSONSet("cache_prompt", true))
 	}
@@ -732,6 +719,22 @@ func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestO
 	}
 	if tier := requestServiceTier(req.Options); tier != "" {
 		opts = append(opts, option.WithJSONSet("service_tier", tier))
+	}
+	// Custom Chat endpoints opt in explicitly; request options override defaults.
+	if !p.customBaseURL || p.promptCacheExplicit {
+		key, retention := p.responsesDefaults.promptCacheKey, p.responsesDefaults.promptCacheRetention
+		if value := requestOptionString(req.Options, "prompt_cache_key"); value != "" {
+			key = value
+		}
+		if value := requestOptionString(req.Options, "prompt_cache_retention"); value == promptCacheRetentionMemory || value == promptCacheRetention24h {
+			retention = value
+		}
+		if key != "" {
+			opts = append(opts, option.WithJSONSet("prompt_cache_key", key))
+		}
+		if retention != "" {
+			opts = append(opts, option.WithJSONSet("prompt_cache_retention", retention))
+		}
 	}
 	return opts
 }
@@ -1048,11 +1051,13 @@ func WithDefaultTextVerbosity(verbosity string) options.Option[Provider] {
 	}
 }
 
-// WithPromptCache sets the documented Responses prompt-cache key and retention.
+// WithPromptCache sets default cache key and retention for Responses and Chat.
+// Custom Chat endpoints opt in to these fields when this option is supplied.
 func WithPromptCache(key, retention string) options.Option[Provider] {
 	return func(p *Provider) {
+		p.promptCacheExplicit = true
 		p.responsesDefaults.promptCacheKey = key
-		if retention == "in-memory" || retention == "24h" {
+		if retention == promptCacheRetentionMemory || retention == promptCacheRetention24h {
 			p.responsesDefaults.promptCacheRetention = retention
 		}
 	}
