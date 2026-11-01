@@ -14,7 +14,7 @@ require (
 	github.com/zarldev/zarlmono/zarlcode v0.23.0
 	github.com/zarldev/zarlmono/zkit v0.23.0
 	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49
-	modernc.org/sqlite v1.60.1
+	modernc.org/sqlite v1.61.0
 )
 
 require (
@@ -90,7 +90,7 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.78 // indirect
-	modernc.org/libc v1.78.0 // indirect
+	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
