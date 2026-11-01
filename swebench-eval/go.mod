@@ -11,8 +11,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/pressly/goose/v3 v3.29.0
-	github.com/zarldev/zarlmono/zarlcode v0.20.1
-	github.com/zarldev/zarlmono/zkit v0.20.0
+	github.com/zarldev/zarlmono/zarlcode v0.23.0
+	github.com/zarldev/zarlmono/zkit v0.23.0
 	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49
 	modernc.org/sqlite v1.60.1
 )
@@ -34,6 +34,7 @@ require (
 	github.com/chromedp/chromedp v0.21.0 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
@@ -52,7 +53,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/openai/openai-go/v2 v2.7.1 // indirect
+	github.com/openai/openai-go/v3 v3.89.0 // indirect
 	github.com/parquet-go/bitpack v1.1.0 // indirect
 	github.com/parquet-go/jsonlite v1.5.5 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
