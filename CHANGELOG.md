@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add opt-in SWE-bench static experiments and bounded one-round harness refinement, with isolated probes, private evidence receipts, score-blind projections and no automatic promotion of generated guidance.
 - Add a scripted swarm experiment example and report-only code-risk tooling; strengthen repository-local link confinement against symlink escape.
 - Refresh scripted swarm board reads when a newer observation arrives before the next response, preventing a stale page from ending an otherwise ready evidence chain.
+- Align examples and swebench-eval with the separately published zkit and zarlcode v0.23.0 modules; tidy their standalone dependency graphs without adding downstream release tags.
 - Update the documentation site to Astro 7.4.2 and Starlight 0.42.7. Building the site requires Node >=22.23.4.
 - Extract the zarlos helper from the monorepo workspace and install tasks. It is not part of the zkit or zarlcode release artifacts; examples and swebench-eval also retain their own release lifecycles.
 

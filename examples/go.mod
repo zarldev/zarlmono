@@ -5,8 +5,8 @@ go 1.27.0
 require (
 	github.com/chromedp/chromedp v0.21.0
 	github.com/joho/godotenv v1.5.1
-	github.com/zarldev/zarlmono/zarlcode v0.20.1
-	github.com/zarldev/zarlmono/zkit v0.20.0
+	github.com/zarldev/zarlmono/zarlcode v0.23.0
+	github.com/zarldev/zarlmono/zkit v0.23.0
 )
 
 require (
@@ -18,8 +18,11 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.4 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/charmbracelet/x/ansi v0.11.9 // indirect
 	github.com/chromedp/cdproto v0.157.8 // indirect
+	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
@@ -34,11 +37,12 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/landlock-lsm/go-landlock v0.11.0 // indirect
 	github.com/lmittmann/tint v1.2.1 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/openai/openai-go/v2 v2.7.1 // indirect
+	github.com/openai/openai-go/v3 v3.89.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pressly/goose/v3 v3.29.0 // indirect
 	github.com/redis/go-redis/v9 v9.23.0 // indirect
@@ -55,6 +59,7 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
+	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
