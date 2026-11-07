@@ -3,7 +3,7 @@ module github.com/zarldev/zarlmono/examples
 go 1.27.0
 
 require (
-	github.com/chromedp/chromedp v0.21.0
+	github.com/chromedp/chromedp v0.22.0
 	github.com/joho/godotenv v1.5.1
 	github.com/zarldev/zarlmono/zarlcode v0.23.0
 	github.com/zarldev/zarlmono/zkit v0.23.0
@@ -19,7 +19,7 @@ require (
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/x/ansi v0.11.9 // indirect
-	github.com/chromedp/cdproto v0.157.8 // indirect
+	github.com/chromedp/cdproto v0.159.0 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
