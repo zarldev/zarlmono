@@ -3,7 +3,7 @@ module github.com/zarldev/zarlmono/zarlcode
 go 1.27.0
 
 require (
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/atotto/clipboard v0.1.4
@@ -18,7 +18,7 @@ require (
 	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
-	google.golang.org/genai v1.76.0
+	google.golang.org/genai v1.77.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
