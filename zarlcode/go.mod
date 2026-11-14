@@ -3,9 +3,9 @@ module github.com/zarldev/zarlmono/zarlcode
 go 1.27.0
 
 require (
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/glamour/v2 v2.0.1
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
@@ -16,9 +16,9 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/zarldev/zarlmono/zkit v0.23.0
 	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49
-	golang.org/x/sys v0.49.0
-	golang.org/x/term v0.47.0
-	google.golang.org/genai v1.76.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/term v0.48.0
+	google.golang.org/genai v1.77.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
