@@ -120,8 +120,9 @@ func newAuxiliaryPersistFixture(t *testing.T, late bool) (*beforeFixture, *atomi
 		limit = 2
 	}
 	live.SetLimits(64, limit, 6, 2)
+	testCtx := t.Context()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(testCtx), 10*time.Second)
 		defer cancel()
 		if err := live.Close(ctx); err != nil {
 			t.Error(err)

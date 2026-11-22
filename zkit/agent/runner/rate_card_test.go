@@ -171,9 +171,10 @@ func TestRunnerRateCardBlockedAcrossHostRevision(t *testing.T) {
 		old := runner.New(client, runner.WithRateCard(card))
 		var oldResult runner.TaskResult
 		done := make(chan struct{})
+		testCtx := t.Context()
 		go func() {
 			defer close(done)
-			oldResult = old.Run(t.Context(), runner.TaskSpec{Prompt: "old"})
+			oldResult = old.Run(testCtx, runner.TaskSpec{Prompt: "old"})
 		}()
 		<-started
 		synctest.Wait()

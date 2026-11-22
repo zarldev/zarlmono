@@ -309,9 +309,10 @@ func TestInvokeObservedFinalizesBeforeBlockedSettlement(t *testing.T) {
 				yield(llm.CompletionChunk{UsageReported: true, Usage: llm.Usage{TotalTokens: 3}}, nil)
 			}
 		})
+		testCtx := t.Context()
 		go func() {
 			defer close(done)
-			if err := (inference.Scope{Account: account}).InvokeObserved(t.Context(), inference.Call{}, source, llm.CompletionRequest{}, func(stream llm.CompletionStream) {
+			if err := (inference.Scope{Account: account}).InvokeObserved(testCtx, inference.Call{}, source, llm.CompletionRequest{}, func(stream llm.CompletionStream) {
 				stream(func(llm.CompletionChunk, error) bool { <-releaseYield; return true })
 				time.Sleep(20 * time.Second) // Later consumer work is excluded too.
 			}, func(_ context.Context, o inference.Observation) { event = o; callbacks++ }); err != nil {
@@ -392,6 +393,7 @@ func TestInvokeObservedFallbackFinalizesBeforeBlockedSettlement(t *testing.T) {
 					}
 					return func(func(llm.CompletionChunk, error) bool) { t.Error("unconsumed stream invoked") }
 				})
+				testCtx := t.Context()
 				go func() {
 					defer close(done)
 					defer func() {
@@ -400,7 +402,7 @@ func TestInvokeObservedFallbackFinalizesBeforeBlockedSettlement(t *testing.T) {
 							t.Errorf("stage %s panic = %v", stage, got)
 						}
 					}()
-					if err := (inference.Scope{Account: account}).InvokeObserved(t.Context(), inference.Call{}, source, llm.CompletionRequest{}, func(llm.CompletionStream) {
+					if err := (inference.Scope{Account: account}).InvokeObserved(testCtx, inference.Call{}, source, llm.CompletionRequest{}, func(llm.CompletionStream) {
 						if stage == "consume" {
 							panic("consume panic")
 						}

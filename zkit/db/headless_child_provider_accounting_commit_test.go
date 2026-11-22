@@ -61,11 +61,12 @@ func TestHeadlessChildAccountingConcurrentStores(t *testing.T) {
 	start := headlessAccountingStart("concurrent")
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
+	testCtx := t.Context()
 	for _, store := range []*db.Store{s, other} {
 		wg.Add(1)
 		go func(store *db.Store) {
 			defer wg.Done()
-			errs <- commitChildren(t.Context(), store, start, childEntry("same", 1))
+			errs <- commitChildren(testCtx, store, start, childEntry("same", 1))
 		}(store)
 	}
 	wg.Wait()

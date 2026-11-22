@@ -127,9 +127,10 @@ func TestHeadlessAccountingRecorderConcurrentReplacementSurvivesOldACK(t *testin
 	defer closeConn()
 	before := store.DB().Stats().WaitCount
 	first, second := make(chan struct{}), make(chan struct{})
-	go func() { defer close(first); rec.Attempt(t.Context(), headlessReport(1, "older", 1)) }()
+	testCtx := t.Context()
+	go func() { defer close(first); rec.Attempt(testCtx, headlessReport(1, "older", 1)) }()
 	waitHeadlessWriter(t, store, before)
-	go func() { defer close(second); rec.Attempt(t.Context(), headlessReport(1, "newer", 2)) }()
+	go func() { defer close(second); rec.Attempt(testCtx, headlessReport(1, "newer", 2)) }()
 	// The second call has no database queue until the first writer leaves. Its
 	// eventual checkpoint must still persist the newer arrival, even if an old
 	// transaction acknowledged attempt 1 while it was pending.
@@ -291,7 +292,8 @@ func TestHeadlessAccountingSyntheticReportKeepsLateLeaseAndJoins(t *testing.T) {
 		}
 		release := sync.OnceFunc(func() { close(p.release) })
 		done := make(chan runner.TaskResult, 1)
-		go func() { done <- live.RunHeadless(t.Context(), "late usage", 1) }()
+		testCtx := t.Context()
+		go func() { done <- live.RunHeadless(testCtx, "late usage", 1) }()
 		joined := false
 		defer func() {
 			release()

@@ -363,7 +363,8 @@ func TestBoundTargetRateCardLoopbackRunnerDelivery(t *testing.T) {
 	frozen := old.RateCard.Clone()
 	run := runner.New(runner.ClientFromProvider(old.Provider), runner.WithRateCard(frozen), runner.WithSink(sink))
 	done := make(chan runner.TaskResult, 1)
-	go func() { done <- run.Run(t.Context(), runner.TaskSpec{Prompt: "go"}) }()
+	testCtx := t.Context()
+	go func() { done <- run.Run(testCtx, runner.TaskSpec{Prompt: "go"}) }()
 	select {
 	case <-started:
 	case early := <-done:

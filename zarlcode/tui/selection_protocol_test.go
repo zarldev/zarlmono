@@ -123,8 +123,9 @@ func newProtocolSelectionUI(t *testing.T, protocol llm.ModelProtocol) (*engine.S
 		}
 	})
 	live := engine.NewLiveRunner(provider, ws, initial.Model)
+	testCtx := t.Context()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(testCtx), 5*time.Second)
 		defer cancel()
 		if err := live.Close(ctx); err != nil {
 			t.Error(err)

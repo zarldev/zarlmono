@@ -144,8 +144,9 @@ func TestRateCardChildActualDispatch(t *testing.T) {
 			t.Cleanup(func() { _ = workspace.Close() })
 			sink := &childRateCardSink{}
 			live := engine.NewLiveRunner(prepared.Provider, workspace, prepared.Spec.Model, engine.WithSettings(settings), engine.WithLiveSink(sink))
+			testCtx := t.Context()
 			t.Cleanup(func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(testCtx), 5*time.Second)
 				defer cancel()
 				if err := live.Close(ctx); err != nil {
 					t.Error(err)
@@ -246,8 +247,9 @@ func TestRateCardChildChangedConnectionDoesNotBorrowBasis(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workspace.Close() })
 	live := engine.NewLiveRunner(prepared.Provider, workspace, prepared.Spec.Model, engine.WithSettings(settings))
+	testCtx := t.Context()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(testCtx), 5*time.Second)
 		defer cancel()
 		if err := live.Close(ctx); err != nil {
 			t.Error(err)

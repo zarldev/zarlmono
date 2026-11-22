@@ -32,8 +32,9 @@ func TestPreparedChildTargetConstructionScopeAndBudget(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ws.Close() })
 	live := engine.NewLiveRunner(prepared.Provider, ws, prepared.Spec.Model, engine.WithSettings(settings))
+	testCtx := t.Context()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(testCtx), 5*time.Second)
 		defer cancel()
 		if err := live.Close(ctx); err != nil {
 			t.Error(err)

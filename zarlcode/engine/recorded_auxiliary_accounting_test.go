@@ -164,9 +164,10 @@ func TestRecordedAuxiliaryOuterBudgetNeverFabricatesDeniedPlanner(t *testing.T) 
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- goal.Run(t.Context()) }()
+	testCtx := t.Context()
+	go func() { done <- goal.Run(testCtx) }()
 	defer func() {
-		_ = goal.Close(context.WithoutCancel(t.Context()))
+		_ = goal.Close(context.WithoutCancel(testCtx))
 		if err := <-done; !errors.Is(err, swarm.ErrBudget) {
 			t.Errorf("budget run: %v", err)
 		}

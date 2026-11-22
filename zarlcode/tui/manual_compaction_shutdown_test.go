@@ -31,9 +31,10 @@ func TestManualCompactionTUIShutdownJoinsCanceledProviderAfterDeadline(t *testin
 	var workers sync.WaitGroup
 	workers.Go(func() { _ = command() })
 	var releaseOnce sync.Once
+	testCtx := t.Context()
 	t.Cleanup(func() {
 		releaseOnce.Do(func() { close(release) })
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(testCtx), 5*time.Second)
 		defer cancel()
 		if err := f.ui.FlushSessionPersistence(ctx); err != nil {
 			t.Error(err)

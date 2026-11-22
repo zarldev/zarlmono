@@ -151,7 +151,8 @@ func TestModelSourceRefreshWaitCancellation(t *testing.T) {
 		})}))
 		source := litellm.NewModelSource(p, time.Minute)
 		done := make(chan error, 1)
-		go func() { _, err := source.Refresh(t.Context()); done <- err }()
+		testCtx := t.Context()
+		go func() { _, err := source.Refresh(testCtx); done <- err }()
 		<-started
 		cause := errors.New("cancel queued refresh")
 		ctx, cancel := context.WithCancelCause(t.Context())

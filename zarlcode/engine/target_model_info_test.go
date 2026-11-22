@@ -112,7 +112,8 @@ func TestTargetModelInfoOldCompletionCannotEnrichNewGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, refreshErr := old.Facts.RefreshModelInfo(t.Context()); done <- refreshErr }()
+	testCtx := t.Context()
+	go func() { _, refreshErr := old.Facts.RefreshModelInfo(testCtx); done <- refreshErr }()
 	<-started
 	spec.APIKey = "new-test-key"
 	next, err := settings.PrepareTargetCached(t.Context(), spec)

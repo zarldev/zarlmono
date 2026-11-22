@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### zkit
+
+- Add a first-class LiteLLM adapter with explicit protocol selection, opaque request aliases, optional model-info discovery, and conservative capability and billing evidence. Gateway declarations do not prove the serving model, effective capabilities, or applicable prices.
+- Preserve provider-native streaming/nonstream content and replay data, and retain precise JSON numbers in tool arguments and validation. Google Interactions support remains an opt-in library surface; this does not qualify a Vertex or live gateway deployment.
+- Record provider invocation, usage, cache and pricing observations with explicit unknown states, including helper and child inference. These observations do not account for hidden physical HTTP retries or constitute an audited invoice.
+- Add per-alias cache-policy storage and effective constructor facts for Anthropic-compatible and supported LiteLLM codecs. Generated-marker policy does not grant permission to forward arbitrary replay markers.
+
+### zarlcode
+
+- Add durable provider/accounting evidence for recorded turns, headless attempts, children, helpers and manual compaction, with cancellation-aware settlement and storage-only retries.
+- Add per-alias cache-policy editing under Settings → Providers → `c`, with separate saved and active state, supported TTL/site choices, and safe retry when the active target cannot be refreshed.
+- Pin cache construction policy for exact replay while preserving the original runtime override intent; later model or alias selections resolve their own configured policy. LiteLLM is not newly qualified for exact replay.
+- Add `gpt-6.2-astra`, `gpt-6.2-sol`, and `gpt-6.1-terra` to the Codex fallback catalogue without changing saved selections or the provider default. Account-specific availability and live usable budgets remain authoritative.
+- Prevent indexed provider text from being interpreted as an unindexed synthetic tool call that makes a checkpoint unsaveable; preserve native output ordering and ordinary unindexed fallback behavior.
+- Keep manual compaction owned through persistence, retry repaired drafts without another provider call, and join canceled or interrupted work before shutdown releases its reservation.
+
+#### Upgrade and qualification notes
+
+- Back up session state and vault metadata before upgrading. The new persistence tables advance the database to schema **44**; an older executable must not be used against an upgraded database. Do not lower the schema version to bypass that guard.
+- “Disabled” cache policy means no generated cache markers, not disabling server caching or stripping existing native replay controls. Cache requests do not prove storage or a cache hit.
+- This scoped release preparation excludes the newer configured-catalogue-reference prototype, durable gateway affinity/credential-epoch work, live multi-deployment acceptance, and the separate zarlOS workspace expansion.
+- A compatible published zkit version and portable generator prerequisite must be qualified before standalone application publication. Credentialed provider/stream/tool/cancellation qualification and native release CI remain separate release gates.
+
 ### workspace and other modules
 
 - Add opt-in SWE-bench static experiments and bounded one-round harness refinement, with isolated probes, private evidence receipts, score-blind projections and no automatic promotion of generated guidance.

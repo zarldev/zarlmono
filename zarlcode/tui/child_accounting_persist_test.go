@@ -89,8 +89,9 @@ func configureLateChildFixture(t *testing.T, f *beforeFixture, partial bool) (*b
 	live := engine.NewLiveRunner(p, f.ws, "saved-model", engine.WithReadOnlyTasks(), engine.WithLiveSink(sink))
 	live.SetProviderSpec(p, engine.ProviderSpec{Name: "openai", Model: "saved-model"})
 	live.SetLimits(1024, 1, 3, 1)
+	testCtx := t.Context()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(testCtx), 10*time.Second)
 		defer cancel()
 		if err := live.Close(ctx); err != nil {
 			t.Error(err)
