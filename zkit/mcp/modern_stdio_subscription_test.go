@@ -203,8 +203,12 @@ func TestModernStdioSyntheticPeer(t *testing.T) {
 			if json.Unmarshal(request.Params, &params) != nil || string(params["requestId"]) != `"subscription"` || !hasModernProtocolMetadata(request.Params) {
 				return
 			}
+			// The reply acknowledges completed cancellation. Write the evidence
+			// before replying so Close's wait for this reply also observes it.
+			if err := os.WriteFile(os.Getenv("ZARL_MCP_MODERN_STDIO_MARKER"), []byte("requests/cancel\n"), 0o600); err != nil {
+				return
+			}
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"resultType": "complete"}})
-			_ = os.WriteFile(os.Getenv("ZARL_MCP_MODERN_STDIO_MARKER"), []byte("requests/cancel\n"), 0o600)
 		default:
 			return
 		}
