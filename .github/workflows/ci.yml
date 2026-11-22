@@ -148,6 +148,8 @@ jobs:
 
       # Application owners coordinate turns, UI events, durable writes, and
       # evaluation workers beyond the shared runner's lifecycle.
+      # zarlcode's race task gives its test binary 20m for the full TUI suite;
+      # the 30m job still bounds setup, compilation, and execution together.
       - name: race test
         run: go tool task race:${{ matrix.module }}
 

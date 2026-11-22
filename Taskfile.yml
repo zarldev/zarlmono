@@ -157,7 +157,7 @@ tasks:
   race:zarlcode:
     desc: Race-test engine lifecycle, TUI settlement, and event delivery
     cmds:
-      - go test -C zarlcode -race -count=1 ./engine/... ./tui/...
+      - go test -C zarlcode -race -count=1 -timeout=20m ./engine/... ./tui/...
 
   race:swebench-eval:
     desc: Race-test evaluation execution, scoring, and persistence

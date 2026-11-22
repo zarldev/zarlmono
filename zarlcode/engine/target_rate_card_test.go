@@ -38,7 +38,7 @@ func targetCardConfig(t *testing.T, target engine.RateCardTarget, revision strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := engine.ParseRateCardConfig(data, time.Unix(1, 0))
+	config, err := engine.ParseRateCardConfig(data, time.Unix(1, 0).UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
