@@ -16,6 +16,7 @@ func TestProvider_ThoughtAndAnswerChannelsStayDisjoint(t *testing.T) {
 	defer server.Close()
 
 	chunks := completeGoogle(t, server.URL, llm.CompletionRequest{
+		Stream:   true,
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "answer"}},
 	})
 	var content, thinking strings.Builder
@@ -36,6 +37,7 @@ func TestProvider_ThoughtsAndToolCallsAreBothSurfaced(t *testing.T) {
 	defer server.Close()
 
 	chunks := completeGoogle(t, server.URL, llm.CompletionRequest{
+		Stream:   true,
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "read it"}},
 	})
 	var thinking strings.Builder
@@ -66,6 +68,7 @@ func TestProvider_RequestsThoughts(t *testing.T) {
 	defer server.Close()
 
 	completeGoogle(t, server.URL, llm.CompletionRequest{
+		Stream:      true,
 		Messages:    []llm.Message{{Role: llm.RoleUser, Content: "think"}},
 		Temperature: 0.4,
 	})

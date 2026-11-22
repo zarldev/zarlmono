@@ -29,7 +29,7 @@ func TestReasoningUsageIsSubtotalWithConservativePresence(t *testing.T) {
 				t.Fatal(err)
 			}
 			var usage llm.Usage
-			for chunk, err := range provider.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}}) {
+			for chunk, err := range provider.Complete(t.Context(), llm.CompletionRequest{Stream: true, Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}}) {
 				if err != nil {
 					t.Fatal(err)
 				}

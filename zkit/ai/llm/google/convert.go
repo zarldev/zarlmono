@@ -1,9 +1,16 @@
 package google
 
 import (
+	"bytes"
+	"cmp"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/big"
+	"reflect"
+	"slices"
 	"strings"
 
 	"google.golang.org/genai"
@@ -23,11 +30,14 @@ func decodeBase64(s string) ([]byte, error) {
 //
 // All system messages collapse into one SystemInstruction (joined
 // with blank lines) — Gemini only honours one system block.
-func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) {
+func convertMessages(ctx context.Context, messages []llm.Message) (*genai.Content, []*genai.Content, error) {
 	var sys *genai.Content
 	var contents []*genai.Content
 	var sysParts []string
-	for _, m := range messages {
+	for messageIndex, m := range messages {
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, nil, cause
+		}
 		switch m.Role {
 		case llm.RoleSystem:
 			if m.Content != "" {
@@ -54,26 +64,31 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 				Parts: parts,
 			})
 		case llm.RoleAssistant:
-			parts := []*genai.Part{}
-			if m.Content != "" {
-				parts = append(parts, &genai.Part{Text: m.Content})
+			parts, native, err := continuationParts(ctx, m)
+			if err != nil {
+				return nil, nil, err
 			}
-			for _, tc := range m.ToolCalls {
-				if native := signedFunctionCallPart(m.ContinuationItems, tc); native != nil {
-					parts = append(parts, native)
-					continue
+			if !native {
+				if m.Content != "" {
+					parts = append(parts, &genai.Part{Text: m.Content})
 				}
-				args := map[string]any{}
-				if tc.Function.Arguments != "" {
-					_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				for _, tc := range m.ToolCalls {
+					native, found, err := signedFunctionCallPart(ctx, m.ContinuationItems, tc)
+					if err != nil {
+						return nil, nil, err
+					}
+					if found {
+						parts = append(parts, native)
+						continue
+					}
+					args := map[string]any{}
+					if tc.Function.Arguments != "" {
+						_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+					}
+					parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{
+						ID: tc.ID, Name: tc.Function.Name, Args: args,
+					}})
 				}
-				parts = append(parts, &genai.Part{
-					FunctionCall: &genai.FunctionCall{
-						ID:   tc.ID,
-						Name: tc.Function.Name,
-						Args: args,
-					},
-				})
 			}
 			if len(parts) == 0 {
 				continue
@@ -88,10 +103,14 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 			//
 			// MCP/zarlcode tool results are plain text; wrap as
 			// {"result": <text>} so the schema matches what models expect.
+			name, err := toolNameFromID(ctx, messages[:messageIndex], m.ToolCallID)
+			if err != nil {
+				return nil, nil, err
+			}
 			resp := map[string]any{"result": m.Content}
 			part := &genai.Part{FunctionResponse: &genai.FunctionResponse{
 				ID:       m.ToolCallID,
-				Name:     toolNameFromID(messages, m.ToolCallID),
+				Name:     name,
 				Response: resp,
 			}}
 			if len(contents) > 0 && contents[len(contents)-1].Role == llm.RoleUser {
@@ -111,45 +130,365 @@ func convertMessages(messages []llm.Message) (*genai.Content, []*genai.Content) 
 			Parts: []*genai.Part{{Text: strings.Join(sysParts, "\n\n")}},
 		}
 	}
-	return sys, contents
+	return sys, contents, nil
 }
-func signedFunctionCallPart(items []llm.ContinuationItem, call llm.ToolCall) *genai.Part {
+
+// continuationParts decodes v2's complete replay projection. Supplied display
+// text and reasoning must agree with the native projection; absent display
+// fields permit native-only histories. Native parts are never repaired.
+func continuationParts(ctx context.Context, message llm.Message) ([]*genai.Part, bool, error) {
+	var items []llm.ContinuationItem
+	legacy := false
+	legacyIDs := make(map[string]struct{})
+	for _, item := range message.ContinuationItems {
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, false, cause
+		}
+		if item.Provider != continuationProvider {
+			continue
+		}
+		switch item.Format {
+		case continuationFormat:
+			items = append(items, item)
+		case legacyContinuationFormat:
+			legacy = true
+			if _, err := decodeLegacyPart(ctx, item); err != nil {
+				return nil, false, err
+			}
+			if _, exists := legacyIDs[item.ID]; exists {
+				return nil, false, errors.New("google: ambiguous legacy continuation function-call ID")
+			}
+			legacyIDs[item.ID] = struct{}{}
+		}
+	}
+	if len(items) == 0 {
+		if legacy {
+			seen := make(map[string]struct{}, len(message.ToolCalls))
+			for _, call := range message.ToolCalls {
+				if _, exists := seen[call.ID]; exists {
+					return nil, false, errors.New("google: ambiguous display tool-call ID")
+				}
+				seen[call.ID] = struct{}{}
+				delete(legacyIDs, call.ID)
+			}
+			if len(legacyIDs) != 0 {
+				return nil, false, errors.New("google: legacy continuation has no matching display tool call")
+			}
+		}
+		return nil, false, nil
+	}
+	if legacy {
+		return nil, false, errors.New("google: mixed legacy and complete continuation formats")
+	}
 	for _, item := range items {
-		if item.Provider != continuationProvider || item.Format != continuationFormat ||
-			item.Kind != "function_call" || item.ID != call.ID ||
-			(item.OutputIndex != nil && call.OutputIndex != nil && *item.OutputIndex != *call.OutputIndex) {
-			continue
+		if item.OutputIndex == nil || *item.OutputIndex < 0 {
+			return nil, false, errors.New("google: continuation part requires a nonnegative output index")
 		}
-		var part genai.Part
-		if json.Unmarshal(item.Data, &part) != nil || part.FunctionCall == nil ||
-			(part.FunctionCall.ID != "" && part.FunctionCall.ID != call.ID) ||
-			part.FunctionCall.Name != call.Function.Name || len(part.ThoughtSignature) == 0 {
-			continue
+	}
+	// Sort our own slice, never the borrowed message's continuation items.
+	slices.SortStableFunc(items, func(a, b llm.ContinuationItem) int {
+		return cmp.Compare(*a.OutputIndex, *b.OutputIndex)
+	})
+	parts := make([]*genai.Part, 0, len(items))
+	type nativeCall struct {
+		function    genai.FunctionCall
+		outputIndex int
+	}
+	calls := make(map[string]nativeCall)
+	var content, reasoning strings.Builder
+	for index, item := range items {
+		if index > 0 && *items[index-1].OutputIndex == *item.OutputIndex {
+			return nil, false, fmt.Errorf("google: duplicate continuation output index %d", *item.OutputIndex)
 		}
-		return &part
+		part, err := decodeContinuationPart(ctx, item)
+		if err != nil {
+			return nil, false, err
+		}
+		if part.FunctionCall != nil {
+			id := item.ID
+			if id == "" {
+				id = part.FunctionCall.ID
+			}
+			if _, exists := calls[id]; exists {
+				return nil, false, errors.New("google: ambiguous native continuation function-call ID")
+			}
+			calls[id] = nativeCall{function: *part.FunctionCall, outputIndex: *item.OutputIndex}
+		}
+		if part.Thought {
+			reasoning.WriteString(part.Text)
+		} else {
+			content.WriteString(part.Text)
+		}
+		parts = append(parts, part)
+	}
+	if (message.Content != "" && message.Content != content.String()) ||
+		(message.ReasoningContent != "" && message.ReasoningContent != reasoning.String()) {
+		return nil, false, errors.New("google: display text does not match native continuation")
+	}
+	seenCalls := make(map[string]struct{}, len(message.ToolCalls))
+	for _, call := range message.ToolCalls {
+		if _, exists := seenCalls[call.ID]; exists {
+			return nil, false, errors.New("google: ambiguous display tool-call ID")
+		}
+		seenCalls[call.ID] = struct{}{}
+		native, exists := calls[call.ID]
+		if !exists || native.function.Name != call.Function.Name ||
+			(call.OutputIndex != nil && *call.OutputIndex != native.outputIndex) {
+			return nil, false, errors.New("google: tool call does not match native continuation")
+		}
+		if err := validateCallArguments(ctx, call, native.function); err != nil {
+			return nil, false, err
+		}
+	}
+	return parts, true, nil
+}
+
+// validateCallArguments compares the display projection to the signed argument
+// object without replacing native data. Only root parameterless representations
+// (empty string, null, omitted args and {}) are interchangeable.
+func validateCallArguments(ctx context.Context, call llm.ToolCall, function genai.FunctionCall) error {
+	var args map[string]any
+	if call.Function.Arguments != "" {
+		if err := decodeReplayJSON([]byte(call.Function.Arguments), &args); err != nil {
+			return fmt.Errorf("google: decode tool-call arguments: %w", err)
+		}
+	}
+	if (len(args) != 0 || len(function.Args) != 0) && !equalReplayJSON(ctx, args, function.Args) {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		return errors.New("google: tool-call arguments do not match native continuation")
 	}
 	return nil
+}
+
+// decodeReplayJSON preserves both json.Unmarshal's strict syntax errors and
+// exact numbers in open SDK fields, rather than rounding them through float64.
+func decodeReplayJSON(data []byte, target any) error {
+	var raw json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	return decoder.Decode(target)
+}
+
+// equalReplayJSON compares parsed JSON without changing the signed native data.
+// Decimal and exponent spellings compare by exact value, including large integers.
+func equalReplayJSON(ctx context.Context, left, right any) bool {
+	if context.Cause(ctx) != nil {
+		return false
+	}
+	switch value := left.(type) {
+	case json.Number:
+		other, ok := right.(json.Number)
+		if !ok {
+			return false
+		}
+		return equalReplayNumber(value, other)
+	case map[string]any:
+		other, ok := right.(map[string]any)
+		if !ok || len(value) != len(other) {
+			return false
+		}
+		for key, entry := range value {
+			otherEntry, exists := other[key]
+			if !exists || !equalReplayJSON(ctx, entry, otherEntry) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		other, ok := right.([]any)
+		if !ok || len(value) != len(other) {
+			return false
+		}
+		for index, entry := range value {
+			if !equalReplayJSON(ctx, entry, other[index]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(left, right)
+	}
+}
+
+// equalReplayNumber compares normalized decimal coefficients and exponents.
+// The bigint stores only the exponent itself, never a power of ten: compact
+// huge exponents therefore require space proportional to their spelling, not
+// their value. Inputs are already validated JSON numbers.
+func equalReplayNumber(left, right json.Number) bool {
+	a, aExponent := replayDecimal(left)
+	b, bExponent := replayDecimal(right)
+	return a == b && aExponent.Cmp(&bExponent) == 0
+}
+
+func replayDecimal(number json.Number) (string, big.Int) {
+	text := string(number)
+	negative := strings.HasPrefix(text, "-")
+	text = strings.TrimPrefix(text, "-")
+	mantissa, exponentText := text, "0"
+	if index := strings.IndexAny(text, "eE"); index >= 0 {
+		mantissa, exponentText = text[:index], text[index+1:]
+	}
+	fractionDigits := 0
+	if index := strings.IndexByte(mantissa, '.'); index >= 0 {
+		fractionDigits = len(mantissa) - index - 1
+	}
+	coefficient := strings.TrimLeft(strings.ReplaceAll(mantissa, ".", ""), "0")
+	var exponent big.Int
+	if coefficient == "" {
+		return "0", exponent
+	}
+	trimmed := strings.TrimRight(coefficient, "0")
+	offset := big.NewInt(int64(len(coefficient) - len(trimmed) - fractionDigits))
+	exponent.SetString(exponentText, 10)
+	exponent.Add(&exponent, offset)
+	if negative {
+		trimmed = "-" + trimmed
+	}
+	return trimmed, exponent
+}
+
+func validateReplayNumbers(ctx context.Context, raw any) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	switch value := raw.(type) {
+	case json.Number:
+		// The request-local body hook restores exact numbers after SDK conversion,
+		// including rounding and underflow. Overflow still makes the SDK's initial
+		// float64 remarshal fail before that hook can run; reject it before dispatch.
+		if _, err := value.Float64(); err != nil {
+			return errors.New("google: continuation number cannot encode through SDK JSON")
+		}
+	case map[string]any:
+		for _, entry := range value {
+			if err := validateReplayNumbers(ctx, entry); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, entry := range value {
+			if err := validateReplayNumbers(ctx, entry); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func decodeContinuationPart(ctx context.Context, item llm.ContinuationItem) (*genai.Part, error) {
+	var raw any
+	if err := decodeReplayJSON(item.Data, &raw); err != nil {
+		return nil, fmt.Errorf("google: decode continuation part: %w", err)
+	}
+	if err := validateReplayNumbers(ctx, raw); err != nil {
+		return nil, err
+	}
+
+	var part genai.Part
+	if err := decodeReplayJSON(item.Data, &part); err != nil {
+		return nil, fmt.Errorf("google: decode continuation part: %w", err)
+	}
+	// Null, empty objects and unknown-only payloads have no replayable SDK data.
+	data, err := json.Marshal(part)
+	if err != nil {
+		return nil, fmt.Errorf("google: encode continuation part: %w", err)
+	}
+	if string(data) == "{}" || (part.FunctionCall != nil && part.FunctionCall.Name == "") {
+		return nil, errors.New("google: continuation part has no replayable content")
+	}
+	if part.FunctionCall != nil && item.ID != "" && part.FunctionCall.ID != "" && item.ID != part.FunctionCall.ID {
+		return nil, errors.New("google: continuation function-call ID does not match native data")
+	}
+	return &part, nil
+}
+
+func decodeLegacyPart(ctx context.Context, item llm.ContinuationItem) (*genai.Part, error) {
+	part, err := decodeContinuationPart(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	if part.FunctionCall == nil || len(part.ThoughtSignature) == 0 {
+		return nil, errors.New("google: legacy continuation requires a signed function call")
+	}
+	return part, nil
+}
+
+func signedFunctionCallPart(ctx context.Context, items []llm.ContinuationItem, call llm.ToolCall) (*genai.Part, bool, error) {
+	for _, item := range items {
+		if item.Provider != continuationProvider || item.Format != legacyContinuationFormat || item.ID != call.ID {
+			continue
+		}
+		part, err := decodeLegacyPart(ctx, item)
+		if err != nil {
+			return nil, false, err
+		}
+		if part.FunctionCall.Name != call.Function.Name ||
+			(item.OutputIndex != nil && call.OutputIndex != nil && *item.OutputIndex != *call.OutputIndex) {
+			return nil, false, errors.New("google: tool call does not match legacy continuation")
+		}
+		if err := validateCallArguments(ctx, call, *part.FunctionCall); err != nil {
+			return nil, false, err
+		}
+		return part, true, nil
+	}
+	return nil, false, nil
 }
 
 // toolNameFromID walks back through messages to find the assistant
 // tool-call whose ID matches — Gemini's FunctionResponse requires the
 // Name (not just ID) to bind the response to the call.
-func toolNameFromID(messages []llm.Message, id string) string {
-	for _, m := range messages {
-		if m.Role != llm.RoleAssistant {
+func toolNameFromID(ctx context.Context, messages []llm.Message, id string) (string, error) {
+	// Only preceding messages are supplied, so later reuse cannot change an
+	// earlier response. The nearest assistant binding wins across turns.
+	for index := len(messages) - 1; index >= 0; index-- {
+		if cause := context.Cause(ctx); cause != nil {
+			return "", cause
+		}
+		message := messages[index]
+		if message.Role != llm.RoleAssistant {
 			continue
 		}
-		for _, tc := range m.ToolCalls {
-			if tc.ID == id {
-				return tc.Function.Name
+		for _, call := range message.ToolCalls {
+			if call.ID == id {
+				return call.Function.Name, nil
+			}
+		}
+		for _, item := range message.ContinuationItems {
+			if item.Provider != continuationProvider ||
+				(item.Format != continuationFormat && item.Format != legacyContinuationFormat) {
+				continue
+			}
+			part, err := decodeContinuationPart(ctx, item)
+			if err != nil {
+				return "", err
+			}
+			if part.FunctionCall == nil {
+				continue
+			}
+			routingID := item.ID
+			if routingID == "" {
+				routingID = part.FunctionCall.ID
+			}
+			if routingID == id {
+				return part.FunctionCall.Name, nil
 			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func validateMessages(messages []llm.Message) error {
 	for _, message := range messages {
+		for _, item := range message.ContinuationItems {
+			if item.Provider == continuationProvider && item.Format == interactionsContinuationFormat {
+				return interactionsUnsupported()
+			}
+		}
 		for _, part := range message.Parts {
 			switch part.Type {
 			case llm.ContentTypeText:
@@ -247,65 +586,16 @@ func convertTools(tools []llm.Tool) []*genai.Tool {
 	}
 	decls := make([]*genai.FunctionDeclaration, 0, len(tools))
 	for _, t := range tools {
-		schema := jsonSchemaToGenAI(t.Function.Parameters)
-		decls = append(decls, &genai.FunctionDeclaration{
+		decl := &genai.FunctionDeclaration{
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
-			Parameters:  schema,
-		})
+		}
+		if !t.Function.Parameters.IsZero() {
+			// The raw JSON Schema field preserves constraints and enum value types
+			// that cannot be represented by the SDK's OpenAPI Schema type.
+			decl.ParametersJsonSchema = t.Function.Parameters.Map()
+		}
+		decls = append(decls, decl)
 	}
 	return []*genai.Tool{{FunctionDeclarations: decls}}
-}
-
-// jsonSchemaToGenAI converts a JSON-Schema (the OpenAI-style
-// map[string]any tools speak) into a genai.Schema. Walks
-// {type, properties, items, required, description, enum} recursively.
-// Open-world keys (Schema.Extra) are dropped — Gemini's schema is a subset of
-// JSON Schema and rejects fields it doesn't recognise.
-func jsonSchemaToGenAI(schema llm.Schema) *genai.Schema {
-	if schema.IsZero() {
-		return nil
-	}
-	out := &genai.Schema{}
-
-	if schema.Type != "" {
-		out.Type = jsonTypeToGenAI(schema.Type)
-	}
-	if schema.Description != "" {
-		out.Description = schema.Description
-	}
-	for _, v := range schema.Enum {
-		out.Enum = append(out.Enum, fmt.Sprint(v))
-	}
-	out.Required = append(out.Required, schema.Required...)
-	if schema.Items != nil {
-		out.Items = jsonSchemaToGenAI(*schema.Items)
-	}
-	if len(schema.Properties) > 0 {
-		out.Properties = make(map[string]*genai.Schema, len(schema.Properties))
-		for k, v := range schema.Properties {
-			out.Properties[k] = jsonSchemaToGenAI(v)
-		}
-	}
-	return out
-}
-
-// jsonTypeToGenAI maps a JSON-Schema "type" string to genai.Type. Falls
-// back to TypeObject for unknown values so the call doesn't crash.
-func jsonTypeToGenAI(t string) genai.Type {
-	switch strings.ToLower(t) {
-	case "string":
-		return genai.TypeString
-	case "number":
-		return genai.TypeNumber
-	case "integer":
-		return genai.TypeInteger
-	case "boolean":
-		return genai.TypeBoolean
-	case "array":
-		return genai.TypeArray
-	case "object":
-		return genai.TypeObject
-	}
-	return genai.TypeObject
 }

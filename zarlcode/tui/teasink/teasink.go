@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,8 @@ import (
 //
 // The send function is held atomically so it can be swapped at
 // runtime (e.g. between testSend and program.Send). nil send
-// silently drops messages — useful before the program is wired.
+// silently drops messages in legacy mode — useful before the program is wired.
+// NewApplicationSink instead retains accepted messages until application.
 //
 // # Content coalescing
 //
@@ -154,6 +156,9 @@ func (s *Sink) SetSend(send func(tea.Msg)) {
 	}
 	fn := sendFunc(send)
 	s.send.Store(&fn)
+	s.queue.mu.Lock()
+	s.queue.signal()
+	s.queue.mu.Unlock()
 	s.startPump()
 }
 
@@ -170,9 +175,17 @@ func (s *Sink) Close() {
 		}
 	})
 	<-s.done
+	if s.queue.application {
+		s.waitApplicationCallback()
+	}
 }
 
 func (s *Sink) startPump() {
+	s.queue.mu.Lock()
+	defer s.queue.mu.Unlock()
+	if s.queue.closed {
+		return
+	}
 	if !s.started.CompareAndSwap(false, true) {
 		return
 	}
@@ -185,6 +198,10 @@ func (s *Sink) startPump() {
 // can't kill the pump and back up subsequent events.
 func (s *Sink) pump() {
 	defer close(s.done)
+	if s.queue.application {
+		s.pumpApplications()
+		return
+	}
 	for !s.stopped() {
 		msg, changed := s.queue.pop()
 		if msg != nil {
@@ -245,7 +262,7 @@ func (s *Sink) recoverDelivery() {
 // pump buffer is full (sustained overrun — rare under normal use,
 // and counted via [Sink.Overflows] when it happens).
 func (s *Sink) dispatch(msg tea.Msg) {
-	if !s.started.Load() {
+	if !s.started.Load() && !s.queue.application {
 		return
 	}
 	counted := false
@@ -287,11 +304,15 @@ func (s *Sink) OnContent(ctx context.Context, e runner.Content) {
 		return
 	}
 	key := contentKey{TaskID: string(e.TaskID), Depth: e.Depth}
+	var outputIndex *int
+	if e.ContentOutputIndex != nil {
+		outputIndex = new(*e.ContentOutputIndex)
+	}
 
 	s.mu.Lock()
 	pending, exists := s.pending[key]
-	if exists && e.ContentOutputIndex != nil &&
-		(pending.contentOutputIndex == nil || *pending.contentOutputIndex != *e.ContentOutputIndex) {
+	if exists && outputIndex != nil &&
+		(pending.contentOutputIndex == nil || *pending.contentOutputIndex != *outputIndex) {
 		s.flushLocked()
 		pending = pendingContent{}
 		exists = false
@@ -300,8 +321,8 @@ func (s *Sink) OnContent(ctx context.Context, e runner.Content) {
 		s.keyOrder = append(s.keyOrder, key)
 	}
 	pending.delta += e.Delta
-	if pending.contentOutputIndex == nil && e.ContentOutputIndex != nil {
-		pending.contentOutputIndex = new(*e.ContentOutputIndex)
+	if pending.contentOutputIndex == nil {
+		pending.contentOutputIndex = outputIndex
 	}
 	s.pending[key] = pending
 	if s.timer == nil {
@@ -333,11 +354,13 @@ func (s *Sink) Flush() { s.flush() }
 
 // Drain flushes pending content and waits for all previously queued lifecycle
 // events and non-superseded previews to reach the send function (or for Close).
+// In application mode, this waits for preceding application ACKs, not merely
+// transport; an unwired receipt sink also requires consumer progress.
 // Its FIFO barrier prevents later previews from replacing earlier ones across
 // the drain boundary. Call before program teardown when delivery is required.
 func (s *Sink) Drain() {
 	s.Flush()
-	if !s.started.Load() {
+	if !s.started.Load() && !s.queue.application {
 		return
 	}
 	ack := make(chan struct{})
@@ -416,6 +439,7 @@ func (s *Sink) OnToolStarted(ctx context.Context, e runner.ToolStarted) {
 
 // OnWorkspaceWaitStarted flushes pending content, then forwards the workspace wait event.
 func (s *Sink) OnWorkspaceWaitStarted(ctx context.Context, e runner.WorkspaceWaitStarted) {
+	e.Paths = slices.Clone(e.Paths)
 	s.flush()
 	s.dispatch(WorkspaceWaitStartedMsg{
 		TaskID: string(e.TaskID), Depth: e.Depth, ExecutionID: e.ExecutionID, ToolID: e.ToolID, ToolName: e.ToolName,
@@ -426,6 +450,9 @@ func (s *Sink) OnWorkspaceWaitStarted(ctx context.Context, e runner.WorkspaceWai
 
 // OnToolCompleted forwards as ToolCompletedMsg.
 func (s *Sink) OnToolCompleted(ctx context.Context, e runner.ToolCompleted) {
+	if s.queue.application {
+		e.Result = ownedApplicationResult(e.Result, e.FormattedResult)
+	}
 	s.settleToolOutput(toolOutputKeyFor(
 		string(e.TaskID), e.Depth, e.ExecutionID, e.ToolID, e.ToolName,
 		e.ParentExecutionID, e.ParentToolID, e.Sequence,
@@ -497,6 +524,8 @@ func (s *Sink) OnConversationStarted(ctx context.Context, e runner.ConversationS
 
 // OnConversationEnded forwards as ConversationEndedMsg.
 func (s *Sink) OnConversationEnded(ctx context.Context, e runner.ConversationEnded) {
+	e.TotalUsage = cloneUsage(e.TotalUsage)
+	e.RateLimit = cloneRateLimitError(e.RateLimit)
 	s.flush()
 	s.dispatch(ConversationEndedMsg{
 		TaskID:            string(e.TaskID),
@@ -518,6 +547,10 @@ func (s *Sink) OnConversationEnded(ctx context.Context, e runner.ConversationEnd
 // dispatch settle. flush() drains any coalesced content so the
 // iteration boundary lands after every chunk that belongs to it.
 func (s *Sink) OnIterationCompleted(ctx context.Context, e runner.IterationCompleted) {
+	e.Usage, e.Delta = cloneUsage(e.Usage), cloneUsage(e.Delta)
+	if e.Context != nil {
+		e.Context = new(*e.Context)
+	}
 	s.flush()
 	s.dispatch(IterationCompletedMsg{
 		TaskID:                     string(e.TaskID),
@@ -534,11 +567,12 @@ func (s *Sink) OnIterationCompleted(ctx context.Context, e runner.IterationCompl
 
 // OnSteerInjected forwards as SteerInjectedMsg.
 func (s *Sink) OnSteerInjected(ctx context.Context, e runner.SteerInjected) {
+	e.Messages = cloneMessages(e.Messages)
 	s.flush()
 	s.dispatch(SteerInjectedMsg{
 		TaskID:   string(e.TaskID),
 		Depth:    e.Depth,
-		Messages: cloneMessages(e.Messages),
+		Messages: e.Messages,
 	})
 }
 
@@ -597,6 +631,7 @@ func (s *Sink) OnDiagnostic(context.Context, runner.Diagnostic) {}
 // pending content first so the plan lands ordered with the surrounding tool
 // events rather than overtaking the streamed text before them.
 func (s *Sink) PlanUpdated(taskID string, plan code.Plan) {
+	plan.Steps = slices.Clone(plan.Steps)
 	s.flush()
 	s.dispatch(PlanUpdatedMsg{TaskID: taskID, Plan: plan})
 }
@@ -607,8 +642,9 @@ func (s *Sink) PromptDiagnostics(diags []string) {
 	if len(diags) == 0 {
 		return
 	}
+	diags = slices.Clone(diags)
 	s.flush()
-	s.dispatch(PromptDiagnosticsMsg{Diagnostics: append([]string(nil), diags...)})
+	s.dispatch(PromptDiagnosticsMsg{Diagnostics: diags})
 }
 
 // ModeChanged delivers an already-applied workflow transition in event order.

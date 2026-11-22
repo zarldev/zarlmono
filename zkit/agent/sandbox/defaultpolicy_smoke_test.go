@@ -36,6 +36,10 @@ func TestDefaultPolicyToolchainSmoke(t *testing.T) {
 	}
 
 	script := `set -e
+# Keep Git's configuration reads within the fixture instead of following
+# the invoking user's global/system includes outside the default policy.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 git init -q .
 git add .
 	git -c commit.gpgsign=false -c user.email=smoke@test -c user.name=smoke commit -qm smoke

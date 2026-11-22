@@ -2,6 +2,7 @@ package openaicodex
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -83,6 +84,8 @@ func (i inputItem) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wire(i))
 }
 
+const outputTextContentType = "output_text"
+
 // contentPart is one element of an inputItem.Content array. text uses
 // sseTypeInputText for user turns and "output_text" for assistant turns;
 // images go through "input_image".
@@ -92,6 +95,77 @@ type contentPart struct {
 	ImageURL string `json:"image_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+}
+
+// MarshalJSON keeps the required text field even for an explicit empty text
+// part, without adding text fields to media blocks.
+func (p contentPart) MarshalJSON() ([]byte, error) {
+	if p.Type == sseTypeInputText || p.Type == outputTextContentType {
+		return json.Marshal(struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}{Type: p.Type, Text: p.Text})
+	}
+	type wire contentPart
+	return json.Marshal(wire(p))
+}
+
+// validateInputMessages checks original neutral content before credentials or
+// transport work. Diagnostics contain only numeric paths and fixed reasons.
+// Native continuation items remain opaque to this validation.
+func validateInputMessages(messages []llm.Message) error {
+	for i, message := range messages {
+		switch message.Role {
+		case llm.RoleSystem, llm.RoleUser, llm.RoleAssistant, llm.RoleTool:
+		default:
+			return fmt.Errorf("openaicodex: messages[%d].role: unsupported role: %w", i, llm.ErrModelNotSupported)
+		}
+		for j, part := range message.Parts {
+			if reason := unsupportedPartReason(message.Role, part); reason != "" {
+				return fmt.Errorf("openaicodex: messages[%d].parts[%d]: %s: %w", i, j, reason, llm.ErrModelNotSupported)
+			}
+		}
+	}
+	return nil
+}
+
+func unsupportedPartReason(role string, part llm.ContentPart) string {
+	switch part.Type {
+	case llm.ContentTypeText:
+		return ""
+	case llm.ContentTypeImage:
+		if role != llm.RoleUser && role != llm.RoleTool {
+			return "image not supported for role"
+		}
+		if part.Image == nil || (part.Image.URL == "" && part.Image.DataURI == "") {
+			return "image source required"
+		}
+	case llm.ContentTypeVideo:
+		if role != llm.RoleUser && role != llm.RoleTool {
+			return "video not supported for role"
+		}
+		if part.Video == nil || (part.Video.URL == "" && part.Video.DataURI == "") {
+			return "video source required"
+		}
+	case llm.ContentTypeAudio:
+		return "audio not supported"
+	default:
+		return "unsupported content type"
+	}
+	return ""
+}
+
+// effectiveText projects validated text parts without trimming or separators.
+// A nonempty Parts slice is authoritative even when its text is empty.
+func effectiveText(message llm.Message) string {
+	if len(message.Parts) == 0 {
+		return message.Content
+	}
+	var text strings.Builder
+	for _, part := range message.Parts {
+		text.WriteString(part.Text)
+	}
+	return text.String()
 }
 
 // responsesTool is the function-tool shape the Responses API accepts.
@@ -259,22 +333,11 @@ func optionStringOr(opts llm.ModelOptions, key, fallback string) string {
 //   - user messages carry Parts (multimodal) if set, else flat Content.
 //
 // System messages get prepended into the request's `instructions`
-// field upstream — see Provider.complete. We still accept them here
-// (mapped to a user-role sseTypeMessage with input_text) for the rare case
-// where a caller routes a system message through the regular history.
+// field upstream. Neutral roles and parts are validated before adaptation.
 func messagesToInput(msgs []llm.Message) []inputItem {
 	out := make([]inputItem, 0, len(msgs))
 	for _, m := range llm.ExpandToolResultParts(msgs) {
 		switch m.Role {
-		case llm.RoleSystem:
-			// Codex prefers instructions in the top-level field; if a
-			// caller passed one mid-history we still preserve it as a
-			// user-role text part to avoid losing information.
-			out = append(out, inputItem{
-				Type:    sseTypeMessage,
-				Role:    llm.RoleUser,
-				Content: []contentPart{{Type: sseTypeInputText, Text: m.Content}},
-			})
 		case llm.RoleUser:
 			out = append(out, inputItem{
 				Type:    sseTypeMessage,
@@ -282,6 +345,7 @@ func messagesToInput(msgs []llm.Message) []inputItem {
 				Content: userContentParts(m),
 			})
 		case llm.RoleAssistant:
+			m.Content = effectiveText(m)
 			out = append(out, assistantInputItems(m)...)
 		case llm.RoleTool:
 			// `output` is a required field on function_call_output even
@@ -299,12 +363,6 @@ func messagesToInput(msgs []llm.Message) []inputItem {
 				CallID: m.ToolCallID,
 				Output: body,
 			})
-		default:
-			out = append(out, inputItem{
-				Type:    sseTypeMessage,
-				Role:    llm.RoleUser,
-				Content: []contentPart{{Type: sseTypeInputText, Text: m.Content}},
-			})
 		}
 	}
 	return out
@@ -316,7 +374,7 @@ func assistantInputItems(m llm.Message) []inputItem {
 		projected = append(projected, inputItem{
 			Type:    sseTypeMessage,
 			Role:    llm.RoleAssistant,
-			Content: []contentPart{{Type: "output_text", Text: m.Content}},
+			Content: []contentPart{{Type: outputTextContentType, Text: m.Content}},
 		})
 	}
 	for _, tc := range m.ToolCalls {
@@ -422,30 +480,15 @@ func userContentParts(m llm.Message) []contentPart {
 		case llm.ContentTypeText:
 			parts = append(parts, contentPart{Type: sseTypeInputText, Text: p.Text})
 		case llm.ContentTypeImage:
-			if p.Image == nil {
-				continue
-			}
 			u := p.Image.DataURI
 			if u == "" {
 				u = p.Image.URL
 			}
-			if u == "" {
-				continue
-			}
 			parts = append(parts, contentPart{Type: "input_image", ImageURL: u, Detail: p.Image.Detail})
-		case llm.ContentTypeAudio:
-			// Codex doesn't currently accept audio on /responses;
-			// skip silently so we don't break the request body.
 		case llm.ContentTypeVideo:
-			if p.Video == nil {
-				continue
-			}
 			u := p.Video.DataURI
 			if u == "" {
 				u = p.Video.URL
-			}
-			if u == "" {
-				continue
 			}
 			parts = append(parts, contentPart{Type: "input_video", VideoURL: u})
 		}

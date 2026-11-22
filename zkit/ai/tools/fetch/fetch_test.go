@@ -1,6 +1,8 @@
 package fetch_test
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,7 +45,16 @@ func TestDefinition_Shape(t *testing.T) {
 // TestDecodeAndValidate covers arg-validation boundaries.
 func TestDecodeAndValidate(t *testing.T) {
 	tool := fetch.New()
-	ctx := t.Context()
+	t.Cleanup(func() {
+		if err := tool.Close(); err != nil {
+			t.Errorf("close fetch tool: %v", err)
+		}
+	})
+	// An IP literal skips DNS preflight; the already-canceled context stops
+	// HTTP before dialing. A nonexistent Chrome path prevents browser startup.
+	tool.ConfigureChromeBinary(filepath.Join(t.TempDir(), "missing-chrome"))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
 
 	tests := []struct {
 		name    string
@@ -53,12 +64,12 @@ func TestDecodeAndValidate(t *testing.T) {
 	}{
 		{
 			name:    "valid http url",
-			args:    tools.ToolParameters{"url": "https://example.com"},
+			args:    tools.ToolParameters{"url": "https://192.0.2.1"},
 			wantErr: false,
 		},
 		{
 			name:    "valid http plain",
-			args:    tools.ToolParameters{"url": "http://example.com"},
+			args:    tools.ToolParameters{"url": "http://192.0.2.1"},
 			wantErr: false,
 		},
 		{
@@ -87,17 +98,17 @@ func TestDecodeAndValidate(t *testing.T) {
 		},
 		{
 			name:    "with use_browser flag",
-			args:    tools.ToolParameters{"url": "https://example.com", "use_browser": true},
+			args:    tools.ToolParameters{"url": "https://192.0.2.1", "use_browser": true},
 			wantErr: false,
 		},
 		{
 			name:    "with max_chars",
-			args:    tools.ToolParameters{"url": "https://example.com", "max_chars": 1000},
+			args:    tools.ToolParameters{"url": "https://192.0.2.1", "max_chars": 1000},
 			wantErr: false,
 		},
 		{
 			name:    "with selector",
-			args:    tools.ToolParameters{"url": "https://example.com", "selector": ".main-content"},
+			args:    tools.ToolParameters{"url": "https://192.0.2.1", "selector": ".main-content"},
 			wantErr: false,
 		},
 	}
@@ -120,10 +131,21 @@ func TestDecodeAndValidate(t *testing.T) {
 					t.Errorf("kind: got %v, want %v", result.Err, tt.errKind)
 				}
 			}
-			// Non-wantErr tests will fail at the HTTP level since the URLs
-			// aren't real, but they shouldn't be validation failures.
-			if !tt.wantErr && result.Err != nil && result.Err.Kind == tools.Kinds.VALIDATION {
-				t.Errorf("unexpected validation error: %s", result.Error)
+			// Valid arguments pass URL/SSRF validation, then fail at canceled
+			// HTTP (or the deliberately missing browser binary), without I/O.
+			if !tt.wantErr {
+				if result.Success || result.Error == "" {
+					t.Errorf("expected execution failure, got %+v", result)
+				}
+				if result.Err != nil && result.Err.Kind == tools.Kinds.VALIDATION {
+					t.Errorf("unexpected validation error: %s", result.Error)
+				}
+				if tt.name != "with use_browser flag" && (result.Err == nil || result.Err.Kind != tools.Kinds.TRANSIENT || !strings.Contains(result.Error, "context canceled")) {
+					t.Errorf("expected canceled HTTP request, got %+v", result)
+				}
+				if tt.name == "with use_browser flag" && !strings.Contains(result.Error, "chrome binary not found at configured path") {
+					t.Errorf("browser path was not attempted: %s", result.Error)
+				}
 			}
 		})
 	}

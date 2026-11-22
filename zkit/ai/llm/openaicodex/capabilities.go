@@ -13,7 +13,7 @@ func Capabilities(model string) llm.ModelCapabilities {
 		SupportsTools:     true,
 		SupportsSystem:    true,
 		SupportsVision:    true,
-		SupportsVideo:     base != modelGPT61Sol && base != modelGPT6Sol && base != modelGPT6Luna,
+		SupportsVideo:     base != modelGPT62Astra && base != modelGPT62Sol && base != modelGPT61Terra && base != modelGPT61Sol && base != modelGPT6Sol && base != modelGPT6Luna,
 		SupportsThinking:  true,
 	}
 }

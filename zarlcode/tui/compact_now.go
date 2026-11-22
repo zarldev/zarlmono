@@ -17,25 +17,7 @@ type compactNowFinishedMsg struct {
 
 type compactNowFailedMsg struct{ Error string }
 
-func (m *UI) compactNowCmd() tea.Cmd {
-	if m.live == nil {
-		return func() tea.Msg { return compactNowFailedMsg{Error: "live runner is not available"} }
-	}
-	return func() tea.Msg {
-		started := time.Now()
-		res, err := m.live.CompactNow(m.appContext())
-		if err != nil {
-			return compactNowFailedMsg{Error: err.Error()}
-		}
-		return compactNowFinishedMsg{
-			Before:       res.MessagesBefore,
-			After:        res.MessagesAfter,
-			BytesTrimmed: res.BytesTrimmed,
-			Engine:       res.Engine,
-			Duration:     time.Since(started),
-		}
-	}
-}
+func (m *UI) compactNowCmd() tea.Cmd { return m.startManualCompaction() }
 
 func (m *UI) applyCompactNowFinished(msg compactNowFinishedMsg) {
 	m.session.logEvent("manual compact", fmt.Sprintf("%d→%d msgs engine=%s", msg.Before, msg.After, msg.Engine))

@@ -71,7 +71,9 @@ func (s *Settings) ActiveProvider(ctx context.Context, fb ProviderSpec) Provider
 		CodexEffort: s.setting(ctx, prefs.KeyCodexEffort, effort),
 	}
 	if spec.Name == fb.Name {
+		spec.Protocol = fb.Protocol
 		spec.BaseURL = fb.BaseURL
+		spec.CachePolicy = fb.CachePolicy
 		spec.APIKey = fb.APIKey
 	}
 	spec.CodexEffort = validCodexEffort(spec, spec.CodexEffort)
@@ -183,6 +185,12 @@ func (s *Settings) CompactEngine(ctx context.Context) string {
 // falls back to the active provider so a misconfigured override never breaks
 // compaction.
 func (s *Settings) CompactorProvider(ctx context.Context, active llm.Provider, activeModel string) (llm.Provider, string) {
+	target, model := s.compactorTarget(ctx, auxiliaryTarget{provider: active, model: activeModel})
+	return target.provider, model
+}
+
+func (s *Settings) compactorTarget(ctx context.Context, active auxiliaryTarget) (auxiliaryTarget, string) {
+	activeModel := active.model
 	target := s.ModelTarget(ctx, prefs.KeyCompactProvider)
 	cp, cm := target.Name, target.Model
 	if cm == "" {
@@ -195,7 +203,7 @@ func (s *Settings) CompactorProvider(ctx context.Context, active llm.Provider, a
 	if err != nil || prov == nil {
 		return active, activeModel
 	}
-	return prov, cm
+	return auxiliaryTarget{provider: prov, providerLabel: cp, model: cm}, cm
 }
 
 // DecomposeJudgeProvider resolves the LLM target for the decompose
@@ -205,13 +213,18 @@ func (s *Settings) CompactorProvider(ctx context.Context, active llm.Provider, a
 // A build failure falls back to the active provider so a
 // misconfigured override never silently disables a judge the user enabled.
 func (s *Settings) DecomposeJudgeProvider(ctx context.Context, active llm.Provider, activeSpec ProviderSpec) llm.Provider {
+	target, _ := s.decomposeJudgeTarget(ctx, auxiliaryTarget{provider: active, providerLabel: activeSpec.Name, model: activeSpec.Model}, activeSpec)
+	return target.provider
+}
+
+func (s *Settings) decomposeJudgeTarget(ctx context.Context, active auxiliaryTarget, activeSpec ProviderSpec) (auxiliaryTarget, string) {
 	if s.setting(ctx, prefs.KeyDecomposeJudge, prefs.DefaultDecomposeJudge) != "on" {
-		return nil
+		return auxiliaryTarget{}, ""
 	}
 	target := s.ModelTarget(ctx, prefs.KeyJudgeProvider)
 	jp, jm := target.Name, target.Model
 	if jp == "" && jm == "" {
-		return active
+		return active, activeSpec.Model
 	}
 	spec := activeSpec // model-only override keeps the active backend's URL/key
 	if jp != "" {
@@ -221,13 +234,20 @@ func (s *Settings) DecomposeJudgeProvider(ctx context.Context, active llm.Provid
 	if jm == "" {
 		spec.Model = activeSpec.Model
 	}
+	// Preserve inherited models before resolving a genuinely empty registry default.
+	id, _ := llm.ParseLLMProvider(spec.Name)
+	if spec.Model == "" && id != backends.NameOpenAICodex && id != backends.NameClaudeCode {
+		if def, err := s.Registry.Parse(spec.Name); err == nil {
+			spec.Model = def.DefaultModel
+		}
+	}
 	prov, err := BuildProvider(ctx, s.Registry, s.Svc, spec)
 	if err != nil || prov == nil {
 		slog.WarnContext(ctx, "decompose judge override unbuildable; reusing active provider",
 			"judge_provider", jp, "judge_model", jm, "err", err)
-		return active
+		return active, activeSpec.Model
 	}
-	return prov
+	return auxiliaryTarget{provider: prov, providerLabel: spec.Name, model: spec.Model}, spec.Model
 }
 
 // VerifyLoop resolves the headless verified re-drive configuration: the

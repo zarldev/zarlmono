@@ -62,11 +62,12 @@ var _ LiveSink = nopLiveSink{}
 // is advisory; headless/eval is strict). A context cache threads model messages across
 // turns, and a pressure-gated compactor keeps long chats inside the window.
 type LiveRunner struct {
-	ws        code.Workspace
-	sink      LiveSink
-	context   ContextCache
-	queue     *queueState
-	admission runtimeAdmission
+	ws                code.Workspace
+	sink              LiveSink
+	auxiliaryObserved func(context.Context, AuxiliaryObservation)
+	context           ContextCache
+	queue             *queueState
+	admission         runtimeAdmission
 	// publication excludes readers while a reserved restore publishes context,
 	// target, plan and operational state. Lock order: context.mu (when needed),
 	// publication, then component locks. Never hold it while waiting for a turn.
@@ -249,14 +250,15 @@ func NewLiveRunner(prov llm.Provider, ws code.Workspace, model string, opts ...o
 			Model:    model,
 			Window:   LiveContextWindow,
 		},
-		promptProfile:  PromptProfiles.LEAN,
-		planStore:      newLivePlanStore(),
-		catalog:        newRuntimeCatalog(ws.Root()),
-		truncator:      &runner.SpillingTruncator{Prefix: "zarlcode-"},
-		operational:    newOperationalState(),
-		fetchTool:      fetch.New(),
-		sink:           nopLiveSink{},
-		programOutputs: programtools.NewOutputStore(),
+		promptProfile:     PromptProfiles.LEAN,
+		planStore:         newLivePlanStore(),
+		catalog:           newRuntimeCatalog(ws.Root()),
+		truncator:         &runner.SpillingTruncator{Prefix: "zarlcode-"},
+		operational:       newOperationalState(),
+		fetchTool:         fetch.New(),
+		sink:              nopLiveSink{},
+		auxiliaryObserved: ignoreAuxiliaryObservation,
+		programOutputs:    programtools.NewOutputStore(),
 	}
 	l.queue = newQueueState(&l.admission)
 	l.computer = &liveComputer{owner: l}
@@ -485,6 +487,8 @@ func (l *LiveRunner) SetContextWindow(tokens int) {
 	if tokens > 0 {
 		l.mu.Lock()
 		l.target.Window = tokens
+		l.target.Facts = nil
+		l.target.RateCard = nil
 		l.mu.Unlock()
 	}
 }
@@ -562,6 +566,8 @@ func (l *LiveRunner) SetProvider(prov llm.Provider, model string) {
 	}
 	l.mu.Lock()
 	l.target.Provider = prov
+	l.target.Facts = nil
+	l.target.RateCard = nil
 	l.target.Model = model
 	l.target.Spec.Model = model
 	l.mu.Unlock()
@@ -580,6 +586,8 @@ func (l *LiveRunner) SetProviderSpec(prov llm.Provider, spec ProviderSpec) {
 	}
 	l.mu.Lock()
 	l.target.Provider = prov
+	l.target.Facts = nil
+	l.target.RateCard = nil
 	l.target.Model = spec.Model
 	l.target.Spec = spec
 	l.mu.Unlock()
@@ -596,6 +604,7 @@ func (l *LiveRunner) ApplyTarget(update TargetUpdate) {
 	}
 	l.mu.Lock()
 	l.target.Provider = update.Provider
+	l.target.Facts, l.target.RateCard = cloneTargetBasis(update.Facts, update.RateCard)
 	l.target.Model = update.Spec.Model
 	l.target.Spec = update.Spec
 	if update.Window > 0 {
@@ -614,6 +623,8 @@ func (l *LiveRunner) SetModel(name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.target.Model = name
+	l.target.Facts = nil
+	l.target.RateCard = nil
 	l.target.Spec.Model = name
 }
 

@@ -11,7 +11,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
 	"github.com/zarldev/zarlmono/zkit/ai/tools/code"
-	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // ErrRuntimeBusy means an admission reservation conflicts with runtime work,
@@ -249,9 +248,17 @@ func (r *RuntimeReservation) PlanSnapshot() (code.Plan, error) {
 	return r.owner.planStore.GetPlan(), nil
 }
 
-func checkpointTarget(target RunTarget) rewind.Target {
-	return rewind.Target{Provider: target.Spec.Name, Model: target.Model, Window: target.Window, Reserve: target.Reserve, PlanMode: target.Plan, CodexEffort: target.Spec.CodexEffort}
+// CheckpointTarget projects non-secret saved policy from the actual target.
+func CheckpointTarget(target RunTarget) rewind.Target {
+	saved := rewind.Target{Provider: target.Spec.Name, Model: target.Model, Window: target.Window, Reserve: target.Reserve, PlanMode: target.Plan, CodexEffort: target.Spec.CodexEffort,
+		CacheIntent: rewind.SavedCacheIntent(target.Spec.CachePolicy)}
+	if target.Facts != nil && target.Facts.CachePolicy != (backends.RouteCachePolicy{}) {
+		saved.CachePin = rewind.SavedCachePolicy(target.Spec.Name, target.Facts.CachePolicy)
+	}
+	return saved
 }
+
+func checkpointTarget(target RunTarget) rewind.Target { return CheckpointTarget(target) }
 
 // RunTurn converts this reservation into turn admission after target setup,
 // without an unreserved gap. The caller must first durably save recovery input
@@ -261,10 +268,10 @@ func checkpointTarget(target RunTarget) rewind.Target {
 // resumes during execution, while new reservations remain excluded through
 // context commit and child drain.
 func (r *RuntimeReservation) RunTurn(ctx context.Context, prompt string, attachments []llm.ContentPart) error {
-	return r.runTurn(ctx, prompt, attachments)
+	return r.runTurn(ctx, prompt, attachments, nil)
 }
 
-func (r *RuntimeReservation) runTurn(ctx context.Context, prompt string, attachments []llm.ContentPart, historyOptions ...options.Option[runner.Runner]) error {
+func (r *RuntimeReservation) runTurn(ctx context.Context, prompt string, attachments []llm.ContentPart, recording turnOptionsFactory) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.active {
@@ -294,7 +301,7 @@ func (r *RuntimeReservation) runTurn(ctx context.Context, prompt string, attachm
 		r.owner.admission.mu.Unlock()
 		r.active = false
 		converted = true
-	}, historyOptions...)
+	}, recording)
 }
 
 // RestoreCheckpoint activates validated context and a prebuilt exact target
@@ -357,7 +364,7 @@ func (r *RuntimeReservation) restoreConversationState(messages []llm.Message, sa
 	r.owner.context.exact = true
 	r.owner.mu.Lock()
 	r.owner.rotateProgramOutputsLocked()
-	r.owner.target = target
+	r.owner.target = target.Clone()
 	r.owner.modeGeneration++
 	r.owner.mu.Unlock()
 	plan := r.owner.planStore

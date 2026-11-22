@@ -123,7 +123,7 @@ func TestRecordedHistorySnapshotRetryAndAcknowledgment(t *testing.T) {
 	}
 }
 
-func TestDurableExactProtectionRequiresFreshBoundaryAndRejectsTargetChange(t *testing.T) {
+func TestDurableExactProtectionRequiresFreshBoundaryAndRejectsUnsupportedTarget(t *testing.T) {
 	t.Parallel()
 	provider := &requestRecordingProvider{}
 	live := reservationRunner(t, provider)
@@ -136,6 +136,25 @@ func TestDurableExactProtectionRequiresFreshBoundaryAndRejectsTargetChange(t *te
 	}
 	// A durable boundary survives cancellation before dispatch. The next turn
 	// inherits exact protection rather than silently becoming ordinary.
+	reservation.Release()
+	reservation, err = live.ReserveRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reservation.Release()
+	initial := live.RunTarget()
+	if err := reservation.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "custom", Model: "unsupported"}}); !errors.Is(err, rewind.ErrTarget) {
+		t.Fatalf("empty exact context admitted unsupported target: %v", err)
+	}
+	if !reflect.DeepEqual(live.RunTarget(), initial) || len(live.ContextSnapshot()) != 0 {
+		t.Fatal("rejected empty-context switch mutated runtime")
+	}
+	if err := reservation.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "openai", Model: "protected-model"}}); err != nil {
+		t.Fatalf("empty exact context rejected supported model: %v", err)
+	}
+	if live.RunTarget().Model != "protected-model" || len(live.ContextSnapshot()) != 0 {
+		t.Fatal("supported empty-context switch lost target or invented history")
+	}
 	reservation.Release()
 	reservation, err = live.ReserveTurn()
 	if err != nil {
@@ -150,7 +169,7 @@ func TestDurableExactProtectionRequiresFreshBoundaryAndRejectsTargetChange(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = reservation.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "openai", Model: "other-supported-model"}, Window: beforeTarget.Window})
+	err = reservation.ApplyTarget(engine.TargetUpdate{Provider: provider, Spec: engine.ProviderSpec{Name: "custom", Model: "unsupported-model"}, Window: beforeTarget.Window})
 	reservation.Release()
 	if !errors.Is(err, rewind.ErrTarget) {
 		t.Fatalf("exact target change error = %v, want ErrTarget", err)

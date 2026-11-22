@@ -76,6 +76,7 @@ type Runner struct {
 	modelName    string
 
 	// optional plumbing
+	rateCard        *llm.RateCard // optional constructor-owned pricing basis; never evaluated here
 	inference       inference.Scope
 	sink            EventSink
 	convLock        *ConversationLock

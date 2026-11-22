@@ -74,3 +74,8 @@ func TestCompactorInferenceAccounting(t *testing.T) {
 		})
 	}
 }
+
+// Compactors attribute every invocation, including account-free calls.
+func (fakeProvider) Name() string     { return "summary-fixture" }
+func (errorProvider) Name() string    { return "error-fixture" }
+func (execFakeProvider) Name() string { return "executive-fixture" }

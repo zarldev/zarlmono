@@ -141,6 +141,8 @@ func NewSettings(store *db.Store, v *vault.Vault, src *modelsdev.Source, wsRoot 
 	svc := prefs.NewService(store, v, wsRoot)
 	reg := backends.NewRegistry(
 		backends.WithStore(store),
+		backends.WithRouteCachePolicyStore(store),
+		backends.WithRouteProtocolStore(store),
 		backends.WithSettingsService(providerKeyResolver{svc: svc}),
 		backends.WithModelsDevSource(src),
 	)

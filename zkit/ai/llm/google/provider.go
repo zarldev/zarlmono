@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"math"
 	"net/http"
+	"slices"
 	"time"
 
 	"google.golang.org/genai"
@@ -18,17 +21,21 @@ import (
 const defaultModel = "gemini-3.8-flash"
 
 const (
-	continuationProvider = "google"
-	continuationFormat   = "generate_content.part.v1"
+	continuationProvider     = "google"
+	legacyContinuationFormat = "generate_content.part.v1"
+	// v2 retains every SDK part (including unsigned display text) in stream
+	// order. Unlike v1's signed-call subset, it owns the full replay projection.
+	continuationFormat = "generate_content.part.v2"
 )
 
 // Provider implements the Google Gemini LLM provider using the official Go SDK.
 type Provider struct {
-	apiKey     string
-	client     *genai.Client
-	model      string
-	baseURL    string       // optional override for HTTPOptions.BaseURL (tests / private proxy)
-	httpClient *http.Client // optional, borrowed SDK transport policy
+	interactionsAPI bool
+	apiKey          string
+	client          *genai.Client
+	model           string
+	baseURL         string       // optional override for HTTPOptions.BaseURL (tests / private proxy)
+	httpClient      *http.Client // optional, borrowed SDK transport policy
 }
 
 // NewProvider creates a Generative Language API (AI Studio) provider
@@ -139,12 +146,16 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 			yield(llm.CompletionChunk{}, cause)
 			return
 		}
+		if p.interactionsAPI {
+			p.streamInteractions(ctx, req, yield)
+			return
+		}
 		p.streamCompletion(ctx, req, yield)
 	}
 }
 
-// streamCompletion handles both streaming and single-shot requests through the
-// SDK iterator so their cancellation, retry, and metadata semantics stay aligned.
+// streamCompletion selects the native SDK operation while sharing response
+// conversion, cancellation, retry, and final metadata semantics.
 func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, yield func(llm.CompletionChunk, error) bool) {
 	// Request conversion remains inside iterator invocation: Complete itself is
 	// side-effect free and does not acquire an SDK stream.
@@ -158,7 +169,15 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		yield(llm.CompletionChunk{}, err)
 		return
 	}
-	sys, contents := convertMessages(expandedMessages)
+	sys, contents, err := convertMessages(ctx, expandedMessages)
+	if err != nil {
+		yield(llm.CompletionChunk{}, err)
+		return
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		yield(llm.CompletionChunk{}, cause)
+		return
+	}
 	if sys != nil {
 		config.SystemInstruction = sys
 	}
@@ -170,8 +189,15 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	const maxRetries = 4
 	backoff := time.Second
 	for attempt := 0; ; attempt++ {
+		// Each SDK construction gets independent restoration and ExtraBody
+		// snapshots: caller hooks may mutate them before a retry is needed.
+		config.HTTPOptions, err = p.requestHTTPOptions(ctx, contents)
+		if err != nil {
+			yield(llm.CompletionChunk{}, err)
+			return
+		}
 		usage, usageReported, finishReason, calls, accepted, streamErr, downstream :=
-			p.runStream(ctx, contents, config, yield)
+			p.runStream(ctx, contents, config, req.Stream, yield)
 		if !downstream {
 			return
 		}
@@ -217,6 +243,161 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	}
 }
 
+// ErrIncompatibleContentsOverride identifies a static client ExtraBody.contents
+// override that cannot preserve the converted model history's turn mapping or parts.
+var ErrIncompatibleContentsOverride = errors.New("google: incompatible client ExtraBody.contents override")
+
+// requestHTTPOptions composes request-local restoration with the client's hook.
+// The pinned SDK merges ExtraBody before the request hook and replaces, rather
+// than composes, client hooks. Its JSON copy also drops the client's hook, so even
+// requests without model history must explicitly forward a configured hook.
+func (p *Provider) requestHTTPOptions(ctx context.Context, contents []*genai.Content) (*genai.HTTPOptions, error) {
+	clientOptions := p.client.ClientConfig().HTTPOptions
+	restore := false
+	for _, content := range contents {
+		if content.Role == string(genai.RoleModel) {
+			restore = true
+			break
+		}
+	}
+	if !restore {
+		return &genai.HTTPOptions{ExtrasRequestProvider: clientOptions.ExtrasRequestProvider}, nil
+	}
+
+	// Both SDK backend converters expose parts as []map[string]any. Prepare
+	// that shape with exact numbers before entering the no-error-return hook,
+	// rather than leaking SDK structs or the converter's rounded float64 data.
+	modelParts := make(map[int][]map[string]any)
+	for index, content := range contents {
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
+		if content.Role != string(genai.RoleModel) {
+			continue
+		}
+		data, err := json.Marshal(content.Parts)
+		if err != nil {
+			return nil, errors.New("google: encode model parts")
+		}
+		var parts []map[string]any
+		if err := decodeReplayJSON(data, &parts); err != nil {
+			return nil, errors.New("google: decode model parts")
+		}
+		modelParts[index] = parts
+	}
+
+	// The request owns this copy, including nested maps/slices. Passing it as a
+	// request override avoids the SDK's lossy float64 copy of client ExtraBody
+	// and prevents restoration or the caller's hook from mutating client state.
+	var extraBody map[string]any
+	if clientOptions.ExtraBody != nil {
+		data, err := json.Marshal(clientOptions.ExtraBody)
+		if err != nil {
+			return nil, errors.New("google: encode client ExtraBody")
+		}
+		if err := decodeReplayJSON(data, &extraBody); err != nil {
+			return nil, errors.New("google: decode client ExtraBody")
+		}
+		if override, exists := extraBody["contents"]; exists {
+			mapped, err := compatibleContentsOverride(ctx, override, contents)
+			if err != nil {
+				return nil, err
+			}
+			// Both static overrides and the pinned SDK's Gemini/Vertex
+			// converters now supply the same representation to restoration.
+			extraBody["contents"] = mapped
+		}
+	}
+
+	return &genai.HTTPOptions{
+		ExtraBody: extraBody,
+		ExtrasRequestProvider: func(body map[string]any) map[string]any {
+			// Automatic continuation and stream reconnects reuse this closure
+			// and ExtraBody. The SDK merge can alias its nested values, so
+			// snapshot the freshly generated body on every hook invocation.
+			body = cloneRequestBody(body)
+			// The SDK deep-marshals request structs through float64 before
+			// backend conversion. Restore exact stored model parts afterward.
+			wireContents := body["contents"].([]map[string]any) //nolint:errcheck // Pinned SDK shape or preflight-normalized override.
+			for index, parts := range modelParts {
+				wireContents[index]["parts"] = cloneRequestValue(parts)
+			}
+			// Caller policy is final: never restore over its customization.
+			// This no-error-return SDK seam cannot validate arbitrary changes
+			// made here; callers own any resulting replay/dispatch changes.
+			if clientOptions.ExtrasRequestProvider != nil {
+				return clientOptions.ExtrasRequestProvider(body)
+			}
+			return body
+		},
+	}, nil
+}
+
+// cloneRequestBody isolates a normalized request tree without re-encoding it.
+// In particular, json.Number values and the SDK's []map[string]any shapes survive.
+func cloneRequestBody(body map[string]any) map[string]any {
+	cloned := maps.Clone(body)
+	for key, value := range cloned {
+		cloned[key] = cloneRequestValue(value)
+	}
+	return cloned
+}
+
+func cloneRequestValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneRequestBody(value)
+	case []map[string]any:
+		cloned := slices.Clone(value)
+		for index, entry := range cloned {
+			cloned[index] = cloneRequestBody(entry)
+		}
+		return cloned
+	case []any:
+		cloned := slices.Clone(value)
+		for index, entry := range cloned {
+			cloned[index] = cloneRequestValue(entry)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+// compatibleContentsOverride validates the external override after JSON decoding.
+// A compatible override preserves every turn's position and role. Model parts
+// may be omitted (restoration supplies them) or semantically equal to the stored
+// parts; conflicting parts are rejected, not silently overwritten. Other fields
+// and user parts remain caller-owned.
+func compatibleContentsOverride(ctx context.Context, override any, contents []*genai.Content) ([]map[string]any, error) {
+	entries, ok := override.([]any)
+	if !ok || len(entries) != len(contents) {
+		return nil, ErrIncompatibleContentsOverride
+	}
+	mapped := make([]map[string]any, len(entries))
+	for index, entry := range entries {
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
+		content, ok := entry.(map[string]any)
+		if !ok || content["role"] != contents[index].Role {
+			return nil, fmt.Errorf("%w at turn %d", ErrIncompatibleContentsOverride, index)
+		}
+		if parts, exists := content["parts"]; exists && contents[index].Role == string(genai.RoleModel) {
+			data, err := json.Marshal(contents[index].Parts)
+			if err != nil {
+				return nil, fmt.Errorf("%w at turn %d", ErrIncompatibleContentsOverride, index)
+			}
+			var native any
+			if err := decodeReplayJSON(data, &native); err != nil || !equalReplayJSON(ctx, parts, native) {
+				return nil, fmt.Errorf("%w at turn %d", ErrIncompatibleContentsOverride, index)
+			}
+		}
+		mapped[index] = content
+	}
+	return mapped, nil
+}
+
 // runStream consumes one SDK attempt. accepted means at least one event was
 // synchronously accepted by downstream; false from downstream is returned
 // separately and must terminate the invocation silently.
@@ -224,18 +405,21 @@ func (p *Provider) runStream(
 	ctx context.Context,
 	contents []*genai.Content,
 	config *genai.GenerateContentConfig,
+	stream bool,
 	yield func(llm.CompletionChunk, error) bool,
 ) (llm.Usage, bool, llm.FinishReason, []llm.ToolCall, bool, error, bool) {
 	var usage llm.Usage
 	var usageReported bool
 	finishReason := llm.FinishReasons.UNKNOWN
 	callsByID := make(map[string]llm.ToolCall)
-	capturedByID := make(map[string]bool)
 	var order []string
 	partIndex := 0
 	accepted := false
 
-	for resp, err := range p.client.Models.GenerateContentStream(ctx, p.model, contents, config) {
+	for resp, err := range p.responses(ctx, contents, config, stream) {
+		if cause := context.Cause(ctx); cause != nil {
+			return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, cause, true
+		}
 		if err != nil {
 			return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, err, true
 		}
@@ -265,7 +449,14 @@ func (p *Provider) runStream(
 				return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted,
 					fmt.Errorf("google: %w: media output is unsupported", llm.ErrModelNotSupported), true
 			}
-			if !emitPart(part, partIndex, callsByID, capturedByID, &order, &accepted, yield) {
+			if part == nil {
+				continue
+			}
+			downstream, err := emitPart(part, partIndex, callsByID, &order, &accepted, yield)
+			if err != nil {
+				return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, err, true
+			}
+			if !downstream {
 				return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, nil, false
 			}
 			partIndex++
@@ -274,36 +465,64 @@ func (p *Provider) runStream(
 	return usage, usageReported, finishReason, orderedCalls(callsByID, order), accepted, nil, true
 }
 
+// responses keeps both native operations lazy and feeds the same response codec.
+// GenerateContent owns JSON decoding and response-body cleanup in the SDK; a
+// single-shot response is not re-encoded or passed through an SSE decoder.
+func (p *Provider) responses(ctx context.Context, contents []*genai.Content, config *genai.GenerateContentConfig, stream bool) iter.Seq2[*genai.GenerateContentResponse, error] {
+	if stream {
+		return p.client.Models.GenerateContentStream(ctx, p.model, contents, config)
+	}
+	return func(yield func(*genai.GenerateContentResponse, error) bool) {
+		response, err := p.client.Models.GenerateContent(ctx, p.model, contents, config)
+		yield(response, err)
+	}
+}
+
 func emitPart(
 	part *genai.Part,
 	outputIndex int,
 	callsByID map[string]llm.ToolCall,
-	capturedByID map[string]bool,
 	order *[]string,
 	accepted *bool,
 	yield func(llm.CompletionChunk, error) bool,
-) bool {
-	if part.Text != "" {
-		chunk := llm.CompletionChunk{Content: part.Text}
-		if part.Thought {
-			chunk.Content = ""
-			chunk.Thinking = part.Text
+) (bool, error) {
+	data, err := json.Marshal(part)
+	if err != nil {
+		return true, fmt.Errorf("google: encode continuation part: %w", err)
+	}
+	if string(data) == "{}" {
+		return true, nil
+	}
+	item := llm.ContinuationItem{
+		OutputIndex: llm.OutputPosition(outputIndex),
+		Provider:    continuationProvider,
+		Format:      continuationFormat,
+		Kind:        "part",
+		Data:        data,
+	}
+	chunk := llm.CompletionChunk{CompletedItems: []llm.ContinuationItem{item}}
+	if part.Thought {
+		chunk.Thinking = part.Text
+	} else {
+		chunk.Content = part.Text
+		if part.Text != "" {
+			chunk.ContentOutputIndex = llm.OutputPosition(outputIndex)
 		}
-		if !yield(chunk, nil) {
-			return false
-		}
-		*accepted = true
 	}
 	if part.FunctionCall != nil {
 		id := part.FunctionCall.ID
 		if id == "" {
 			id = fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, len(*order))
 		}
-		argBytes, _ := json.Marshal(part.FunctionCall.Args)
-		if _, exists := callsByID[id]; !exists {
-			*order = append(*order, id)
+		argBytes, err := json.Marshal(part.FunctionCall.Args)
+		if err != nil {
+			return true, fmt.Errorf("google: encode function arguments: %w", err)
 		}
-		call := llm.ToolCall{
+		if _, exists := callsByID[id]; exists {
+			return true, errors.New("google: ambiguous native function-call ID")
+		}
+		*order = append(*order, id)
+		callsByID[id] = llm.ToolCall{
 			ID:          id,
 			Type:        "function",
 			OutputIndex: llm.OutputPosition(outputIndex),
@@ -312,26 +531,15 @@ func emitPart(
 				Arguments: string(argBytes),
 			},
 		}
-		callsByID[id] = call
-		if len(part.ThoughtSignature) != 0 && !capturedByID[id] {
-			data, err := json.Marshal(part)
-			if err == nil {
-				capturedByID[id] = true
-				if !yield(llm.CompletionChunk{CompletedItems: []llm.ContinuationItem{{
-					OutputIndex: llm.OutputPosition(outputIndex),
-					Provider:    continuationProvider,
-					Format:      continuationFormat,
-					Kind:        "function_call",
-					ID:          id,
-					Data:        data,
-				}}}, nil) {
-					return false
-				}
-				*accepted = true
-			}
-		}
+		chunk.CompletedItems[0].ID = id
 	}
-	return true
+	// A part and its display projection are accepted together, so an early
+	// downstream stop cannot retain text without the native replay data.
+	if !yield(chunk, nil) {
+		return false, nil
+	}
+	*accepted = true
+	return true, nil
 }
 
 func orderedCalls(callsByID map[string]llm.ToolCall, order []string) []llm.ToolCall {
@@ -370,22 +578,11 @@ func normalizeFinishReason(reason genai.FinishReason) llm.FinishReason {
 	}
 }
 
-func thinkingBudget(tokens int) *int32 {
-	if tokens <= 0 {
-		return nil
-	}
-	if tokens > math.MaxInt32 {
-		return new(int32(math.MaxInt32))
-	}
-	return new(int32(tokens))
-}
-
 // buildConfig produces the GenerateContentConfig for one request.
 func (p *Provider) buildConfig(req llm.CompletionRequest) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{
 		ThinkingConfig: &genai.ThinkingConfig{
 			IncludeThoughts: true,
-			ThinkingBudget:  thinkingBudget(req.Thinking.BudgetTokens),
 		},
 	}
 	if req.Temperature > 0 {
@@ -449,6 +646,13 @@ func WithModel(model string) options.Option[Provider] {
 // be empty. This is the escape hatch for configurations the
 // constructors don't model: explicit Vertex credentials, custom
 // transports, or endpoint setups beyond WithBaseURL.
+//
+// The client's ExtrasRequestProvider runs after exact stored model-part
+// restoration and has final authority over the body. Replay guarantees apply
+// before that hook; callers own any subsequent history changes. Static
+// ExtraBody.contents overrides with model history must retain turn count/roles
+// and omit model parts or supply semantically equal parts. Other fields and
+// user-only contents overrides are preserved.
 func WithClient(client *genai.Client) options.Option[Provider] {
 	return func(p *Provider) {
 		p.client = client
@@ -490,4 +694,15 @@ func rateLimitError(err error, fallback error) error {
 		Message:    msg,
 		RetryAfter: backoffWithRetryAfter(err, 0),
 	}
+}
+
+// WithInteractionsAPI selects stateless Gemini v1beta Interactions instead of
+// GenerateContent. False (the default) retains GenerateContent. Selection is
+// validated against the actual client when the completion stream is iterated.
+// Requests explicitly disable storage and background execution and replay the
+// full supplied history. Host Affinity and prompt_cache_key hints do not select
+// a server session or guarantee routing. Explicit thinking budgets/levels and
+// local chat-template controls are unsupported; returned thoughts are retained.
+func WithInteractionsAPI(enabled bool) options.Option[Provider] {
+	return func(p *Provider) { p.interactionsAPI = enabled }
 }

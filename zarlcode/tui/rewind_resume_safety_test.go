@@ -12,6 +12,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zarlcode/tui"
+	"github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
@@ -54,8 +55,8 @@ func TestExactChildInterruptedBeforeSettlementRetainsPairedHead(t *testing.T) {
 	for _, event := range events[:len(events)-1] {
 		f.ui.Update(event)
 	}
-	if err := f.ui.FlushSessionPersistence(t.Context()); err != nil {
-		t.Fatal(err)
+	if err := f.ui.FlushSessionPersistence(t.Context()); !errors.Is(err, teasink.ErrApplicationsUnavailable) {
+		t.Fatalf("discarded plain-sink marker reported application proof: %v", err)
 	}
 
 	// Simulate a crash after durable request-control capture but before its

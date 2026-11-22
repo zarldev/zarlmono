@@ -42,6 +42,17 @@ func WithModelIdentity(provider, model string) options.Option[Runner] {
 	}
 }
 
+// WithRateCard installs an owned frozen pricing basis for this runner's own
+// provider attempts. The host selects the card; the runner only transports it,
+// without estimating prices or inheriting it into descendants. Omit this option
+// when no card is selected. New clones the card, including its cache-write rates.
+func WithRateCard(card llm.RateCard) options.Option[Runner] {
+	return func(r *Runner) {
+		owned := card.Clone()
+		r.rateCard = &owned
+	}
+}
+
 // WithConversationLock installs the cooperative yield mutex. When set,
 // the runner waits for the lock to become inactive before each
 // iteration so a real-time conversation gets LLM priority.

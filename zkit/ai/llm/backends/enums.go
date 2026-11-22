@@ -16,4 +16,5 @@ const (
 	// googleVertex is appended (not grouped with googleCompatible) so the
 	// existing iota values — and any state that captured them — stay put.
 	googleVertex
+	liteLLM // litellm
 )

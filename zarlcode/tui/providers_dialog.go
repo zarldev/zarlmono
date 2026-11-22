@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,7 +40,8 @@ type providersDialog struct {
 	adding   bool        // inline add/edit custom-provider form is open
 	addEds   [6]composer // name, base URL, default model, reasoning, context window, price/M
 	addIdx   int
-	editOrig string // non-empty when the form is editing this existing provider
+	editOrig string                      // non-empty when the form is editing this existing provider
+	editBase backends.ProviderDefinition // form-owned snapshot, including seed models
 
 	oauthBusy bool   // an OAuth sign-in is awaiting the browser callback
 	oauthURL  string // the sign-in URL (shown for manual copy)
@@ -47,6 +49,8 @@ type providersDialog struct {
 	modelsProvider string // provider awaiting/ascribing an async model fetch
 	modelPicker    *listPicker
 	pendingTarget  *prefs.ModelSelection
+	routeProtocol  *routeProtocolEditor
+	routeCache     *routeCacheEditor
 }
 
 func (d *providersDialog) summary() string {
@@ -57,7 +61,9 @@ var providerAddLabels = [6]string{"name", "base url", "default model", "reasonin
 
 // inSubMode reports whether the panel owns Esc rather than returning focus to
 // settings navigation.
-func (d *providersDialog) inSubMode() bool { return d.editing || d.adding || d.oauthBusy }
+func (d *providersDialog) inSubMode() bool {
+	return d.editing || d.adding || d.oauthBusy || d.routeProtocol != nil || d.routeCache != nil
+}
 
 // isOAuthProvider reports whether a provider authenticates via OAuth (a
 // browser sign-in + token source) rather than a static API key.
@@ -103,6 +109,15 @@ func (d *providersDialog) onOAuthCancelled() {
 // footerHint is the key legend the host surface shows in its footer while the
 // providers pane is focused — sub-mode aware.
 func (d *providersDialog) footerHint() string {
+	if d.routeProtocol != nil {
+		return "enter save/read · tab next · esc cancel · pgup/pgdown scroll"
+	}
+	if d.routeCache != nil {
+		return "enter save/read · tab next · esc cancel · pgup/pgdown scroll"
+	}
+	if d.cur().AdapterType == backends.AdapterTypes.LITELLM {
+		return "c cache markers · r route protocol · enter key · a active · m models · n new · e edit · x delete · esc back"
+	}
 	switch {
 	case d.modelPicker != nil:
 		return keyLegend(keyHint{"↵", "select"}, keyHint{"esc", "cancel"})
@@ -114,6 +129,8 @@ func (d *providersDialog) footerHint() string {
 		return keyLegend(keyHint{label: "waiting for the browser callback…"}, keyHint{"esc", "cancel"})
 	case d.cur().Name == backends.NameClaudeCode.String():
 		return keyLegend(keyHint{"enter", "runs `claude setup-token`"}, keyHint{"a", "active"}, keyHint{"m", "models"}, keyHint{"esc", "back"})
+	case d.cur().AdapterType == backends.AdapterTypes.ANTHROPICCOMPATIBLE:
+		return "c cache markers · enter key · a active · m models · n new · e edit · x delete · esc back"
 	default:
 		return keyLegend(keyHint{"↵", "key/sign-in"}, keyHint{"a", "active"}, keyHint{"m", "models"},
 			keyHint{"n", "new"}, keyHint{"e", "edit"}, keyHint{"x", "delete"}, keyHint{"esc", "back"})
@@ -174,6 +191,12 @@ func (d *providersDialog) handleKey(msg tea.KeyPressMsg) action {
 }
 
 func (d *providersDialog) handleKeyInner(msg tea.KeyPressMsg) action {
+	if d.routeProtocol != nil {
+		return d.handleRouteProtocolKey(msg)
+	}
+	if d.routeCache != nil {
+		return d.handleRouteCacheKey(msg)
+	}
 	if d.oauthBusy {
 		if msg.String() == "esc" {
 			return actionCancelOAuthLogin{}
@@ -209,6 +232,14 @@ func (d *providersDialog) handleKeyInner(msg tea.KeyPressMsg) action {
 			return d.startSignIn()
 		}
 		d.startKeyEdit()
+	case "r":
+		if d.cur().AdapterType == backends.AdapterTypes.LITELLM {
+			return actionEditRouteProtocol{}
+		}
+	case "c":
+		if d.cur().AdapterType == backends.AdapterTypes.LITELLM || d.cur().AdapterType == backends.AdapterTypes.ANTHROPICCOMPATIBLE {
+			return actionEditRouteCache{}
+		}
 	case "e":
 		if d.cursor < len(d.defs) {
 			d.startEditCustom()
@@ -233,13 +264,20 @@ func (d *providersDialog) handleKeyInner(msg tea.KeyPressMsg) action {
 
 // handleAddKey drives the inline add/edit-custom-provider form.
 func (d *providersDialog) handleAddKey(msg tea.KeyPressMsg) action {
-	return handleAddFormKey(msg, d.addEds[:], &d.addIdx, func() { d.adding = false; d.editOrig = "" }, d.submitAdd)
+	return handleAddFormKey(msg, d.addEds[:], &d.addIdx, d.closeAddForm, d.submitAdd)
+}
+
+// closeAddForm releases the retained edit snapshot on every form close.
+func (d *providersDialog) closeAddForm() {
+	d.adding = false
+	d.editOrig = ""
+	d.editBase = backends.ProviderDefinition{}
 }
 
 // openAddForm opens the inline form blank, for adding a new provider.
 func (d *providersDialog) openAddForm() {
+	d.closeAddForm()
 	d.adding = true
-	d.editOrig = ""
 	d.addEds = [6]composer{}
 	d.addIdx = 0
 	d.status = ""
@@ -292,6 +330,8 @@ func (d *providersDialog) startEditCustom() {
 	}
 	d.adding = true
 	d.editOrig = def.Name
+	d.editBase = def
+	d.editBase.SeedModels = slices.Clone(def.SeedModels)
 	win := ""
 	if def.ContextWindow > 0 {
 		win = strconv.Itoa(def.ContextWindow)
@@ -308,11 +348,11 @@ func (d *providersDialog) startEditCustom() {
 	d.status = ""
 }
 
-// submitAdd upserts the custom OpenAI-compatible provider from the inline
+// submitAdd upserts the custom provider from the inline
 // form and, on success, closes the form and refreshes the list.
 func (d *providersDialog) submitAdd() {
 	if d.s == nil || d.s.Registry == nil {
-		d.adding = false
+		d.closeAddForm()
 		return
 	}
 	name := strings.TrimSpace(d.addEds[0].text())
@@ -329,26 +369,31 @@ func (d *providersDialog) submitAdd() {
 		window = 0
 	}
 	inCost, outCost := parseCostPerM(d.addEds[5].text())
-	def := backends.ProviderDefinition{
-		Name:              name,
-		DisplayName:       name,
-		AdapterType:       backends.AdapterTypes.OPENAICOMPATIBLE,
-		BaseURL:           strings.TrimSpace(d.addEds[1].text()),
-		DefaultModel:      strings.TrimSpace(d.addEds[2].text()),
-		ReasoningHistory:  reasoning,
-		ContextWindow:     window,
-		InputCostPerMTok:  inCost,
-		OutputCostPerMTok: outCost,
-		Enabled:           true,
-		Builtin:           false,
+	def := d.editBase
+	model := d.addEds[2].text()
+	if d.editOrig == "" {
+		def = backends.ProviderDefinition{
+			DisplayName: name,
+			AdapterType: backends.AdapterTypes.OPENAICOMPATIBLE,
+			Enabled:     true,
+		}
+		model = strings.TrimSpace(model)
 	}
+	def.Name = name
+	def.BaseURL = strings.TrimSpace(d.addEds[1].text())
+	def.DefaultModel = model
+	def.ReasoningHistory = reasoning
+	def.ContextWindow = window
+	def.InputCostPerMTok = inCost
+	def.OutputCostPerMTok = outCost
 	if err := d.s.Registry.UpsertProvider(d.ctx, def); err != nil {
 		d.status = "save: " + err.Error()
 		return
 	}
 	// An edit that renamed the provider upserts a new row, so drop the old
 	// one. Its vault-stored key (if any) is keyed by name and is left behind —
-	// re-enter the key under the new name.
+	// re-enter the key under the new name. Old per-alias policies are deleted
+	// by provider cleanup, not migrated to the new connection.
 	if d.editOrig != "" && d.editOrig != name {
 		if err := d.s.Registry.Delete(d.ctx, d.editOrig); err != nil {
 			d.status = "saved " + name + ", but old provider cleanup failed: " + err.Error()
@@ -359,8 +404,7 @@ func (d *providersDialog) submitAdd() {
 	if d.editOrig != "" {
 		verb = "updated"
 	}
-	d.adding = false
-	d.editOrig = ""
+	d.closeAddForm()
 	d.status = name + " " + verb
 	d.refresh()
 }
@@ -416,6 +460,10 @@ func (d *providersDialog) handleKeyEdit(msg tea.KeyPressMsg) action {
 // text-entry sub-mode.
 func (d *providersDialog) handlePaste(content string) {
 	switch {
+	case d.routeProtocol != nil && !d.routeProtocol.choosing:
+		d.routeProtocol.alias.insert(content)
+	case d.routeCache != nil && !d.routeCache.choosing:
+		d.routeCache.alias.insert(content)
 	case d.editing:
 		d.editor.insert(content)
 	case d.adding && d.addIdx >= 0 && d.addIdx < len(d.addEds):
@@ -577,6 +625,12 @@ func (d *providersDialog) deleteCustom() {
 // active). It returns rows only — the surface owns the footer hint + the
 // status toast, so the list never grows its own.
 func (d *providersDialog) detailLines(width int) []string {
+	if d.routeProtocol != nil {
+		return d.routeProtocol.lines(width)
+	}
+	if d.routeCache != nil {
+		return d.routeCache.lines(width)
+	}
 	if d.modelPicker != nil {
 		return d.modelPickerLines(width)
 	}
@@ -634,7 +688,7 @@ func (d *providersDialog) addFormLines() []string {
 	lines := make([]string, 0, len(d.addEds)+3)
 	title := "add custom provider (openai-compatible)"
 	if d.editOrig != "" {
-		title = "edit custom provider (openai-compatible)"
+		title = "edit custom provider (" + d.editBase.AdapterType.String() + ")"
 	}
 	lines = append(lines, palette.Assistant.On(title), "")
 	for i := range d.addEds {
@@ -648,6 +702,9 @@ func (d *providersDialog) addFormLines() []string {
 			label = palette.Subtle.On(label)
 		}
 		lines = append(lines, label+val)
+	}
+	if d.editOrig != "" && strings.TrimSpace(d.addEds[0].text()) != d.editOrig {
+		lines = append(lines, palette.Assistant.On("rename creates a new connection: keys and per-alias policies are not moved"))
 	}
 	lines = append(lines, "",
 		palette.Subtle.On("  reasoning: inline (default) · field (thinking models: Moonshot/Kimi) · strip"),

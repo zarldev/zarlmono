@@ -141,7 +141,7 @@ func (c *ContextCache) compactNow(ctx context.Context, compactor agentcompact.Co
 	keep = agentcompact.KeepRecentExchange(c.context, keep)
 	res, err := compactor.Compact(ctx, cloneMessages(c.context), keep)
 	if sink != nil && res.Inference != nil {
-		sink.OnCompactionSettled(ctx, runner.CompactionSettled{TaskID: "manual-compact", Inference: *res.Inference, Err: err})
+		sink.OnCompactionSettled(ctx, runner.CompactionSettled{TaskID: "manual-compact", Inference: res.Inference.Clone(), Err: err})
 	}
 	if err != nil {
 		return ManualCompactionResult{}, fmt.Errorf("compact now: %w", err)

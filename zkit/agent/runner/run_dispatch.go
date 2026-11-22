@@ -14,7 +14,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
-	"github.com/zarldev/zarlmono/zkit/ai/llm/repair"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -122,24 +121,14 @@ func (t *taskRun) dispatch(
 	r, spec := t.r, t.spec
 	name := tools.ToolName(tc.Function.Name)
 	args := tools.ToolParameters{}
-	// repair.Unmarshal accepts an empty buffer (decodes as `{}`) and
-	// tries a cascade of small-model recovery transforms on malformed
-	// input — literal newlines in strings, trailing commas, missing
-	// closers — before giving up. On total failure we fail the call
-	// with a Validation result so the model gets a clear "your JSON
-	// didn't parse" message rather than a tool-side "X required"
-	// once dispatch lands with empty args.
-	//
-	// Build the typed *tools.Error first and project it via
-	// failedFromError so the resulting Result carries Kind structurally
-	// (errors.AsType extracts it) — same pattern as code.failure and
-	// failedFromGuard, with no duplication of the projection logic.
+	// Decode a complete repaired document with exact numeric leaves. RawArguments
+	// remains the original provider output for audit, including malformed input.
 	call := tools.ToolCall{
 		ID: tools.ToolCallID(tc.ID), ExecutionID: executionID, ToolName: name,
 		Arguments: args, RawArguments: tc.Function.Arguments,
 		Status: tools.ToolCallStatusExecuting, CreatedAt: time.Now(),
 	}
-	if err := repair.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+	if err := decodeToolArguments(tc.Function.Arguments, &args); err != nil {
 		r.publishToolStarted(ctx, spec, call)
 		res := tools.Failure(call.ID, tools.Validation(string(name), fmt.Sprintf(
 			"tool arguments did not parse as JSON (after repair attempts): %v. Re-emit the call with valid JSON", err)))

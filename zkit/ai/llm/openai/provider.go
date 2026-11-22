@@ -68,6 +68,10 @@ type Provider struct {
 	responsesDefaults    responsesPlan
 	// promptCacheExplicit opts custom Chat endpoints into hosted cache fields.
 	promptCacheExplicit bool
+	deepSeekChatDialect bool
+	liteLLMChat         bool
+	liteLLMCache        LiteLLMPromptCachePolicy
+	liteLLMReplay       *LiteLLMReplayScope
 }
 
 const (
@@ -85,11 +89,12 @@ const (
 // Options are applied before constructing the SDK client; construction performs no I/O.
 func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 	provider := &Provider{
-		model:        modelGPT4oMini,
-		apiKey:       apiKey,
-		baseURL:      defaultBaseURL,
-		httpClient:   defaultHTTPClient(),
-		responsesAPI: true,
+		model:         modelGPT4oMini,
+		liteLLMReplay: &LiteLLMReplayScope{},
+		apiKey:        apiKey,
+		baseURL:       defaultBaseURL,
+		httpClient:    defaultHTTPClient(),
+		responsesAPI:  true,
 	}
 	for _, opt := range opts {
 		opt(provider)
@@ -125,12 +130,35 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 			yield(llm.CompletionChunk{}, cause)
 			return
 		}
-		plan, err := planRequest(p.model, req, p.responsesAPI, p.responsesDefaults)
-		if err != nil {
-			yield(llm.CompletionChunk{}, err)
+		plan := planRequest(p.model, req, p.responsesAPI, p.responsesAPIExplicit, p.responsesDefaults)
+		_, responses := plan.(responsesPlan)
+		var policy *nativeCachePolicy
+		if raw, present := req.Options[PromptCacheOption]; present {
+			resolved, err := p.resolveNativeCachePolicy(raw, req, responses)
+			if err != nil {
+				yield(llm.CompletionChunk{}, err)
+				return
+			}
+			policy = &resolved
+		}
+		switch resolved := plan.(type) {
+		case chatCompletionPlan:
+			resolved.nativeCache = policy
+			plan = resolved
+		case responsesPlan:
+			resolved.nativeCache = policy
+			plan = resolved
+		}
+		if p.liteLLMChat {
+			if err := p.validateLiteLLMChat(ctx, req); err != nil {
+				yield(llm.CompletionChunk{}, err)
+				return
+			}
+		}
+		if p.liteLLMChat && responses {
+			yield(llm.CompletionChunk{}, ErrLiteLLMChat)
 			return
 		}
-		_, responses := plan.(responsesPlan)
 		for _, message := range req.Messages {
 			for _, part := range message.Parts {
 				if part.Type == llm.ContentTypeVideo || (responses && part.Type == llm.ContentTypeAudio) {
@@ -188,7 +216,7 @@ func semanticFinishReason(reason string) llm.FinishReason {
 // returns false (the consumer broke / the attempt was cancelled).
 func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionRequest, plan chatCompletionPlan, yield func(llm.CompletionChunk, error) bool) {
 	// Convert our LLM messages to OpenAI messages
-	messages := p.convertMessagesToOpenAI(req.Messages)
+	messages := convertMessagesToOpenAIWithCache(req.Messages, p.reasoningHistory, p.reasoningKeepMask, plan.nativeCache)
 
 	// Build OpenAI chat completion parameters using the v2 API.
 	//
@@ -201,8 +229,9 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	// The trailing chunk arrives with choices=[]; see the stream loop
 	// below for how usage is captured separately from finish_reason.
 	params := openai.ChatCompletionNewParams{
-		Messages: messages,
-		Model:    p.model,
+		Messages:           messages,
+		Model:              p.model,
+		PromptCacheOptions: nativeCacheChatOptions(plan.nativeCache),
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.Bool(true),
 		},
@@ -234,8 +263,12 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	// llama.cpp / vLLM extension the OpenAI SDK doesn't know about;
 	// inject it as an extra top-level JSON field via WithJSONSet.
 	// Providers that don't recognise the key ignore it.
-	stream := p.client.Chat.Completions.NewStreaming(ctx, params,
-		p.extraJSONOptions(req)...)
+	opts, err := p.extraJSONOptions(ctx, req)
+	if err != nil {
+		yield(llm.CompletionChunk{}, fmt.Errorf("chat controls: %w", err))
+		return
+	}
+	stream := p.client.Chat.Completions.NewStreaming(ctx, params, opts...)
 	defer stream.Close()
 
 	// OpenAI streams tool calls as deltas keyed by Index — the first
@@ -258,9 +291,21 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 	var finishReason string
 	var finalUsage openai.CompletionUsage
 	var usageSeen bool
+	translated := liteLLMChatState{policy: p.liteLLMCache}
+	var completedItems []llm.ContinuationItem
 
 	for stream.Next() {
 		evt := stream.Current()
+		if p.liteLLMChat {
+			if err := translated.acceptRaw(ctx, evt.RawJSON()); err != nil {
+				yield(llm.CompletionChunk{}, err)
+				return
+			}
+		}
+		if p.liteLLMChat && len(evt.Choices) > 1 {
+			yield(llm.CompletionChunk{}, ErrLiteLLMChat)
+			return
+		}
 
 		// Send content as it comes in
 		if len(evt.Choices) > 0 {
@@ -270,7 +315,16 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			// whole reasoning before any answer). Route them through
 			// the Thinking channel only — Content stays the visible
 			// answer.
-			if r := extractReasoningDelta(choice.Delta); r != "" {
+			reasoning := extractReasoningDelta(choice.Delta)
+			if p.liteLLMChat {
+				var err error
+				reasoning, err = translated.observe(ctx, choice.Delta.RawJSON(), reasoning, true)
+				if err != nil {
+					yield(llm.CompletionChunk{}, err)
+					return
+				}
+			}
+			if r := reasoning; r != "" {
 				if !yield(llm.CompletionChunk{Thinking: r}, nil) {
 					return
 				}
@@ -279,7 +333,7 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			if choice.Delta.Content != "" {
 				recoveredArtifact := false
 				// Recover tool calls from <tool_calls> artifacts in streamed content.
-				if toolparse.IsToolCallArtifactPrefix(choice.Delta.Content) {
+				if !p.liteLLMChat && toolparse.IsToolCallArtifactPrefix(choice.Delta.Content) {
 					result := toolparse.ParseArtifact(choice.Delta.Content)
 					if result.HighConfidence {
 						if !yield(llm.CompletionChunk{
@@ -337,6 +391,18 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 			// existence and starve the token-pressure gate.
 			if choice.FinishReason != "" {
 				finishReason = choice.FinishReason
+				if p.liteLLMChat {
+					if len(translated.blocks) != 0 && !liteLLMSignedFinish(finishReason) {
+						yield(llm.CompletionChunk{}, ErrLiteLLMChat)
+						return
+					}
+					items, err := translated.complete(ctx, p.liteLLMScope())
+					if err != nil {
+						yield(llm.CompletionChunk{}, err)
+						return
+					}
+					completedItems = items
+				}
 			}
 		}
 
@@ -348,6 +414,9 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		// either didn't honour include_usage or hasn't emitted it yet.
 		if reportedJSONUsage(evt.RawJSON()) {
 			finalUsage = evt.Usage
+			if p.liteLLMChat {
+				translated.observeUsage(evt.RawJSON())
+			}
 			usageSeen = true
 		}
 	}
@@ -357,12 +426,25 @@ func (p *Provider) streamCompletion(ctx context.Context, req llm.CompletionReque
 		return
 	}
 
-	metadata := llm.CompletionChunk{FinishReason: semanticFinishReason(finishReason)}
-	if usageSeen {
-		metadata.Usage = chatUsage(finalUsage)
-		metadata.UsageReported = true
+	if p.liteLLMChat {
+		if cause := contextError(ctx); cause != nil {
+			yield(llm.CompletionChunk{}, cause)
+			return
+		}
 	}
-	if metadata.FinishReason != llm.FinishReasons.UNKNOWN || metadata.UsageReported {
+	if p.liteLLMChat && !translated.finished && (len(translated.blocks) != 0 || len(translated.calls) != 0) {
+		yield(llm.CompletionChunk{}, ErrLiteLLMChat)
+		return
+	}
+	metadata := llm.CompletionChunk{FinishReason: semanticFinishReason(finishReason), CompletedItems: completedItems}
+	if usageSeen {
+		metadata.Usage = p.nativeChatUsage(finalUsage)
+		metadata.UsageReported = true
+		if p.liteLLMChat {
+			translated.applyUsage(&metadata)
+		}
+	}
+	if metadata.FinishReason != llm.FinishReasons.UNKNOWN || metadata.UsageReported || len(metadata.CompletedItems) != 0 {
 		yield(metadata, nil)
 	}
 }
@@ -588,12 +670,13 @@ func (p *Provider) nonStreamCompletion(
 	yield func(llm.CompletionChunk, error) bool,
 ) {
 	// Convert our LLM messages to OpenAI messages
-	messages := p.convertMessagesToOpenAI(req.Messages)
+	messages := convertMessagesToOpenAIWithCache(req.Messages, p.reasoningHistory, p.reasoningKeepMask, plan.nativeCache)
 
 	// Build OpenAI chat completion parameters using the v2 API
 	params := openai.ChatCompletionNewParams{
-		Messages: messages,
-		Model:    p.model,
+		Messages:           messages,
+		Model:              p.model,
+		PromptCacheOptions: nativeCacheChatOptions(plan.nativeCache),
 	}
 
 	// Set optional parameters
@@ -613,14 +696,57 @@ func (p *Provider) nonStreamCompletion(
 	}
 
 	// Create completion (see extraJSONOptions for chat_template_kwargs handling).
-	completion, err := p.client.Chat.Completions.New(ctx, params,
-		p.extraJSONOptions(req)...)
+	opts, err := p.extraJSONOptions(ctx, req)
+	if err != nil {
+		yield(llm.CompletionChunk{}, fmt.Errorf("chat controls: %w", err))
+		return
+	}
+	completion, err := p.client.Chat.Completions.New(ctx, params, opts...)
 	if err != nil {
 		yield(llm.CompletionChunk{}, fmt.Errorf("completion: %w", normalizeContextError(ctx, userFacingAPIError(err))))
 		return
 	}
+	// The SDK decodes an HTTP 200 JSON null as a nil completion without an error.
+	if completion == nil {
+		yield(llm.CompletionChunk{}, normalizeContextError(ctx, errors.New("completion: null response")))
+		return
+	}
 
+	if p.liteLLMChat {
+		if len(completion.Choices) != 1 {
+			yield(llm.CompletionChunk{}, ErrLiteLLMChat)
+			return
+		}
+		choice := completion.Choices[0]
+		translated := liteLLMChatState{policy: p.liteLLMCache}
+		if err := translated.acceptRaw(ctx, completion.RawJSON()); err != nil {
+			yield(llm.CompletionChunk{}, err)
+			return
+		}
+		reasoning, err := translated.observe(ctx, choice.Message.RawJSON(), extractReasoningFromMessage(choice.Message), false)
+		if err != nil {
+			yield(llm.CompletionChunk{}, err)
+			return
+		}
+		if len(translated.blocks) != 0 && !liteLLMSignedFinish(choice.FinishReason) {
+			yield(llm.CompletionChunk{}, ErrLiteLLMChat)
+			return
+		}
+		items, err := translated.complete(ctx, p.liteLLMScope())
+		if err != nil {
+			yield(llm.CompletionChunk{}, err)
+			return
+		}
+		chunk := llm.CompletionChunk{Content: choice.Message.Content, Thinking: reasoning, ToolCalls: translated.calls, CompletedItems: items, FinishReason: semanticFinishReason(choice.FinishReason), Usage: chatUsage(completion.Usage), UsageReported: reportedJSONUsage(completion.RawJSON())}
+		liteLLMUsage(completion.RawJSON(), &chunk)
+		yield(chunk, nil)
+		return
+	}
 	usageReported := reportedJSONUsage(completion.RawJSON())
+	if len(completion.Choices) == 0 && p.nativeOpenAIUsage() && nativeChatCacheWrite(completion.Usage).Known {
+		yield(llm.CompletionChunk{Usage: p.nativeChatUsage(completion.Usage), UsageReported: usageReported}, nil)
+		return
+	}
 	if len(completion.Choices) > 0 {
 		choice := completion.Choices[0]
 
@@ -647,7 +773,7 @@ func (p *Provider) nonStreamCompletion(
 					Thinking:      extractReasoningFromMessage(choice.Message),
 					FinishReason:  semanticFinishReason(choice.FinishReason),
 					ToolCalls:     result.Calls,
-					Usage:         chatUsage(completion.Usage),
+					Usage:         p.nativeChatUsage(completion.Usage),
 					UsageReported: usageReported,
 				}, nil) {
 					return
@@ -661,7 +787,7 @@ func (p *Provider) nonStreamCompletion(
 			Thinking:      extractReasoningFromMessage(choice.Message),
 			FinishReason:  semanticFinishReason(choice.FinishReason),
 			ToolCalls:     toolCalls,
-			Usage:         chatUsage(completion.Usage),
+			Usage:         p.nativeChatUsage(completion.Usage),
 			UsageReported: usageReported,
 		}, nil) {
 			return
@@ -706,8 +832,20 @@ func applyChatTokenLimit(params *openai.ChatCompletionNewParams, field TokenLimi
 
 // Returns the option slice the callers spread into their
 // NewStreaming/New variadics.
-func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestOption {
-	opts := p.chatControlOptions(req)
+func (p *Provider) extraJSONOptions(ctx context.Context, req llm.CompletionRequest) ([]option.RequestOption, error) {
+	var opts []option.RequestOption
+	if p.deepSeekChatDialect {
+		var err error
+		opts, err = deepSeekChatOptions(req)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		opts = p.chatControlOptions(req)
+	}
+	if p.liteLLMChat {
+		opts = append(opts, p.liteLLMOptions(ctx, req)...)
+	}
 	if p.cachePrompt {
 		opts = append(opts, option.WithJSONSet("cache_prompt", true))
 	}
@@ -736,7 +874,7 @@ func (p *Provider) extraJSONOptions(req llm.CompletionRequest) []option.RequestO
 			opts = append(opts, option.WithJSONSet("prompt_cache_retention", retention))
 		}
 	}
-	return opts
+	return opts, nil
 }
 
 // buildResponseFormat translates the provider-neutral
@@ -788,12 +926,17 @@ func buildResponseFormat(rf llm.ResponseFormat) (map[string]any, bool) {
 // userMessageWithParts builds a user message whose Content is the
 // OpenAI multimodal "array of parts" form. Caller has already checked
 // len(msg.Parts) > 0.
-func userMessageWithParts(msg llm.Message) openai.ChatCompletionMessageParamUnion {
+func userMessageWithParts(msg llm.Message, source int, policy *nativeCachePolicy) openai.ChatCompletionMessageParamUnion {
 	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(msg.Parts))
-	for _, p := range msg.Parts {
+	for index, p := range msg.Parts {
 		switch p.Type {
 		case llm.ContentTypeText:
-			parts = append(parts, openai.TextContentPart(p.Text))
+			if selector, selected := policy.selected(source, index); selected {
+				text := nativeCacheChatText(p.Text, selector)
+				parts = append(parts, openai.ChatCompletionContentPartUnionParam{OfText: &text})
+			} else {
+				parts = append(parts, openai.TextContentPart(p.Text))
+			}
 		case llm.ContentTypeImage:
 			if p.Image == nil {
 				continue
@@ -881,6 +1024,15 @@ func convertMessagesToOpenAIWithReasoning(
 	mode llm.ReasoningHistory,
 	keepMaskFn func([]llm.Message) []bool,
 ) []openai.ChatCompletionMessageParamUnion {
+	return convertMessagesToOpenAIWithCache(messages, mode, keepMaskFn, nil)
+}
+
+func convertMessagesToOpenAIWithCache(
+	messages []llm.Message,
+	mode llm.ReasoningHistory,
+	keepMaskFn func([]llm.Message) []bool,
+	policy *nativeCachePolicy,
+) []openai.ChatCompletionMessageParamUnion {
 	if mode == llm.ReasoningHistories.FIELD && keepMaskFn != nil {
 		// Apply the hook to canonical history before inserting transport-only
 		// attachment messages, which must not count as new user turns.
@@ -895,16 +1047,25 @@ func convertMessagesToOpenAIWithReasoning(
 		}
 	}
 	var result []openai.ChatCompletionMessageParamUnion
-	for _, msg := range llm.ExpandToolResultParts(messages) {
+	for source, msg := range nativeCacheMessageSources(messages) {
 		switch msg.Role {
-		case "system":
-			result = append(result, openai.SystemMessage(msg.Content))
+		case llm.RoleSystem:
+			if selector, selected := policy.selected(source, 0); selected {
+				result = append(result, openai.SystemMessage([]openai.ChatCompletionContentPartTextParam{nativeCacheChatText(msg.Content, selector)}))
+			} else {
+				result = append(result, openai.SystemMessage(msg.Content))
+			}
 		case roleUser:
 			if len(msg.Parts) > 0 {
-				result = append(result, userMessageWithParts(msg))
+				result = append(result, userMessageWithParts(msg, source, policy))
 				continue
 			}
-			result = append(result, openai.UserMessage(msg.Content))
+			if selector, selected := policy.selected(source, 0); selected {
+				text := nativeCacheChatText(msg.Content, selector)
+				result = append(result, openai.UserMessage([]openai.ChatCompletionContentPartUnionParam{{OfText: &text}}))
+			} else {
+				result = append(result, openai.UserMessage(msg.Content))
+			}
 		case roleAssistant:
 			if len(msg.ToolCalls) == 0 {
 				assistant := assistantMessageParam(msg, mode)
@@ -1027,8 +1188,9 @@ func WithChatTemplateKwargs(enabled bool) options.Option[Provider] {
 	}
 }
 
-// WithResponsesAPI explicitly selects whether to use OpenAI's public Responses
-// wire format. This selection wins over [WithBaseURL] regardless of option order.
+// WithResponsesAPI explicitly selects the Responses wire format when enabled,
+// regardless of model spelling or streaming mode. Disabled selects Chat
+// Completions. This wins over [WithBaseURL] regardless of option order.
 func WithResponsesAPI(enabled bool) options.Option[Provider] {
 	return func(p *Provider) {
 		p.responsesAPI = enabled

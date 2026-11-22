@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/cache"
 )
@@ -26,7 +27,7 @@ func TestSourceStaleSnapshotBacksOffAfterRefreshFailure(t *testing.T) {
 	defer server.Close()
 	store := cache.NewMemoryCache[string, modelsdev.Snapshot]()
 	stale := modelsdev.Snapshot{
-		Schema: 2, FetchedAt: time.Now().Add(-time.Hour),
+		Schema: 4, FetchedAt: time.Now().Add(-time.Hour),
 		Entries: map[string]map[string]modelsdev.Entry{"openai": {"gpt-test": {}}},
 	}
 	if err := store.Set(t.Context(), "models.dev", stale); err != nil {
@@ -74,11 +75,11 @@ func (c *countingSnapshotCache) Healthy(ctx context.Context) error {
 func TestSourceLookupCachesSnapshotInMemory(t *testing.T) {
 	store := &countingSnapshotCache{inner: cache.NewMemoryCache[string, modelsdev.Snapshot]()}
 	snapshot := modelsdev.Snapshot{
-		Schema:    2,
+		Schema:    4,
 		FetchedAt: time.Now(),
 		Entries: map[string]map[string]modelsdev.Entry{
 			"openai": {
-				"gpt-test": {Intrinsic: modelsdev.Intrinsic{ContextWindow: 128_000, SupportsTools: true}},
+				"gpt-test": {Evidence: modelsdev.Evidence{Limits: llm.ModelLimits{ContextTokens: 128_000}, Tools: llm.Supports.SUPPORTSUPPORTED}},
 			},
 		},
 	}

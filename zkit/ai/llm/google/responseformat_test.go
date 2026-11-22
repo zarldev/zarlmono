@@ -40,6 +40,7 @@ func TestProvider_ResponseFormat(t *testing.T) {
 				t.Fatalf("NewProvider: %v", err)
 			}
 			for _, err := range p.Complete(t.Context(), llm.CompletionRequest{
+				Stream:         true,
 				Messages:       []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
 				ResponseFormat: tc.format,
 			}) {
@@ -84,6 +85,7 @@ func TestProvider_Temperature(t *testing.T) {
 				t.Fatalf("NewProvider: %v", err)
 			}
 			for range p.Complete(t.Context(), llm.CompletionRequest{
+				Stream:      true,
 				Messages:    []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
 				Temperature: tc.temperature,
 			}) {

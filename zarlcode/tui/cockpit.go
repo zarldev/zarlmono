@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -57,6 +58,10 @@ type RunState struct {
 	toolsRunning   int
 	maxDepth       int // deepest active sub-agent this turn
 
+	providerObservations      []ProviderAttemptDiagnostic
+	providerObservationRootID string
+	auxiliaryObservations     engine.AuxiliarySnapshot
+
 	// turnStartedAt / turnCompletionTokens drive the live tok/s shown on the
 	// timeline title while a turn streams. turnOutBytes remains a visible-output
 	// counter for future UI use, but not for tok/s.
@@ -102,6 +107,8 @@ type RunState struct {
 	lastTurnAt                                                  time.Time
 
 	// --- session rollup (since reset / launch) ---
+	// Recent auxiliary evidence survives root starts, but not a full session reset.
+	compactionObservations       []CompactionDiagnostic
 	startedAt                    time.Time
 	sessionTurns                 int
 	sessionIn                    int
@@ -336,6 +343,8 @@ func (s *RunState) reset() {
 	s.turnStartedAt = time.Now()
 	s.iterationStartedAt = s.turnStartedAt
 	s.performance = PerformanceDiagnostics{}
+	s.resetProviderObservations()
+	s.auxiliaryObservations = engine.AuxiliarySnapshot{}
 	s.turnOutBytes = 0
 	s.turnCompletionTokens = 0
 	if s.startedAt.IsZero() {

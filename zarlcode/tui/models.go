@@ -5,6 +5,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/zarldev/zarlmono/zarlcode/engine"
 )
 
 // modelsLoadedMsg carries an async model-list fetch back to the settings
@@ -35,6 +37,18 @@ func (m *UI) openSettings() tea.Cmd {
 	}
 	m.captureSettingsTargetSnapshot()
 	d := newSettingsDialog(m.appContext(), m.settings)
+	// Append rather than reorder existing routing/editor rows.
+	if m.live != nil {
+		for i := range d.cats {
+			if d.cats[i].name == "model" {
+				d.cats[i].rows = append(d.cats[i].rows, settingsRow{
+					label: "gateway advertised", kind: rowAction,
+					desc: "Cached declarations for the actual active connection. Optional refresh; not capabilities or billing authority.",
+					open: func(*engine.Settings) dialog { return newTargetModelInfoDialog(m.live.RunTarget()) },
+				})
+			}
+		}
+	}
 	d.gallery.workspace = m.session.WorkspaceDir
 	d.gallery.refresh()
 	m.overlay.push(d)
@@ -56,6 +70,20 @@ func (m *UI) openSettings() tea.Cmd {
 // (bounded), reporting the result as a modelsLoadedMsg. The registry
 // resolves the key/endpoint and falls back to seed models on any failure.
 func (m *UI) fetchModelsCmd(provider string) tea.Cmd {
+	if d, ok := m.overlay.top().(*targetModelInfoDialog); ok {
+		if m.live == nil || !d.matches(m.live.RunTarget()) {
+			d.targetChanged = true
+			return nil
+		}
+		return m.RefreshTargetModelInfo()
+	}
+	// Bind summaries only to the actual construction, never a settings-global
+	// map keyed by mutable provider names or guessed credential identities.
+	if m.live != nil {
+		if p, ok := m.overlay.top().(*modelQuickPick); ok {
+			p.meta.target = m.live.RunTarget
+		}
+	}
 	if m.settings == nil || m.settings.Registry == nil || provider == "" {
 		return nil
 	}
@@ -73,6 +101,9 @@ func (m *UI) fetchModelsCmd(provider string) tea.Cmd {
 // a modelQuickPick overlay if one is active. Also populates the model cache so
 // subsequent ctrl+e opens are instant.
 func (m *UI) handleModelsMsg(msg tea.Msg) bool {
+	if m.handleTargetModelInfoMsg(msg) {
+		return true
+	}
 	lm, ok := msg.(modelsLoadedMsg)
 	if !ok {
 		return false

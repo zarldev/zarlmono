@@ -8,7 +8,6 @@ import (
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/runner"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
-	"github.com/zarldev/zarlmono/zkit/options"
 )
 
 // ManualCompactionResult reports the effect of a user-triggered conversation
@@ -30,7 +29,7 @@ func (l *LiveRunner) CompactNow(ctx context.Context) (ManualCompactionResult, er
 	}
 	defer l.admission.leave()
 	l.mu.Lock()
-	tgt := l.target
+	tgt := l.target.Clone()
 	settings := l.settings
 	l.mu.Unlock()
 
@@ -55,13 +54,13 @@ func (l *LiveRunner) RunTurnWithAttachments(ctx context.Context, prompt string, 
 		return l.admission.rejection()
 	}
 	defer l.admission.leave()
-	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {})
+	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {}, nil)
 }
 
 // onPrepared converts an exclusive reservation only after the turn's target and
 // dependencies have been built. finish covers context commit as well as child
 // drain; ConversationEnded alone is not this boundary.
-func (l *LiveRunner) runTurnAdmitted(ctx context.Context, spec runner.TaskSpec, onPrepared func(), historyOptions ...options.Option[runner.Runner]) error {
+func (l *LiveRunner) runTurnAdmitted(ctx context.Context, spec runner.TaskSpec, onPrepared func(), recording turnOptionsFactory) error {
 	var finish func()
 	return l.context.transition(ctx, spec, func() (func(runner.TaskSpec) runner.TaskResult, error) {
 		runCtx, end, err := l.beginTurn(ctx)
@@ -69,7 +68,7 @@ func (l *LiveRunner) runTurnAdmitted(ctx context.Context, spec runner.TaskSpec, 
 			return nil, err
 		}
 		finish = end
-		turn, err := l.buildTurnWithSource(runCtx, l.source, append(historyOptions, runner.WithContextBreakdown())...)
+		turn, err := l.buildTurn(runCtx, l.source, nil, recording, runner.WithContextBreakdown())
 		if err != nil {
 			return nil, err
 		}

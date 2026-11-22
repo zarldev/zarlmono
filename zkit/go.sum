@@ -167,6 +167,8 @@ github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78/go.mod h1:aL8wCCfTfS
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 github.com/zarldev/goenums v0.4.9 h1:4FjJx0TTttF7CmZio+68tEj+e+ZuzdIOPs9YRdSQ6iQ=
 github.com/zarldev/goenums v0.4.9/go.mod h1:QwNxpUOvaBNjBJe+VIA6Xqe1A8FvPQudj7HAGeTeiWk=
+github.com/zarldev/goenums v0.7.0 h1:vYom0uyfENKIt4dquP2jRlEiWwdUAZ6bcne0VrntRMw=
+github.com/zarldev/goenums v0.7.0/go.mod h1:zfEm5ybc2qjaJZYKQCTcB6EBTqQDiJYegx6pw4oU8Ns=
 github.com/zeebo/xxh3 v1.1.0 h1:s7DLGDK45Dyfg7++yxI0khrfwq9661w9EN78eP/UZVs=
 github.com/zeebo/xxh3 v1.1.0/go.mod h1:IisAie1LELR4xhVinxWS5+zf1lA4p0MW4T+w+W07F5s=
 go.mongodb.org/mongo-driver v1.17.10 h1:kdAgQvu8TROXZpSkJQd5wzfaNCCrMbpZyKFtQ6qkPCE=

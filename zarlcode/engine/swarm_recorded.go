@@ -70,7 +70,7 @@ func (a *RecordedSwarmActivation) RunRecorded(ctx context.Context, store *db.Sto
 	if a.context.Err() != nil {
 		cancel(context.Cause(a.context))
 	}
-	result := a.Reservation.runSwarmActivation(runCtx, a.activation, a.coordinator, a.live.sessionRecordingOptions(store, sessionID)...)
+	result := a.Reservation.runSwarmActivation(runCtx, a.activation, a.coordinator, a.live.sessionRecordingOptions(store, sessionID))
 	a.result = result
 	return result
 }

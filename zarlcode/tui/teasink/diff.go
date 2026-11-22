@@ -27,10 +27,12 @@ func (s *Sink) Diff(path, diff string) {
 // DiffEvent dispatches a rich diff recorder event through the pump, preserving
 // the pre/post images needed by the TUI checkpoint model.
 func (s *Sink) DiffEvent(e diffrecorder.DiffEvent) {
+	before := append([]byte(nil), e.Before...)
+	after := append([]byte(nil), e.After...)
 	s.flush()
 	s.dispatch(DiffMsg{
 		TaskID: e.TaskID, Path: e.Path, Diff: e.Diff,
-		Before: append([]byte(nil), e.Before...), BeforeMissing: e.BeforeMissing,
-		After: append([]byte(nil), e.After...), AfterMissing: e.AfterMissing,
+		Before: before, BeforeMissing: e.BeforeMissing,
+		After: after, AfterMissing: e.AfterMissing,
 	})
 }

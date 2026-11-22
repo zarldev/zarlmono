@@ -21,13 +21,21 @@ type ProviderAttemptSettled struct {
 	Depth   int
 	Attempt int
 	Usage   *llm.Usage
-	Reason  TerminalReason
-	Err     error
+	// PricingUsage and Execution are independently owned latest supplied sidecars.
+	// Nil means absent. A later nil retains the prior snapshot; a non-nil
+	// snapshot replaces it completely, including unknown fields.
+	PricingUsage *llm.PricingUsage
+	Execution    *llm.ExecutionObservation
+	// RateCard owns the optional host-selected basis frozen before dispatch.
+	// It is independent of usage presence and does not imply any price.
+	RateCard *llm.RateCard
+	Reason   TerminalReason
+	Err      error
 	// Duration runs from lazy stream invocation through return, including local
 	// yield handling and provider cleanup, but excluding this settlement callback.
 	Duration time.Duration
 	// TimeToFirstOutput measures the first content, thinking, or tool-call delta.
-	// Nil means none arrived; usage, finish metadata and opaque native items do
+	// Nil means none arrived; usage, sidecars, finish metadata and native items do
 	// not qualify. A non-nil zero is an immediate output.
 	TimeToFirstOutput *time.Duration
 	// TimeToFirstAccepted measures the first observation accepted by recovery
@@ -56,9 +64,16 @@ func (t *taskRun) settleAttempt(ctx context.Context, sr streamResult) {
 			reason = TerminalCancelled
 		}
 	}
+	observation := ProviderAttemptObservation{
+		Attempt: t.attempt, Usage: usage, PricingUsage: sr.pricingUsage, Execution: sr.execution, RateCard: sr.rateCard,
+	}.Clone()
+	t.providerObservations = append(t.providerObservations, observation)
+	// The sink owns its snapshot independently of the retained task result.
+	event := observation.Clone()
 	t.r.sink.OnProviderAttemptSettled(ctx, ProviderAttemptSettled{
 		TaskID: t.spec.ID, Depth: t.spec.Depth, Attempt: t.attempt,
-		Usage: addUsage(nil, usage), Reason: reason, Err: err,
+		Usage: event.Usage, PricingUsage: event.PricingUsage, Execution: event.Execution, RateCard: event.RateCard,
+		Reason: reason, Err: err,
 		Duration: sr.duration, CallbackDuration: sr.callbackDuration,
 		TimeToFirstOutput: sr.firstOutput, TimeToFirstAccepted: sr.firstAccepted,
 	})

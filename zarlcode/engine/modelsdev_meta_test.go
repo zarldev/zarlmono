@@ -1,8 +1,10 @@
 package engine_test
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
@@ -19,26 +21,12 @@ func TestSettingsUsesModelsDevMetadata(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	modelCache := cache.NewMemoryCache[string, modelsdev.Snapshot]()
-	source := modelsdev.New(modelCache)
-	if err := modelCache.Set(t.Context(), "models.dev", modelsdev.Snapshot{
-		Schema:    2,
-		FetchedAt: time.Now(),
-		Entries: map[string]map[string]modelsdev.Entry{
-			"openai": {
-				"metadata-only-model": {
-					Intrinsic: modelsdev.Intrinsic{
-						ContextWindow:    123_456,
-						SupportsTools:    true,
-						SupportsThinking: true,
-					},
-					Pricing: modelsdev.Pricing{InputCostPerMTok: 2, OutputCostPerMTok: 8},
-				},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("seed models.dev cache: %v", err)
-	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"openai":{"models":{"metadata-only-model":{"id":"metadata-only-model","tool_call":true,"reasoning":true,"limit":{"context":123456},"cost":{"input":2,"output":8}}}}}`)
+	}))
+	t.Cleanup(server.Close)
+	source := modelsdev.New(cache.NewMemoryCache[string, modelsdev.Snapshot](), modelsdev.WithBaseURL(server.URL))
 
 	settings := engine.NewSettings(store, nil, source, t.TempDir())
 	spec := engine.ProviderSpec{Name: "openai", Model: "metadata-only-model"}

@@ -20,4 +20,5 @@ const (
 	claudeCode                     // claude-code
 	llamaCpp                       // llamacpp
 	ollama                         // ollama
+	liteLLM                        // litellm
 )

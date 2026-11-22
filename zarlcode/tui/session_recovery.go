@@ -78,10 +78,13 @@ func (d *sessionRecoveryDialog) handleKey(msg tea.KeyPressMsg) action {
 func (d *sessionRecoveryDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	m := d.ui
 	activity := "Runtime idle."
-	if m.session.Run.Running {
+	switch {
+	case m.session.Run.Running:
 		activity = "A turn is running; tools may already have changed files or external systems."
-	} else if m.liveOperation != nil {
+	case m.liveOperation != nil:
 		activity = "Turn dispatch or settlement is pending."
+	case m.manualCompaction != nil:
+		activity = "Manual compaction or its durable save is pending."
 	}
 	status := "No unsaved conversation changes are known."
 	if m.sessionLossRisk() {
@@ -111,7 +114,7 @@ func (d *sessionRecoveryDialog) draw(scr uv.Screen, area uv.Rectangle) {
 }
 
 func (m *UI) sessionLossRisk() bool {
-	return m.unsavedTurnError != nil || m.liveOperation != nil || m.sessionRetry != nil ||
+	return m.manualCompaction != nil || m.unsavedTurnError != nil || m.liveOperation != nil || m.sessionRetry != nil ||
 		m.sessionPersistRunning || len(m.sessionPersistQueue) != 0 ||
 		m.session.Run.Running || m.sourceConflict || m.rewindRecovery != "" ||
 		m.composer.text() != m.durableDraftText || len(m.pendingAttachments) != 0 ||
@@ -150,6 +153,9 @@ func (m *UI) sessionSaveRetryReason() string {
 // An empty reason permits capture; runtime admission still decides atomically
 // whether background activity or a concurrent caller prevents the reservation.
 func (m *UI) sessionSaveRetryUnavailable() string {
+	if m.manualCompaction != nil {
+		return m.manualSaveRetryUnavailable()
+	}
 	switch {
 	case m.sourceConflict || errors.Is(m.unsavedTurnError, db.ErrCheckpointConflict) || errors.Is(m.unsavedTurnError, db.ErrTranscriptConflict):
 		return "Saving paused: session changed elsewhere. Export/copy before explicitly reloading."
@@ -175,6 +181,9 @@ func (m *UI) sessionSaveRetryUnavailable() string {
 }
 
 func (m *UI) retrySessionSave() tea.Cmd {
+	if m.manualCompaction != nil {
+		return m.RetryManualCompactionSave()
+	}
 	b := m.completedBoundary
 	if reason := m.sessionSaveRetryUnavailable(); reason != "" {
 		m.session.SetErrorToast(reason)

@@ -18,23 +18,21 @@ func (m *UI) prepareOrdinarySessionTarget(saved *savedSession) (engine.TargetUpd
 		if current.Spec.Name != saved.Provider || current.Spec.Model != saved.Model {
 			return engine.TargetUpdate{}, errors.New("saved provider/model unavailable")
 		}
-		return engine.TargetUpdate{Provider: current.Provider, Spec: current.Spec, Window: current.Window}, nil
+		return engine.TargetUpdate{Provider: current.Provider, Spec: current.Spec, Window: current.Window, Facts: current.Facts, RateCard: current.RateCard}, nil
 	}
 	spec := engine.ProviderSpec{Name: saved.Provider, Model: saved.Model}
 	fallback, _ := m.session.ProviderContext()
 	if spec.Name == fallback.Name {
+		spec.Protocol = fallback.Protocol
+		spec.CachePolicy = fallback.CachePolicy
 		spec.BaseURL, spec.APIKey = fallback.BaseURL, fallback.APIKey
 	}
 	ctx, cancel := context.WithTimeout(m.appContext(), repointTimeout)
 	defer cancel()
 	spec.CodexEffort = m.settings.CodexEffort(ctx, spec)
-	provider, err := engine.BuildProvider(ctx, m.settings.Registry, m.settings.Svc, spec)
+	target, err := m.settings.PrepareTarget(ctx, spec)
 	if err != nil {
 		return engine.TargetUpdate{}, errors.New("saved provider/model unavailable with current credentials")
 	}
-	window := m.settings.ContextWindow(ctx, spec)
-	if window <= 0 {
-		window = engine.LiveContextWindow
-	}
-	return engine.TargetUpdate{Provider: provider, Spec: spec, Window: window}, nil
+	return target, nil
 }

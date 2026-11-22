@@ -32,6 +32,19 @@ import (
 // oracle, failures feed back, and the agent continues with its transcript
 // up to the attempt cap.
 func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int) runner.TaskResult {
+	return l.RunHeadlessWithObservations(ctx, prompt, maxIter).Task
+}
+
+// HeadlessResult separates main-run accounting from ephemeral latest-only
+// auxiliary evidence for the entire invocation, including re-drives and children.
+type HeadlessResult struct {
+	Task      runner.TaskResult
+	Auxiliary AuxiliarySnapshot
+}
+
+// RunHeadlessWithObservations executes the same headless drive as RunHeadless,
+// returning auxiliary evidence only after the supervisor and children drain.
+func (l *LiveRunner) RunHeadlessWithObservations(ctx context.Context, prompt string, maxIter int) HeadlessResult {
 	id := uuid.NewString()
 	spec := runner.TaskSpec{
 		ID:            taskscope.ID(id),
@@ -40,7 +53,7 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 	}
 
 	if !l.admission.enter() {
-		return runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: l.admission.rejection()}
+		return HeadlessResult{Task: runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: l.admission.rejection()}}
 	}
 	defer l.admission.leave()
 
@@ -48,23 +61,23 @@ func (l *LiveRunner) RunHeadless(ctx context.Context, prompt string, maxIter int
 	// only inside the cache transition gate.
 	turnCtx, finish, err := l.beginTurn(ctx)
 	if err != nil {
-		return runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
+		return HeadlessResult{Task: runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}}
 	}
 	defer finish()
-	var result runner.TaskResult
+	var result HeadlessResult
 	err = l.context.transition(turnCtx, spec, func() (func(runner.TaskSpec) runner.TaskResult, error) {
 		return func(seed runner.TaskSpec) runner.TaskResult {
 			result = l.runHeadlessTurn(turnCtx, seed)
-			return result
+			return result.Task
 		}, nil
 	}, finish)
 	if err != nil {
-		return runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
+		return HeadlessResult{Task: runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}}
 	}
 	return result
 }
 
-func (l *LiveRunner) runHeadlessTurn(ctx context.Context, spec runner.TaskSpec) runner.TaskResult {
+func (l *LiveRunner) runHeadlessTurn(ctx context.Context, spec runner.TaskSpec) HeadlessResult {
 	// Persist the run lifecycle: a row at start, live progress after each
 	// iteration (so a SIGKILL leaves a trail), and the terminal summary on
 	// completion. The recorder is nil (no-op) when no store is configured.
@@ -72,54 +85,58 @@ func (l *LiveRunner) runHeadlessTurn(ctx context.Context, spec runner.TaskSpec) 
 	provider, model := l.headlessProviderModel()
 	rec.start(ctx, spec.Prompt, provider, model)
 
-	turn, err := l.buildTurnWithSource(ctx, l.headlessSource, runner.WithProgressUpdater(rec.progress))
+	turn, err := l.buildTurn(ctx, l.headlessSource, nil, rec.recordingOptions(l.sink, spec.ID), runner.WithProgressUpdater(rec.progress))
 	if err != nil {
 		res := runner.TaskResult{ID: spec.ID, Reason: runner.TerminalError, Err: err}
 		rec.complete(ctx, res)
-		return res
+		return HeadlessResult{Task: res}
 	}
 
-	// Optional early-stop: when an EarlyStopCommand is configured, stop the
-	// attempt the moment that command passes (e.g. "keep editing until
-	// `go test ./...` is green, then stop") instead of running to the
-	// iteration cap. The watcher is a stop-hint; the bare Drive still trusts
-	// the terminal reason as its verdict.
-	var reqOpts []pursue.RequestOption
-	supervisor := pursue.NewSupervisor()
-	if w := l.earlyStopWatcher(supervisor); w != nil {
-		reqOpts = append(reqOpts, pursue.WithWatcher(w))
-	}
+	task := func() runner.TaskResult {
+		defer turn.close(ctx)
 
-	// Verified re-drive: when a verify command is configured with attempts
-	// to spend, it becomes the world-checking goal — each attempt's claim
-	// of completion is checked by actually running the command; failures
-	// feed back and the agent continues with the full transcript. This is
-	// the eval-proven oracle+feedback+memory loop (8/10 verified vs the
-	// 3/5 single-shot ceiling).
-	var driveOpts []options.Option[pursue.Config]
-	l.mu.Lock()
-	verifyCmd, verifyAttempts := l.verifyCommand, l.verifyAttempts
-	l.mu.Unlock()
-	if verifyCmd != "" && verifyAttempts > 1 {
-		root := l.ws.Root()
-		goal := coderunner.CommandGoal(root, verifyCmd,
-			func() string { return gitWorktreeState(root) },
-			coderunner.VerifyOpts{OnResult: func(result coderunner.VerifyResult) {
-				rec.verifierResult(ctx, result)
-			}})
-		reqOpts = append(reqOpts, pursue.WithGoal(goal))
-		driveOpts = append(driveOpts, pursue.WithMaxAttempts(verifyAttempts),
-			pursue.WithContextThreader(pursue.ThreadFullTranscript()),
-		)
-	}
-	if rec != nil {
-		driveOpts = append(driveOpts, pursue.WithOnAttempt(func(report pursue.AttemptReport) {
-			rec.attempt(ctx, report)
-		}))
-	}
-	result := driveHeadlessOwned(ctx, supervisor, turn.runner, spec, reqOpts, driveOpts...)
-	turn.close(ctx)
-	rec.complete(ctx, result)
+		// Optional early-stop: when an EarlyStopCommand is configured, stop the
+		// attempt the moment that command passes (e.g. "keep editing until
+		// `go test ./...` is green, then stop") instead of running to the
+		// iteration cap. The watcher is a stop-hint; the bare Drive still trusts
+		// the terminal reason as its verdict.
+		var reqOpts []pursue.RequestOption
+		supervisor := pursue.NewSupervisor()
+		if w := l.earlyStopWatcher(supervisor); w != nil {
+			reqOpts = append(reqOpts, pursue.WithWatcher(w))
+		}
+
+		// Verified re-drive: when a verify command is configured with attempts
+		// to spend, it becomes the world-checking goal — each attempt's claim
+		// of completion is checked by actually running the command; failures
+		// feed back and the agent continues with the full transcript. This is
+		// the eval-proven oracle+feedback+memory loop (8/10 verified vs the
+		// 3/5 single-shot ceiling).
+		var driveOpts []options.Option[pursue.Config]
+		l.mu.Lock()
+		verifyCmd, verifyAttempts := l.verifyCommand, l.verifyAttempts
+		l.mu.Unlock()
+		if verifyCmd != "" && verifyAttempts > 1 {
+			root := l.ws.Root()
+			goal := coderunner.CommandGoal(root, verifyCmd,
+				func() string { return gitWorktreeState(root) },
+				coderunner.VerifyOpts{OnResult: func(result coderunner.VerifyResult) {
+					rec.verifierResult(ctx, result)
+				}})
+			reqOpts = append(reqOpts, pursue.WithGoal(goal))
+			driveOpts = append(driveOpts, pursue.WithMaxAttempts(verifyAttempts),
+				pursue.WithContextThreader(pursue.ThreadFullTranscript()),
+			)
+		}
+		if rec != nil {
+			driveOpts = append(driveOpts, pursue.WithOnAttempt(func(report pursue.AttemptReport) {
+				rec.ownedReport(ctx, report)
+			}))
+		}
+		return driveHeadlessOwned(ctx, supervisor, rec.ownedAttempt(turn.runner.Run), spec, reqOpts, driveOpts...)
+	}()
+	result := HeadlessResult{Task: task, Auxiliary: turn.auxiliary.snapshot()}
+	rec.complete(ctx, task)
 	return result
 }
 
@@ -172,7 +189,7 @@ func gitOutput(ctx context.Context, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
-func driveHeadlessOwned(ctx context.Context, supervisor *pursue.Supervisor, r *runner.Runner, spec runner.TaskSpec, reqOpts []pursue.RequestOption, driveOpts ...options.Option[pursue.Config]) runner.TaskResult {
+func driveHeadlessOwned(ctx context.Context, supervisor *pursue.Supervisor, run pursue.AttemptFunc, spec runner.TaskSpec, reqOpts []pursue.RequestOption, driveOpts ...options.Option[pursue.Config]) runner.TaskResult {
 	var res runner.TaskResult
 	attempt := func(ctx context.Context, attemptSpec runner.TaskSpec) runner.TaskResult {
 		var result runner.TaskResult
@@ -183,7 +200,7 @@ func driveHeadlessOwned(ctx context.Context, supervisor *pursue.Supervisor, r *r
 					result = runner.TaskResult{ID: attemptSpec.ID, Reason: runner.TerminalError, Err: fmt.Errorf("headless attempt panicked: %v", p)}
 				}
 			}()
-			result = r.Run(ctx, attemptSpec)
+			result = run(ctx, attemptSpec)
 		}()
 		return result
 	}
@@ -253,49 +270,83 @@ type HeadlessReport struct {
 	TerminalCause    runner.TerminalCause  `json:"terminal_cause,omitempty"`
 	Iterations       int                   `json:"iterations"`
 	Duration         time.Duration         `json:"duration"`
-	// TotalUsage sums reported attempt snapshots for this Run only; nil means
-	// unreported. Timing.AttemptsWithUsage identifies partial totals. Descendant
-	// usage and earlier verified re-drive Runs are not included.
+	// TotalUsage sums reported main-provider attempt snapshots for this Run only;
+	// nil means unreported. Timing.AttemptsWithUsage identifies partial totals.
+	// Auxiliary compaction, descendants and earlier verified re-drive Runs are excluded.
 	TotalUsage *HeadlessUsage    `json:"total_usage"`
 	Timing     runner.TaskTiming `json:"timing"`
+	// ProviderObservations retains independent evidence for each provider attempt
+	// in this Run, including failed attempts. It excludes descendants and earlier
+	// verified re-drive Runs; costs are observations, never summed charges.
+	ProviderObservations []HeadlessProviderObservation `json:"provider_observations"`
+	// CompactionObservations retains auxiliary inference in invocation order,
+	// separately from main provider attempts, timing counters and usage totals.
+	CompactionObservations []HeadlessCompactionObservation `json:"compaction_observations"`
+	// AuxiliaryObservations retains the latest judge and planner for the WHOLE
+	// headless invocation, unlike own-Run totals and main provider attempts.
+	AuxiliaryObservations HeadlessAuxiliarySnapshot `json:"auxiliary_observations"`
 	// UnattributedDuration retains setup, compaction, backoff and settlement
 	// rather than presenting those as provider or tool execution time.
 	UnattributedDuration time.Duration `json:"unattributed_duration"`
 }
 
-// HeadlessUsage is the reported whole-Run token total, distinct from latest
-// context occupancy. CachedTokens retains provider semantics: providers that
-// omit cache accounting cannot be distinguished from reported zero here.
+// HeadlessUsage is a legacy reported token snapshot. TotalUsage holds the
+// main-provider whole-Run total; ProviderObservations holds each main attempt
+// separately and CompactionObservations holds auxiliary invocations. All are
+// distinct from latest context occupancy. PromptTokens and CompletionTokens are inclusive totals;
+// CachedTokens and cache-creation fields are provider-reported subtotals with
+// provider-specific semantics. Cache creation TTL fields are subsets of
+// CacheCreationTokens. ReasoningTokens is a subtotal of CompletionTokens, and
+// ReasoningTokensReported preserves whether it was reported, including zero.
+// Zero cache values do not distinguish unknown from reported zero: this
+// contract has no cache-presence indicator.
 type HeadlessUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CachedTokens     int `json:"cached_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int  `json:"prompt_tokens"`
+	CachedTokens            int  `json:"cached_tokens"`
+	CompletionTokens        int  `json:"completion_tokens"`
+	TotalTokens             int  `json:"total_tokens"`
+	CacheCreationTokens     int  `json:"cache_creation_tokens"`
+	CacheCreation5mTokens   int  `json:"cache_creation_5m_tokens"`
+	CacheCreation1hTokens   int  `json:"cache_creation_1h_tokens"`
+	ReasoningTokens         int  `json:"reasoning_tokens"`
+	ReasoningTokensReported bool `json:"reasoning_tokens_reported"`
 }
 
-// Report returns cold-start accounting for res.
+// Report returns cold-start accounting and independently owned observation
+// snapshots for res. Each configured estimate uses only that attempt's frozen
+// card and final normalized usage; estimates and reported costs are never summed.
 func Report(res runner.TaskResult) HeadlessReport {
+	return ReportWithAuxiliary(res, AuxiliarySnapshot{})
+}
+
+// ReportWithAuxiliary projects independent latest-only judge/planner evidence
+// without changing main usage, timing or spend. Legacy Report supplies empty slots.
+func ReportWithAuxiliary(res runner.TaskResult, auxiliary AuxiliarySnapshot) HeadlessReport {
 	report := HeadlessReport{
-		PromptBytes:          len(res.SystemPrompt),
-		PromptWords:          len(strings.Fields(res.SystemPrompt)),
-		ToolCount:            res.ToolSurface.Count,
-		ToolJSONBytes:        res.ToolSurface.JSONBytes,
-		ToolFingerprint:      res.ToolSurface.Fingerprint,
-		TerminalReason:       res.Reason,
-		TerminalCause:        res.Cause,
-		Iterations:           res.Iterations,
-		Duration:             res.Duration,
-		Timing:               res.Timing,
-		UnattributedDuration: res.Duration - res.Timing.ProviderDuration - res.Timing.RequestPreparationDuration - res.Timing.ToolDispatchDuration,
+		PromptBytes:            len(res.SystemPrompt),
+		PromptWords:            len(strings.Fields(res.SystemPrompt)),
+		ToolCount:              res.ToolSurface.Count,
+		ToolJSONBytes:          res.ToolSurface.JSONBytes,
+		ToolFingerprint:        res.ToolSurface.Fingerprint,
+		TerminalReason:         res.Reason,
+		TerminalCause:          res.Cause,
+		Iterations:             res.Iterations,
+		Duration:               res.Duration,
+		Timing:                 res.Timing,
+		ProviderObservations:   projectProviderObservations(res.ProviderObservations),
+		CompactionObservations: projectCompactionObservations(res.CompactionObservations),
+		AuxiliaryObservations:  projectAuxiliarySnapshot(auxiliary),
+		UnattributedDuration:   res.Duration - res.Timing.ProviderDuration - res.Timing.RequestPreparationDuration - res.Timing.ToolDispatchDuration,
+	}
+	if first := res.Timing.TimeToFirstOutput; first != nil {
+		report.Timing.TimeToFirstOutput = new(*first)
 	}
 	if res.LastUsage != nil {
 		report.PromptTokens = res.LastUsage.PromptTokens
 		report.CachedTokens = res.LastUsage.CachedTokens
 		report.CompletionTokens = res.LastUsage.CompletionTokens
 	}
-	if u := res.TotalUsage; u != nil {
-		report.TotalUsage = &HeadlessUsage{PromptTokens: u.PromptTokens, CachedTokens: u.CachedTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
-	}
+	report.TotalUsage = projectLegacyUsage(res.TotalUsage)
 	return report
 }
 
@@ -311,12 +362,13 @@ func RunHeadlessProcess(ctx context.Context, live *LiveRunner, prompt string, ma
 	}
 	fmt.Fprintf(os.Stderr, "headless: workspace=%s\n", live.ws.Root())
 
-	res := live.RunHeadless(ctx, prompt, maxIter)
+	result := live.RunHeadlessWithObservations(ctx, prompt, maxIter)
+	res := result.Task
 	fmt.Fprintf(os.Stderr,
 		"headless: terminated reason=%s iterations=%d duration=%s tool_calls=%d\n",
 		res.Reason, res.Iterations, res.Duration, coderunner.ToolCallCount(res.Messages))
 	if reportOut != nil {
-		if err := json.NewEncoder(reportOut).Encode(Report(res)); err != nil {
+		if err := json.NewEncoder(reportOut).Encode(ReportWithAuxiliary(res, result.Auxiliary)); err != nil {
 			fmt.Fprintln(os.Stderr, "headless: report:", err)
 			return 2
 		}

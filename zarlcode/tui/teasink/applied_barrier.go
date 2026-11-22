@@ -10,8 +10,9 @@ import tea "charm.land/bubbletea/v2"
 // The caller must first settle the event producers and bind the marker to its
 // session, operation generation and turn. This method neither establishes runtime
 // quiescence nor waits for application. Call it off the Update loop because a
-// full pump queue applies backpressure. An unwired or closed sink drops markers
-// just like events; callers must not interpret command completion as application.
+// full pump queue applies backpressure. Legacy New(nil) drops unwired markers, while NewApplicationSink(nil)
+// retains them until application or final Close. A closed sink drops markers;
+// callers must not interpret command completion as application.
 func (s *Sink) AfterEvents(marker tea.Msg) {
 	s.flush()
 	s.dispatch(marker)

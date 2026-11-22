@@ -32,7 +32,9 @@ func (s *Sink) OnWaitingForInputs(_ context.Context, event runner.WaitingForInpu
 
 // OnInputsAdmitted copies admitted observations into the UI event stream.
 func (s *Sink) OnInputsAdmitted(_ context.Context, event runner.InputsAdmitted) {
+	messages := llm.CloneMessages(event.Messages)
+	references := append([]tools.AdmissionReference(nil), event.References...)
 	s.flush()
 	s.dispatch(InputsAdmittedMsg{TaskID: string(event.TaskID), Depth: event.Depth,
-		Messages: llm.CloneMessages(event.Messages), References: append([]tools.AdmissionReference(nil), event.References...)})
+		Messages: messages, References: references})
 }

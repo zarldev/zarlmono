@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,23 +14,43 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openai/openai-go/v3/responses"
+
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
+// ResponsesError retains the structured code and HTTP status of a Responses
+// failure. StatusCode is zero for in-band failures without an HTTP error status.
+// The wrapped diagnostic preserves native rate-limit details; gateway consumers
+// must sanitize it before exposing errors from an untrusted endpoint.
+type ResponsesError struct {
+	// Code is the error code decoded from the JSON error object, or empty if absent.
+	Code string
+	// StatusCode is the HTTP error status, or zero for an in-band failure.
+	StatusCode int
+	cause      error
+}
+
+func (e *ResponsesError) Error() string { return e.cause.Error() }
+
+// Unwrap preserves native diagnostic and rate-limit inspection.
+func (e *ResponsesError) Unwrap() error { return e.cause }
+
 // responseEventType is a typed string for SSE event types. Unknown values
-// are silently ignored for forward compatibility.
+// are ignored for forward compatibility.
 type responseEventType string
 
 const (
-	responsesTypeMessage            = "message"
-	responsesTypeReasoning          = "reasoning"
-	responsesTypeFunctionCall       = "function_call"
-	responsesTypeFunctionCallOutput = "function_call_output"
-	responsesContentInputText       = "input_text"
-	responsesContentOutputText      = "output_text"
-	responsesContentInputImage      = "input_image"
-	openAIContinuationProvider      = "openai"
-	openAIResponsesItemFormat       = "responses.output_item"
+	responsesTypeMessage             = "message"
+	responsesTypeReasoning           = "reasoning"
+	responsesTypeFunctionCall        = "function_call"
+	responsesTypeFunctionCallOutput  = "function_call_output"
+	responsesContentInputText        = "input_text"
+	responsesContentOutputText       = "output_text"
+	responsesContentInputImage       = "input_image"
+	responsesIncompleteContentFilter = "content_filter"
+	openAIContinuationProvider       = "openai"
+	openAIResponsesItemFormat        = "responses.output_item"
 )
 
 const (
@@ -49,20 +70,21 @@ const (
 )
 
 type responsesRequest struct {
-	Model                string               `json:"model"`
-	Input                []responsesInputItem `json:"input"`
-	Tools                []responsesTool      `json:"tools,omitempty"`
-	ToolChoice           string               `json:"tool_choice,omitempty"`
-	Stream               bool                 `json:"stream"`
-	Store                bool                 `json:"store"`
-	Reasoning            map[string]string    `json:"reasoning,omitempty"`
-	Text                 *responsesText       `json:"text,omitempty"`
-	MaxOutputTokens      int                  `json:"max_output_tokens,omitempty"`
-	Include              []string             `json:"include,omitempty"`
-	ParallelToolCalls    bool                 `json:"parallel_tool_calls,omitempty"`
-	PromptCacheKey       string               `json:"prompt_cache_key,omitempty"`
-	PromptCacheRetention string               `json:"prompt_cache_retention,omitempty"`
-	ServiceTier          string               `json:"service_tier,omitempty"`
+	PromptCacheOptions   *nativeCacheOptionsWire `json:"prompt_cache_options,omitempty"`
+	Model                string                  `json:"model"`
+	Input                []responsesInputItem    `json:"input"`
+	Tools                []responsesTool         `json:"tools,omitempty"`
+	ToolChoice           string                  `json:"tool_choice,omitempty"`
+	Stream               bool                    `json:"stream"`
+	Store                bool                    `json:"store"`
+	Reasoning            map[string]string       `json:"reasoning,omitempty"`
+	Text                 *responsesText          `json:"text,omitempty"`
+	MaxOutputTokens      int                     `json:"max_output_tokens,omitempty"`
+	Include              []string                `json:"include,omitempty"`
+	ParallelToolCalls    bool                    `json:"parallel_tool_calls,omitempty"`
+	PromptCacheKey       string                  `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string                  `json:"prompt_cache_retention,omitempty"`
+	ServiceTier          string                  `json:"service_tier,omitempty"`
 }
 
 type responsesText struct {
@@ -107,10 +129,21 @@ func (i responsesInputItem) MarshalJSON() ([]byte, error) {
 }
 
 type responsesContentPart struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
-	Detail   string `json:"detail,omitempty"`
+	PromptCacheBreakpoint *nativeCacheBreakpointWire `json:"-"`
+	Type                  string                     `json:"type"`
+	Text                  string                     `json:"text,omitempty"`
+	ImageURL              string                     `json:"image_url,omitempty"`
+	Detail                string                     `json:"detail,omitempty"`
+}
+
+// MarshalJSON adds request-only markers without teaching native replay/output
+// decoding to interpret opaque marker values that were previously ignored.
+func (part responsesContentPart) MarshalJSON() ([]byte, error) {
+	type wire responsesContentPart
+	return json.Marshal(struct {
+		wire
+		PromptCacheBreakpoint *nativeCacheBreakpointWire `json:"prompt_cache_breakpoint,omitempty"`
+	}{wire: wire(part), PromptCacheBreakpoint: part.PromptCacheBreakpoint})
 }
 
 type responsesTool struct {
@@ -147,6 +180,7 @@ type responseOutputItem struct {
 	CallID           string                 `json:"call_id"`
 	Name             string                 `json:"name"`
 	Arguments        string                 `json:"arguments"`
+	Summary          []responsesContentPart `json:"summary,omitempty"`
 	Raw              json.RawMessage        `json:"-"`
 }
 
@@ -174,6 +208,7 @@ type responseArgsDone struct {
 }
 
 type responseUsage struct {
+	rawJSON            []byte
 	InputTokens        int `json:"input_tokens"`
 	OutputTokens       int `json:"output_tokens"`
 	TotalTokens        int `json:"total_tokens"`
@@ -185,14 +220,29 @@ type responseUsage struct {
 	} `json:"output_tokens_details"`
 }
 
+// UnmarshalJSON preserves legacy typed decoding and retains owned wire bytes
+// for presence-aware interpretation of optional native cache-write evidence.
+func (u *responseUsage) UnmarshalJSON(data []byte) error {
+	type plainUsage responseUsage
+	decoded := plainUsage(*u)
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*u = responseUsage(decoded)
+	u.rawJSON = append([]byte(nil), data...)
+	return nil
+}
+
+type responseResult struct {
+	Status            responses.ResponseStatus            `json:"status"`
+	Output            []responseOutputItem                `json:"output"`
+	Usage             *responseUsage                      `json:"usage"`
+	IncompleteDetails responses.ResponseIncompleteDetails `json:"incomplete_details"`
+	Error             *responses.ResponseError            `json:"error"`
+}
+
 type responseCompleted struct {
-	Response struct {
-		Output            []responseOutputItem `json:"output"`
-		Usage             *responseUsage       `json:"usage"`
-		IncompleteDetails struct {
-			Reason string `json:"reason"`
-		} `json:"incomplete_details"`
-	} `json:"response"`
+	Response responseResult `json:"response"`
 }
 
 func hasOpenAIContinuationItems(messages []llm.Message) bool {
@@ -242,11 +292,17 @@ type pendingResponseToolCall struct {
 }
 
 func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRequest, plan responsesPlan, yield func(llm.CompletionChunk, error) bool) {
+	input, err := messagesToResponsesInput(req.Messages, plan.nativeCache)
+	if err != nil {
+		yield(llm.CompletionChunk{}, err)
+		return
+	}
 	body := responsesRequest{
+		PromptCacheOptions:   nativeCacheResponsesOptions(plan.nativeCache),
 		Model:                p.model,
-		Input:                messagesToResponsesInput(req.Messages),
+		Input:                input,
 		Tools:                toolsToResponsesTools(req.Tools),
-		Stream:               true,
+		Stream:               req.Stream,
 		Store:                false,
 		ParallelToolCalls:    plan.parallelToolCalls,
 		PromptCacheKey:       plan.promptCacheKey,
@@ -284,7 +340,11 @@ func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRe
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	if req.Stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	} else {
+		httpReq.Header.Set("Accept", "application/json")
+	}
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
@@ -294,17 +354,245 @@ func (p *Provider) responsesCompletion(ctx context.Context, req llm.CompletionRe
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		yield(llm.CompletionChunk{}, responsesHTTPError(resp.StatusCode, resp.Header, msg, resp.Request))
+		yield(llm.CompletionChunk{}, normalizeContextError(ctx, responsesHTTPError(resp.StatusCode, resp.Header, msg, resp.Request)))
 		return
 	}
-	if err := parseResponsesSSE(resp.Body, yield); err != nil {
+	if !req.Stream {
+		if err := parseResponsesJSON(ctx, resp.Body, p.nativeOpenAIUsage(), yield); err != nil {
+			yield(llm.CompletionChunk{}, normalizeContextError(ctx, err))
+		}
+		return
+	}
+	if err := parseResponsesSSE(resp.Body, p.nativeOpenAIUsage(), yield); err != nil {
 		yield(llm.CompletionChunk{}, normalizeContextError(ctx, err))
 	}
 }
 
-func messagesToResponsesInput(messages []llm.Message) []responsesInputItem {
+// parseResponsesJSON consumes a single native response, not a synthetic event
+// stream. Decode and validate the whole document before exposing any output.
+func parseResponsesJSON(ctx context.Context, r io.Reader, nativeUsage bool, yield func(llm.CompletionChunk, error) bool) error {
+	var result responseResult
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(&result); err != nil {
+		return fmt.Errorf("responses decode: %w", err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return fmt.Errorf("responses trailing data: %w", err)
+		}
+		return errors.New("responses decode: multiple JSON values")
+	}
+	finish, err := responsesJSONFinish(result)
+	if err != nil {
+		return err
+	}
+	for index, item := range result.Output {
+		if err := validateResponsesJSONItem(item); err != nil {
+			return fmt.Errorf("responses output %d: %w", index, err)
+		}
+	}
+	for index, item := range result.Output {
+		if err := contextError(ctx); err != nil {
+			return err
+		}
+		chunk := llm.CompletionChunk{}
+		switch item.Type {
+		case responsesTypeMessage:
+			var text strings.Builder
+			for _, part := range item.Content {
+				if part.Type == responsesContentOutputText {
+					text.WriteString(part.Text)
+				}
+			}
+			chunk.Content = text.String()
+			if chunk.Content != "" {
+				chunk.ContentOutputIndex = llm.OutputPosition(index)
+			}
+		case responsesTypeReasoning:
+			var thinking strings.Builder
+			for _, part := range item.Summary {
+				if part.Type == "summary_text" {
+					thinking.WriteString(part.Text)
+				}
+			}
+			// Prefer the summary projection; raw reasoning content remains in
+			// the native item and is used only when no summary was supplied.
+			if thinking.Len() == 0 {
+				for _, part := range item.Content {
+					if part.Type == "reasoning_text" {
+						thinking.WriteString(part.Text)
+					}
+				}
+			}
+			chunk.Thinking = thinking.String()
+		case responsesTypeFunctionCall:
+			id := item.CallID
+			if id == "" {
+				id = item.ID
+			}
+			chunk.ToolCalls = []llm.ToolCall{{ID: id, Type: typeFunction, OutputIndex: llm.OutputPosition(index), Function: llm.ToolCallFunction{Name: item.Name, Arguments: item.Arguments}}}
+		}
+		if native, ok := openAIContinuationItem(index, item); ok {
+			chunk.CompletedItems = []llm.ContinuationItem{native}
+		}
+		if chunk.Content != "" || chunk.Thinking != "" || len(chunk.CompletedItems) > 0 || len(chunk.ToolCalls) > 0 {
+			if !yield(chunk, nil) {
+				return nil
+			}
+		}
+	}
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	chunk := llm.CompletionChunk{FinishReason: finish}
+	setResponsesUsage(&chunk, result.Usage, nativeUsage)
+	yield(chunk, nil)
+	return nil
+}
+
+func responsesJSONFinish(result responseResult) (llm.FinishReason, error) {
+	if result.Error != nil {
+		return llm.FinishReason{}, responsesFailure(string(result.Error.Code), result.Error.Message)
+	}
+	switch result.Status {
+	case responses.ResponseStatusCompleted, responses.ResponseStatusIncomplete:
+		if result.Output == nil {
+			return llm.FinishReason{}, errors.New("responses decode: missing output")
+		}
+	case responses.ResponseStatusFailed:
+		return llm.FinishReason{}, responsesFailure("", "")
+	default:
+		return llm.FinishReason{}, fmt.Errorf("responses decode: unexpected status %q", result.Status)
+	}
+	if result.Status == responses.ResponseStatusIncomplete {
+		switch result.IncompleteDetails.Reason {
+		case "max_output_tokens", "max_messages":
+			return llm.FinishReasons.LENGTH, nil
+		case responsesIncompleteContentFilter:
+			return llm.FinishReasons.CONTENTFILTER, nil
+		case "":
+			return llm.FinishReason{}, errors.New("responses decode: incomplete response without reason")
+		default:
+			return llm.FinishReasons.UNKNOWN, nil
+		}
+	}
+	for _, item := range result.Output {
+		if item.Type == responsesTypeFunctionCall {
+			return llm.FinishReasons.TOOLCALLS, nil
+		}
+	}
+	return llm.FinishReasons.STOP, nil
+}
+
+func validateResponsesJSONItem(item responseOutputItem) error {
+	switch item.Type {
+	case "":
+		return errors.New("missing item type")
+	case responsesTypeMessage:
+		var message responses.ResponseOutputMessage
+		if err := json.Unmarshal(item.Raw, &message); err != nil {
+			return fmt.Errorf("message decode: %w", err)
+		}
+		if item.ID == "" || item.Role != roleAssistant || item.Content == nil {
+			return errors.New("invalid assistant message")
+		}
+		if message.Status != responses.ResponseOutputMessageStatusCompleted && message.Status != responses.ResponseOutputMessageStatusIncomplete {
+			return fmt.Errorf("unexpected message status %q", message.Status)
+		}
+		for _, part := range message.Content {
+			if part.Type == "" || part.Type == responsesContentOutputText && !part.JSON.Text.Valid() {
+				return errors.New("invalid message content")
+			}
+		}
+	case responsesTypeReasoning:
+		var reasoning responses.ResponseReasoningItem
+		if err := json.Unmarshal(item.Raw, &reasoning); err != nil {
+			return fmt.Errorf("reasoning decode: %w", err)
+		}
+		if reasoning.Status != "" && reasoning.Status != responses.ResponseReasoningItemStatusCompleted && reasoning.Status != responses.ResponseReasoningItemStatusIncomplete {
+			return fmt.Errorf("unexpected reasoning status %q", reasoning.Status)
+		}
+		if reasoning.ID == "" || reasoning.Summary == nil {
+			return errors.New("invalid reasoning item")
+		}
+		for _, part := range reasoning.Summary {
+			if !part.JSON.Text.Valid() {
+				return errors.New("invalid reasoning summary")
+			}
+		}
+		for _, part := range reasoning.Content {
+			if !part.JSON.Text.Valid() {
+				return errors.New("invalid reasoning content")
+			}
+		}
+	case responsesTypeFunctionCall:
+		var call responses.ResponseFunctionToolCall
+		if err := json.Unmarshal(item.Raw, &call); err != nil {
+			return fmt.Errorf("function_call decode: %w", err)
+		}
+		if call.Status != "" && call.Status != responses.ResponseFunctionToolCallStatusCompleted {
+			return fmt.Errorf("unexpected function_call status %q", call.Status)
+		}
+		if item.CallID == "" && item.ID == "" || strings.TrimSpace(item.Name) == "" {
+			return errors.New("function_call without ID or name")
+		}
+		var arguments map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(item.Arguments), &arguments); err != nil {
+			return fmt.Errorf("function_call arguments: %w", err)
+		}
+		if arguments == nil {
+			return errors.New("function_call arguments must be an object")
+		}
+	default:
+		return fmt.Errorf("unsupported item type %q", item.Type)
+	}
+	return nil
+}
+
+func setResponsesUsage(chunk *llm.CompletionChunk, usage *responseUsage, nativeUsage bool) {
+	if usage == nil {
+		return
+	}
+	chunk.UsageReported = true
+	chunk.Usage = llm.Usage{
+		PromptTokens: usage.InputTokens, CompletionTokens: usage.OutputTokens,
+		TotalTokens: usage.TotalTokens, CachedTokens: usage.InputTokensDetails.CachedTokens,
+	}
+	if reasoning := usage.OutputTokensDetails.ReasoningTokens; reasoning != nil {
+		chunk.Usage.ReasoningTokens = *reasoning
+		chunk.Usage.ReasoningTokensReported = true
+	}
+	if nativeUsage {
+		chunk.PricingUsage = nativeResponsesCacheUsage(usage.rawJSON)
+		if chunk.PricingUsage != nil && chunk.PricingUsage.Input.CacheWrite.Known {
+			chunk.Usage.CacheCreationTokens = int(chunk.PricingUsage.Input.CacheWrite.Tokens)
+		}
+	}
+}
+
+func responsesFailure(code, message string) error {
+	if message == "" {
+		message = "responses failed"
+	}
+	if isRateLimitBody(message) || isRateLimitBody(code) {
+		rle := &llm.RateLimitError{
+			Message:    "responses failed: " + message,
+			Retryable:  true,
+			RetryAfter: parseRetryAfterFromProse(message),
+		}
+		if isPermanentQuotaBody(message) || isPermanentQuotaBody(code) {
+			rle.Permanent = true
+			rle.Retryable = false
+		}
+		return &ResponsesError{Code: code, cause: rle}
+	}
+	return &ResponsesError{Code: code, cause: fmt.Errorf("responses failed: %s", message)}
+}
+
+func messagesToResponsesInput(messages []llm.Message, policy *nativeCachePolicy) ([]responsesInputItem, error) {
 	out := make([]responsesInputItem, 0, len(messages))
-	for _, msg := range llm.ExpandToolResultParts(messages) {
+	for source, msg := range nativeCacheMessageSources(messages) {
 		switch msg.Role {
 		case "tool":
 			// output is required for function_call_output items. Keep it
@@ -336,6 +624,9 @@ func messagesToResponsesInput(messages []llm.Message) []responsesInputItem {
 				validText := item.Type == responsesTypeMessage && item.Role == roleAssistant && hasResponsesOutputText(item.Content) && continuation.OutputIndex != nil
 				if !validReasoning && !validText {
 					continue
+				}
+				if policy != nil && nativeCacheReplayMarker(continuation.Data) {
+					return nil, invalidCachePolicy("native replay cache marker")
 				}
 				item.Raw = append(item.Raw[:0], continuation.Data...)
 				index := order
@@ -376,21 +667,21 @@ func messagesToResponsesInput(messages []llm.Message) []responsesInputItem {
 			if role == "" {
 				role = roleUser
 			}
-			out = append(out, responsesInputItem{Type: responsesTypeMessage, Role: role, Content: responsesUserContentParts(msg)})
+			out = append(out, responsesInputItem{Type: responsesTypeMessage, Role: role, Content: responsesUserContentParts(msg, source, policy)})
 		}
 	}
-	return out
+	return out, nil
 }
 
-func responsesUserContentParts(msg llm.Message) []responsesContentPart {
+func responsesUserContentParts(msg llm.Message, source int, policy *nativeCachePolicy) []responsesContentPart {
 	if len(msg.Parts) == 0 {
-		return []responsesContentPart{{Type: responsesContentInputText, Text: msg.Content}}
+		return []responsesContentPart{{Type: responsesContentInputText, Text: msg.Content, PromptCacheBreakpoint: nativeCacheResponsesMarker(policy, source, 0)}}
 	}
 	parts := make([]responsesContentPart, 0, len(msg.Parts))
-	for _, part := range msg.Parts {
+	for index, part := range msg.Parts {
 		switch part.Type {
 		case llm.ContentTypeText:
-			parts = append(parts, responsesContentPart{Type: responsesContentInputText, Text: part.Text})
+			parts = append(parts, responsesContentPart{Type: responsesContentInputText, Text: part.Text, PromptCacheBreakpoint: nativeCacheResponsesMarker(policy, source, index)})
 		case llm.ContentTypeImage:
 			if part.Image == nil {
 				continue
@@ -422,7 +713,7 @@ func toolsToResponsesTools(tools []llm.Tool) []responsesTool {
 	return out
 }
 
-func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool) error {
+func parseResponsesSSE(r io.Reader, nativeUsage bool, yield func(llm.CompletionChunk, error) bool) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	var data strings.Builder
@@ -438,7 +729,7 @@ func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool)
 		if payload == "" || payload == "[DONE]" {
 			return false
 		}
-		return dispatchResponseEvent(payload, calls, byID, &orderedIndexes, emittedItems, yield)
+		return dispatchResponseEvent(payload, calls, byID, &orderedIndexes, emittedItems, nativeUsage, yield)
 	}
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -467,7 +758,7 @@ func parseResponsesSSE(r io.Reader, yield func(llm.CompletionChunk, error) bool)
 	return nil
 }
 
-func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCall, byID map[string]*pendingResponseToolCall, orderedIndexes *[]int, emittedItems map[int]bool, yield func(llm.CompletionChunk, error) bool) bool {
+func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCall, byID map[string]*pendingResponseToolCall, orderedIndexes *[]int, emittedItems map[int]bool, nativeUsage bool, yield func(llm.CompletionChunk, error) bool) bool {
 	var env responseEventEnvelope
 	if err := json.Unmarshal([]byte(payload), &env); err != nil {
 		yield(llm.CompletionChunk{}, fmt.Errorf("responses event: %w", err))
@@ -580,23 +871,13 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 			toolCalls = append(toolCalls, llm.ToolCall{ID: call.id, Type: typeFunction, OutputIndex: llm.OutputPosition(idx), Function: llm.ToolCallFunction{Name: call.name, Arguments: call.arguments.String()}})
 		}
 		chunk := llm.CompletionChunk{FinishReason: llm.FinishReasons.STOP, ToolCalls: toolCalls, CompletedItems: nativeItems}
-		if ev.Response.Usage != nil {
-			chunk.UsageReported = true
-			chunk.Usage = llm.Usage{
-				PromptTokens: ev.Response.Usage.InputTokens, CompletionTokens: ev.Response.Usage.OutputTokens,
-				TotalTokens: ev.Response.Usage.TotalTokens, CachedTokens: ev.Response.Usage.InputTokensDetails.CachedTokens,
-			}
-			if reasoning := ev.Response.Usage.OutputTokensDetails.ReasoningTokens; reasoning != nil {
-				chunk.Usage.ReasoningTokens = *reasoning
-				chunk.Usage.ReasoningTokensReported = true
-			}
-		}
+		setResponsesUsage(&chunk, ev.Response.Usage, nativeUsage)
 		if len(toolCalls) > 0 {
 			chunk.FinishReason = llm.FinishReasons.TOOLCALLS
 		}
 		if env.Type == responseEventIncomplete {
 			chunk.FinishReason = llm.FinishReasons.LENGTH
-			if ev.Response.IncompleteDetails.Reason == "content_filter" {
+			if ev.Response.IncompleteDetails.Reason == responsesIncompleteContentFilter {
 				chunk.FinishReason = llm.FinishReasons.CONTENTFILTER
 			}
 		}
@@ -611,24 +892,7 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 		if env.Type == responseEventError {
 			ev.Response.Error.Code, ev.Response.Error.Message = ev.Code, ev.Message
 		}
-		msg := ev.Response.Error.Message
-		if msg == "" {
-			msg = "responses failed"
-		}
-		if isRateLimitBody(msg) || isRateLimitBody(ev.Response.Error.Code) {
-			rle := &llm.RateLimitError{
-				Message:   "responses failed: " + msg,
-				Retryable: true,
-			}
-			rle.RetryAfter = parseRetryAfterFromProse(msg)
-			if isPermanentQuotaBody(msg) || isPermanentQuotaBody(ev.Response.Error.Code) {
-				rle.Permanent = true
-				rle.Retryable = false
-			}
-			yield(llm.CompletionChunk{}, rle)
-			return true
-		}
-		yield(llm.CompletionChunk{}, fmt.Errorf("responses failed: %s", msg))
+		yield(llm.CompletionChunk{}, responsesFailure(ev.Response.Error.Code, ev.Response.Error.Message))
 		return true
 	default:
 		// Unknown events are silently ignored for forward compatibility.
@@ -641,6 +905,12 @@ func dispatchResponseEvent(payload string, calls map[int]*pendingResponseToolCal
 // *llm.RateLimitError with parsed retry timing. Other statuses produce
 // contextual ordinary errors.
 func responsesHTTPError(statusCode int, header http.Header, body []byte, _ *http.Request) error {
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &envelope)
 	bodyStr := strings.TrimSpace(string(body))
 	if len(bodyStr) > 512 {
 		bodyStr = bodyStr[:512] + "... (truncated)"
@@ -666,10 +936,10 @@ func responsesHTTPError(statusCode int, header http.Header, body []byte, _ *http
 			rle.Permanent = true
 			rle.Retryable = false
 		}
-		return rle
+		return &ResponsesError{Code: envelope.Error.Code, StatusCode: statusCode, cause: rle}
 	}
 
-	return fmt.Errorf("responses status %d: %s", statusCode, bodyStr)
+	return &ResponsesError{Code: envelope.Error.Code, StatusCode: statusCode, cause: fmt.Errorf("responses status %d: %s", statusCode, bodyStr)}
 }
 
 // isRateLimitBody reports whether the response body indicates a rate-limit

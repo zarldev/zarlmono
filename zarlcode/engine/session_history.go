@@ -26,6 +26,7 @@ type sessionHistorySink struct {
 	provider  string
 	model     string
 	live      *LiveRunner
+	capture   *recordedTurnCapture
 }
 
 var _ runner.HistorySink = sessionHistorySink{}
@@ -59,14 +60,24 @@ func (s sessionHistorySink) Request(ctx context.Context, request llm.CompletionR
 		return fmt.Errorf("encode prepared model request: %w", err)
 	}
 	rendered, current, observer := s.live.requestControlCapture(ctx)
-	return s.buffer.captureRequest(ctx, s.store, s.sessionID, request, data, rendered, current, observer)
+	receipt, err := s.buffer.captureRequest(ctx, s.store, s.sessionID, request, data, rendered, current, observer)
+	if err != nil {
+		return err
+	}
+	s.buffer.mu.Lock()
+	s.capture.receipt = receipt
+	if s.capture.firstReceipt == "" {
+		s.capture.firstReceipt = receipt
+	}
+	s.buffer.mu.Unlock()
+	return nil
 }
 
 // RunRecordedTurn dispatches a reserved turn with canonical replay capture and
 // separately stored prepared model input. The caller first commits its BEFORE
 // checkpoint and lends store until the turn and persistence FIFO have drained.
 func (r *RuntimeReservation) RunRecordedTurn(ctx context.Context, prompt string, attachments []llm.ContentPart, store *db.Store, sessionID string) error {
-	return r.runTurn(ctx, prompt, attachments, r.owner.sessionRecordingOptions(store, sessionID)...)
+	return r.runTurn(ctx, prompt, attachments, r.owner.sessionRecordingOptions(store, sessionID))
 }
 
 // ProtectDurableExactContext activates exact-history semantics after the caller
@@ -97,7 +108,7 @@ func (l *LiveRunner) RunRecordedTurn(ctx context.Context, prompt string, attachm
 		return l.admission.rejection()
 	}
 	defer l.admission.leave()
-	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {}, l.sessionRecordingOptions(store, sessionID)...)
+	return l.runTurnAdmitted(ctx, runner.TaskSpec{Prompt: prompt, Attachments: attachments}, func() {}, l.sessionRecordingOptions(store, sessionID))
 }
 
 // Session IDs survive resume and change on forks/new sessions. Hashing keeps
@@ -107,24 +118,46 @@ func sessionPromptCacheKey(sessionID string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// sessionRecordingOptions returns the shared prompt-cache and history-capture
-// options for one recorded turn against store/sessionID.
-func (l *LiveRunner) sessionRecordingOptions(store *db.Store, sessionID string) []options.Option[runner.Runner] {
-	target := l.RunTarget()
-	return []options.Option[runner.Runner]{
-		runner.WithPromptCacheKey(sessionPromptCacheKey(sessionID)),
-		runner.WithHistorySink(sessionHistorySink{
-			store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model, buffer: l.historyBuffer(sessionID), live: l,
-		}),
+// turnOptionsFactory binds recording to the same frozen target used to build
+// this operation's runner. It is never installed on LiveRunner or in a context.
+type turnOptionsFactory func(RunTarget) turnRecordingOptions
+
+type childRecordingSinkFactory func(RunTarget) runner.EventSink
+
+type turnRecordingOptions struct {
+	root      []options.Option[runner.Runner]
+	child     childRecordingSinkFactory
+	auxiliary auxiliaryProviderFactory
+}
+
+// sessionRecordingOptions creates recording only after actual policy resolution.
+func (l *LiveRunner) sessionRecordingOptions(store *db.Store, sessionID string) turnOptionsFactory {
+	return func(target RunTarget) turnRecordingOptions {
+		capture := &recordedTurnCapture{buffer: l.historyBuffer(sessionID), provider: target.Spec.Name, model: target.Model}
+		return turnRecordingOptions{root: []options.Option[runner.Runner]{
+			runner.WithPromptCacheKey(sessionPromptCacheKey(sessionID)),
+			runner.WithHistorySink(sessionHistorySink{
+				store: store, sessionID: sessionID, provider: target.Spec.Name, model: target.Model,
+				buffer: capture.buffer, live: l, capture: capture,
+			}),
+			runner.WithSink(recordedAccountingSink{EventSink: l.sink, capture: capture, provider: target.Spec.Name, model: target.Model}),
+		}, auxiliary: newAuxiliaryProviderFactory(capture.settleAuxiliary), child: func(child RunTarget) runner.EventSink {
+			return recordedAccountingSink{EventSink: l.sink, capture: capture, provider: child.Spec.Name, model: child.Model}
+		}}
 	}
 }
 
 // sessionHistoryBuffer owns serialized batches, never runner aliases. No writer
 // goroutine exists: request capture and the application's save FIFO own writes.
 type sessionHistoryBuffer struct {
-	mu      sync.Mutex
-	pending []db.SessionHistoryBatch
-	control requestControlState
+	mu            sync.Mutex
+	pending       []db.SessionHistoryBatch
+	control       requestControlState
+	accounting    []db.SessionProviderAccounting
+	children      []db.SessionChildProviderAccounting
+	auxiliaries   []db.SessionAuxiliaryProviderAccounting
+	manual        []db.SessionManualProviderAccounting
+	accountingErr error
 }
 
 func (l *LiveRunner) historyBuffer(sessionID string) *sessionHistoryBuffer {
@@ -161,6 +194,10 @@ func (l *LiveRunner) AcknowledgeRecordedHistory(sessionID string, batches []db.S
 	buffer := l.historyBuffer(sessionID)
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
+	buffer.acknowledgeHistoryLocked(batches)
+}
+
+func (buffer *sessionHistoryBuffer) acknowledgeHistoryLocked(batches []db.SessionHistoryBatch) {
 	ids := make(map[string]bool, len(batches))
 	for _, batch := range batches {
 		ids[batch.ID] = true

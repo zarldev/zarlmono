@@ -84,6 +84,11 @@ func completeHistory(t *testing.T, provider llm.Provider, request llm.Completion
 }
 
 func TestStoredGoogleHistoryReplaysSignedCallsAndInlineImage(t *testing.T) {
+	const nativeParts = `[{"text":"private reasoning","thought":true},{"text":"calling tools"},{"functionCall":{"name":"read","args":{"path":"one"}},"thoughtSignature":"c2lnbmVk"},{"functionCall":{"id":"second","name":"read","args":{"path":"two"}},"thoughtSignature":"c2Vjb25k"}]`
+	var wantParts []map[string]any
+	if err := json.Unmarshal([]byte(nativeParts), &wantParts); err != nil {
+		t.Fatal(err)
+	}
 	for _, route := range []string{"gemini", "google-vertex"} {
 		t.Run(route, func(t *testing.T) {
 			var requests []json.RawMessage
@@ -91,7 +96,7 @@ func TestStoredGoogleHistoryReplaysSignedCallsAndInlineImage(t *testing.T) {
 				body, _ := io.ReadAll(r.Body)
 				requests = append(requests, body)
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"private reasoning","thought":true},{"text":"calling tools"},{"functionCall":{"name":"read","args":{"path":"one"}},"thoughtSignature":"c2lnbmVk"},{"functionCall":{"id":"second","name":"read","args":{"path":"two"}},"thoughtSignature":"c2Vjb25k"}]},"finishReason":"STOP"}]}`+"\n\n")
+				_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":`+nativeParts+`},"finishReason":"STOP"}]}`+"\n\n")
 			}))
 			t.Cleanup(server.Close)
 			var p *google.Provider
@@ -110,8 +115,35 @@ func TestStoredGoogleHistoryReplaysSignedCallsAndInlineImage(t *testing.T) {
 			}
 			user := llm.Message{Role: llm.RoleUser, Content: "one prompt", Parts: []llm.ContentPart{{Type: llm.ContentTypeText, Text: "one prompt"}, {Type: llm.ContentTypeImage, Image: &llm.ImageData{DataURI: "data:image/png;base64,YQ==", MIMEType: "image/png"}}}}
 			assistant := completeHistory(t, p, llm.CompletionRequest{Messages: []llm.Message{user}})
-			if len(assistant.ToolCalls) != 2 || len(assistant.ContinuationItems) != 2 || assistant.ReasoningContent != "private reasoning" || assistant.Content != "calling tools" {
+			if len(assistant.ToolCalls) != 2 || len(assistant.ContinuationItems) != len(wantParts) || assistant.ReasoningContent != "private reasoning" || assistant.Content != "calling tools" {
 				t.Fatalf("capture missing fields: %#v", assistant)
+			}
+			if assistant.ContentOutputIndex == nil || *assistant.ContentOutputIndex != 1 {
+				t.Fatalf("display content position = %v", assistant.ContentOutputIndex)
+			}
+			for index, item := range assistant.ContinuationItems {
+				if item.Provider != "google" || item.Format != "generate_content.part.v2" || item.Kind != "part" || item.OutputIndex == nil || *item.OutputIndex != index {
+					t.Fatalf("native part %d metadata = %#v", index, item)
+				}
+				var part map[string]any
+				if err := json.Unmarshal(item.Data, &part); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(part, wantParts[index]) {
+					t.Fatalf("native part %d = %#v, want %#v", index, part, wantParts[index])
+				}
+				if index < 2 {
+					if item.ID != "" {
+						t.Fatalf("text part %d has tool binding %q", index, item.ID)
+					}
+					continue
+				}
+				call := assistant.ToolCalls[index-2]
+				wantID := []string{"call_read_0", "second"}[index-2]
+				wantArgs := []string{`{"path":"one"}`, `{"path":"two"}`}[index-2]
+				if item.ID != wantID || call.ID != item.ID || call.Type != "function" || call.Function.Name != "read" || call.Function.Arguments != wantArgs || call.OutputIndex == nil || *call.OutputIndex != index {
+					t.Fatalf("native/display tool binding %d: item=%#v call=%#v", index, item, call)
+				}
 			}
 			history := []llm.Message{user, assistant}
 			for _, call := range assistant.ToolCalls {
@@ -133,29 +165,37 @@ func TestStoredGoogleHistoryReplaysSignedCallsAndInlineImage(t *testing.T) {
 			if strings.Count(string(requests[2]), "one prompt") != 1 {
 				t.Fatal("duplicated user prompt")
 			}
-			if strings.Contains(string(requests[2]), "private reasoning") {
-				t.Fatal("display reasoning sent outbound")
-			}
 			var wire struct {
 				Contents []struct {
-					Parts []struct {
-						Text       string `json:"text"`
-						InlineData *struct {
-							Data     string `json:"data"`
-							MIMEType string `json:"mimeType"`
-						} `json:"inlineData"`
-						ThoughtSignature string `json:"thoughtSignature"`
-					} `json:"parts"`
+					Role  string           `json:"role"`
+					Parts []map[string]any `json:"parts"`
 				} `json:"contents"`
 			}
 			if err := json.Unmarshal(requests[2], &wire); err != nil {
 				t.Fatal(err)
 			}
-			if len(wire.Contents) != 3 || len(wire.Contents[0].Parts) != 2 || wire.Contents[0].Parts[1].InlineData == nil || wire.Contents[0].Parts[1].InlineData.Data != "YQ==" || wire.Contents[0].Parts[1].InlineData.MIMEType != "image/png" {
-				t.Fatal("inline image lost")
+			if len(wire.Contents) != 3 || wire.Contents[0].Role != "user" || wire.Contents[1].Role != "model" || wire.Contents[2].Role != "user" {
+				t.Fatalf("replayed turn ordering = %#v", wire.Contents)
 			}
-			if len(wire.Contents[1].Parts) != 3 || wire.Contents[1].Parts[0].Text != "calling tools" || wire.Contents[1].Parts[1].ThoughtSignature != "c2lnbmVk" || wire.Contents[1].Parts[2].ThoughtSignature != "c2Vjb25k" {
-				t.Fatal("signed call pairing lost")
+			wantUserParts := []map[string]any{
+				{"text": "one prompt"},
+				{"inlineData": map[string]any{"data": "YQ==", "mimeType": "image/png"}},
+			}
+			if !reflect.DeepEqual(wire.Contents[0].Parts, wantUserParts) {
+				t.Fatalf("user inline image lost or prompt duplicated: %#v", wire.Contents[0].Parts)
+			}
+			// V2 replays the complete native projection, including thought text.
+			// Exact ordered equality also excludes duplicate display text/calls and
+			// preserves the original no-ID signed call without synthesizing an ID.
+			if !reflect.DeepEqual(wire.Contents[1].Parts, wantParts) {
+				t.Fatalf("ordered native parts/signatures changed or display duplicated: %#v", wire.Contents[1].Parts)
+			}
+			wantResults := []map[string]any{
+				{"functionResponse": map[string]any{"id": assistant.ToolCalls[0].ID, "name": "read", "response": map[string]any{"result": "ok"}}},
+				{"functionResponse": map[string]any{"id": assistant.ToolCalls[1].ID, "name": "read", "response": map[string]any{"result": "ok"}}},
+			}
+			if !reflect.DeepEqual(wire.Contents[2].Parts, wantResults) {
+				t.Fatalf("ordered tool result bindings changed: %#v", wire.Contents[2].Parts)
 			}
 		})
 	}

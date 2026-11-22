@@ -42,13 +42,35 @@ const (
 // that adds an agent at runtime can simply re-wire WithSpawnPlanner
 // with the updated slice — no per-planner cache to invalidate.
 type LLMSpawnPlanner struct {
-	inference inference.Scope
-	model     string
-	provider  llm.Provider
-	maxTokens int
+	inference  inference.Scope
+	model      string
+	provider   llm.Provider
+	maxTokens  int
+	onObserved func(context.Context, PlanObservation)
 }
 
 type LLMSpawnPlannerOption = options.Option[LLMSpawnPlanner]
+
+// PlanObservation retains invocation evidence and semantic response validity.
+// Valid is true only when the existing response parsing and validation succeed;
+// it does not describe recovery or child execution. A value copy borrows sidecars.
+type PlanObservation struct {
+	Inference inference.Observation
+	Valid     bool
+}
+
+// Clone returns an observation with independently owned inference evidence.
+func (o PlanObservation) Clone() PlanObservation {
+	o.Inference = o.Inference.Clone()
+	return o
+}
+
+// WithPlannerObservationSink installs a synchronous per-call callback, emitted
+// after response validation only when an invocation was admitted. The callback
+// must tolerate concurrent calls and must not retain the operation context.
+func WithPlannerObservationSink(sink func(context.Context, PlanObservation)) LLMSpawnPlannerOption {
+	return func(p *LLMSpawnPlanner) { p.onObserved = sink }
+}
 
 // WithPlannerInferenceScope includes routing inference in the supplied account.
 // model identifies the configured planner model; empty means unknown.
@@ -71,8 +93,9 @@ func WithPlannerMaxTokens(n int) LLMSpawnPlannerOption {
 // when routing should use a smaller model.
 func NewLLMSpawnPlanner(provider llm.Provider, opts ...LLMSpawnPlannerOption) *LLMSpawnPlanner {
 	p := &LLMSpawnPlanner{
-		provider:  provider,
-		maxTokens: defaultPlannerMaxTokens,
+		provider:   provider,
+		onObserved: func(context.Context, PlanObservation) {},
+		maxTokens:  defaultPlannerMaxTokens,
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -114,14 +137,31 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
-	chunks := p.inference.Complete(ctx, inference.Call{Operation: "planner", Provider: p.provider.Name(), Model: p.model}, p.provider, req)
-
-	var body strings.Builder
-	for chunk, cerr := range chunks {
-		if cerr != nil {
-			return SpawnPlan{}, fmt.Errorf("planner stream: %w", cerr)
+	var observation PlanObservation
+	present := false
+	defer func() {
+		if present {
+			p.onObserved(ctx, observation)
 		}
-		body.WriteString(chunk.Content)
+	}()
+	var body strings.Builder
+	var streamErr error
+	err := p.inference.InvokeObserved(ctx, inference.Call{Operation: "planner", Provider: p.provider.Name(), Model: p.model}, p.provider, req, func(chunks llm.CompletionStream) {
+		for chunk, cerr := range chunks {
+			if cerr != nil {
+				streamErr = cerr
+				return
+			}
+			body.WriteString(chunk.Content)
+		}
+	}, func(_ context.Context, observed inference.Observation) {
+		observation.Inference, present = observed, true
+	})
+	if err != nil {
+		return SpawnPlan{}, fmt.Errorf("planner stream: %w", err)
+	}
+	if streamErr != nil {
+		return SpawnPlan{}, fmt.Errorf("planner stream: %w", streamErr)
 	}
 
 	// Third-party backends that inline `<think>…</think>` in content
@@ -155,6 +195,7 @@ func (p *LLMSpawnPlanner) Plan(ctx context.Context, in SpawnPlanInput) (SpawnPla
 		return SpawnPlan{}, fmt.Errorf("planner invalid agent: %q", payload.Agent)
 	}
 
+	observation.Valid = true
 	return SpawnPlan{
 		Rationale: payload.Rationale,
 		Agent:     payload.Agent,

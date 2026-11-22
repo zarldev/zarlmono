@@ -1,6 +1,7 @@
 package guardrails
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -35,9 +36,8 @@ const (
 // Returns nil when value satisfies schema. Error messages name the dotted
 // field path so the LLM can fix the specific argument.
 //
-// Numbers from JSON arrive as float64; whole numbers are treated as integers
-// so an "integer" schema accepts 42.0 from a JSON-decoded stream as well as
-// int(42) from a Go caller.
+// Structured runner numbers arrive as json.Number and classify exactly,
+// without machine-width limits. Legacy whole floats remain accepted as integers.
 func validateJSONSchema(schema llm.Schema, value any) error {
 	return validateAt(schema, value, "")
 }
@@ -51,7 +51,7 @@ func validateAt(schema llm.Schema, value any, path string) error {
 	// Enum is one Go type now (the typed Schema canonicalises it), so there's
 	// no []string-vs-[]any reconciliation here any more.
 	if len(schema.Enum) > 0 {
-		if !slices.ContainsFunc(schema.Enum, func(e any) bool { return e == value }) {
+		if !slices.ContainsFunc(schema.Enum, func(e any) bool { return schemaEnumEqual(e, value) }) {
 			return fmt.Errorf("%s: value %v not in enum %v", fieldPath(path), value, schema.Enum)
 		}
 	}
@@ -147,11 +147,18 @@ func checkType(want string, value any, path string) error {
 	return nil
 }
 
-// jsonType reports the JSON-schema type name for value. Whole-number
-// float64s (the shape JSON unmarshaling produces) classify as integer
-// so an "integer" schema accepts JSON's 42 → float64(42).
+// jsonType reports the JSON-schema type name for value. Valid json.Number
+// values classify without float rounding or machine-integer bounds.
 func jsonType(value any) string {
 	switch v := value.(type) {
+	case json.Number:
+		if decimal, ok := parseSchemaDecimal(string(v)); ok {
+			if decimal.coefficient == "" || decimal.exponent.Sign() >= 0 {
+				return jsonTypeInteger
+			}
+			return jsonTypeNumber
+		}
+		return "invalid json.Number"
 	case string:
 		return schemaTypeStr
 	case bool:

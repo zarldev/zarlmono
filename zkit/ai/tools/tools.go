@@ -61,7 +61,10 @@ const (
 )
 
 // ToolParameters are raw model-provided arguments at the tool dispatch
-// boundary. Prefer DecodeArgs or New in tool implementations so business
+// boundary. Structured runner dispatch supplies json.Number numeric leaves
+// recursively, preserving exact decimal values instead of float64 rounding.
+// Direct float64 assertions are not compatible with that raw-map contract.
+// Prefer DecodeArgs or New in tool implementations so business
 // logic receives a typed argument struct.
 type ToolParameters map[string]any
 
@@ -105,11 +108,19 @@ func cloneParameterValue(value any) any {
 }
 
 // Int returns the value at key as an int, or defaultValue if missing or
-// unconvertible.
+// unconvertible. json.Number truncates exactly toward zero, with machine-int
+// range checking; malformed or out-of-range Numbers return defaultValue.
 func (tp ToolParameters) Int(key string, defaultValue int) int {
 	switch val := tp[key].(type) {
 	case int:
 		return val
+	case json.Number:
+		if decimal, ok := parseArgumentDecimal(string(val)); ok {
+			if number, ok := decimal.integer(strconv.IntSize, false, true); ok {
+				i, _ := strconv.Atoi(number)
+				return i
+			}
+		}
 	case float64:
 		return int(val)
 	case string:
@@ -129,10 +140,16 @@ func (tp ToolParameters) Bool(key string, defaultValue bool) bool {
 }
 
 // Float returns the value at key as a float64, or defaultValue if
-// missing or unconvertible. JSON numbers always decode as float64
-// through encoding/json so the type assertion catches the common case.
+// missing or unconvertible. json.Number must have valid JSON number syntax;
+// parse errors and float64 overflow return defaultValue.
 func (tp ToolParameters) Float(key string, defaultValue float64) float64 {
 	switch val := tp[key].(type) {
+	case json.Number:
+		if _, ok := parseArgumentDecimal(string(val)); ok {
+			if f, err := strconv.ParseFloat(string(val), 64); err == nil {
+				return f
+			}
+		}
 	case float64:
 		return val
 	case int:

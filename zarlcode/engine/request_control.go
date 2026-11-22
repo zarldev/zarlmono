@@ -55,22 +55,22 @@ func (b *sessionHistoryBuffer) captureRequest(
 	rendered requestControlObservation,
 	current requestControlObservation,
 	observer func(runner.ReplayControl),
-) error {
+) (string, error) {
 	b.mu.Lock()
 	if err := b.hydrateControlLocked(ctx, store, sessionID); err != nil {
 		b.mu.Unlock()
-		return err
+		return "", err
 	}
 	if current != rendered {
 		b.mu.Unlock()
-		return ErrRequestControlDrift
+		return "", ErrRequestControlDrift
 	}
 
 	var messages [][]byte
 	control, err := requestControl(request, rendered.policyLabel)
 	if err != nil {
 		b.mu.Unlock()
-		return err
+		return "", err
 	}
 	control.TurnID = string(taskscope.IDFrom(ctx))
 	if control.SurfaceDigest != b.control.baseline {
@@ -79,23 +79,24 @@ func (b *sessionHistoryBuffer) captureRequest(
 		})
 		if err != nil {
 			b.mu.Unlock()
-			return fmt.Errorf("encode request control: %w", err)
+			return "", fmt.Errorf("encode request control: %w", err)
 		}
 		messages = [][]byte{data}
 		b.control.baseline = control.SurfaceDigest
 	}
 
+	receipt := uuid.NewString()
 	b.pending = append(b.pending, db.SessionHistoryBatch{
-		ID: uuid.NewString(), Messages: messages, RequestJSON: requestJSON,
+		ID: receipt, Messages: messages, RequestJSON: requestJSON,
 	})
 	if err := store.SaveSessionHistory(ctx, sessionID, b.pending); err != nil {
 		b.mu.Unlock()
-		return err
+		return "", err
 	}
 	controls, err := b.unnotifiedControlsLocked(observer != nil)
 	if err != nil {
 		b.mu.Unlock()
-		return err
+		return "", err
 	}
 	b.mu.Unlock()
 	if observer != nil {
@@ -103,7 +104,7 @@ func (b *sessionHistoryBuffer) captureRequest(
 			observer(control.Clone())
 		}
 	}
-	return nil
+	return receipt, nil
 }
 
 func (b *sessionHistoryBuffer) hydrateControlLocked(ctx context.Context, store *db.Store, sessionID string) error {

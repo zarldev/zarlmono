@@ -139,7 +139,7 @@ func TestProviderPreservesSupportedInlineMedia(t *testing.T) {
 				llm.ImagePartFromDataURI("data:image/png;base64,cG5n", "image/png"),
 				llm.VideoPartFromDataURI("data:video/mp4;base64,bXA0", "video/mp4"),
 			}}}
-			for _, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{Messages: messages}) {
+			for _, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{Stream: true, Messages: messages}) {
 				if streamErr != nil {
 					t.Fatalf("Complete: %v", streamErr)
 				}

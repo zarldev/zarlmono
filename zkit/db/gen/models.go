@@ -42,6 +42,35 @@ type HeadlessAttempt struct {
 	RecordedAt     int64
 }
 
+type HeadlessAuxiliaryProviderAccounting struct {
+	Sequence     int64
+	RunID        string
+	InvocationID string
+	Version      int64
+	PayloadJson  []byte
+	Checksum     string
+}
+
+type HeadlessChildProviderAccounting struct {
+	Sequence    int64
+	RunID       string
+	ChildTaskID string
+	Attempt     int64
+	Version     int64
+	PayloadJson []byte
+	Checksum    string
+}
+
+type HeadlessProviderAccounting struct {
+	Sequence        int64
+	RunID           string
+	PursueAttempt   int64
+	ProviderOrdinal int64
+	Version         int64
+	PayloadJson     []byte
+	Checksum        string
+}
+
 type HeadlessRun struct {
 	ID             string
 	Workspace      string
@@ -94,6 +123,23 @@ type LlmProvider struct {
 	OutputCostPerMtok float64
 }
 
+type LlmRouteCachePolicy struct {
+	Provider     string
+	Alias        string
+	Version      int64
+	Mode         string
+	StaticTtl    string
+	RollingTtl   string
+	SystemMarker int64
+	ToolMarker   int64
+}
+
+type LlmRouteProtocol struct {
+	Provider string
+	Alias    string
+	Protocol string
+}
+
 type McpServer struct {
 	Name         string
 	Transport    string
@@ -133,6 +179,16 @@ type Session struct {
 	McpActivationsJson string
 }
 
+type SessionAuxiliaryProviderAccounting struct {
+	Sequence            int64
+	SessionID           string
+	InvocationID        string
+	OwnerRequestBatchID string
+	Version             int64
+	PayloadJson         []byte
+	Checksum            string
+}
+
 type SessionBranch struct {
 	SessionID          string
 	SourceSessionID    string
@@ -165,6 +221,17 @@ type SessionCheckpointHistory struct {
 	StateID        string
 }
 
+type SessionChildProviderAccounting struct {
+	Sequence            int64
+	SessionID           string
+	OwnerRequestBatchID string
+	ChildTaskID         string
+	Attempt             int64
+	Version             int64
+	PayloadJson         []byte
+	Checksum            string
+}
+
 type SessionHistoryBatch struct {
 	SessionID string
 	BatchID   string
@@ -195,11 +262,29 @@ type SessionHistoryValue struct {
 	Payload []byte
 }
 
+type SessionManualProviderAccounting struct {
+	Sequence     int64
+	SessionID    string
+	InvocationID string
+	Version      int64
+	PayloadJson  []byte
+	Checksum     string
+}
+
 type SessionModelContext struct {
 	SessionID   string
 	HistoryHead string
 	Generation  int64
 	RequestJson []byte
+}
+
+type SessionProviderAccounting struct {
+	Sequence       int64
+	SessionID      string
+	RequestBatchID string
+	Version        int64
+	PayloadJson    []byte
+	Checksum       string
 }
 
 type SessionTranscript struct {

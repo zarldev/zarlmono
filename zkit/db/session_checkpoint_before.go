@@ -33,6 +33,10 @@ func (s *Store) CommitBeforeTurn(ctx context.Context, record SessionRecord, upda
 // CommitBeforeTurnVersioned retains every BEFORE publication guard and returns
 // the resulting row version from that transaction, only after it commits.
 func (s *Store) CommitBeforeTurnVersioned(ctx context.Context, record SessionRecord, update TranscriptUpdate, boundary HistoryCheckpoint, expectedActive string, expected SessionContentVersion, history ...SessionHistoryBatch) (SessionContentVersion, error) {
+	return s.commitBeforeTurnVersioned(ctx, record, update, boundary, expectedActive, expected, SessionAccountingBatch{}, history)
+}
+
+func (s *Store) commitBeforeTurnVersioned(ctx context.Context, record SessionRecord, update TranscriptUpdate, boundary HistoryCheckpoint, expectedActive string, expected SessionContentVersion, accounting SessionAccountingBatch, history []SessionHistoryBatch) (SessionContentVersion, error) {
 	checkpoint := boundary.Checkpoint
 	if len(checkpoint.Payload) > CheckpointPayloadLimit {
 		return SessionContentVersion{}, ErrCheckpointQuota
@@ -85,6 +89,18 @@ func (s *Store) CommitBeforeTurnVersioned(ctx context.Context, record SessionRec
 		}
 		checkpoint.Checksum = checkpointChecksum(checkpoint)
 		if err := tx.saveSessionCheckpoint(ctx, checkpoint); err != nil {
+			return err
+		}
+		if err := tx.saveSessionProviderAccounting(ctx, record.ID, accounting.Roots); err != nil {
+			return err
+		}
+		if err := tx.saveSessionChildProviderAccounting(ctx, record.ID, accounting.Children); err != nil {
+			return err
+		}
+		if err := tx.saveSessionAuxiliaryProviderAccounting(ctx, record.ID, accounting.Auxiliaries); err != nil {
+			return err
+		}
+		if err := tx.saveSessionManualProviderAccounting(ctx, record.ID, accounting.Manual); err != nil {
 			return err
 		}
 		version, err = tx.SessionVersion(ctx, record.ID)

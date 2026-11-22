@@ -87,6 +87,7 @@ func TestGoogleCustomRegistryDiscoveryAndGenerationShareVersionedPrefix(t *testi
 	}
 	for _, err := range provider.Complete(t.Context(), llm.CompletionRequest{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
+		Stream:   true,
 	}) {
 		if err != nil {
 			t.Fatalf("Complete: %v", err)
@@ -145,4 +146,19 @@ func googleTestRegistry(baseURL, apiKey string) *backends.ProviderRegistry {
 			Enabled:        true,
 		}}),
 	)
+}
+
+func TestGoogleRegistryCapabilitiesPreserveModelsPrefix(t *testing.T) {
+	t.Parallel()
+	registry := backends.NewRegistry()
+	for _, model := range []string{"gemini-3.8-flash", "gemini-4-argon", "gemini-4-hydrogen"} {
+		t.Run(model, func(t *testing.T) {
+			t.Parallel()
+			want := registry.Capabilities("gemini", model)
+			got := registry.Capabilities("gemini", "models/"+model)
+			if !want.SupportsThinking || got != want {
+				t.Fatalf("capabilities: bare=%+v prefixed=%+v", want, got)
+			}
+		})
+	}
 }

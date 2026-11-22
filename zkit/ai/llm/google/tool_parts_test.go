@@ -30,7 +30,7 @@ func TestProviderSerializesToolResultAttachments(t *testing.T) {
 		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "screen-1", Function: llm.ToolCallFunction{Name: "computer_observe", Arguments: `{}`}}}},
 		{Role: llm.RoleTool, ToolCallID: "screen-1", Content: "metadata", Parts: []llm.ContentPart{llm.ImagePartFromDataURI("data:image/png;base64,cG5n", "image/png")}},
 	}
-	for _, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{Messages: messages}) {
+	for _, streamErr := range provider.Complete(t.Context(), llm.CompletionRequest{Stream: true, Messages: messages}) {
 		if streamErr != nil {
 			t.Fatalf("Complete: %v", streamErr)
 		}

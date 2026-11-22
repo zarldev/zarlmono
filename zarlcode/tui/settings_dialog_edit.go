@@ -16,6 +16,11 @@ import (
 // embedded newlines are stripped — a pasted API key carrying a trailing
 // newline lands clean. No-op when nothing is in a text-entry state.
 func (d *settingsDialog) handlePaste(content string) {
+	// Route aliases are opaque connection keys, unlike single-line preferences.
+	if d.focusRows && d.cats[d.cat].providers && (d.providers.routeProtocol != nil || d.providers.routeCache != nil) {
+		d.providers.handlePaste(content)
+		return
+	}
 	content = stripNewlines(content)
 	if content == "" {
 		return

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
@@ -113,6 +114,10 @@ type taskRun struct {
 	// snapshot. Nil until the first reported usage, including reported zero.
 	// Attempts without usage contribute nothing; descendants are excluded.
 	totalUsage *llm.Usage
+	// providerObservations owns evidence for this Run only, in invocation order.
+	providerObservations []ProviderAttemptObservation
+	// compactionObservations owns auxiliary evidence in this Run's settlement order.
+	compactionObservations []compact.Inference
 	// toolSurface is the accounting for the most recent provider request.
 	toolSurface ToolSurface
 	timing      TaskTiming
@@ -211,17 +216,19 @@ func (t *taskRun) completed(ctx context.Context) TaskResult {
 	}
 	t.r.publishConversationEnded(ctx, t.spec, TerminalCompleted, nil, time.Since(t.start), t.iter+1, t.totalUsage, "")
 	return TaskResult{
-		ID:           t.spec.ID,
-		Reason:       TerminalCompleted,
-		Iterations:   t.iter + 1,
-		Duration:     time.Since(t.start),
-		FinalContent: t.finalContent,
-		Messages:     stripSystem(t.messages),
-		SystemPrompt: systemPromptFrom(t.messages),
-		LastUsage:    t.lastUsage,
-		TotalUsage:   t.totalUsage,
-		ToolSurface:  t.toolSurface,
-		Timing:       t.timing,
+		ID:                     t.spec.ID,
+		Reason:                 TerminalCompleted,
+		Iterations:             t.iter + 1,
+		Duration:               time.Since(t.start),
+		FinalContent:           t.finalContent,
+		Messages:               stripSystem(t.messages),
+		SystemPrompt:           systemPromptFrom(t.messages),
+		LastUsage:              t.lastUsage,
+		TotalUsage:             t.totalUsage,
+		ProviderObservations:   cloneProviderObservations(t.providerObservations),
+		CompactionObservations: cloneCompactionObservations(t.compactionObservations),
+		ToolSurface:            t.toolSurface,
+		Timing:                 t.timing,
 	}
 }
 
@@ -233,17 +240,19 @@ func (t *taskRun) maxedOut(ctx context.Context) TaskResult {
 	}
 	t.r.publishConversationEnded(ctx, t.spec, TerminalMaxIterations, nil, time.Since(t.start), t.maxIter, t.totalUsage, "")
 	return TaskResult{
-		ID:           t.spec.ID,
-		Reason:       TerminalMaxIterations,
-		Iterations:   t.maxIter,
-		Duration:     time.Since(t.start),
-		FinalContent: t.finalContent,
-		Messages:     stripSystem(t.messages),
-		SystemPrompt: systemPromptFrom(t.messages),
-		LastUsage:    t.lastUsage,
-		TotalUsage:   t.totalUsage,
-		ToolSurface:  t.toolSurface,
-		Timing:       t.timing,
+		ID:                     t.spec.ID,
+		Reason:                 TerminalMaxIterations,
+		Iterations:             t.maxIter,
+		Duration:               time.Since(t.start),
+		FinalContent:           t.finalContent,
+		Messages:               stripSystem(t.messages),
+		SystemPrompt:           systemPromptFrom(t.messages),
+		LastUsage:              t.lastUsage,
+		TotalUsage:             t.totalUsage,
+		ProviderObservations:   cloneProviderObservations(t.providerObservations),
+		CompactionObservations: cloneCompactionObservations(t.compactionObservations),
+		ToolSurface:            t.toolSurface,
+		Timing:                 t.timing,
 	}
 }
 
@@ -262,19 +271,21 @@ func (t *taskRun) cancelled(ctx context.Context, cancelErr error) TaskResult {
 	cause := terminalCause(cancelErr)
 	t.r.publishConversationEnded(ctx, t.spec, TerminalCancelled, nil, time.Since(t.start), t.iter, t.totalUsage, cause)
 	return TaskResult{
-		ID:           t.spec.ID,
-		Reason:       TerminalCancelled,
-		Iterations:   t.iter,
-		Duration:     time.Since(t.start),
-		Cause:        cause,
-		FinalContent: t.finalContent,
-		Messages:     stripSystem(t.messages),
-		SystemPrompt: systemPromptFrom(t.messages),
-		LastUsage:    t.lastUsage,
-		TotalUsage:   t.totalUsage,
-		ToolSurface:  t.toolSurface,
-		Timing:       t.timing,
-		Err:          cancelErr,
+		ID:                     t.spec.ID,
+		Reason:                 TerminalCancelled,
+		Iterations:             t.iter,
+		Duration:               time.Since(t.start),
+		Cause:                  cause,
+		FinalContent:           t.finalContent,
+		Messages:               stripSystem(t.messages),
+		SystemPrompt:           systemPromptFrom(t.messages),
+		LastUsage:              t.lastUsage,
+		TotalUsage:             t.totalUsage,
+		ProviderObservations:   cloneProviderObservations(t.providerObservations),
+		CompactionObservations: cloneCompactionObservations(t.compactionObservations),
+		ToolSurface:            t.toolSurface,
+		Timing:                 t.timing,
+		Err:                    cancelErr,
 	}
 }
 
@@ -294,18 +305,20 @@ func (t *taskRun) errored(ctx context.Context, err error) TaskResult {
 	cause := terminalCause(err)
 	t.r.publishConversationEnded(ctx, t.spec, TerminalError, err, time.Since(t.start), t.iter+1, t.totalUsage, cause)
 	return TaskResult{
-		ID:           t.spec.ID,
-		Reason:       TerminalError,
-		Iterations:   t.iter + 1,
-		Duration:     time.Since(t.start),
-		Cause:        cause,
-		FinalContent: t.finalContent,
-		Messages:     stripSystem(t.messages),
-		LastUsage:    t.lastUsage,
-		TotalUsage:   t.totalUsage,
-		ToolSurface:  t.toolSurface,
-		Timing:       t.timing,
-		Err:          err,
+		ID:                     t.spec.ID,
+		Reason:                 TerminalError,
+		Iterations:             t.iter + 1,
+		Duration:               time.Since(t.start),
+		Cause:                  cause,
+		FinalContent:           t.finalContent,
+		Messages:               stripSystem(t.messages),
+		LastUsage:              t.lastUsage,
+		TotalUsage:             t.totalUsage,
+		ProviderObservations:   cloneProviderObservations(t.providerObservations),
+		CompactionObservations: cloneCompactionObservations(t.compactionObservations),
+		ToolSurface:            t.toolSurface,
+		Timing:                 t.timing,
+		Err:                    err,
 	}
 }
 
@@ -399,11 +412,15 @@ func (t *taskRun) maybeCompact(ctx context.Context) error {
 	if err := t.flushHistory(ctx); err != nil {
 		return err
 	}
-	msgs, err := t.r.maybeCompact(ctx, t.spec, t.messages, t.lastUsage, t.iter, &t.st)
+	result, err := t.r.maybeCompact(ctx, t.messages, t.lastUsage, t.iter, &t.st)
+	t.settleCompaction(ctx, result.Inference, err)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrCompact, err)
 	}
-	t.messages = msgs
-	t.historyOffset = len(msgs)
+	if len(result.History) != len(t.messages) || result.BytesTrimmed > 0 {
+		t.r.publishCompactionApplied(ctx, t.spec, len(t.messages), len(result.History), result.BytesTrimmed, result.Engine)
+	}
+	t.messages = result.History
+	t.historyOffset = len(result.History)
 	return nil
 }

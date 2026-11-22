@@ -101,7 +101,22 @@ func (s *Store) UpsertProvider(ctx context.Context, p backends.StoredProvider) e
 	})
 }
 
-// DeleteProvider removes a provider row by name. Conforms to backends.Store.
+// DeleteProvider removes a custom provider and all its route policies atomically.
+// Upserts preserve policies. Older binaries do not perform this cleanup; rolling
+// back to one cannot guarantee policy cleanup when a provider is deleted.
 func (s *Store) DeleteProvider(ctx context.Context, name string) error {
-	return s.q.DeleteProvider(ctx, name)
+	if s.inTx {
+		return s.deleteProvider(ctx, name)
+	}
+	return s.WithTx(ctx, func(tx *Store) error { return tx.deleteProvider(ctx, name) })
+}
+
+func (s *Store) deleteProvider(ctx context.Context, name string) error {
+	if err := s.q.DeleteProviderRouteProtocols(ctx, name); err != nil {
+		return fmt.Errorf("delete provider route protocols: %w", err)
+	}
+	if err := s.q.DeleteProvider(ctx, name); err != nil {
+		return fmt.Errorf("delete provider: %w", err)
+	}
+	return nil
 }

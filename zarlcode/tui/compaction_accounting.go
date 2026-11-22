@@ -4,6 +4,7 @@ import "github.com/zarldev/zarlmono/zarlcode/tui/teasink"
 
 func (s *Session) applyCompactionSettled(e teasink.CompactionSettledMsg) {
 	inference := e.Inference
+	s.Run.observeCompaction(e)
 	// A compactor is a separate inference target and cannot borrow root pricing.
 	price := s.taskPrice(teasink.ConversationStartedMsg{Depth: 1, Provider: inference.Provider, Model: inference.Model})
 	s.Run.foldCacheTarget(price, inference.Usage, false, true)

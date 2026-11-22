@@ -92,6 +92,10 @@ func (m *UI) openSessionNameDialog() {
 }
 
 func (m *UI) setSessionLabel(label string) tea.Cmd {
+	if m.manualCompaction != nil {
+		m.session.SetErrorToast("wait for manual compaction to be saved before renaming")
+		return m.toastExpiryCmd()
+	}
 	m.session.Label = normalizeSessionLabel(label)
 	m.session.LabelManual = true
 	if m.session.Label == "" {

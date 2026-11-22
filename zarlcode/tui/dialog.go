@@ -229,6 +229,9 @@ func (m *UI) handleAction(a action) tea.Cmd {
 	if cmd, ok := m.handleCredentialAction(a); ok {
 		return cmd
 	}
+	if m.handleRoutePolicyAction(a) {
+		return nil
+	}
 	switch a := a.(type) {
 	case actionViewSavedHistory:
 		m.viewSavedHistory(a)

@@ -69,5 +69,5 @@ func validResume(state ResumeState) bool {
 	return (state.Version == 1 || state.Version == 2) && validStrings(reflect.ValueOf(metadata)) && state.Context != nil && state.Target.Provider != "" &&
 		state.Target.Model != "" && state.Target.Window >= 0 && state.Target.Reserve >= 0 &&
 		validBoundary(state.Revision, len(state.Context) == 0, state.SettledTurnID, state.EventWatermark, state.InitialContinuation) &&
-		validateTargetContext(state.Context, state.Target) == nil
+		validTargetCache(state.Target) && validateTargetContext(state.Context, state.Target) == nil
 }

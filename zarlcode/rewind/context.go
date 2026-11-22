@@ -45,7 +45,7 @@ func ValidateContext(messages []llm.Message, provider string) error {
 func ValidateLegacyContext(messages []llm.Message, provider string) error {
 	var pending []string
 	for i, message := range messages {
-		if !messageShapeValid(message) || !providerMessageValid(message, provider) {
+		if !messageShapeValid(message) || !savedProviderMessageValid(message, provider) {
 			return fmt.Errorf("%w: message %d has unsupported replay fields or output order", ErrInvalid, i+1)
 		}
 		if message.Role == llm.RoleTool {
@@ -149,7 +149,7 @@ func partValid(part llm.ContentPart, provider string) bool {
 
 func continuationValid(item llm.ContinuationItem, provider string) bool {
 	if googleRoute(provider) {
-		return googleContinuationValid(item)
+		return savedGoogleContinuationValid(item)
 	}
 	if item.Provider != provider || !indexValid(item.OutputIndex) {
 		return false

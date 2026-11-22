@@ -126,12 +126,9 @@ func Repair(raw []byte) ([]byte, bool) {
 	return raw, false
 }
 
-// isParseable returns true when raw decodes as valid JSON (any
-// shape — object, array, number, string, bool, null). Cheap: it
-// only Unmarshals into an empty interface and discards the result.
+// isParseable checks syntax only, including numbers beyond float64's range.
 func isParseable(raw []byte) bool {
-	var v any
-	return json.Unmarshal(raw, &v) == nil
+	return json.Valid(raw)
 }
 
 // escapeControlCharsInStrings walks raw and escapes literal newlines,

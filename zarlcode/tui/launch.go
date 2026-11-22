@@ -72,10 +72,92 @@ type Launch struct {
 	TraceFile     string
 	PromptProfile engine.PromptProfile
 	ReportFile    string
+	// Protocol overrides only the initially selected provider for this run.
+	// Its zero value preserves the adapter's default protocol.
+	Protocol llm.ModelProtocol
+	// RateCardFile is an explicit, unpersisted local JSON policy for the initial
+	// target only. Paths use ordinary OS semantics relative to the launch cwd:
+	// no tilde/environment expansion, repair, or alias/URL normalization.
+	// Startup re-preparation rebinds the same parsed policy without rereading.
+	// Manual target replacement/restore does not implicitly carry this policy.
+	// Binding currently requires a proven LiteLLM selected protocol; native
+	// providers with unknown actual protocol are rejected rather than guessed.
+	RateCardFile string
 }
 
 // Name identifies the program to the zapp harness (errors, signals).
 func (Launch) Name() string { return "zarlcode" }
+
+// ProviderSpec resolves the launch provider/model from effective settings, then
+// applies the runtime protocol override. It does not build a provider, access
+// credentials, or persist the override.
+func (p Launch) ProviderSpec(ctx context.Context, settings *engine.Settings) engine.ProviderSpec {
+	spec := settings.ActiveProvider(ctx, engine.ProviderSpec{Name: prefs.DefaultProvider, Model: prefs.DefaultModel})
+	spec.Protocol = p.Protocol
+	return spec
+}
+
+// PrepareTarget builds the launch target with cached-only operational metadata
+// for interactive first render, or full budget resolution for headless dispatch.
+// Neither path fetches optional gateway declarations.
+func (p Launch) PrepareTarget(ctx context.Context, settings *engine.Settings, spec engine.ProviderSpec) (engine.TargetUpdate, error) {
+	target, _, err := p.PrepareTargetWithStartup(ctx, settings, spec, 0)
+	return target, err
+}
+
+// PrepareTargetWithStartup prepares the initial target exactly as PrepareTarget
+// does and returns its deferred, bounded interactive metadata command. sequence
+// is the UI's target-change sequence at preparation. The command owns the parsed
+// policy snapshot: it never rereads the file and only publishes a newly prepared
+// target if that exact policy still matches. Headless launches return no command.
+func (p Launch) PrepareTargetWithStartup(ctx context.Context, settings *engine.Settings, spec engine.ProviderSpec, sequence uint64) (engine.TargetUpdate, tea.Cmd, error) {
+	config, err := p.loadRateCard(ctx)
+	if err != nil {
+		return engine.TargetUpdate{}, nil, err
+	}
+	return p.prepareTargetWithStartup(ctx, settings, spec, sequence, config)
+}
+
+func (p Launch) prepareTargetWithStartup(ctx context.Context, settings *engine.Settings, spec engine.ProviderSpec, sequence uint64, config *engine.RateCardConfig) (engine.TargetUpdate, tea.Cmd, error) {
+	var target engine.TargetUpdate
+	var err error
+	if p.Headless {
+		target, err = settings.PrepareTarget(ctx, spec)
+	} else {
+		target, err = settings.PrepareTargetCached(ctx, spec)
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return engine.TargetUpdate{}, nil, ctx.Err()
+		}
+		if config != nil {
+			// Provider errors may contain private endpoint/credential diagnostics.
+			return engine.TargetUpdate{}, nil, fmt.Errorf("%w: prepare target", engine.ErrRateCardTargetMismatch)
+		}
+		return engine.TargetUpdate{}, nil, err
+	}
+	if config != nil {
+		target, err = engine.BindTargetRateCard(target, *config)
+	}
+	if err != nil {
+		return engine.TargetUpdate{}, nil, err
+	}
+	if p.Headless {
+		return target, nil, nil
+	}
+	return target, finishStartupMetadataCmd(ctx, settings, target, target.Spec, sequence, config), nil
+}
+
+// NewLiveEventSink composes event delivery for the launch mode. Interactive
+// launches retain application receipts before Run wires the UI consumer;
+// headless launches discard unwired events because they have no UI consumer.
+// The caller owns Close after runtime producers and any UI consumer have joined.
+func (p Launch) NewLiveEventSink() *teasink.Sink {
+	if p.Headless {
+		return teasink.New(nil)
+	}
+	return teasink.NewApplicationSink(nil)
+}
 
 // Create wires the application against the workspace (the launch cwd):
 // optional .env, file-only logging (the alt-screen owns stdout), shared
@@ -83,6 +165,12 @@ func (Launch) Name() string { return "zarlcode" }
 // Long-lived resources are registered with app.AddCloser so the harness
 // closes them deterministically on exit.
 func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode, error) {
+	// Reject invalid explicit local input before creating workspace/settings
+	// resources. The owned parsed snapshot is reused below and at startup.
+	config, err := p.loadRateCard(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if p.EnvFile != "" {
 		// Overload so the .env wins over a stale ambient value, matching the
 		// eval driver's --env behaviour.
@@ -204,13 +292,31 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	if providerPreferenceErr != nil && !unconfigured {
 		return nil, fmt.Errorf("read provider preference: %w", providerPreferenceErr)
 	}
-	prov, spec, providerErr := settings.BuildActive(ctx, fallback)
+	spec := p.ProviderSpec(ctx, settings)
+	if p.Protocol != llm.ModelProtocols.PROTOCOLUNKNOWN {
+		// Bind the runtime override to this provider so same-provider rebuilds
+		// retain it, while switching providers does not leak the override.
+		fallback = spec
+	}
+	m := New()
+	target, startupCmd, providerErr := p.prepareTargetWithStartup(ctx, settings, spec, m.repointSeq, config)
+	if providerErr != nil && p.RateCardFile != "" {
+		return nil, providerErr // Explicit policy errors never fall into onboarding.
+	}
+	prov := target.Provider
+	if providerErr == nil {
+		spec = target.Spec
+	} else {
+		// Onboarding retains the unavailable selection without invented facts.
+		target = engine.TargetUpdate{Spec: spec, Window: engine.LiveContextWindow}
+	}
 	if providerErr != nil && p.Headless {
 		return nil, fmt.Errorf("provider %q: %w", spec.Name, providerErr)
 	}
 
-	// Sink first (no send yet); Run wires it to the program once it exists.
-	sink := teasink.New(nil)
+	// Only interactive composition retains events until UI application. Headless
+	// has no consumer and preserves the legacy unwired sink's drop semantics.
+	sink := p.NewLiveEventSink()
 	_ = app.AddCloser("sink", closerFunc(func() error { sink.Close(); return nil }))
 
 	var appearanceErr error
@@ -228,18 +334,12 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		slog.WarnContext(ctx, "appearance path", "error", e)
 	}
 
-	// Use static provider metadata immediately. Interactive launches defer network
-	// probes (local server props and Codex account limits) until Bubble Tea can
-	// render; headless resolves the exact window before its first turn.
-	ctxWindow := settings.Registry.ContextWindow(spec.Name, spec.Model)
-	if p.Headless {
-		ctxWindow = settings.ContextWindow(ctx, spec)
-	}
+	// Cached preparation performs no new startup probes before the first frame.
+	ctxWindow := target.Window
 	if ctxWindow <= 0 {
 		ctxWindow = engine.LiveContextWindow
 	}
 
-	m := New()
 	m.ctx = ctx
 	m.SetWorkspace(root, spec.Model)
 	m.SetProvider(spec.Name)
@@ -271,6 +371,7 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 		spec.Model,
 		engine.WithPromptProfile(p.PromptProfile),
 		engine.WithLiveSink(sink),
+		engine.WithAuxiliaryObservationSink(sink.AuxiliaryObserved),
 		engine.WithSettings(settings),
 		engine.WithToolOutputSink(toolSink),
 		engine.WithProcessManager(pm),
@@ -297,13 +398,16 @@ func (p Launch) Create(ctx context.Context, app *zapp.App[*Zarlcode]) (*Zarlcode
 	// turn already in flight keeps its snapshot and the update applies next turn.
 	m.startupReady = true
 	if !p.Headless {
-		m.startupCmd = finishStartupMetadataCmd(ctx, settings, spec, m.repointSeq)
+		m.startupCmd = startupCmd
+		if m.startupCmd == nil {
+			// Preserve ordinary onboarding's advisory discovery path.
+			m.startupCmd = finishStartupMetadataCmd(ctx, settings, target, spec, m.repointSeq, nil)
+		}
 		m.startupMCPCmd = connectConfiguredMCPServersCmd(ctx, settings, mcpReg)
 	}
 
 	live.AttachMCP(mcpReg, mcpHost)
-	live.SetProviderSpec(prov, spec)
-	live.SetContextWindow(ctxWindow)
+	live.ApplyTarget(target)
 	// web_search: pick the configured backend and build its tool here, at the
 	// composition root. SearXNG (self-host) needs a URL; Brave needs an API key
 	// from the encrypted credential store.
@@ -445,38 +549,40 @@ func (f closerFunc) Close() error { return f() }
 // server is live before the first turn. Failures are logged, never fatal —
 // one bad server config must not block launch.
 type startupReadyMsg struct {
-	window       int
-	provider     llm.Provider
-	spec         engine.ProviderSpec
+	target       engine.TargetUpdate
 	modelChanged bool
 	origin       engine.ProviderSpec
+	generation   engine.TargetGeneration
 	sequence     uint64
+	err          error
 }
 
-func finishStartupMetadataCmd(ctx context.Context, settings *engine.Settings, spec engine.ProviderSpec, sequence uint64) tea.Cmd {
+func finishStartupMetadataCmd(ctx context.Context, settings *engine.Settings, initial engine.TargetUpdate, spec engine.ProviderSpec, sequence uint64, config *engine.RateCardConfig) tea.Cmd {
+	var generation engine.TargetGeneration
+	if initial.Facts != nil {
+		generation = initial.Facts.Generation
+	}
+	if config != nil {
+		owned := config.Clone()
+		config = &owned
+	}
 	return func() tea.Msg {
-		// Startup metadata is advisory and must never hold the first submitted
-		// turn behind a slow model catalogue or local-provider probe. The static
-		// window selected during Create remains the fallback.
 		metadataCtx, cancel := context.WithTimeout(ctx, startupMetadataTimeout)
 		defer cancel()
 		validated, changed, err := settings.ValidateCodexModel(metadataCtx, spec)
 		if err != nil {
 			slog.WarnContext(ctx, "validate Codex model", "err", err)
-			validated = spec
+			validated, changed = spec, false
 		}
-		var provider llm.Provider
-		if changed {
-			provider, err = engine.BuildProvider(metadataCtx, settings.Registry, settings.Svc, validated)
-			if err != nil {
-				slog.WarnContext(ctx, "rebuild validated Codex provider", "err", err)
-				validated, changed = spec, false
-			}
+		// Prepare the actual construction and full operational budget together.
+		// Optional gateway enrichment is deliberately not part of startup.
+		target, err := settings.PrepareTarget(metadataCtx, validated)
+		if err == nil && config != nil {
+			target, err = engine.BindTargetRateCard(target, *config)
 		}
 		return startupReadyMsg{
-			window: settings.ContextWindow(metadataCtx, validated), provider: provider,
-			spec: validated, modelChanged: changed,
-			origin: spec, sequence: sequence,
+			target: target, modelChanged: changed, err: err,
+			origin: spec, generation: generation, sequence: sequence,
 		}
 	}
 }

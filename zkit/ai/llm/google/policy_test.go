@@ -39,7 +39,7 @@ func TestProviderBorrowsHTTPPolicyAndUsesStableDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, err := range provider.Complete(t.Context(), llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}}}) {
+	for _, err := range provider.Complete(t.Context(), llm.CompletionRequest{Stream: true, Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}}}) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,7 +56,7 @@ func TestProviderReportsBillableThoughtTokens(t *testing.T) {
 	server := googleStreamServer(t, `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"thoughtsTokenCount":7,"totalTokenCount":15}}`)
 	defer server.Close()
 
-	chunks := completeGoogle(t, server.URL, llm.CompletionRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "think"}}})
+	chunks := completeGoogle(t, server.URL, llm.CompletionRequest{Stream: true, Messages: []llm.Message{{Role: llm.RoleUser, Content: "think"}}})
 	final := chunks[len(chunks)-1]
 	if !final.UsageReported {
 		t.Fatal("usage not reported")
@@ -78,11 +78,12 @@ func TestProviderMapsThinkingBudget(t *testing.T) {
 			Request:    request,
 		}, nil
 	}}
-	provider, err := google.NewProvider("test-key", google.WithHTTPClient(&http.Client{Transport: transport}))
+	provider, err := google.NewProvider("test-key", google.WithModel("gemini-2.5-flash"), google.WithHTTPClient(&http.Client{Transport: transport}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := llm.CompletionRequest{
+		Stream:   true,
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "think"}},
 		Thinking: llm.ThinkingConfig{Enabled: true, BudgetTokens: 321},
 	}

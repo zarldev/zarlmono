@@ -19,3 +19,16 @@ func TestCurrentDefaultMetadataDoesNotBorrowOlderModelRates(t *testing.T) {
 		t.Fatal("unknown model silently inherited an older generation's rates")
 	}
 }
+
+func TestCapabilitiesPreserveModelsPrefixEquivalence(t *testing.T) {
+	t.Parallel()
+	for _, model := range []string{"gemini-3.8-flash", "gemini-4-argon", "gemini-4-hydrogen", "gemini-2.5-flash", "gemini-unlisted"} {
+		t.Run(model, func(t *testing.T) {
+			t.Parallel()
+			want := google.Capabilities(model)
+			if got := google.Capabilities("models/" + model); got != want {
+				t.Fatalf("prefixed capabilities = %+v, want bare model capabilities %+v", got, want)
+			}
+		})
+	}
+}

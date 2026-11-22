@@ -13,6 +13,8 @@ import (
 type buildParams struct {
 	apiKey           string
 	baseURL          string
+	protocol         llm.ModelProtocol
+	cachePolicy      RouteCachePolicy
 	model            string
 	reasoningHistory llm.ReasoningHistory
 	options          llm.ModelOptions

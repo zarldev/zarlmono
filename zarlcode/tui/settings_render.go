@@ -61,7 +61,14 @@ func (d *settingsDialog) draw(scr uv.Screen, area uv.Rectangle) {
 	var lines []string
 	switch {
 	case d.cats[d.cat].providers:
-		lines = d.providers.detailLines(detailW)
+		switch {
+		case d.providers.routeProtocol != nil:
+			lines = d.providers.routeProtocol.visibleLines(detailW, bodyH)
+		case d.providers.routeCache != nil:
+			lines = d.providers.routeCache.visibleLines(detailW, bodyH)
+		default:
+			lines = d.providers.detailLines(detailW)
+		}
 	case d.cats[d.cat].gallery:
 		lines = d.gallery.detailLines(detailW, bodyH)
 	case d.cats[d.cat].catalog:

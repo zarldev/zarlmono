@@ -111,17 +111,13 @@ func (m *UI) buildModeTargetCmd(
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, repointTimeout)
 		defer cancel()
-		prov, err := engine.BuildProvider(ctx, settings.Registry, settings.Svc, spec)
+		target, err := settings.PrepareTarget(ctx, spec)
 		if err != nil {
 			return providerRepointedMsg{route: true, routeGeneration: generation, modeGeneration: modeGeneration, sessionID: sessionID, plan: plan, spec: spec, err: err}
 		}
-		window := settings.ContextWindow(ctx, spec)
-		if window <= 0 {
-			window = engine.LiveContextWindow
-		}
 		return providerRepointedMsg{
 			route: true, routeGeneration: generation, modeGeneration: modeGeneration, sessionID: sessionID, plan: plan,
-			prov: prov, spec: spec, window: window, reasoning: reasoning, defWindow: defWindow,
+			target: &target, prov: target.Provider, spec: target.Spec, window: target.Window, reasoning: reasoning, defWindow: defWindow,
 		}
 	}
 }
@@ -143,7 +139,7 @@ func (m *UI) handleModeTargetRepoint(rp providerRepointedMsg) {
 		m.session.SetErrorToast(state.err.Error())
 		return
 	}
-	if m.exactResume && !m.live.SupportsExactTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}) {
+	if m.exactResume && !m.live.SupportsExactTarget(rp.targetUpdate()) {
 		state.err = errors.New("mode target cannot preserve this conversation's exact replay support; choose another target or start a new conversation")
 		m.session.SetErrorToast(state.err.Error())
 		return
@@ -188,9 +184,11 @@ func (m *UI) applyPreparedModeTarget(reservation *engine.RuntimeReservation) err
 		}()
 	}
 	rp := *state.prepared
-	if err := reservation.ApplyTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}); err != nil {
+	if err := reservation.ApplyTarget(rp.targetUpdate()); err != nil {
 		return err
 	}
+	m.routeProtocolApplied(rp.spec)
+	m.routeCacheApplied(rp.spec)
 	m.appliedReasoning = rp.reasoning
 	m.appliedWindow = rp.defWindow
 	m.session.SetActiveProviderSpec(rp.spec)

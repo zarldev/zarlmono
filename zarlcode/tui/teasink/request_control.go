@@ -17,10 +17,11 @@ type RequestControlRecordedMsg struct {
 // RequestControlRecorded forwards committed request observations through the
 // same ordered event pump as the owning run's other transcript events.
 func (s *Sink) RequestControlRecorded(ctx context.Context, control runner.ReplayControl) {
+	control = control.Clone()
 	s.flush()
 	taskID := control.TurnID
 	if taskID == "" {
 		taskID = string(taskscope.IDFrom(ctx))
 	}
-	s.dispatch(RequestControlRecordedMsg{TaskID: taskID, Control: control.Clone()})
+	s.dispatch(RequestControlRecordedMsg{TaskID: taskID, Control: control})
 }

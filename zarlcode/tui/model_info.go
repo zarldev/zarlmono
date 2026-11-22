@@ -7,10 +7,12 @@ import (
 
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 )
 
 type modelInfoResolver struct {
-	s *engine.Settings
+	s      *engine.Settings
+	target func() engine.RunTarget
 }
 
 func newModelInfoResolver(s *engine.Settings) *modelInfoResolver {
@@ -20,6 +22,26 @@ func newModelInfoResolver(s *engine.Settings) *modelInfoResolver {
 func (r *modelInfoResolver) summary(provider, model string) string {
 	if r == nil || r.s == nil || r.s.Registry == nil || provider == "" || model == "" {
 		return ""
+	}
+	if def, err := r.s.Registry.Parse(provider); err == nil && def.AdapterType == backends.AdapterTypes.LITELLM {
+		if r.target != nil {
+			target := r.target()
+			if target.Spec.Name != provider || target.Facts == nil {
+				return palette.Muted.On("gateway metadata unknown")
+			}
+			if snapshot, err := target.Facts.CachedModelInfo(); err == nil {
+				var rows []string
+				for _, row := range snapshot.Rows {
+					if string(row.RequestedModel) == model {
+						rows = append(rows, advertisedRowSummary(row))
+					}
+				}
+				if len(rows) > 0 {
+					return palette.Muted.On("gateway advertised · " + strings.Join(rows, " | "))
+				}
+			}
+		}
+		return palette.Muted.On("gateway metadata unknown")
 	}
 	ctx := ""
 	if cw := r.s.Registry.ResolveContextWindowCached(provider, model); cw > 0 {

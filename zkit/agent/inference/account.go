@@ -27,20 +27,34 @@ type Limits struct {
 
 // Call identifies a host-selected inference endpoint and purpose. Operation is
 // a host label (for example runner, compaction, planner or judge), not model text.
-type Call struct{ Operation, Provider, Model string }
+// Reference-backed fields are borrowed until invocation returns. Admission
+// clones RateCard before provider construction or iteration; settlement owns it.
+type Call struct {
+	Operation, Provider, Model string
+	// RateCard is an optional host-selected frozen basis, not a price estimate.
+	// It does not contribute to Snapshot usage or admission thresholds.
+	RateCard *llm.RateCard
+}
 
 // Settlement describes one invoked stream, not parsing or tool execution after it.
 // ID is unique within its Account. UsageReported distinguishes unknown from zero.
 // Stopped means the consumer ended iteration; Interrupted means the stream did not
 // return normally, including panic unwinding or an admitted stream never consumed.
 type Settlement struct {
-	ID                   uint64
-	Call                 Call
-	Member               string
-	TaskID               taskscope.ID
-	Depth                int
-	Usage                llm.Usage
-	UsageReported        bool
+	ID            uint64
+	Call          Call
+	Member        string
+	TaskID        taskscope.ID
+	Depth         int
+	Usage         llm.Usage
+	UsageReported bool
+	// PricingUsage and Execution own the latest independently supplied sidecars.
+	// Nil is absent; present unknown and known zero remain distinct. A supplied
+	// non-nil sidecar replaces its predecessor completely, while a later nil
+	// retains it (see llm.CompletionChunk). Neither sidecar contributes to the
+	// legacy Snapshot token/admission aggregate.
+	PricingUsage         *llm.PricingUsage
+	Execution            *llm.ExecutionObservation
 	Started              time.Time
 	Duration             time.Duration
 	Err                  error
@@ -135,6 +149,10 @@ func (s Scope) invoke(ctx context.Context, call Call, consume func(func(llm.Comp
 	a.snapshot.Admitted++
 	a.snapshot.Active++
 	a.mu.Unlock()
+	if call.RateCard != nil {
+		card := call.RateCard.Clone()
+		call.RateCard = &card
+	}
 	record := Settlement{ID: id, Call: call, Member: s.Member, TaskID: taskscope.IDFrom(ctx), Depth: taskscope.DepthFrom(ctx), Started: time.Now(), Interrupted: true}
 	settled := false
 	settle := func() {
@@ -155,6 +173,14 @@ func (s Scope) invoke(ctx context.Context, call Call, consume func(func(llm.Comp
 			stream(func(chunk llm.CompletionChunk, err error) bool {
 				if chunk.UsageReported {
 					record.Usage, record.UsageReported = chunk.Usage, true
+				}
+				if chunk.PricingUsage != nil {
+					usage := chunk.PricingUsage.Clone()
+					record.PricingUsage = &usage
+				}
+				if chunk.Execution != nil {
+					execution := chunk.Execution.Clone()
+					record.Execution = &execution
 				}
 				if err != nil {
 					record.Err = err

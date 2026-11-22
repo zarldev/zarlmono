@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
@@ -24,9 +27,11 @@ var ErrKeyNotFound = errors.New("provider key not found")
 // exist (built-in + Store-backed custom), how to build them, and how to
 // resolve their credentials and settings.
 type ProviderRegistry struct {
-	store Store
-	svc   SettingsService
-	seeds []ProviderDefinition
+	store              Store
+	routeProtocols     RouteProtocolStore
+	routeCachePolicies RouteCachePolicyStore
+	svc                SettingsService
+	seeds              []ProviderDefinition
 
 	mu              sync.RWMutex
 	merged          []ProviderDefinition
@@ -155,6 +160,8 @@ func adapterDiscriminator(at AdapterType) adapterType {
 		return googleCompatible
 	case AdapterTypes.GOOGLEVERTEX:
 		return googleVertex
+	case AdapterTypes.LITELLM:
+		return liteLLM
 	case AdapterTypes.OAUTHOPENAICODEX:
 		return oauthOpenAICodex
 	case AdapterTypes.OAUTHCLAUDECODE:
@@ -182,9 +189,16 @@ func (r *ProviderRegistry) Parse(name string) (ProviderDefinition, error) {
 // may fall back to provider-definition defaults; APIKey comes from this config or
 // the caller-supplied SettingsService, never the ambient environment.
 type BuildConfig struct {
-	Model   string
+	Model string
+	// BaseURL is a gateway root for LiteLLM, optionally with a reverse-proxy
+	// prefix, but without a protocol/version suffix such as /v1 or /v1beta.
 	BaseURL string
 	APIKey  string
+	// Protocol is runtime override intent only. Unknown consults exact-alias
+	// policy, then defaults to Chat Completions. Other adapters reject overrides.
+	Protocol llm.ModelProtocol
+	// CachePolicy is runtime intent; zero inherits the saved exact-alias policy.
+	CachePolicy RouteCachePolicy
 }
 
 // Build constructs an llm.Provider for the named definition, optionally
@@ -193,20 +207,98 @@ func (r *ProviderRegistry) Build(ctx context.Context, name, model string) (llm.P
 	return r.BuildWithConfig(ctx, name, BuildConfig{Model: model})
 }
 
-// BuildWithConfig constructs an llm.Provider for name using cfg as an
-// override layer. Empty cfg.Model falls back to def.DefaultModel; empty
-// cfg.BaseURL falls back to def.BaseURL; empty cfg.APIKey resolves through
-// the supplied SettingsService. No credentials are read from the environment.
+// BuiltProvider holds the actual provider and its construction-resolved route facts.
+// It contains no credential or endpoint configuration.
+// Protocol is the selected LiteLLM wire protocol; for native adapters Unknown
+// means the protocol is managed by their runtime rather than selected here.
+// CachePolicy is the effective construction policy, not BuildConfig intent.
+type BuiltProvider struct {
+	Provider    llm.Provider
+	Model       string
+	Protocol    llm.ModelProtocol
+	CachePolicy RouteCachePolicy
+}
+
+// BuildWithConfig preserves the provider-only construction API.
 func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg BuildConfig) (llm.Provider, error) {
-	def, err := r.Parse(name)
+	built, err := r.BuildResolved(ctx, name, cfg)
 	if err != nil {
 		return nil, err
+	}
+	return built.Provider, nil
+}
+
+// BuildResolved resolves the exact alias and its policies once for this construction.
+func (r *ProviderRegistry) BuildResolved(ctx context.Context, name string, cfg BuildConfig) (BuiltProvider, error) {
+	def, err := r.Parse(name)
+	if err != nil {
+		return BuiltProvider{}, err
 	}
 	if cfg.Model == "" {
 		cfg.Model = def.DefaultModel
 	}
+	if err := r.resolveConstructionProtocol(ctx, def, &cfg); err != nil {
+		return BuiltProvider{}, err
+	}
+	policy, err := r.resolveConstructionCache(ctx, def, cfg.Model, cfg.CachePolicy)
+	if err != nil {
+		return BuiltProvider{}, err
+	}
+	if err := validateConstructionCache(def.AdapterType, cfg.Protocol, policy); err != nil {
+		return BuiltProvider{}, err
+	}
+	policy = effectiveConstructionCache(def.AdapterType, cfg.Protocol, policy)
+	provider, err := r.buildResolvedProvider(ctx, def, cfg, policy)
+	if err != nil {
+		return BuiltProvider{}, err
+	}
+	return BuiltProvider{Provider: provider, Model: cfg.Model, Protocol: cfg.Protocol, CachePolicy: policy}, nil
+}
+
+func (r *ProviderRegistry) resolveConstructionProtocol(ctx context.Context, def ProviderDefinition, cfg *BuildConfig) error {
+	if def.AdapterType != AdapterTypes.LITELLM {
+		if cfg.Protocol != llm.ModelProtocols.PROTOCOLUNKNOWN {
+			return fmt.Errorf("%w: protocol override requires LiteLLM adapter", ErrInvalidProviderDef)
+		}
+		return nil
+	}
+	if cfg.Protocol == llm.ModelProtocols.PROTOCOLUNKNOWN {
+		cfg.Protocol = llm.ModelProtocols.PROTOCOLCHATCOMPLETIONS
+		if r.routeProtocols != nil {
+			// Validate the lookup key using the captured definition, not a second Parse.
+			if err := validateConstructionRouteKey(def.Name, cfg.Model); err != nil {
+				return err
+			}
+			protocol, err := r.routeProtocols.GetRouteProtocol(ctx, def.Name, cfg.Model)
+			switch {
+			case err == nil:
+				cfg.Protocol = protocol
+			case errors.Is(err, ErrRouteProtocolNotFound):
+			default:
+				return fmt.Errorf("get route protocol: %w", err)
+			}
+		}
+	}
+	return validateRouteProtocol(cfg.Protocol)
+}
+
+// validateConstructionRouteKey checks only the exact key used for a store read.
+func validateConstructionRouteKey(provider, alias string) error {
+	if provider == "" || alias == "" || !utf8.ValidString(provider) || !utf8.ValidString(alias) {
+		return fmt.Errorf("%w: route protocol keys require nonempty UTF-8", ErrInvalidProviderDef)
+	}
+	return nil
+}
+
+func (r *ProviderRegistry) buildResolvedProvider(ctx context.Context, def ProviderDefinition, cfg BuildConfig, policy RouteCachePolicy) (llm.Provider, error) {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = def.BaseURL
+	}
+
+	if def.AdapterType == AdapterTypes.LITELLM {
+		if err := validateLiteLLMBaseURL(cfg.BaseURL); err != nil {
+			return nil, err
+		}
 	}
 
 	// OAuth-backed providers still route through the existing shell path.
@@ -239,6 +331,8 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		apiKey:           cfg.APIKey,
 		baseURL:          cfg.BaseURL,
 		model:            cfg.Model,
+		protocol:         cfg.Protocol,
+		cachePolicy:      policy,
 		reasoningHistory: def.ReasoningHistory,
 		// cache_prompt is a llama.cpp server extension. Enable it only for
 		// the llama.cpp built-in — hosted OpenAI, Ollama, and custom
@@ -265,7 +359,7 @@ func (r *ProviderRegistry) BuildWithConfig(ctx context.Context, name string, cfg
 		}
 		return prov, nil
 
-	case deepSeekCompatible:
+	case deepSeekCompatible, liteLLM:
 		ad, ok := lookupAdapter(at)
 		if !ok {
 			return nil, fmt.Errorf("%w: adapter %s in switch but absent from adapter table", ErrRegistryInternal, def.AdapterType)
@@ -417,6 +511,14 @@ func (r *ProviderRegistry) fetchLive(ctx context.Context, def ProviderDefinition
 		return nil, fmt.Errorf("resolve API key for %q: %w", def.Name, err)
 	}
 	switch adapterDiscriminator(def.AdapterType) {
+	case liteLLM:
+		if key == "" {
+			return nil, llm.ErrInvalidAPIKey
+		}
+		if err := validateLiteLLMBaseURL(def.BaseURL); err != nil {
+			return nil, err
+		}
+		return fetchLiteLLMModels(ctx, def.BaseURL, key)
 	case openAICompatible, deepSeekCompatible:
 		// Send a bearer whenever a key resolved — hosted built-ins and any
 		// custom provider with a key saved in the vault. Probe
@@ -436,4 +538,22 @@ func (r *ProviderRegistry) fetchLive(ctx context.Context, def ProviderDefinition
 		// OAuth backends require a TokenSource the generic registry does not own.
 		return def.SeedModels, nil
 	}
+}
+
+// validateLiteLLMBaseURL validates external config before constructing a gateway
+// provider. The URL is a gateway root, optionally with a reverse-proxy prefix,
+// not a versioned protocol endpoint. Empty uses the provider's localhost default.
+func validateLiteLLMBaseURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%w: invalid LiteLLM base URL", ErrInvalidProviderDef)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.Opaque != "" ||
+		u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
+		return fmt.Errorf("%w: LiteLLM base URL requires HTTP(S) without credentials, query or fragment", ErrInvalidProviderDef)
+	}
+	return nil
 }

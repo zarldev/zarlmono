@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/zarldev/zarlmono/zkit/ai/llm/litellm"
+	"github.com/zarldev/zarlmono/zkit/options"
 	"github.com/zarldev/zarlmono/zkit/zhttp"
 )
 
@@ -266,4 +268,20 @@ func modelListURL(endpoint, cursorParam, cursor string, includeLimit bool) (stri
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+func fetchLiteLLMModels(ctx context.Context, baseURL, key string) ([]string, error) {
+	opts := []options.Option[litellm.Provider]{}
+	if baseURL != "" {
+		opts = append(opts, litellm.WithBaseURL(baseURL))
+	}
+	models, err := litellm.NewProvider(key, opts...).Models(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("discover LiteLLM models: %w", err)
+	}
+	ids := make([]string, len(models))
+	for i, model := range models {
+		ids[i] = string(model)
+	}
+	return ids, nil
 }
