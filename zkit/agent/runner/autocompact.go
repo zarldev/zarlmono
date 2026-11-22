@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
@@ -30,18 +29,18 @@ func shouldRunCompact(keep int, history []llm.Message, c compact.Compactor) bool
 }
 
 // maybeCompact applies the per-iteration auto-compaction policy and returns
-// the (possibly trimmed) history. A non-nil error is the terminal,
-// ErrCompact-wrapped compaction failure — the caller turns it into a terminal
-// TaskResult. It skips iteration 0 (no prior usage to drive a decision) and
-// runners without a compactor configured.
+// the (possibly trimmed) history and optional inference evidence. A non-nil
+// error is the compaction failure; the caller settles evidence before publishing
+// events or turning the failure into a terminal TaskResult. It skips iteration
+// zero and runners without a compactor configured.
 //
 // Static or adaptive retention is expanded to preserve the newest tool
 // exchange. A Prober may skip work when it predicts no reduction; reported
 // token pressure bypasses that gate but not exchange retention. A prior forced
 // no-op is latched until enough history accrues to make older input eligible.
-func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm.Message, lastUsage *llm.Usage, iterNum int, st *loopState) ([]llm.Message, error) {
+func (r *Runner) maybeCompact(ctx context.Context, messages []llm.Message, lastUsage *llm.Usage, iterNum int, st *loopState) (compact.Result, error) {
 	if iterNum == 0 || r.compactor == nil {
-		return messages, nil
+		return compact.Result{History: messages}, nil
 	}
 
 	before := len(messages)
@@ -54,7 +53,7 @@ func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm
 	// trust the runner's token-pressure read over its own byte-pressure
 	// heuristic); otherwise the Prober gate decides whether to act.
 	if !forceCompact && !shouldRunCompact(keep, messages, r.compactor) {
-		return messages, nil
+		return compact.Result{History: messages}, nil
 	}
 
 	// No-op latch: a prior forced compaction freed nothing and fewer than
@@ -63,15 +62,12 @@ func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm
 	// Compact we know will no-op (the eval traces showed this firing every
 	// iteration on user-message-dominated histories).
 	if forceCompact && st.forceCompactNoopAt > 0 && before < st.forceCompactNoopAt+keep {
-		return messages, nil
+		return compact.Result{History: messages}, nil
 	}
 
 	result, cerr := r.compactor.Compact(ctx, messages, keep)
-	if result.Inference != nil {
-		r.sink.OnCompactionSettled(ctx, CompactionSettled{TaskID: spec.ID, Depth: spec.Depth, Inference: *result.Inference, Err: cerr})
-	}
 	if cerr != nil {
-		return messages, fmt.Errorf("%w: %w", ErrCompact, cerr)
+		return result, cerr
 	}
 	// Adopt the trimmed history whenever the engine reports work — a byte
 	// trim is real even if the message count stayed the same (Structural and
@@ -79,7 +75,7 @@ func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm
 	// length alone discarded every in-place trim: the runner kept the
 	// full-size history, pressure never relented, and the compactor re-fired
 	// (and re-published "compacted N→N") every iteration while tokens climbed.
-	// The swap-in guard MUST match the publish guard below — both keyed on
+	// The swap-in guard MUST match taskRun.maybeCompact's publish guard — both keyed on
 	// "did the engine do work?", not "did the count change?".
 	changed := len(result.History) != before || result.BytesTrimmed > 0
 	if changed {
@@ -89,8 +85,6 @@ func (r *Runner) maybeCompact(ctx context.Context, spec TaskSpec, messages []llm
 		// Forced compaction freed nothing: arm the latch until history grows.
 		st.forceCompactNoopAt = before
 	}
-	if changed {
-		r.publishCompactionApplied(ctx, spec, before, len(messages), result.BytesTrimmed, result.Engine)
-	}
-	return messages, nil
+	result.History = messages
+	return result, nil
 }

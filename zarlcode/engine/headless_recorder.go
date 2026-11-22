@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/zarldev/zarlmono/zkit/agent/coderunner"
@@ -22,9 +25,36 @@ type headlessRecorder struct {
 	store     *db.Store
 	id        string
 	workspace string
-	base      string // HEAD at start — the diff baseline, captured before the agent can move HEAD
-	startedAt time.Time
+
+	// stateMu owns capture identity and immutable pending snapshots. writeMu
+	// serializes checkpoints, but never prevents settlement during database I/O.
+	stateMu            sync.Mutex
+	writeMu            sync.Mutex
+	startRecord        db.HeadlessRunStart
+	started            bool
+	nextAttempt        int
+	lease              headlessAttemptLease
+	captureErr         error
+	pending            []db.HeadlessProviderAccounting
+	pendingAuxiliaries []db.HeadlessAuxiliaryProviderAccounting
+	pendingChildren    []db.HeadlessChildProviderAccounting
+	revision           uint64
+	attempts           []headlessAttemptSnapshot
+	completion         *db.HeadlessRunSummary
+	completionFrozen   bool
 }
+
+type headlessAttemptLease struct {
+	number int
+	active bool
+}
+
+type headlessAttemptSnapshot struct {
+	revision uint64
+	record   db.HeadlessAttemptRecord
+}
+
+const headlessCheckpointTimeout = 5 * time.Second
 
 // newHeadlessRecorder returns a recorder bound to the run id, or nil when
 // no store is configured.
@@ -32,11 +62,7 @@ func (l *LiveRunner) newHeadlessRecorder(id string) *headlessRecorder {
 	if l == nil || l.settings == nil || l.settings.Store == nil {
 		return nil
 	}
-	return &headlessRecorder{
-		store:     l.settings.Store,
-		id:        id,
-		workspace: l.ws.Root(),
-	}
+	return NewHeadlessRecorder(l.settings.Store, id, l.ws.Root())
 }
 
 // start inserts the initial row, capturing the base commit so the eval
@@ -46,20 +72,22 @@ func (r *headlessRecorder) start(ctx context.Context, prompt, provider, model st
 	if r == nil {
 		return
 	}
-	r.startedAt = time.Now()
-	r.base = code.GitHead(ctx, r.workspace) // baseline now, before the agent can move HEAD
-	err := r.store.InsertHeadlessRun(ctx, db.HeadlessRunStart{
-		ID:         r.id,
-		Workspace:  r.workspace,
-		BaseCommit: r.base,
-		Prompt:     prompt,
-		StartedAt:  r.startedAt,
-		Provider:   provider,
-		Model:      model,
-	})
-	if err != nil {
-		slog.WarnContext(ctx, "headless: insert run row", "id", r.id, "err", err)
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	r.stateMu.Lock()
+	started := r.started
+	r.stateMu.Unlock()
+	if !started {
+		start := db.HeadlessRunStart{
+			ID: r.id, Workspace: r.workspace, Prompt: prompt,
+			StartedAt: time.Now(), Provider: provider, Model: model,
+			BaseCommit: code.GitHead(ctx, r.workspace),
+		}
+		r.stateMu.Lock()
+		r.startRecord, r.started = start, true
+		r.stateMu.Unlock()
 	}
+	r.flushLocked(ctx, "start")
 }
 
 // progress is the runner.ProgressUpdater: it persists the live counters
@@ -79,7 +107,6 @@ func (r *headlessRecorder) attempt(ctx context.Context, report pursue.AttemptRep
 	if r == nil {
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
 	res := report.Attempt.Result
 	rec := db.HeadlessAttemptRecord{
 		RunID:          r.id,
@@ -100,9 +127,27 @@ func (r *headlessRecorder) attempt(ctx context.Context, report pursue.AttemptRep
 		in, out := int64(u.PromptTokens), int64(u.CompletionTokens)
 		rec.TokensIn, rec.TokensOut = &in, &out
 	}
-	if err := r.store.InsertHeadlessAttempt(ctx, rec); err != nil {
-		slog.WarnContext(ctx, "headless: insert attempt row", "id", r.id, "attempt", report.Attempt.Number, "err", err)
+	r.stateMu.Lock()
+	r.revision++
+	snapshot := headlessAttemptSnapshot{revision: r.revision, record: rec}
+	index := slices.IndexFunc(r.attempts, func(p headlessAttemptSnapshot) bool {
+		return p.record.AttemptNumber == rec.AttemptNumber
+	})
+	// Pending summaries are a latest-arrival UPSERT per number, not immutable
+	// occurrences. Compress only unsaved replacements; a writer's detached
+	// snapshot remains eligible to commit, and its exact revision ACK cannot
+	// discard a newer arrival. writeMu keeps that older commit before the newer.
+	if index < 0 {
+		r.attempts = append(r.attempts, snapshot)
+	} else {
+		r.attempts[index] = snapshot
 	}
+	r.stateMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), headlessCheckpointTimeout)
+	defer cancel()
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	r.flushLocked(ctx, "attempt")
 }
 
 // verifierResult records the structured command-backed oracle result for a
@@ -140,26 +185,129 @@ func (r *headlessRecorder) complete(ctx context.Context, res runner.TaskResult) 
 	if r == nil {
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
-	summary := db.HeadlessRunSummary{
-		EndedAt:        time.Now(),
-		TerminalReason: string(res.Reason),
-		FinalContent:   res.FinalContent,
-		FinalDiff:      code.WorktreeDiff(ctx, r.workspace, r.base, nil),
-		Iterations:     res.Iterations,
-		ToolCalls:      coderunner.ToolCallCount(res.Messages),
-		Duration:       time.Since(r.startedAt),
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), headlessCheckpointTimeout)
+	defer cancel()
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	r.stateMu.Lock()
+	frozen, start := r.completionFrozen, r.startRecord
+	r.stateMu.Unlock()
+	if !frozen {
+		now := time.Now()
+		summary := db.HeadlessRunSummary{
+			EndedAt: now, TerminalReason: string(res.Reason), FinalContent: res.FinalContent,
+			Iterations: res.Iterations, ToolCalls: coderunner.ToolCallCount(res.Messages),
+			Duration: now.Sub(start.StartedAt),
+		}
+		if res.Err != nil {
+			summary.Error = res.Err.Error()
+		}
+		if u := res.TotalUsage; u != nil {
+			in, out := int64(u.PromptTokens), int64(u.CompletionTokens)
+			summary.TokensIn, summary.TokensOut = &in, &out
+		}
+		summary.FinalDiff = code.WorktreeDiff(ctx, r.workspace, start.BaseCommit, nil)
+		r.stateMu.Lock()
+		r.completion, r.completionFrozen = &summary, true
+		r.stateMu.Unlock()
 	}
-	if res.Err != nil {
-		summary.Error = res.Err.Error()
+	r.flushLocked(ctx, "complete")
+}
+
+// flushLocked requires writeMu, snapshots under stateMu and releases it before
+// database work. A failed write retains exactly the original timestamps/bytes.
+func (r *headlessRecorder) flushLocked(ctx context.Context, checkpoint string) {
+	r.stateMu.Lock()
+	if r.captureErr != nil {
+		r.stateMu.Unlock()
+		slog.WarnContext(ctx, "headless: accounting capture rejected", "id", r.id, "checkpoint", checkpoint)
+		return
 	}
-	if u := res.TotalUsage; u != nil {
-		in, out := int64(u.PromptTokens), int64(u.CompletionTokens)
-		summary.TokensIn, summary.TokensOut = &in, &out
+	start := r.startRecord
+	attempts := slices.Clone(r.attempts)
+	records := make([]db.HeadlessAttemptRecord, len(attempts))
+	for i, snapshot := range attempts {
+		records[i] = snapshot.record
+		records[i].TokensIn = cloneHeadlessTokens(snapshot.record.TokensIn)
+		records[i].TokensOut = cloneHeadlessTokens(snapshot.record.TokensOut)
+		attempts[i].record = records[i]
 	}
-	if err := r.store.CompleteHeadlessRun(ctx, r.id, summary); err != nil {
-		slog.WarnContext(ctx, "headless: complete run row", "id", r.id, "err", err)
+	batch := db.HeadlessAccountingBatch{
+		Providers:   make([]db.HeadlessProviderAccounting, len(r.pending)),
+		Auxiliaries: make([]db.HeadlessAuxiliaryProviderAccounting, len(r.pendingAuxiliaries)),
+		Children:    make([]db.HeadlessChildProviderAccounting, len(r.pendingChildren)),
 	}
+	for i, row := range r.pending {
+		batch.Providers[i] = row.Clone()
+	}
+	for i, row := range r.pendingAuxiliaries {
+		batch.Auxiliaries[i] = row.Clone()
+	}
+	for i, row := range r.pendingChildren {
+		batch.Children[i] = row.Clone()
+	}
+	completionIdentity := r.completion
+	var completion *db.HeadlessRunSummary
+	if completionIdentity != nil {
+		owned := *completionIdentity
+		owned.TokensIn = cloneHeadlessTokens(owned.TokensIn)
+		owned.TokensOut = cloneHeadlessTokens(owned.TokensOut)
+		completion = &owned
+	}
+	r.stateMu.Unlock()
+	if err := r.store.CommitHeadlessRecordingWithAccountingBatch(ctx, start, records, batch, completion); err != nil {
+		// Do not log database diagnostics: input payloads and private provider
+		// representations must not reach this best-effort warning boundary.
+		slog.WarnContext(ctx, "headless: recording checkpoint rejected", "id", r.id, "checkpoint", checkpoint)
+		return
+	}
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	r.attempts = slices.DeleteFunc(r.attempts, func(p headlessAttemptSnapshot) bool {
+		return slices.ContainsFunc(attempts, func(saved headlessAttemptSnapshot) bool {
+			return p.revision == saved.revision && equalHeadlessAttempt(p.record, saved.record)
+		})
+	})
+	r.pending = slices.DeleteFunc(r.pending, func(p db.HeadlessProviderAccounting) bool {
+		return slices.ContainsFunc(batch.Providers, func(saved db.HeadlessProviderAccounting) bool {
+			return p.PursueAttempt == saved.PursueAttempt && p.ProviderOrdinal == saved.ProviderOrdinal &&
+				p.Version == saved.Version && bytes.Equal(p.PayloadJSON, saved.PayloadJSON)
+		})
+	})
+	r.pendingAuxiliaries = slices.DeleteFunc(r.pendingAuxiliaries, func(p db.HeadlessAuxiliaryProviderAccounting) bool {
+		return slices.ContainsFunc(batch.Auxiliaries, func(saved db.HeadlessAuxiliaryProviderAccounting) bool {
+			return p.InvocationID == saved.InvocationID && p.Version == saved.Version && bytes.Equal(p.PayloadJSON, saved.PayloadJSON)
+		})
+	})
+	r.pendingChildren = slices.DeleteFunc(r.pendingChildren, func(p db.HeadlessChildProviderAccounting) bool {
+		return slices.ContainsFunc(batch.Children, func(saved db.HeadlessChildProviderAccounting) bool {
+			return p.ChildTaskID == saved.ChildTaskID && p.Attempt == saved.Attempt &&
+				p.Version == saved.Version && bytes.Equal(p.PayloadJSON, saved.PayloadJSON)
+		})
+	})
+	if r.completion == completionIdentity {
+		r.completion = nil
+	}
+}
+
+func cloneHeadlessTokens(tokens *int64) *int64 {
+	if tokens == nil {
+		return nil
+	}
+	owned := *tokens
+	return &owned
+}
+
+func equalHeadlessAttempt(a, b db.HeadlessAttemptRecord) bool {
+	if !equalHeadlessTokens(a.TokensIn, b.TokensIn) || !equalHeadlessTokens(a.TokensOut, b.TokensOut) {
+		return false
+	}
+	a.TokensIn, a.TokensOut, b.TokensIn, b.TokensOut = nil, nil, nil, nil
+	return a == b
+}
+
+func equalHeadlessTokens(a, b *int64) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 // HeadlessRecorder persists a headless run lifecycle. A nil recorder is a no-op.
@@ -167,7 +315,7 @@ type HeadlessRecorder = headlessRecorder
 
 // NewHeadlessRecorder creates a recorder for a run and workspace.
 func NewHeadlessRecorder(store *db.Store, id, workspace string) *HeadlessRecorder {
-	return &headlessRecorder{store: store, id: id, workspace: workspace}
+	return &headlessRecorder{store: store, id: id, workspace: workspace, nextAttempt: 1}
 }
 
 // Start persists the initial run row.

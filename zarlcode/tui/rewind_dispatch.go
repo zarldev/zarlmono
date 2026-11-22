@@ -52,12 +52,6 @@ func (b *beforeTurn) admit() bool {
 	return true
 }
 
-func (b *beforeTurn) stopped() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.stopping
-}
-
 // runtimeReservation returns the borrowed recorded-activation reservation when
 // this beforeTurn dispatches a swarm activation; otherwise its own reservation.
 func (b *beforeTurn) runtimeReservation() *engine.RuntimeReservation {
@@ -158,7 +152,7 @@ type beforeTurnFailedMsg struct {
 // checkpoint in one transaction. Retained batches are acknowledged only afterward.
 func saveBeforeTurn(ctx context.Context, store *db.Store, snapshot *sessionSnapshot, input rewind.CaptureInput, expectedActive string, expectedSource db.SessionContentVersion) (db.SessionContentVersion, error) {
 	if !snapshot.exact {
-		version, err := store.CommitCompletedTurnVersioned(ctx, snapshot.record, snapshot.transcript, expectedSource, snapshot.historyBatches...)
+		version, err := store.CommitCompletedTurnWithAccountingBatchVersioned(ctx, snapshot.record, snapshot.transcript, expectedSource, snapshot.accounting, snapshot.historyBatches...)
 		if err == nil {
 			snapshot.acknowledgeHistory()
 		}
@@ -177,7 +171,7 @@ func saveBeforeTurn(ctx context.Context, store *db.Store, snapshot *sessionSnaps
 	if err != nil {
 		return db.SessionContentVersion{}, err
 	}
-	version, err := store.CommitBeforeTurnVersioned(ctx, snapshot.record, snapshot.transcript, checkpoint, expectedActive, expectedSource, snapshot.historyBatches...)
+	version, err := store.CommitBeforeTurnWithAccountingBatchVersioned(ctx, snapshot.record, snapshot.transcript, checkpoint, expectedActive, expectedSource, snapshot.accounting, snapshot.historyBatches...)
 	if err != nil {
 		return db.SessionContentVersion{}, err
 	}
@@ -321,9 +315,7 @@ func (m *UI) beforeTurnCommand(op sessionPersistOp) tea.Cmd {
 			revision: op.transcriptRevision(), err: err, beforeGeneration: op.beforeGeneration, turnResult: result, operation: op.done}
 		// Shutdown must not close dependencies while this command still uses
 		// the sink. Its pump remains alive through FlushSessionPersistence.
-		if !op.before.stopped() {
-			sink.AfterEvents(msg)
-		}
+		sink.AfterEvents(msg)
 		op.done <- msg
 		close(op.done)
 		return nil

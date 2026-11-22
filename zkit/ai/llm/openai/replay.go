@@ -9,8 +9,11 @@ func SupportsResponsesReplay(model string) bool {
 
 // DefaultReplayCompatible reports whether this constructed provider uses the
 // stock endpoint and model's default streaming replay route. Custom endpoints,
-// model mismatches and disabled Responses for a Responses model are excluded.
+// model mismatches, and explicit routes differing from restoration defaults are
+// excluded.
 // It exposes no endpoint, credentials or other private configuration.
 func (p *Provider) DefaultReplayCompatible(model string) bool {
-	return !p.customBaseURL && p.model == model && (!supportsCoreResponses(model) || p.responsesAPI)
+	defaultResponses := supportsCoreResponses(model)
+	configuredResponses := p.responsesAPI && (p.responsesAPIExplicit || defaultResponses)
+	return !p.customBaseURL && p.model == model && configuredResponses == defaultResponses
 }

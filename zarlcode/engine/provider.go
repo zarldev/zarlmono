@@ -25,6 +25,13 @@ type ProviderSpec struct {
 	BaseURL     string
 	APIKey      string
 	CodexEffort string
+	// Protocol is a runtime-only LiteLLM override, not persisted route state.
+	// Unknown consults exact-alias policy, then Chat Completions. Never replace
+	// this intent with resolved policy: a later alias must resolve independently.
+	// Other adapters reject explicit values.
+	Protocol llm.ModelProtocol
+	// CachePolicy is runtime intent; inheritance resolves the destination alias.
+	CachePolicy backends.RouteCachePolicy
 }
 
 // BuildProvider constructs an llm.Provider for ANY backend, dispatching on
@@ -44,10 +51,26 @@ type ProviderSpec struct {
 // needed to build the token source — the registry deliberately refuses
 // OAuth backends in BuildWithConfig.
 func BuildProvider(ctx context.Context, reg *backends.ProviderRegistry, svc *prefs.Service, spec ProviderSpec) (llm.Provider, error) {
+	built, err := buildProviderResolved(ctx, reg, svc, spec, spec.CachePolicy)
+	if err != nil {
+		return nil, err
+	}
+	return built.Provider, nil
+}
+
+// buildProviderResolved keeps credentials in the provider handle, not target facts.
+// forced is transient for exact replay; spec retains its original runtime intent.
+func buildProviderResolved(ctx context.Context, reg *backends.ProviderRegistry, svc *prefs.Service, spec ProviderSpec, forced backends.RouteCachePolicy) (backends.BuiltProvider, error) {
 	switch id, _ := llm.ParseLLMProvider(spec.Name); id {
 	case backends.NameOpenAICodex:
+		if spec.Protocol != llm.ModelProtocols.PROTOCOLUNKNOWN {
+			return backends.BuiltProvider{}, fmt.Errorf("%w: protocol override requires LiteLLM adapter", backends.ErrInvalidProviderDef)
+		}
+		if err := validateOAuthCachePolicy(forced); err != nil {
+			return backends.BuiltProvider{}, err
+		}
 		if svc == nil {
-			return nil, fmt.Errorf("%s: credential service unavailable", spec.Name)
+			return backends.BuiltProvider{}, fmt.Errorf("%s: credential service unavailable", spec.Name)
 		}
 		var opts []options.Option[openaicodex.Provider]
 		if spec.Model != "" {
@@ -56,24 +79,39 @@ func BuildProvider(ctx context.Context, reg *backends.ProviderRegistry, svc *pre
 		if spec.CodexEffort != "" {
 			opts = append(opts, openaicodex.WithDefaultReasoningEffort(spec.CodexEffort))
 		}
-		return openaicodex.NewProvider(codex.NewTokenSource(svc), opts...), nil
+		return backends.BuiltProvider{Provider: openaicodex.NewProvider(codex.NewTokenSource(svc), opts...), Model: spec.Model}, nil
 	case backends.NameClaudeCode:
+		if spec.Protocol != llm.ModelProtocols.PROTOCOLUNKNOWN {
+			return backends.BuiltProvider{}, fmt.Errorf("%w: protocol override requires LiteLLM adapter", backends.ErrInvalidProviderDef)
+		}
+		if err := validateOAuthCachePolicy(forced); err != nil {
+			return backends.BuiltProvider{}, err
+		}
 		if svc == nil {
-			return nil, fmt.Errorf("%s: credential service unavailable", spec.Name)
+			return backends.BuiltProvider{}, fmt.Errorf("%s: credential service unavailable", spec.Name)
 		}
 		var opts []options.Option[claudecode.Provider]
 		if spec.Model != "" {
 			opts = append(opts, claudecode.WithModel(spec.Model))
 		}
-		return claudecode.NewProvider(claude.NewTokenSource(svc), opts...), nil
+		return backends.BuiltProvider{Provider: claudecode.NewProvider(claude.NewTokenSource(svc), opts...), Model: spec.Model}, nil
 	default:
 		if reg == nil {
-			return nil, errors.New("provider registry not initialised")
+			return backends.BuiltProvider{}, errors.New("provider registry not initialised")
 		}
-		return reg.BuildWithConfig(ctx, spec.Name, backends.BuildConfig{
-			BaseURL: spec.BaseURL,
-			APIKey:  spec.APIKey,
-			Model:   spec.Model,
+		return reg.BuildResolved(ctx, spec.Name, backends.BuildConfig{
+			BaseURL: spec.BaseURL, APIKey: spec.APIKey, Model: spec.Model,
+			Protocol: spec.Protocol, CachePolicy: forced,
 		})
 	}
+}
+
+func validateOAuthCachePolicy(policy backends.RouteCachePolicy) error {
+	if err := backends.ValidateRouteCachePolicy(policy); err != nil {
+		return err
+	}
+	if policy.Mode != backends.RouteCacheModes.CACHEINHERIT && policy.Mode != backends.RouteCacheModes.CACHEDEFAULT {
+		return backends.ErrInvalidRouteCachePolicy
+	}
+	return nil
 }

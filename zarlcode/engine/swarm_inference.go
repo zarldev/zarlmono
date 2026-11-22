@@ -3,18 +3,20 @@ package engine
 import (
 	agentcompact "github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/inference"
-	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
-func buildScopedCompactor(engine string, window int, provider llm.Provider, model string, state agentcompact.StateProvider, root string, scope inference.Scope) agentcompact.Compactor {
-	compactor := buildLiveCompactor(engine, window, provider, model, state, root)
+func buildScopedCompactor(engine string, window int, target auxiliaryTarget, model string, state agentcompact.StateProvider, root string, scope inference.Scope, auxiliary auxiliaryProviderFactory) agentcompact.Compactor {
+	compactor := buildLiveCompactor(engine, window, target.provider, model, state, root)
 	switch c := compactor.(type) {
 	case *agentcompact.Summary:
 		c.InferenceScope = scope
+		c.Provider = auxiliary.bind(AuxiliaryAccountingPurposes.PURPOSESUMMARY, target)
 	case *agentcompact.Executive:
 		c.InferenceScope = scope
+		c.Provider = auxiliary.bind(AuxiliaryAccountingPurposes.PURPOSEEXECUTIVE, target)
 	case *agentcompact.Handover:
 		c.InferenceScope = scope
+		c.Provider = auxiliary.bind(AuxiliaryAccountingPurposes.PURPOSEHANDOVER, target)
 	}
 	return compactor
 }

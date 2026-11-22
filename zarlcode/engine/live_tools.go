@@ -37,15 +37,11 @@ func (l *LiveRunner) guardrailDeps(ctx context.Context) guardrails.Deps {
 	return l.guardrailDepsFor(ctx, false)
 }
 
-func (l *LiveRunner) headlessGuardrailDeps(ctx context.Context) guardrails.Deps {
-	return l.guardrailDepsFor(ctx, true)
-}
-
 func (l *LiveRunner) guardrailDepsFor(ctx context.Context, headless bool) guardrails.Deps {
-	return l.scopedGuardrailDeps(ctx, headless, inference.Scope{})
+	return l.scopedGuardrailDeps(ctx, headless, inference.Scope{}, ignoreAuxiliaryObservation, nil)
 }
 
-func (l *LiveRunner) scopedGuardrailDeps(ctx context.Context, headless bool, scope inference.Scope) guardrails.Deps {
+func (l *LiveRunner) scopedGuardrailDeps(ctx context.Context, headless bool, scope inference.Scope, observed func(context.Context, AuxiliaryObservation), auxiliary auxiliaryProviderFactory) guardrails.Deps {
 	var testEdit guardrails.Guardrail
 	switch {
 	case headless:
@@ -65,7 +61,7 @@ func (l *LiveRunner) scopedGuardrailDeps(ctx context.Context, headless bool, sco
 	// when the decompose_judge setting is on; nil keeps the deterministic path.
 	deps := coderunner.StandardGuardrailDeps(l.ws.Root(), testEdit)
 	deps.SkillLookup = l.catalog
-	deps.DecomposeJudge = l.decomposeJudge(ctx, scope)
+	deps.DecomposeJudge = l.decomposeJudge(ctx, scope, observed, auxiliary)
 	deps.DecomposeIgnoredTools = append(deps.DecomposeIgnoredTools,
 		spawn.ToolNameAgentSpawn,
 		spawn.ToolNameAgentAwait,
@@ -136,20 +132,24 @@ func (l *LiveRunner) scopedGuardrailDeps(ctx context.Context, headless bool, sco
 // takes effect on the next turn without a restart. nil — judge off, no
 // settings handle, or no provider to run it on — keeps the guardrail's
 // deterministic advisory path.
-func (l *LiveRunner) decomposeJudge(ctx context.Context, scope inference.Scope) guardrails.VerdictJudge {
+func (l *LiveRunner) decomposeJudge(ctx context.Context, scope inference.Scope, observed func(context.Context, AuxiliaryObservation), auxiliary auxiliaryProviderFactory) guardrails.VerdictJudge {
 	l.mu.Lock()
 	settings := l.settings
-	active := l.target.Provider
+	active := auxiliaryTargetFromRun(l.target)
 	spec := l.target.Spec
+	spec.Model = l.target.Model
 	l.mu.Unlock()
 	if settings == nil {
 		return nil
 	}
-	prov := settings.DecomposeJudgeProvider(ctx, active, spec)
-	if prov == nil {
+	target, model := settings.decomposeJudgeTarget(ctx, active, spec)
+	if target.provider == nil {
 		return nil
 	}
-	return guardrails.NewLLMVerdictJudge(prov, guardrails.WithVerdictInferenceScope(scope, ""))
+	return guardrails.NewLLMVerdictJudge(auxiliary.bind(AuxiliaryAccountingPurposes.PURPOSEJUDGE, target), guardrails.WithVerdictInferenceScope(scope, model),
+		guardrails.WithVerdictObservationSink(func(ctx context.Context, o guardrails.VerdictObservation) {
+			observed(ctx, AuxiliaryObservation{Kind: AuxiliaryKinds.JUDGE, Inference: o.Inference, ResponseValid: o.Valid})
+		}))
 }
 
 // source registers the standard tools and arms the production guardrail
@@ -160,12 +160,12 @@ func (l *LiveRunner) decomposeJudge(ctx context.Context, scope inference.Scope) 
 // It returns the wrapped source AND the underlying registry: the caller
 // late-registers the spawn tool onto the registry after building the runner
 // (the registry enumerates lazily, so it's visible to the turn's schema).
-func (l *LiveRunner) source(ctx context.Context, webSearch tools.Tool) (tools.Source, *tools.Registry, error) {
-	return l.sourceWithDeps(ctx, webSearch, l.guardrailDeps(ctx))
+func (l *LiveRunner) source(ctx context.Context, webSearch tools.Tool, scope inference.Scope, observed func(context.Context, AuxiliaryObservation), auxiliary auxiliaryProviderFactory) (tools.Source, *tools.Registry, error) {
+	return l.sourceWithDeps(ctx, webSearch, l.scopedGuardrailDeps(ctx, false, scope, observed, auxiliary))
 }
 
-func (l *LiveRunner) headlessSource(ctx context.Context, webSearch tools.Tool) (tools.Source, *tools.Registry, error) {
-	return l.sourceWithDeps(ctx, webSearch, l.headlessGuardrailDeps(ctx))
+func (l *LiveRunner) headlessSource(ctx context.Context, webSearch tools.Tool, scope inference.Scope, observed func(context.Context, AuxiliaryObservation), auxiliary auxiliaryProviderFactory) (tools.Source, *tools.Registry, error) {
+	return l.sourceWithDeps(ctx, webSearch, l.scopedGuardrailDeps(ctx, true, scope, observed, auxiliary))
 }
 
 func (l *LiveRunner) sourceWithDeps(ctx context.Context, webSearch tools.Tool, deps guardrails.Deps) (tools.Source, *tools.Registry, error) {
@@ -365,7 +365,7 @@ type turnPolicy struct {
 	settings        *Settings
 	thinking        bool
 	compactEngine   string
-	compactProvider llm.Provider
+	compactTarget   auxiliaryTarget
 	compactModel    string
 	maxIterations   int
 	reserve         int
@@ -381,21 +381,21 @@ func (l *LiveRunner) resolveTurnPolicy(ctx context.Context) turnPolicy {
 	// Snapshot every re-pointable target field atomically. PLAN deliberately stays
 	// live through l.isPlan so a mode change gates the next dispatch in this turn.
 	l.mu.Lock()
-	target := l.target
+	target := l.target.Clone()
 	settings := l.settings
 	thinking := l.thinkingEnabledForLocked(target)
 	l.mu.Unlock()
 
 	policy := turnPolicy{
-		target:          target,
-		settings:        settings,
-		thinking:        thinking,
-		compactEngine:   agentcompact.EngineTiered,
-		compactProvider: target.Provider,
-		compactModel:    target.Model,
-		maxIterations:   target.MaxIter,
-		reserve:         target.Reserve,
-		autoCompact:     true,
+		target:        target,
+		settings:      settings,
+		thinking:      thinking,
+		compactEngine: agentcompact.EngineTiered,
+		compactTarget: auxiliaryTargetFromRun(target),
+		compactModel:  target.Model,
+		maxIterations: target.MaxIter,
+		reserve:       target.Reserve,
+		autoCompact:   true,
 	}
 	if policy.maxIterations <= 0 {
 		policy.maxIterations = 20
@@ -408,7 +408,7 @@ func (l *LiveRunner) resolveTurnPolicy(ctx context.Context) turnPolicy {
 	}
 
 	policy.compactEngine = settings.CompactEngine(ctx)
-	policy.compactProvider, policy.compactModel = settings.CompactorProvider(ctx, target.Provider, target.Model)
+	policy.compactTarget, policy.compactModel = settings.compactorTarget(ctx, auxiliaryTargetFromRun(target))
 	policy.temperature = settings.Temperature(ctx)
 	policy.streamIdle = settings.ResponseTimeout(ctx)
 	policy.autoCompact = settings.AutoCompact(ctx)
@@ -441,6 +441,7 @@ type turn struct {
 	coordinator     *tools.WorkspaceCoordinator
 	ownsCoordinator bool
 	inputs          *swarm.Inputs
+	auxiliary       *auxiliaryCollector
 }
 
 func (t *turn) close(ctx context.Context) {
@@ -453,19 +454,18 @@ func (t *turn) close(ctx context.Context) {
 	_ = t.group.Close(context.WithoutCancel(ctx))
 }
 
-func (l *LiveRunner) buildTurnWithSource(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), extraOpts ...options.Option[runner.Runner]) (*turn, error) {
-	return l.buildTurn(ctx, sourceFn, nil, extraOpts...)
-}
-
-func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Context, tools.Tool) (tools.Source, *tools.Registry, error), collaboration *swarmTurn, extraOpts ...options.Option[runner.Runner]) (*turn, error) {
+func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Context, tools.Tool, inference.Scope, func(context.Context, AuxiliaryObservation), auxiliaryProviderFactory) (tools.Source, *tools.Registry, error), collaboration *swarmTurn, recording turnOptionsFactory, extraOpts ...options.Option[runner.Runner]) (*turn, error) {
+	collector := &auxiliaryCollector{forward: l.auxiliaryObserved}
 	var scope inference.Scope
 	if collaboration != nil {
 		scope = collaboration.activation.InferenceScope()
-		sourceFn = func(ctx context.Context, web tools.Tool) (tools.Source, *tools.Registry, error) {
-			return l.sourceWithDeps(ctx, web, l.scopedGuardrailDeps(ctx, false, scope))
-		}
+		sourceFn = l.source
 	}
 	policy := l.resolveTurnPolicy(ctx)
+	var bound turnRecordingOptions
+	if recording != nil {
+		bound = recording(policy.target)
+	}
 	if collaboration != nil && !receivesAutomaticCompletion(policy.target.Provider) {
 		return nil, ErrSwarmReceiver
 	}
@@ -498,12 +498,16 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 		runner.WithTemperature(policy.temperature),
 		runner.WithModelOptions(policy.modelOptions),
 	)
+	if policy.target.RateCard != nil {
+		card := policy.target.RateCard.Clone()
+		opts = append(opts, runner.WithRateCard(card))
+	}
 	if scope.Account != nil {
 		opts = append(opts, runner.WithModelIdentity(policy.target.Provider.Name(), policy.target.Model))
 	}
 	if policy.autoCompact {
 		opts = append(opts, runner.WithCompactor(coderunner.StandardCompactor(
-			buildScopedCompactor(policy.compactEngine, policy.target.Window, policy.compactProvider, policy.compactModel, l, l.ws.Root(), scope), policy.target.Window, policy.reserve)))
+			buildScopedCompactor(policy.compactEngine, policy.target.Window, policy.compactTarget, policy.compactModel, l, l.ws.Root(), scope, bound.auxiliary), policy.target.Window, policy.reserve)))
 	}
 	if l.sink != nil {
 		opts = append(opts, runner.WithSink(l.sink))
@@ -512,7 +516,7 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 		opts = append(opts, runner.WithToolOutputSink(l.toolOutputSink))
 	}
 
-	src, reg, err := sourceFn(ctx, policy.target.WebSearch)
+	src, reg, err := sourceFn(ctx, policy.target.WebSearch, scope, collector.observe, bound.auxiliary)
 	if err != nil {
 		return nil, err
 	}
@@ -545,6 +549,7 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 	}
 	opts = append(opts, runner.WithIterationPrompt(iterationPrompt))
 	opts = append(opts, extraOpts...)
+	opts = append(opts, bound.root...)
 	quality := newPlanAwareTurnQuality(l.planStore, l.isPlan, evidence)
 	if automaticCompletion {
 		opts = append(opts, runner.WithInputSource(group), runner.WithTurnQuality(quality))
@@ -560,7 +565,7 @@ func (l *LiveRunner) buildTurn(ctx context.Context, sourceFn func(context.Contex
 	r := runner.New(runner.ClientFromProvider(policy.target.Provider), opts...)
 	// Late-register spawn onto the base registry now that the parent runner exists
 	// (the registry enumerates lazily, so it is visible to this turn's schema).
-	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter, scope, boardAccess...)
+	l.registerSpawnTools(ctx, reg, r, group, coordinator, policy.target.SpawnDepth, policy.target.SpawnMaxIter, scope, collector.observe, bound.child, bound.auxiliary, boardAccess...)
 	return &turn{runner: r, thinking: policy.thinking, group: group, coordinator: coordinator,
-		ownsCoordinator: collaboration == nil, inputs: inputs}, nil
+		ownsCoordinator: collaboration == nil, inputs: inputs, auxiliary: collector}, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/agent/compact"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
@@ -149,6 +150,20 @@ type TaskResult struct {
 	// Nil means no attempt reported usage; reported zero remains non-nil.
 	// Attempts that omit usage make this a partial total (see Timing.AttemptsWithUsage).
 	TotalUsage *llm.Usage
+
+	// ProviderObservations owns one snapshot per invoked, settled provider attempt,
+	// including attempts without evidence. It excludes descendants and earlier
+	// Runs. Nil means no provider attempt settled. Values borrow nested pointers
+	// when copied; use ProviderAttemptObservation.Clone for independent retention.
+	ProviderObservations []ProviderAttemptObservation
+
+	// CompactionObservations owns one snapshot per invoked, settled compaction
+	// in this Run's settlement order, including failed and no-change calls.
+	// It excludes descendants, earlier Runs and main-provider usage totals.
+	// Nil means no compaction inference settled. Value copies borrow nested
+	// pointers; use compact.Inference.Clone for independent retention.
+	CompactionObservations []compact.Inference
+
 	// ToolSurface is the exact model-visible tool set from the final request.
 	ToolSurface ToolSurface
 

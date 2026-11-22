@@ -16,6 +16,10 @@ type pumpQueue struct {
 	previews    map[toolOutputKey]int
 	changed     chan struct{}
 	closed      bool
+	// Application ownership stays in the head slot until callback acknowledgement.
+	application                              bool
+	epoch, sequence                          uint64
+	forwarded, claimed, sending, taken, lost bool
 }
 
 func newPumpQueue() pumpQueue {
@@ -65,6 +69,13 @@ func (q *pumpQueue) pop() (tea.Msg, <-chan struct{}) {
 		return nil, q.changed
 	}
 	msg := q.slots[q.head]
+	q.removeHead()
+	return msg, nil
+}
+
+// removeHead requires q.mu.
+func (q *pumpQueue) removeHead() {
+	msg := q.slots[q.head]
 	if preview, ok := msg.(ToolOutputMsg); ok {
 		key := queuedPreviewKey(preview)
 		if slot, exists := q.previews[key]; exists && slot == q.head {
@@ -74,8 +85,9 @@ func (q *pumpQueue) pop() (tea.Msg, <-chan struct{}) {
 	q.slots[q.head] = nil
 	q.head = (q.head + 1) % len(q.slots)
 	q.count--
+	q.sequence++
+	q.forwarded = false
 	q.signal()
-	return msg, nil
 }
 
 func (q *pumpQueue) signal() {

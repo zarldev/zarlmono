@@ -1,7 +1,10 @@
 package modelsdev
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/cache"
 	"github.com/zarldev/zarlmono/zkit/options"
 	"github.com/zarldev/zarlmono/zkit/zhttp"
@@ -20,7 +24,7 @@ const (
 	providerGoogle = "google"
 	snapshotKey    = "models.dev"
 	defaultTTL     = 6 * time.Hour
-	snapshotSchema = 2
+	snapshotSchema = 4
 )
 
 // fetchClient is the shared client for models.dev/api.json. zhttp's
@@ -44,17 +48,40 @@ type Pricing struct {
 	OutputCostPerMTok float64
 }
 
-// Entry composes provider-independent model metadata with provider-specific
-// pricing from a models.dev provider catalogue entry.
+// ModelInformation is native catalogue evidence, not effective route or protocol
+// support. Reasoning describes the catalogue's reasoning assertion only; it says
+// nothing about request controls, displayable output, or replay. Zero fields mean
+// unknown. All fields are values, safe to retain independently of the source.
+type ModelInformation struct {
+	Tools      llm.Support
+	Reasoning  llm.Support
+	Modalities llm.DirectionalModalities
+	Limits     llm.ModelLimits
+}
+
+// ModelRecord couples native catalogue evidence with its snapshot provenance.
+// It is a value snapshot with no borrowed mutable state.
+type ModelRecord struct {
+	Information ModelInformation
+	Provenance  llm.MetadataProvenance
+}
+
+// Entry retains authoritative native Evidence and its derived compatibility
+// views. On ingestion only Evidence is trusted; Intrinsic, Pricing, and
+// Information are recomputed, never used to infer missing assertions.
 type Entry struct {
 	Intrinsic
 	Pricing
+	Information ModelInformation
+	Evidence    Evidence
 }
 
-// Snapshot is the cached whole-fetch blob.
+// Snapshot is the cached whole-fetch blob. Its maps belong to the cache or its
+// caller; Source clones both map levels when loading or publishing a snapshot.
 type Snapshot struct {
 	Schema    int                         `json:"schema"`
 	FetchedAt time.Time                   `json:"fetched_at"`
+	Revision  string                      `json:"revision"`
 	Entries   map[string]map[string]Entry `json:"entries"`
 }
 
@@ -137,6 +164,20 @@ func (s *Source) LookupCached(providerKey, model string) (Entry, bool) {
 	}
 	entry, ok := models[model]
 	return entry, ok
+}
+
+// LookupModelCached returns native evidence for exact catalogue provider and
+// model keys from the process-local snapshot only. It does not apply provider
+// aliases, normalize identities, seek consensus, read the backing cache, or use
+// the network. Until Warm or a regular lookup populates the snapshot, ok is false.
+// Stale evidence remains observable with its original observation and expiry
+// timestamps; callers decide freshness. The returned value is safe to retain.
+func (s *Source) LookupModelCached(providerKey string, model llm.ModelID) (ModelRecord, bool) {
+	evidence, ok := s.LookupEvidenceCached(providerKey, string(model))
+	if !ok {
+		return ModelRecord{}, false
+	}
+	return ModelRecord{Information: information(evidence), Provenance: evidence.Provenance}, true
 }
 
 // LookupIntrinsic returns provider-independent metadata for a model name. It
@@ -268,6 +309,9 @@ func (s *Source) ensureSnapshot(ctx context.Context) (Snapshot, bool, error) {
 		var gerr error
 		cached, gerr = s.store.Get(ctx, snapshotKey)
 		gotFromCache = gerr == nil && cached.Schema == snapshotSchema
+		if gotFromCache {
+			cached = loadSnapshot(cached)
+		}
 		if gotFromCache && time.Since(cached.FetchedAt) <= s.ttl {
 			s.mu.Lock()
 			s.snapshot, s.hasSnap, s.retryAt = cached, true, time.Time{}
@@ -291,7 +335,7 @@ func (s *Source) ensureSnapshot(ctx context.Context) (Snapshot, bool, error) {
 	s.mu.Lock()
 	s.snapshot, s.hasSnap, s.retryAt = fresh, true, time.Time{}
 	s.mu.Unlock()
-	if serr := s.store.Set(ctx, snapshotKey, fresh); serr != nil {
+	if serr := s.store.Set(ctx, snapshotKey, cloneSnapshot(fresh)); serr != nil {
 		return fresh, true, fmt.Errorf("modelsdev: cache snapshot: %w", serr)
 	}
 	return fresh, true, nil
@@ -346,82 +390,92 @@ func (s *Source) fetch(ctx context.Context) (Snapshot, error) {
 			continue
 		}
 		models := make(map[string]Entry, len(p.Models))
-		for id, m := range p.Models {
-			if m.ID == "" {
-				m.ID = id
-			}
-			if m.ID == "" {
+		for id, blob := range p.Models {
+			// The outer decode guarantees valid JSON. Non-object records have no
+			// model quantities to validate and must not discard valid neighbors.
+			if bytes.TrimSpace(blob)[0] != '{' {
 				continue
 			}
-			e := Entry{Intrinsic: Intrinsic{
-				ContextWindow:    m.Limit.Context,
-				MaxOutputTokens:  m.Limit.Output,
-				SupportsTools:    m.ToolCall,
-				SupportsThinking: m.Reasoning,
-				SupportsVision:   hasVision(m.Modalities.Input),
-				SupportsVideo:    hasVideo(m.Modalities.Input),
-			}}
-			if m.Cost.Input > 0 || m.Cost.Output > 0 {
-				e.Pricing = Pricing{
-					InputCostPerMTok:  m.Cost.Input,
-					OutputCostPerMTok: m.Cost.Output,
-				}
+			// Decode quantities first: malformed numeric representations invalidate
+			// the entire refresh, never publish a partially decoded catalogue.
+			var quantities struct {
+				Limit limitWire `json:"limit"`
+				Cost  costWire  `json:"cost"`
 			}
-			models[m.ID] = e
+			if err := json.Unmarshal(blob, &quantities); err != nil {
+				return Snapshot{}, fmt.Errorf("modelsdev: decode quantities for %q/%q: %w", providerKey, id, err)
+			}
+			var m *modelWire
+			// Other invalid records, nulls, and conflicting embedded identities
+			// are skipped without manufacturing a replacement identity.
+			if err := json.Unmarshal(blob, &m); err != nil || m == nil ||
+				id == "" || (m.ID != "" && m.ID != id) {
+				continue
+			}
+			models[id] = decodeEntry(*m)
 		}
 		entries[providerKey] = models
 	}
+	digest := sha256.Sum256(body)
 	return Snapshot{
 		Schema:    snapshotSchema,
 		FetchedAt: time.Now(),
+		Revision:  hex.EncodeToString(digest[:]),
 		Entries:   entries,
 	}, nil
-}
-
-func hasVision(inputs []string) bool {
-	for _, m := range inputs {
-		if strings.EqualFold(m, "image") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasVideo(inputs []string) bool {
-	for _, m := range inputs {
-		if strings.EqualFold(m, "video") {
-			return true
-		}
-	}
-	return false
 }
 
 // --- wire types for deserialisation ---
 
 type providerWire struct {
-	Models map[string]modelWire `json:"models"`
+	Models map[string]json.RawMessage `json:"models"`
 }
 
 type modelWire struct {
 	ID         string         `json:"id"`
-	ToolCall   bool           `json:"tool_call"`
-	Reasoning  bool           `json:"reasoning"`
+	ToolCall   *bool          `json:"tool_call"`
+	Reasoning  *bool          `json:"reasoning"`
 	Modalities modalitiesWire `json:"modalities"`
 	Limit      limitWire      `json:"limit"`
 	Cost       costWire       `json:"cost"`
 }
 
 type modalitiesWire struct {
-	Input  []string `json:"input"`
-	Output []string `json:"output"`
+	Input  modalityListWire `json:"input"`
+	Output modalityListWire `json:"output"`
+}
+
+// modalityListWire preserves missing/null lists but rejects null list elements.
+// encoding/json otherwise silently decodes those elements as empty strings.
+type modalityListWire []string
+
+func (values *modalityListWire) UnmarshalJSON(data []byte) error {
+	var raw []*string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decode modality list: %w", err)
+	}
+	if raw == nil {
+		*values = nil
+		return nil
+	}
+	parsed := make(modalityListWire, len(raw))
+	for i, value := range raw {
+		if value == nil {
+			return fmt.Errorf("null modality at index %d", i)
+		}
+		parsed[i] = *value
+	}
+	*values = parsed
+	return nil
 }
 
 type limitWire struct {
+	Input   int `json:"input"`
 	Context int `json:"context"`
 	Output  int `json:"output"`
 }
 
 type costWire struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	Input  *float64 `json:"input"`
+	Output *float64 `json:"output"`
 }

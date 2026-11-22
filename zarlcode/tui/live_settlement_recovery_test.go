@@ -168,9 +168,6 @@ func TestLiveTurnSettlementEncodingFailureDoesNotBlock(t *testing.T) {
 		if err := f.ui.SaveSession(t.Context()); !errors.Is(err, rewind.ErrInvalid) {
 			t.Fatalf("invalid state was saved at shutdown: %v", err)
 		}
-		if err := f.ui.FlushSessionPersistence(t.Context()); !errors.Is(err, rewind.ErrInvalid) {
-			t.Fatalf("shutdown flush did not retain the unsaved state: %v", err)
-		}
 		after, err := f.store.GetSessionResumeState(t.Context(), f.ui.SessionIdentity())
 		if err != nil || !reflect.DeepEqual(before, after) {
 			t.Fatal("memory-only continuation modified the last valid checkpoint", err)
@@ -180,5 +177,13 @@ func TestLiveTurnSettlementEncodingFailureDoesNotBlock(t *testing.T) {
 	f.ui.Update(tea.WindowSizeMsg{Width: 160, Height: 32})
 	if !strings.Contains(f.ui.View().Content, "Not saved — checkpoint rejected") || !strings.Contains(f.ui.View().Content, "Ctrl+q: recovery") {
 		t.Fatal("unsaved warning disappeared with a transient toast")
+	}
+	// Flush is terminal: prove both memory-only continuations before closing.
+	if err := f.ui.FlushSessionPersistence(t.Context()); !errors.Is(err, rewind.ErrInvalid) {
+		t.Fatalf("shutdown flush did not retain the unsaved state: %v", err)
+	}
+	after, err := f.store.GetSessionResumeState(t.Context(), f.ui.SessionIdentity())
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("shutdown modified the last valid checkpoint", err)
 	}
 }

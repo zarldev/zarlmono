@@ -44,6 +44,8 @@ func terminalNotice(reason runner.TerminalReason, iterations int) string {
 // subAgentItem instead of rendering as flat indented notices.
 func (m *UI) handleRunnerMsg(msg tea.Msg) (bool, tea.Cmd) {
 	switch event := msg.(type) {
+	case teasink.AuxiliaryObservedMsg:
+		m.session.Run.observeAuxiliary(event.Observation)
 	case teasink.CompactionSettledMsg:
 		m.session.applyCompactionSettled(event)
 	case teasink.RequestControlRecordedMsg:
@@ -100,18 +102,7 @@ func (m *UI) handleRunnerLifecycleMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.timeline.appendThinking(e.TaskID, e.Depth, e.Delta)
 
 	case teasink.ToolStartedMsg:
-		m.session.applyToolStarted(e)
-		hint, input := presentToolCall(e.ToolName, e.Parameters, e.RawArguments)
-		m.timeline.startToolWithInput(e.TaskID, e.Depth, e.ExecutionID, e.ToolID, e.ToolName, hint, e.ParentExecutionID, e.ParentToolID, e.Sequence, input)
-		if e.ToolName == "agent_spawn" {
-			agent, _ := e.Parameters["agent"].(string)
-			if agent == "" {
-				agent = "agent"
-			}
-			prompt, _ := e.Parameters["prompt"].(string)
-			m.timeline.reserveSubAgent(e.ExecutionID, e.ToolID, e.Depth, agent, prompt)
-		}
-		m.notePRRelevantTool(e.ToolName, e.Parameters)
+		m.handleToolStarted(e)
 	case teasink.WorkspaceWaitStartedMsg:
 		m.session.applyWorkspaceWaitStarted(e)
 		m.timeline.waitTool(toolEventKey(e.ExecutionID, e.ToolID), e.Access, e.Paths)
@@ -143,17 +134,12 @@ func (m *UI) handleRunnerLifecycleMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.session.applyPlanUpdated(e)
 		m.resetSidebarForPlan(before)
 		m.timeline.addPlanUpdate(e.TaskID, e.Plan)
-		cmd = tea.Batch(cmd, planProgressSoundCmd(m.appContext(), m.settings, before, e.Plan))
+		if !m.persistenceClosing {
+			cmd = tea.Batch(cmd, planProgressSoundCmd(m.appContext(), m.settings, before, e.Plan))
+		}
 
 	case teasink.PromptDiagnosticsMsg:
-		for _, diag := range e.Diagnostics {
-			if strings.TrimSpace(diag) == "" {
-				continue
-			}
-			m.timeline.addNotice(palette.Warning.On("⚠ " + diag))
-			m.session.SetToastTone(diag, toastInfo)
-			cmd = tea.Batch(cmd, m.toastExpiryCmd())
-		}
+		cmd = m.handlePromptDiagnostics(e)
 
 	case teasink.ProviderAttemptSettledMsg:
 		m.session.applyProviderAttemptSettled(e)
@@ -236,10 +222,12 @@ func (m *UI) handleRunnerLifecycleMsg(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			// Re-resolve the PR after the turn settles: catches an agent
 			// checkout (branch change) or a git/gh tool that opened/pushed a PR.
-			if !failed && e.Reason == runner.TerminalCompleted {
+			if !m.persistenceClosing && !failed && e.Reason == runner.TerminalCompleted {
 				cmd = tea.Batch(cmd, completionSoundCmd(m.appContext(), m.settings))
 			}
-			cmd = tea.Batch(cmd, m.refreshPRCmd())
+			if !m.persistenceClosing {
+				cmd = tea.Batch(cmd, m.refreshPRCmd())
+			}
 			cmd = tea.Batch(cmd, m.persistSettledLiveTurn())
 		}
 
@@ -273,7 +261,7 @@ func (m *UI) handleModeChanged(e teasink.ModeChangedMsg) tea.Cmd {
 		mode = "Plan"
 	}
 	m.timeline.addModeChange(e.TaskID, mode, e.Reason)
-	if changed {
+	if changed && !m.persistenceClosing {
 		return m.requestModeTarget(e.Plan, e.Generation)
 	}
 	return nil
@@ -285,4 +273,32 @@ func (m *UI) handleRequestControlRecorded(e teasink.RequestControlRecordedMsg) {
 		turnID = e.TaskID
 	}
 	m.timeline.addControl(turnID, e.Control)
+}
+
+func (m *UI) handlePromptDiagnostics(e teasink.PromptDiagnosticsMsg) tea.Cmd {
+	var cmd tea.Cmd
+	for _, diag := range e.Diagnostics {
+		if strings.TrimSpace(diag) == "" {
+			continue
+		}
+		m.timeline.addNotice(palette.Warning.On("⚠ " + diag))
+		m.session.SetToastTone(diag, toastInfo)
+		cmd = tea.Batch(cmd, m.toastExpiryCmd())
+	}
+	return cmd
+}
+
+func (m *UI) handleToolStarted(e teasink.ToolStartedMsg) {
+	m.session.applyToolStarted(e)
+	hint, input := presentToolCall(e.ToolName, e.Parameters, e.RawArguments)
+	m.timeline.startToolWithInput(e.TaskID, e.Depth, e.ExecutionID, e.ToolID, e.ToolName, hint, e.ParentExecutionID, e.ParentToolID, e.Sequence, input)
+	if e.ToolName == "agent_spawn" {
+		agent, _ := e.Parameters["agent"].(string)
+		if agent == "" {
+			agent = "agent"
+		}
+		prompt, _ := e.Parameters["prompt"].(string)
+		m.timeline.reserveSubAgent(e.ExecutionID, e.ToolID, e.Depth, agent, prompt)
+	}
+	m.notePRRelevantTool(e.ToolName, e.Parameters)
 }

@@ -58,7 +58,7 @@ func TestServiceTierWireOptions(t *testing.T) {
 					}
 				}))
 				t.Cleanup(server.Close)
-				p := openai.NewProvider("test", openai.WithBaseURL(server.URL), openai.WithModel(endpoint.model), openai.WithResponsesAPI(true))
+				p := openai.NewProvider("test", openai.WithBaseURL(server.URL), openai.WithModel(endpoint.model), openai.WithResponsesAPI(endpoint.path == "/responses"))
 				opts := llm.ModelOptions{"text_verbosity": "high"}
 				if tc.value != nil {
 					opts["service_tier"] = tc.value

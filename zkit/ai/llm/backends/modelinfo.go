@@ -131,7 +131,7 @@ func (r *ProviderRegistry) ResolveCost(ctx context.Context, name, model string) 
 	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
 		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
 	}
-	if def.AdapterType == AdapterTypes.GOOGLEVERTEX {
+	if def.AdapterType == AdapterTypes.GOOGLEVERTEX || def.AdapterType == AdapterTypes.LITELLM {
 		return 0, 0, false
 	}
 	if def.AdapterType == AdapterTypes.GOOGLECOMPATIBLE || def.AdapterType == AdapterTypes.DEEPSEEKCOMPATIBLE {
@@ -161,7 +161,7 @@ func (r *ProviderRegistry) ResolveCostForPrompt(ctx context.Context, name, model
 	if def.InputCostPerMTok > 0 || def.OutputCostPerMTok > 0 {
 		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
 	}
-	if def.AdapterType == AdapterTypes.GOOGLEVERTEX {
+	if def.AdapterType == AdapterTypes.GOOGLEVERTEX || def.AdapterType == AdapterTypes.LITELLM {
 		return 0, 0, false
 	}
 	if def.AdapterType == AdapterTypes.GOOGLECOMPATIBLE || def.AdapterType == AdapterTypes.DEEPSEEKCOMPATIBLE {
@@ -197,7 +197,7 @@ func (r *ProviderRegistry) ResolveCostCached(name, model string) (float64, float
 		return def.InputCostPerMTok / 1000, def.OutputCostPerMTok / 1000, true
 	}
 	// Shared intrinsic metadata does not establish route/account billing.
-	if def.AdapterType == AdapterTypes.GOOGLEVERTEX {
+	if def.AdapterType == AdapterTypes.GOOGLEVERTEX || def.AdapterType == AdapterTypes.LITELLM {
 		return 0, 0, false
 	}
 	if def.AdapterType == AdapterTypes.GOOGLECOMPATIBLE || def.AdapterType == AdapterTypes.DEEPSEEKCOMPATIBLE {
@@ -226,6 +226,10 @@ func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model 
 	if err != nil {
 		return llm.ModelCapabilities{}
 	}
+	// Gateway aliases establish no native or bridged capability evidence.
+	if def.AdapterType == AdapterTypes.LITELLM {
+		return llm.ModelCapabilities{}
+	}
 	caps := capabilitiesForAdapter(def.AdapterType, model)
 	if r.modelsDevSource != nil {
 		entry, ok := r.modelsDevSource.Lookup(ctx, name, model)
@@ -249,6 +253,10 @@ func (r *ProviderRegistry) ResolveCapabilities(ctx context.Context, name, model 
 func (r *ProviderRegistry) ResolveCapabilitiesCached(name, model string) llm.ModelCapabilities {
 	def, err := r.Parse(name)
 	if err != nil {
+		return llm.ModelCapabilities{}
+	}
+	// Gateway aliases establish no native or bridged capability evidence.
+	if def.AdapterType == AdapterTypes.LITELLM {
 		return llm.ModelCapabilities{}
 	}
 	caps := capabilitiesForAdapter(def.AdapterType, model)

@@ -56,6 +56,10 @@ type sessionPersistOp struct {
 	sourceErr         error
 	guarded           bool // retain the supplied source observation; never prefix-retry
 	retry             *sessionSaveRetry
+	manual            *manualCompaction
+	shutdownOwned     bool
+	joined            bool
+	joinResult        sessionPersistedMsg
 }
 
 type sessionPersistedMsg struct {
@@ -114,6 +118,10 @@ func (m *UI) handleDraftPersistenceMsg(msg tea.Msg) (tea.Cmd, bool) {
 		m.sessionPersistCurrent = nil
 		if msg.sessionID == m.session.ID && errors.Is(msg.err, db.ErrCheckpointConflict) {
 			m.sourceConflict = true
+		}
+		if current.manual != nil {
+			manual := m.finishManualPersist(current, msg)
+			return tea.Batch(manual, m.startNextSessionPersist()), true
 		}
 		if current.retry != nil {
 			cmd := m.finishSessionRetry(current, msg)
@@ -233,7 +241,7 @@ func (m *UI) enqueueDraftPersist(generation uint64) tea.Cmd {
 	if m.actionableRewindPreview() {
 		return nil // cancel reschedules; apply saves the source draft transactionally
 	}
-	if m.unsavedTurnError != nil || (m.durableDispatch() && m.liveOperation != nil) {
+	if m.manualCompaction != nil || m.unsavedTurnError != nil || (m.durableDispatch() && m.liveOperation != nil) {
 		return nil // settlement atomically replaces the protected recovery prompt with the current draft
 	}
 	text := m.composer.text()
@@ -267,7 +275,7 @@ func (m *UI) enqueueDraftPersist(generation uint64) tea.Cmd {
 }
 
 func (m *UI) clearDraftCmd() tea.Cmd {
-	if m.unsavedTurnError != nil || (m.durableDispatch() && m.liveOperation != nil) {
+	if m.manualCompaction != nil || m.unsavedTurnError != nil || (m.durableDispatch() && m.liveOperation != nil) {
 		return nil
 	}
 	m.draftGeneration++
@@ -405,7 +413,7 @@ func (m *UI) dropQueuedSession(sessionID string) {
 }
 
 func (m *UI) startNextSessionPersist() tea.Cmd {
-	if m.sessionPersistRunning || len(m.sessionPersistQueue) == 0 {
+	if m.persistenceClosing || m.sessionPersistRunning || len(m.sessionPersistQueue) == 0 {
 		return nil
 	}
 	op := m.sessionPersistQueue[0]
@@ -560,7 +568,7 @@ func (m *UI) persistTranscriptNow() tea.Cmd {
 }
 
 func (m *UI) enqueueTranscriptPersist() tea.Cmd {
-	if m.unsavedTurnError != nil {
+	if m.manualCompaction != nil || m.unsavedTurnError != nil {
 		return nil // retain the last paired head until a valid completed save succeeds
 	}
 	if m.liveOperation != nil && (m.exactResume || m.durableDispatch()) {

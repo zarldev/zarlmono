@@ -92,7 +92,8 @@ func TestStartSwarmSettlesRecordedActivationSuccess(t *testing.T) {
 			continue
 		}
 		for _, event := range events {
-			f.ui.Update(event)
+			_, cmd := f.ui.Update(event)
+			driveBeforeCommand(f, cmd)
 		}
 	}
 }

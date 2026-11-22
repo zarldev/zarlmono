@@ -8,17 +8,22 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/repair"
 )
 
-// DecodeArgs decodes a ToolParameters map into T via a JSON round-trip through
-// repair.Unmarshal, so small-model quirks (literal newlines, trailing commas,
-// missing closers) get repaired at the decode boundary. Returns a *Error of
-// Kinds.VALIDATION on failure; callers pass it straight to Failure.
+// DecodeArgs decodes ToolParameters into T with DecodeJSONArgs integer
+// compatibility and ordinary encoding/json semantics for other destinations.
+// It retains small-model JSON repair and returns a *Error of Kinds.VALIDATION
+// on failure; callers pass it straight to Failure.
 func DecodeArgs[T any](params ToolParameters) (T, error) {
 	var out T
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return out, Validation("decode", fmt.Sprintf("re-encode arguments: %v", err))
 	}
-	if err := repair.Unmarshal(raw, &out); err != nil {
+	var document json.RawMessage
+	err = repair.Unmarshal(raw, &document)
+	if err == nil {
+		out, err = DecodeJSONArgs[T](document)
+	}
+	if err != nil {
 		return out, Validation("decode", fmt.Sprintf(
 			"tool arguments did not decode into the expected struct: %v. "+
 				"Check field names and types against the tool's JSON Schema.", err))

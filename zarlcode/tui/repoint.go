@@ -11,6 +11,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/engine"
 	"github.com/zarldev/zarlmono/zarlcode/prefs"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 )
 
 // repointTimeout bounds the provider rebuild + context-window probe done
@@ -20,6 +21,9 @@ const repointTimeout = 8 * time.Second
 // providerRepointedMsg carries the result of an async provider rebuild back
 // to the Update loop, where the live runner + cockpit are updated.
 type providerRepointedMsg struct {
+	// target carries the complete prepared operation. Legacy fields below remain
+	// for unprepared message producers (including the public behavior test seam).
+	target          *engine.TargetUpdate
 	prov            llm.Provider
 	spec            engine.ProviderSpec
 	window          int                  // resolved window applied to the session/compactor
@@ -36,6 +40,13 @@ type providerRepointedMsg struct {
 	modeGeneration  uint64
 	sessionID       string
 	plan            bool
+	protocolRefresh bool
+	protocolKey     routeProtocolKey
+	protocolValue   llm.ModelProtocol
+	protocolPending bool
+	cacheRefresh    bool
+	cacheKey        routeProtocolKey
+	cacheValue      backends.RouteCachePolicy
 }
 
 // activeProviderPolicy resolves the build-affecting definition fields that
@@ -88,6 +99,16 @@ func (m *UI) maybeRepoint() tea.Cmd {
 			return m.requestModeTarget(mode.Plan, mode.Generation)
 		}
 
+		if cmd, handled := m.refreshRouteProtocol(); handled {
+			return cmd
+		}
+		if cmd, handled := m.refreshRouteCache(); handled {
+			return cmd
+		}
+		if m.modeTarget.deferred && m.liveOperation == nil && m.sessionRetry == nil {
+			return m.deferModeTargetQueueLaunch(false)
+		}
+
 		reasoning, defWindow := activeProviderPolicy(settings, active.Name)
 		if !providerMissing && reasoning == m.appliedReasoning && defWindow == m.appliedWindow {
 			return nil
@@ -135,6 +156,8 @@ func (m *UI) switchTarget(selection prefs.ModelSelection, done func(error)) tea.
 		}
 	}
 	if spec.Name == fb.Name {
+		spec.Protocol = fb.Protocol
+		spec.CachePolicy = fb.CachePolicy
 		spec.BaseURL = fb.BaseURL
 		spec.APIKey = fb.APIKey
 	}
@@ -159,16 +182,20 @@ func (m *UI) buildProviderTargetCmd(
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, repointTimeout)
 		defer cancel()
-		prov, err := engine.BuildProvider(ctx, settings.Registry, settings.Svc, spec)
+		target, err := settings.PrepareTarget(ctx, spec)
 		if err != nil {
 			return providerRepointedMsg{seq: seq, spec: spec, selection: selection, persist: persist, done: done, err: err}
 		}
-		window := settings.ContextWindow(ctx, spec)
-		if window <= 0 {
-			window = engine.LiveContextWindow
+		// Persist configured aliases from this construction. OAuth defaults are
+		// account/constructor selections, not registry aliases: clearing their
+		// override must retain the existing restart/inheritance semantics.
+		selection.Provider = target.Spec.Name
+		id, _ := llm.ParseLLMProvider(target.Spec.Name)
+		if selection.Model != "" || (id != backends.NameOpenAICodex && id != backends.NameClaudeCode) {
+			selection.Model = target.Spec.Model
 		}
 		return providerRepointedMsg{
-			seq: seq, prov: prov, spec: spec, window: window,
+			seq: seq, target: &target, prov: target.Provider, spec: target.Spec, window: target.Window,
 			reasoning: reasoning, defWindow: defWindow,
 			selection: selection, persist: persist, done: done,
 			manual: true,
@@ -204,54 +231,43 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 		m.handleModeTargetRepoint(rp)
 		return true
 	}
-	if m.liveOperation != nil || m.sessionRetry != nil {
-		if rp.done != nil {
-			rp.done(engine.ErrRuntimeBusy)
-		}
-		m.session.SetErrorToast("provider switch deferred: wait for the turn to settle")
-		return true
-	}
 	if rp.seq != 0 && rp.seq != atomic.LoadUint64(&m.repointSeq) {
 		return true
 	}
-	if rp.err != nil {
-		if rp.done != nil {
-			rp.done(rp.err)
-		}
-		m.session.SetErrorToast("provider switch failed: " + rp.err.Error())
+	if rp.protocolRefresh && (m.session.ID != rp.sessionID || m.live.RunTarget().Spec != rp.spec) {
+		m.repointFailed(rp, errors.New("active target changed; close settings again to retry"), "")
 		return true
 	}
-	if m.exactResume && !m.live.SupportsExactTarget(engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}) {
+	if m.liveOperation != nil || m.sessionRetry != nil {
+		m.repointFailed(rp, engine.ErrRuntimeBusy, "provider switch deferred: wait for the turn to settle")
+		return true
+	}
+	if rp.err != nil {
+		m.repointFailed(rp, rp.err, "provider switch failed: "+rp.err.Error())
+		return true
+	}
+	if m.exactResume && !m.live.SupportsExactTarget(rp.targetUpdate()) {
 		err := errors.New("this conversation has exact checkpoints: start a new conversation to use a provider without exact replay support")
-		if rp.done != nil {
-			rp.done(err)
-		}
-		m.session.SetErrorToast("provider switch rejected: " + err.Error())
+		m.repointFailed(rp, err, "provider switch rejected: "+err.Error())
 		return true
 	}
 	reservation, err := m.live.ReserveRuntime()
 	if err != nil {
-		if rp.done != nil {
-			rp.done(err)
-		}
-		m.session.SetErrorToast("provider switch deferred: " + err.Error())
+		m.repointFailed(rp, err, "provider switch deferred: "+err.Error())
 		return true
 	}
 	defer reservation.Release()
 	if rp.window <= 0 {
 		rp.window = engine.LiveContextWindow
 	}
-	update := engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}
+	update := rp.targetUpdate()
 	if rp.persist {
 		err = reservation.ApplyTargetSelection(m.appContext(), update, m.settings.Svc, rp.selection)
 	} else {
 		err = reservation.ApplyTarget(update)
 	}
 	if err != nil {
-		if rp.done != nil {
-			rp.done(err)
-		}
-		m.session.SetErrorToast("provider switch apply: " + err.Error())
+		m.repointFailed(rp, err, "provider switch apply: "+err.Error())
 		return true
 	}
 	if rp.persist && m.settings.Registry != nil {
@@ -282,6 +298,42 @@ func (m *UI) handleRepointMsg(msg tea.Msg) bool {
 	if rp.done != nil {
 		rp.done(nil)
 	}
-	m.session.SetSuccessToast("switched to " + providerModelLabel(rp.spec.Name, rp.spec.Model))
+	if rp.protocolRefresh {
+		if rp.protocolPending {
+			m.finishRouteProtocolRefresh(rp, nil)
+		}
+		if rp.cacheRefresh {
+			m.finishRouteCacheRefresh(rp, nil)
+		}
+	} else {
+		m.routeProtocolApplied(rp.spec)
+		m.routeCacheApplied(rp.spec)
+		m.session.SetSuccessToast("switched to " + providerModelLabel(rp.spec.Name, rp.spec.Model))
+	}
 	return true
+}
+
+func (m *UI) repointFailed(rp providerRepointedMsg, err error, message string) {
+	if rp.done != nil {
+		rp.done(err)
+	}
+	if rp.protocolRefresh {
+		if rp.protocolPending {
+			m.finishRouteProtocolRefresh(rp, err)
+		}
+		if rp.cacheRefresh {
+			m.finishRouteCacheRefresh(rp, err)
+		}
+	} else {
+		m.session.SetErrorToast(message)
+	}
+}
+
+// targetUpdate preserves the complete prepared operation, including future
+// sidecars. Unprepared messages retain their legacy transition semantics.
+func (rp providerRepointedMsg) targetUpdate() engine.TargetUpdate {
+	if rp.target != nil {
+		return *rp.target
+	}
+	return engine.TargetUpdate{Provider: rp.prov, Spec: rp.spec, Window: rp.window}
 }

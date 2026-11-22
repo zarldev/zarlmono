@@ -8,6 +8,8 @@ import (
 // taskAccounting exists only from accepted start to terminal settlement. The
 // turn owner drains child events before another root invocation may start.
 type taskAccounting struct {
+	providerObservationRetired bool
+
 	depth           int
 	attempt         int
 	iterationSeen   bool
@@ -83,6 +85,7 @@ func (s *Session) applyProviderAttemptSettled(e teasink.ProviderAttemptSettledMs
 	}
 	task.attempt = e.Attempt
 	s.Run.tasks[e.TaskID] = task
+	s.Run.observeProviderAttempt(e, task)
 	if s.Run.acceptsActivity(e.TaskID, e.Depth) {
 		s.Run.activity.phase = ActivityPhases.ACTIVITYWORKING
 	}

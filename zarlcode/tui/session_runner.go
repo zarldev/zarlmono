@@ -58,6 +58,7 @@ func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now
 		ordinal := s.workingSet().StartTurn(e.TaskID)
 		s.checkpoints().StartTurn(e.TaskID, ordinal, now)
 		s.Run.reset()
+		s.Run.providerObservationRootID = e.TaskID
 		s.Run.Running = true
 		effect.Attachments = s.TakeSubmittedAttachments()
 		s.Run.activeTopLevel = e.TaskID
@@ -70,7 +71,10 @@ func (s *Session) applyConversationStarted(e teasink.ConversationStartedMsg, now
 	if s.Run.tasks == nil {
 		s.Run.tasks = make(map[string]taskAccounting)
 	}
-	s.Run.tasks[e.TaskID] = taskAccounting{depth: e.Depth, provider: e.Provider, model: e.Model, price: s.taskPrice(e)}
+	s.Run.tasks[e.TaskID] = taskAccounting{
+		depth: e.Depth, provider: e.Provider, model: e.Model, price: s.taskPrice(e),
+		providerObservationRetired: s.Run.activeTopLevel == "",
+	}
 
 	return effect
 }

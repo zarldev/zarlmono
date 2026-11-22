@@ -191,6 +191,11 @@ type CompletionRequest struct {
 	// path) ignore the toggle. Zero value leaves the provider default.
 	Thinking ThinkingConfig
 
+	// Affinity carries host-owned session intent, independently of observed
+	// deployments or server support. It is not consumed by existing adapters;
+	// callers must not treat setting it as an enforcement guarantee.
+	Affinity Affinity
+
 	// Provider-specific options
 	Options ModelOptions
 }
@@ -681,6 +686,15 @@ type ToolCallFunction struct {
 // Reference-backed state is borrowed only until the downstream yield callback
 // returns. Consumers that retain a chunk must call [CompletionChunk.Clone]
 // before returning from yield.
+//
+// PricingUsage and Execution are independent whole snapshots. Nil means no new
+// snapshot: retaining consumers keep the last non-nil value for that sidecar.
+// Each non-nil value completely replaces its predecessor, including fields that
+// are now absent or unknown; snapshots are never sparsely merged or summed.
+// Repeated cumulative frames replace rather than add. Adapters that enrich
+// header evidence with body evidence must compose the complete snapshot before
+// yielding if both are intended to survive. These sidecars alone are not model
+// output and do not establish first-output timing or suppress pre-output recovery.
 type CompletionChunk struct {
 	Content            string
 	ContentOutputIndex *int
@@ -690,6 +704,15 @@ type CompletionChunk struct {
 	FinishReason       FinishReason
 	Usage              Usage
 	UsageReported      bool
+
+	// PricingUsage is optional presence-aware usage for local pricing. Nil means
+	// absent; a non-nil zero value still has unknown quantities. It is never
+	// synthesized from legacy Usage, whose zero counts can mean unknown.
+	PricingUsage *PricingUsage
+
+	// Execution is optional execution evidence, separate from local estimates
+	// and request intent. Nil means no execution observation was supplied.
+	Execution *ExecutionObservation
 }
 
 // Usage tracks token usage.

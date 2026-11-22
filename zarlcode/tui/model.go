@@ -75,7 +75,16 @@ type UI struct {
 	live                *engine.LiveRunner
 	liveSink            *teasink.Sink
 	liveOperation       *liveTurnOperation
+	manualCompaction    *manualCompaction
 	foreground          *foregroundSwarm
+	persistenceClosing  bool
+	applicationError    error
+	shutdownJoin        *sessionPersistOp
+	shutdownRuntime     *liveTurnOperation
+	shutdownForeground  *foregroundSwarm
+	shutdownProtected   bool
+	shutdownDeleting    bool
+	shutdownError       error
 	liveGeneration      uint64
 	unsavedTurnError    error // persistence failure does not retain turn admission
 	completedBoundary   *completedSessionBoundary
@@ -96,6 +105,9 @@ type UI struct {
 	// maybeRepoint compares them to detect an edit and rebuild.
 	appliedReasoning llm.ReasoningHistory
 	appliedWindow    int
+	// routeProtocols is owned by the serial UI loop, not provider build commands.
+	routeProtocols map[routeProtocolKey]routeProtocolChange
+	routeCaches    map[routeProtocolKey]routeCacheChange
 	// widthMethod is how we measure grapheme width when laying out the
 	// canvas. It mirrors bubbletea's renderer: WcWidth by default, switched
 	// to GraphemeWidth once the terminal reports mode 2027 (Unicode core)
@@ -417,7 +429,35 @@ func (m *UI) Init() tea.Cmd {
 // a running turn while ctrl+c handles quitting. Runner events (teasink
 // messages) are handled here too.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if delivery, ok := msg.(teasink.ApplicationDelivery); ok {
+		var command tea.Cmd
+		if !delivery.Apply(func(payload tea.Msg) {
+			var handled bool
+			var err error
+			command, handled, err = m.applyLiveEvent(payload)
+			if !handled || err != nil {
+				m.applicationError = errLiveApplicationUnknown
+			}
+		}) {
+			return m, nil
+		}
+		if m.persistenceClosing {
+			return m, nil
+		}
+		return m.finishUpdate(m, command, msg)
+	}
+	if m.persistenceClosing {
+		return m, nil
+	}
 	model, cmd := m.update(msg)
+	return m.finishUpdate(model, cmd, msg)
+}
+
+func (m *UI) finishUpdate(model tea.Model, cmd tea.Cmd, msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.session.Run.Running && !m.ticking {
+		m.ticking = true
+		cmd = tea.Batch(cmd, tick())
+	}
 	cmd = tea.Batch(cmd, m.inspectionCmd())
 	if persist := m.transcriptPersistenceCmd(); persist != nil {
 		cmd = tea.Batch(cmd, persist)
@@ -502,6 +542,10 @@ func (m *UI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case compactNowFinishedMsg:
 		m.applyCompactNowFinished(msg)
 		return m, tea.Batch(m.toastExpiryCmd(), m.saveSessionCmd())
+	case manualCompactionAppliedMsg:
+		return m, m.applyManualCompaction(msg)
+	case manualCompactionReturnedMsg:
+		return m, m.joinManualCompaction(msg)
 	case compactNowFailedMsg:
 		m.session.SetErrorToast("compact: " + msg.Error)
 		return m, m.toastExpiryCmd()

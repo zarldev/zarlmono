@@ -109,6 +109,10 @@ func (p *Provider) Complete(ctx context.Context, req llm.CompletionRequest) llm.
 			yield(llm.CompletionChunk{}, cause)
 			return
 		}
+		if err := validateInputMessages(req.Messages); err != nil {
+			yield(llm.CompletionChunk{}, err)
+			return
+		}
 		stopped, err := p.run(ctx, req, yield)
 		if err != nil && !stopped {
 			yield(llm.CompletionChunk{}, normalizeContextError(ctx, err))
@@ -247,11 +251,14 @@ func (p *Provider) postResponses(
 func splitSystemMessages(req llm.CompletionRequest) (string, llm.CompletionRequest) {
 	var b strings.Builder
 	for _, m := range req.Messages {
-		if m.Role == llm.RoleSystem && m.Content != "" {
+		if m.Role != llm.RoleSystem {
+			continue
+		}
+		if text := effectiveText(m); text != "" {
 			if b.Len() > 0 {
 				b.WriteString("\n\n")
 			}
-			b.WriteString(m.Content)
+			b.WriteString(text)
 		}
 	}
 	return b.String(), req

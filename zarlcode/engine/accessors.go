@@ -14,6 +14,8 @@ import (
 // provider/model/window/limits a turn would be built against right now.
 type RunTarget struct {
 	Provider     llm.Provider
+	Facts        *TargetFacts  // nil for legacy/unprepared targets
+	RateCard     *llm.RateCard // optional explicit local estimate policy; never inferred
 	Spec         ProviderSpec
 	Model        string
 	Window       int        // context window in tokens; sizes the compactor
@@ -28,6 +30,8 @@ type RunTarget struct {
 // TargetUpdate is an atomic runtime transition for provider policy.
 type TargetUpdate struct {
 	Provider llm.Provider
+	Facts    *TargetFacts  // cloned on publication; nil clears previous facts
+	RateCard *llm.RateCard // cloned on publication; nil clears the previous basis
 	Spec     ProviderSpec
 	Window   int
 }
@@ -42,7 +46,7 @@ func (l *LiveRunner) RunTarget() RunTarget {
 	defer l.publication.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.target
+	return l.target.Clone()
 }
 
 // ProcessList returns a snapshot of background processes managed by the live

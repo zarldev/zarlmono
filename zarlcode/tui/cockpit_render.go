@@ -32,6 +32,21 @@ func (m *UI) cockpitLines(width int) []string {
 		add(lines...)
 	}
 
+	if lines := s.providerObservationLines(width); len(lines) > 0 {
+		add("", sidebarHeading("provider observations"))
+		add(lines...)
+	}
+
+	if lines := s.auxiliaryObservationLines(width); len(lines) > 0 {
+		add("", sidebarHeading("auxiliary judge/planner · latest only · evidence, not session spend"))
+		add(lines...)
+	}
+
+	if lines := s.compactionObservationLines(width); len(lines) > 0 {
+		add("", sidebarHeading("auxiliary compaction · evidence, not session spend"))
+		add(lines...)
+	}
+
 	add("")
 
 	// --- context -------------------------------------------------------
@@ -733,6 +748,9 @@ func (s *RunState) cacheUsageLines(_ int) []string {
 		if d.Provider == "" && d.Model == "" {
 			label = "unknown target"
 		}
+		// Compactor target labels also reach this legacy accounting section.
+		// Preserve printable labels while escaping terminal controls before styling.
+		label = escapeToolInputControls(strings.ReplaceAll(strings.ReplaceAll(label, "\n", `\n`), "\t", `\t`))
 		head := palette.Fg.On(label) + palette.Muted.On(" · "+d.BillingClass+" · ") +
 			palette.Subtle.On(itoa(d.SettledTasks)+" settled")
 		if d.CompactorCalls > 0 {

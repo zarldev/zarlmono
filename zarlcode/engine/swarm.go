@@ -119,14 +119,14 @@ func (l *LiveRunner) runSwarmActivation(ctx context.Context, activation swarm.Ac
 		return result
 	}
 	defer reservation.Release()
-	return reservation.runSwarmActivation(ctx, activation, coordinator)
+	return reservation.runSwarmActivation(ctx, activation, coordinator, nil)
 }
 
 // runSwarmActivation dispatches one activation through a caller-held reservation,
 // preserving activation identity, context transition, inputs/accounting, shared
 // coordinator and descendant drain. The reservation is consumed on successful
 // setup; on earlier failure the caller still owns it and must Release.
-func (r *RuntimeReservation) runSwarmActivation(ctx context.Context, activation swarm.Activation, coordinator *tools.WorkspaceCoordinator, historyOptions ...options.Option[runner.Runner]) runner.TaskResult {
+func (r *RuntimeReservation) runSwarmActivation(ctx context.Context, activation swarm.Activation, coordinator *tools.WorkspaceCoordinator, recording turnOptionsFactory) runner.TaskResult {
 	result := runner.TaskResult{ID: activation.Spec.ID, Reason: runner.TerminalError}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -146,7 +146,7 @@ func (r *RuntimeReservation) runSwarmActivation(ctx context.Context, activation 
 			return nil, setupErr
 		}
 		finish = end
-		turn, setupErr := r.owner.buildTurn(runCtx, r.owner.source, &swarmTurn{activation: activation, coordinator: coordinator}, append(historyOptions, runner.WithContextBreakdown())...)
+		turn, setupErr := r.owner.buildTurn(runCtx, r.owner.source, &swarmTurn{activation: activation, coordinator: coordinator}, recording, runner.WithContextBreakdown())
 		if setupErr != nil {
 			return nil, setupErr
 		}

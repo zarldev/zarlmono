@@ -28,13 +28,35 @@ import (
 //	judge := guardrails.NewLLMVerdictJudge(provider)
 //	g := guardrails.NewDecomposeGuardrail(0, guardrails.WithDecomposeJudge(judge))
 type LLMVerdictJudge struct {
-	inference inference.Scope
-	model     string
-	provider  llm.Provider
-	maxTokens int
+	inference  inference.Scope
+	model      string
+	provider   llm.Provider
+	maxTokens  int
+	onObserved func(context.Context, VerdictObservation)
 }
 
 type LLMVerdictJudgeOption = options.Option[LLMVerdictJudge]
+
+// VerdictObservation retains invocation evidence and semantic response validity.
+// Valid is true only when the existing response parsing and validation succeed;
+// it does not describe recovery or child execution. A value copy borrows sidecars.
+type VerdictObservation struct {
+	Inference inference.Observation
+	Valid     bool
+}
+
+// Clone returns an observation with independently owned inference evidence.
+func (o VerdictObservation) Clone() VerdictObservation {
+	o.Inference = o.Inference.Clone()
+	return o
+}
+
+// WithVerdictObservationSink installs a synchronous per-call callback, emitted
+// after response validation only when an invocation was admitted. The callback
+// must tolerate concurrent calls and must not retain the operation context.
+func WithVerdictObservationSink(sink func(context.Context, VerdictObservation)) LLMVerdictJudgeOption {
+	return func(j *LLMVerdictJudge) { j.onObserved = sink }
+}
 
 // WithVerdictInferenceScope includes judge inference in the supplied account.
 // model identifies the configured judge model; empty means unknown.
@@ -57,8 +79,9 @@ func WithVerdictMaxTokens(n int) LLMVerdictJudgeOption {
 // verdicts should use a smaller model.
 func NewLLMVerdictJudge(provider llm.Provider, opts ...LLMVerdictJudgeOption) *LLMVerdictJudge {
 	j := &LLMVerdictJudge{
-		provider:  provider,
-		maxTokens: defaultVerdictMaxTokens,
+		provider:   provider,
+		onObserved: func(context.Context, VerdictObservation) {},
+		maxTokens:  defaultVerdictMaxTokens,
 	}
 	for _, opt := range opts {
 		opt(j)
@@ -97,14 +120,31 @@ func (j *LLMVerdictJudge) Judge(ctx context.Context, in VerdictInput) (Verdict, 
 		ChatTemplateKwargs: llm.ChatTemplateKwargs{EnableThinking: false},
 	}
 
-	chunks := j.inference.Complete(ctx, inference.Call{Operation: "judge", Provider: j.provider.Name(), Model: j.model}, j.provider, req)
-
-	var body strings.Builder
-	for chunk, cerr := range chunks {
-		if cerr != nil {
-			return Verdict{}, fmt.Errorf("verdict stream: %w", cerr)
+	var observation VerdictObservation
+	present := false
+	defer func() {
+		if present {
+			j.onObserved(ctx, observation)
 		}
-		body.WriteString(chunk.Content)
+	}()
+	var body strings.Builder
+	var streamErr error
+	err := j.inference.InvokeObserved(ctx, inference.Call{Operation: "judge", Provider: j.provider.Name(), Model: j.model}, j.provider, req, func(chunks llm.CompletionStream) {
+		for chunk, cerr := range chunks {
+			if cerr != nil {
+				streamErr = cerr
+				return
+			}
+			body.WriteString(chunk.Content)
+		}
+	}, func(_ context.Context, observed inference.Observation) {
+		observation.Inference, present = observed, true
+	})
+	if err != nil {
+		return Verdict{}, fmt.Errorf("verdict stream: %w", err)
+	}
+	if streamErr != nil {
+		return Verdict{}, fmt.Errorf("verdict stream: %w", streamErr)
 	}
 
 	// Third-party backends that inline `<think>…</think>` in content
@@ -129,6 +169,7 @@ func (j *LLMVerdictJudge) Judge(ctx context.Context, in VerdictInput) (Verdict, 
 	if !action.Valid() {
 		return Verdict{}, fmt.Errorf("verdict invalid action: %q", payload.Action)
 	}
+	observation.Valid = true
 	return Verdict{Rationale: payload.Rationale, Action: action}, nil
 }
 

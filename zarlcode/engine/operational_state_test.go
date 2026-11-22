@@ -154,6 +154,9 @@ func TestLiveRunnerOperationalStateFeedsExecutiveBriefing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compact: %v", err)
 	}
+	if result.Inference == nil || result.Inference.Provider != "operational-narrative" || result.Inference.Model != "model" {
+		t.Fatalf("compaction inference = %+v, want provider %q and model %q", result.Inference, "operational-narrative", "model")
+	}
 	briefing := result.History[1].Content
 	for _, want := range []string{"WORKING FILES", "pkg/file.go", "TOOL USAGE", "bash × 2", "edit × 2", "VERIFICATION", "go test ./pkg", "failed", "UNRESOLVED FAILURES", "anchors changed"} {
 		if !strings.Contains(briefing, want) {
@@ -162,7 +165,9 @@ func TestLiveRunnerOperationalStateFeedsExecutiveBriefing(t *testing.T) {
 	}
 }
 
-type operationalNarrativeProvider struct{ llm.Provider }
+type operationalNarrativeProvider struct{}
+
+func (operationalNarrativeProvider) Name() string { return "operational-narrative" }
 
 func (operationalNarrativeProvider) Complete(context.Context, llm.CompletionRequest) llm.CompletionStream {
 	return func(yield func(llm.CompletionChunk, error) bool) {

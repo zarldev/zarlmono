@@ -24,9 +24,9 @@ func executeVersionedSessionPersist(ctx context.Context, store *db.Store, op *se
 	case sessionPersistFull:
 		snapshot := op.snapshot
 		if snapshot.exact {
-			version, err = store.CommitCheckpointTurnVersioned(ctx, snapshot.record, snapshot.transcript, expected, snapshot.historyBatches...)
+			version, err = store.CommitCheckpointTurnWithAccountingBatchVersioned(ctx, snapshot.record, snapshot.transcript, expected, snapshot.accounting, snapshot.historyBatches...)
 		} else {
-			version, err = store.CommitCompletedTurnVersioned(ctx, snapshot.record, snapshot.transcript, expected, snapshot.historyBatches...)
+			version, err = store.CommitCompletedTurnWithAccountingBatchVersioned(ctx, snapshot.record, snapshot.transcript, expected, snapshot.accounting, snapshot.historyBatches...)
 		}
 		if err == nil {
 			snapshot.acknowledgeHistory()

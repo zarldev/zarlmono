@@ -40,6 +40,9 @@ func (r *ProviderRegistry) ResolveContextWindowCached(name, model string) int {
 	if err == nil && def.ContextWindow > 0 {
 		return def.ContextWindow
 	}
+	if err == nil && def.AdapterType == AdapterTypes.LITELLM {
+		return 0
+	}
 	// Documented route-specific limits beat generic API catalog entries;
 	// unknown models still use the catalog fallback.
 	if err == nil {
@@ -82,6 +85,9 @@ func (r *ProviderRegistry) ResolveContextWindow(ctx context.Context, name, baseU
 	def, err := r.Parse(name)
 	if err == nil && def.ContextWindow > 0 {
 		return def.ContextWindow
+	}
+	if err == nil && def.AdapterType == AdapterTypes.LITELLM {
+		return 0
 	}
 	// Documented route-specific limits beat generic API catalog entries;
 	// unknown models still use the catalog fallback.

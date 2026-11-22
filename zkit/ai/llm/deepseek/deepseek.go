@@ -53,6 +53,7 @@ func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 		openai.WithBaseURL(p.baseURL),
 		openai.WithModel(p.model),
 		openai.WithReasoningHistory(reasoning),
+		openai.WithDeepSeekChatDialect(true),
 	}
 	if p.timeout > 0 {
 		optsInner = append(optsInner, openai.WithTimeout(p.timeout))

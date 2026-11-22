@@ -5,6 +5,9 @@ import (
 )
 
 const (
+	modelGPT62Astra    = "gpt-6.2-astra"
+	modelGPT62Sol      = "gpt-6.2-sol"
+	modelGPT61Terra    = "gpt-6.1-terra"
 	modelGPT6Astra     = "gpt-6-astra"
 	modelGPT61Sol      = "gpt-6.1-sol"
 	modelGPT6Sol       = "gpt-6-sol"
@@ -57,6 +60,11 @@ type modelPreset struct {
 // are intentionally not listed; they may remain API-key-only, but zarlcode's
 // openai-codex backend uses ChatGPT OAuth.
 var presetModels = []modelPreset{
+	// Public model windows are maxima, not an OAuth account's usable compaction budget.
+	// Until /codex/models supplies that budget, retain the conservative fallback.
+	{ID: modelGPT62Astra, BaseModel: modelGPT62Astra, Description: "GPT-6.2 Astra (complex projects)", ContextWindow: DefaultContextWindow},
+	{ID: modelGPT62Sol, BaseModel: modelGPT62Sol, Description: "GPT-6.2 Sol (everyday work)", ContextWindow: DefaultContextWindow},
+	{ID: modelGPT61Terra, BaseModel: modelGPT61Terra, Description: "GPT-6.1 Terra (visual work)", ContextWindow: DefaultContextWindow},
 	{ID: modelGPT61Sol, BaseModel: modelGPT61Sol, Description: "GPT-6.1 Sol (coding/agentic)", ContextWindow: gpt6ContextWindow},
 	// gpt-6-astra (strongest end-to-end coding, apps, and research model)
 	{ID: modelGPT6Astra, BaseModel: modelGPT6Astra, Description: "GPT-6 Astra (most capable)", ContextWindow: gpt6ContextWindow},
@@ -122,6 +130,11 @@ func ContextWindowFor(id string) int {
 // by the settings pane (later) to constrain the effort dropdown to
 // what the active model actually accepts.
 var effortVariants = map[string][]reasoningEffort{
+	// Official model-selection guidance demonstrates low through extra high;
+	// Max availability is model/account-dependent and not presumed here.
+	modelGPT62Astra: {reasoningEffortLow, reasoningEffortMedium, reasoningEffortHigh, reasoningEffortXHigh},
+	modelGPT62Sol:   {reasoningEffortLow, reasoningEffortMedium, reasoningEffortHigh, reasoningEffortXHigh},
+	modelGPT61Terra: {reasoningEffortLow, reasoningEffortMedium, reasoningEffortHigh, reasoningEffortXHigh},
 	modelGPT61Sol:   gpt56Efforts(),
 	modelGPT6Astra:  gpt56Efforts(),
 	modelGPT6Sol:    gpt56Efforts(),

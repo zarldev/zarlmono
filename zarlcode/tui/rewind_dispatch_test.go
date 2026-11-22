@@ -119,17 +119,28 @@ func TestBeforeCheckpointFailureRetainsPromptAndReleasesReservation(t *testing.T
 }
 
 type beforeFixture struct {
-	ui       *tui.UI
-	live     *engine.LiveRunner
-	store    *db.Store
-	ws       code.Workspace
-	provider *beforeProvider
-	sink     *teasink.Sink
-	mu       sync.Mutex
-	events   []tea.Msg
+	ui           *tui.UI
+	live         *engine.LiveRunner
+	store        *db.Store
+	ws           code.Workspace
+	provider     *beforeProvider
+	sink         *teasink.Sink
+	mu           sync.Mutex
+	events       []tea.Msg
+	applications chan teasink.ApplicationDelivery
 }
 
 func newBeforeFixture(t *testing.T, opts ...options.Option[engine.LiveRunner]) *beforeFixture {
+	t.Helper()
+	return newBeforeFixtureWithSink(t, false, opts...)
+}
+
+func newApplicationBeforeFixture(t *testing.T) *beforeFixture {
+	t.Helper()
+	return newBeforeFixtureWithSink(t, true)
+}
+
+func newBeforeFixtureWithSink(t *testing.T, application bool, opts ...options.Option[engine.LiveRunner]) *beforeFixture {
 	t.Helper()
 	ws, err := code.NewWorkspace(t.TempDir())
 	if err != nil {
@@ -141,7 +152,12 @@ func newBeforeFixture(t *testing.T, opts ...options.Option[engine.LiveRunner]) *
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	f := &beforeFixture{ws: ws, store: store, provider: &beforeProvider{}}
-	f.sink = teasink.New(func(msg tea.Msg) { f.mu.Lock(); f.events = append(f.events, msg); f.mu.Unlock() })
+	if application {
+		f.applications = make(chan teasink.ApplicationDelivery, 1)
+		f.sink = teasink.NewApplicationSink(func(msg tea.Msg) { f.applications <- msg.(teasink.ApplicationDelivery) })
+	} else {
+		f.sink = teasink.New(func(msg tea.Msg) { f.mu.Lock(); f.events = append(f.events, msg); f.mu.Unlock() })
+	}
 	t.Cleanup(f.sink.Close)
 	opts = append(opts, engine.WithLiveSink(f.sink))
 	f.live = engine.NewLiveRunner(f.provider, ws, "saved-model", opts...)

@@ -16,7 +16,6 @@ import (
 	"github.com/zarldev/zarlmono/zkit/agent/inference"
 	"github.com/zarldev/zarlmono/zkit/agent/taskscope"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
-	"github.com/zarldev/zarlmono/zkit/ai/llm/repair"
 	"github.com/zarldev/zarlmono/zkit/ai/tools"
 )
 
@@ -27,7 +26,7 @@ import (
 //  3. Drain the Steerer for any queued user-side messages.
 //  4. Build messages: [system?, ...spec.Context, user prompt + accumulated tool results].
 //  5. Stream Provider.Complete; publish chunks as LLM events.
-//  6. Extract structured tool calls; fall back to ParseFromText if none.
+//  6. Extract structured tool calls; fall back to ParseFromText only without native replay.
 //  7. Dispatch each call through the tool registry. Append results
 //     to the message history.
 //  8. Terminate when the model emits no more tool calls, when ctx
@@ -179,11 +178,19 @@ iterations:
 		iterCtx, cancelIter := iterationContext(ctx, r.timeouts.iteration)
 		streamCtx, cancelStream := context.WithCancelCause(iterCtx)
 		var sr streamResult
-		admissionErr := r.inference.Invoke(streamCtx, inference.Call{Operation: "runner", Provider: r.providerName, Model: r.modelName}, r.client, req, func(stream llm.CompletionStream) {
+		// Invoke constructs the provider stream before its consume callback. Own
+		// the basis before that dispatch, but retain it only for admitted attempts.
+		var rateCard *llm.RateCard
+		if r.rateCard != nil {
+			card := r.rateCard.Clone()
+			rateCard = &card
+		}
+		admissionErr := r.inference.Invoke(streamCtx, inference.Call{Operation: "runner", Provider: r.providerName, Model: r.modelName, RateCard: rateCard}, r.client, req, func(stream llm.CompletionStream) {
 			t.attempt++
 			stream = withStreamIdle(cancelStream, r.timeouts.streamIdle, stream)
 			// Drain synchronously; the idle wrapper joins its watchdog on return.
 			sr = r.drainStream(ctx, streamCtx, cancelStream, spec, stream)
+			sr.rateCard = rateCard
 		})
 		cancelIter()
 		if admissionErr != nil {
@@ -225,10 +232,12 @@ iterations:
 
 		assistantContent := strings.TrimSpace(sr.content)
 
-		// Tool fallback: if no structured calls, try parsing them from the
-		// visible text — see appendTextToolCalls.
+		// Tool fallback is only safe without native replay. Continuation items
+		// and explicit text positions bind the provider's output ordering;
+		// synthetic calls have no provider position and cannot share that order.
+		// Leave native text intact; only structured calls authorize execution.
 		clean := assistantContent
-		if len(toolCalls) == 0 && clean != "" {
+		if len(toolCalls) == 0 && !sr.hasNativeOutput() && clean != "" {
 			toolCallOrder, clean = appendTextToolCalls(clean, toolCalls, toolCallOrder)
 		}
 		// Keep dispatch/audit input separate from repaired provider context.
@@ -385,32 +394,6 @@ const upstreamToolCallJSONRecoveryMessage = "Your previous response was rejected
 	"(common cause: literal newlines or unescaped quotes inside a string value). " +
 	"Re-emit the same tool call with valid JSON: escape newlines as \\n, escape quotes as \\\", " +
 	"and keep multi-line code strings on a single JSON line. Try again now."
-
-// canonicalizeToolArgs rewrites each tool call's argument JSON in place to a
-// canonical form. The model sometimes emits malformed JSON (unescaped
-// newlines in long paths, missing closers when the response gets cut off);
-// repair.Unmarshal would recover it later in dispatch, but if the raw text
-// stays in tc.Function.Arguments the malformed string lands in conversation
-// history and chokes the next request server-side (llama-server's
-// chat.cpp:func_args_not_string used to throw 500 on it). Args that can't be
-// salvaged are left as-is so dispatch surfaces a Validation result and the
-// model gets a targeted re-emit message.
-func canonicalizeToolArgs(toolCalls map[string]*llm.ToolCall) {
-	for _, tc := range toolCalls {
-		if tc.Function.Arguments == "" {
-			continue
-		}
-		var v any
-		if err := repair.Unmarshal([]byte(tc.Function.Arguments), &v); err != nil {
-			continue
-		}
-		canonical, err := json.Marshal(v)
-		if err != nil {
-			continue
-		}
-		tc.Function.Arguments = string(canonical)
-	}
-}
 
 // appendTextToolCalls is the no-structured-calls fallback: when the model
 // wrote its tool calls as text rather than structured tool_call objects,
@@ -688,3 +671,9 @@ func (r *Runner) releaseTaskID(id taskscope.ID) {
 }
 
 func (w *cappedBytesWriter) string() string { return string(w.buf) }
+
+// hasNativeOutput identifies provider-owned replay or ordering that synthetic
+// text-to-tool calls must not reinterpret.
+func (s streamResult) hasNativeOutput() bool {
+	return len(s.continuationItems) != 0 || s.contentOutputIndex != nil
+}

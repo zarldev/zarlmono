@@ -157,6 +157,7 @@ func (r *RuntimeReservation) restoreOrdinarySession(messages []llm.Message, stat
 	r.owner.context.exact = false
 	r.owner.mu.Lock()
 	if update != nil {
+		r.owner.target.Facts, r.owner.target.RateCard = cloneTargetBasis(update.Facts, update.RateCard)
 		r.owner.target.Provider, r.owner.target.Spec = update.Provider, update.Spec
 		r.owner.target.Model = update.Spec.Model
 		r.owner.target.Window = update.Window

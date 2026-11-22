@@ -40,7 +40,7 @@ func CostPer1k(model string) (float64, float64, bool) {
 // Capabilities reports what a Gemini model supports. Gemini is natively
 // multimodal; the 2.x / 3.x / 4.x lines expose thinking.
 func Capabilities(model string) llm.ModelCapabilities {
-	m := strings.ToLower(model)
+	m := strings.TrimPrefix(strings.ToLower(model), "models/")
 	return llm.ModelCapabilities{
 		SupportsStreaming: true,
 		SupportsTools:     true,

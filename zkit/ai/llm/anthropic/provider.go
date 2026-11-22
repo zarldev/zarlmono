@@ -2,10 +2,12 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,19 +43,21 @@ const (
 
 // Provider implements the Anthropic Claude LLM provider using the official SDK.
 type Provider struct {
-	client     *anthropic.Client
-	model      anthropic.Model
-	apiKey     string
-	baseURL    string       // optional override; empty → SDK default
-	httpClient *http.Client // optional, borrowed transport policy
+	client      *anthropic.Client
+	model       anthropic.Model
+	apiKey      string
+	baseURL     string       // optional override; empty → SDK default
+	httpClient  *http.Client // optional, borrowed transport policy
+	cachePolicy cachePolicy
 }
 
 // NewProvider assembles an Anthropic provider using an already-resolved API key.
 // Options are applied before constructing the SDK client; construction performs no I/O.
 func NewProvider(apiKey string, opts ...options.Option[Provider]) *Provider {
 	provider := &Provider{
-		model:  defaultModel,
-		apiKey: apiKey,
+		model:       defaultModel,
+		cachePolicy: cachePolicy{static: CacheTTLs.CACHE1H},
+		apiKey:      apiKey,
 	}
 
 	// Apply options FIRST so client construction sees the final
@@ -390,7 +394,7 @@ func extractSystemPrompt(messages []llm.Message) string {
 // which emitted only text blocks — left Claude blind to its own prior
 // tool calls, so it re-issued them every turn or the API rejected the
 // unpaired tool_use.
-func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
+func convertMessagesToSDK(messages []llm.Message) ([]anthropic.MessageParam, error) {
 	var sdkMessages []anthropic.MessageParam
 	var pendingUser []anthropic.ContentBlockParamUnion
 
@@ -408,7 +412,9 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 			continue
 
 		case llm.RoleUser:
-			appendUserContent(&pendingUser, msg)
+			if err := appendUserContent(&pendingUser, msg); err != nil {
+				return nil, err
+			}
 
 		case llm.RoleTool:
 			// A tool result rides on a user message as a tool_result block,
@@ -447,7 +453,7 @@ func convertMessagesToSDK(messages []llm.Message) []anthropic.MessageParam {
 	}
 	flushUser()
 
-	return sdkMessages
+	return sdkMessages, nil
 }
 
 type nativeThinkingBlock struct {
@@ -572,64 +578,7 @@ func mergeAnthropicContinuation(projected []anthropic.ContentBlockParamUnion, it
 	return blocks
 }
 
-// setLastMessageCacheBreakpoint marks the final content block of the final
-// message with cache_control:ephemeral — a rolling breakpoint that lets
-// Anthropic serve the whole conversation prefix from cache on the next turn.
-// The tool_result blocks carrying file reads and every prior turn sit before
-// it, so on a long agentic loop this is where the real prompt-token savings
-// live (the system-prompt breakpoint only covers tools+system, which is a
-// fraction of a deep conversation).
-//
-// Combined with the static system breakpoint this is the standard two-
-// breakpoint incremental pattern: each turn writes cache for the newly
-// appended suffix and reads the longest matching prefix (everything up to the
-// previous turn's breakpoint) from cache. Anthropic allows up to 4
-// breakpoints, so two leaves headroom.
-//
-// Safe on any conversation: an empty message list or a block type that can't
-// carry cache_control is a no-op, and a prefix shorter than the model's
-// minimum cacheable length is silently ignored by the API rather than erroring.
-// staticCacheControl marks the static prefix (tools + system) with a 1-hour
-// cache TTL rather than the default 5 minutes. That prefix is identical for a
-// whole session, so it is written once and read on every turn; the 1-hour TTL
-// lets it survive the multi-minute idle gaps between turns (user think-time,
-// tool-approval waits) that would otherwise evict the 5-minute cache and force
-// a full re-warm. The extra write cost (2x base vs 1.25x) is paid on that
-// one-time write; every read stays ~90% off. The rolling last-message
-// breakpoint keeps the cheaper 5-minute default because its tail is superseded
-// each turn — a 1-hour write there would pay 2x for content used briefly.
-func staticCacheControl() anthropic.CacheControlEphemeralParam {
-	cc := anthropic.NewCacheControlEphemeralParam()
-	cc.TTL = anthropic.CacheControlEphemeralTTLTTL1h
-	return cc
-}
-
-func setLastMessageCacheBreakpoint(messages []anthropic.MessageParam) {
-	if len(messages) == 0 || len(messages[len(messages)-1].Content) == 0 {
-		return
-	}
-	blocks := messages[len(messages)-1].Content
-	index := len(blocks) - 1
-	raw, err := json.Marshal(blocks[index])
-	if err != nil {
-		return
-	}
-	var object map[string]json.RawMessage
-	if json.Unmarshal(raw, &object) != nil {
-		return
-	}
-	var kind string
-	if json.Unmarshal(object["type"], &kind) != nil || kind == continuationThinking || kind == continuationRedacted {
-		return
-	}
-	if _, exists := object["cache_control"]; exists {
-		return
-	}
-	object["cache_control"] = json.RawMessage(`{"type":"ephemeral"}`)
-	blocks[index] = param.Override[anthropic.ContentBlockParamUnion](object)
-}
-
-func appendUserContent(blocks *[]anthropic.ContentBlockParamUnion, msg llm.Message) {
+func appendUserContent(blocks *[]anthropic.ContentBlockParamUnion, msg llm.Message) error {
 	if msg.Parts == nil && msg.Content != "" {
 		*blocks = append(*blocks, anthropic.NewTextBlock(msg.Content))
 	}
@@ -640,41 +589,46 @@ func appendUserContent(blocks *[]anthropic.ContentBlockParamUnion, msg llm.Messa
 				*blocks = append(*blocks, anthropic.NewTextBlock(part.Text))
 			}
 		case llm.ContentTypeImage:
-			block, ok := anthropicImageBlock(part.Image)
-			if ok {
-				*blocks = append(*blocks, block)
+			block, err := anthropicImageBlock(part.Image)
+			if err != nil {
+				return err
 			}
+			*blocks = append(*blocks, block)
 		}
 	}
+	return nil
 }
 
-func anthropicImageBlock(img *llm.ImageData) (anthropic.ContentBlockParamUnion, bool) {
+func anthropicImageBlock(img *llm.ImageData) (anthropic.ContentBlockParamUnion, error) {
 	if img == nil {
-		return anthropic.ContentBlockParamUnion{}, false
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("anthropic: %w: image input is missing its payload", llm.ErrModelNotSupported)
 	}
 	if img.DataURI != "" {
-		mime, data, ok := splitDataURI(img.DataURI)
-		if !ok {
-			return anthropic.ContentBlockParamUnion{}, false
+		prefix, data, ok := strings.Cut(img.DataURI, ";base64,")
+		if !ok || !strings.HasPrefix(prefix, "data:") || data == "" {
+			return anthropic.ContentBlockParamUnion{}, fmt.Errorf("anthropic: %w: image input requires a base64 data URI", llm.ErrModelNotSupported)
 		}
-		if img.MIMEType != "" {
-			mime = img.MIMEType
+		mime := anthropic.Base64ImageSourceMediaType(strings.TrimPrefix(prefix, "data:"))
+		switch mime {
+		case anthropic.Base64ImageSourceMediaTypeImageJPEG, anthropic.Base64ImageSourceMediaTypeImagePNG,
+			anthropic.Base64ImageSourceMediaTypeImageGIF, anthropic.Base64ImageSourceMediaTypeImageWebP:
+		default:
+			return anthropic.ContentBlockParamUnion{}, fmt.Errorf("anthropic: %w: unsupported image media type", llm.ErrModelNotSupported)
 		}
-		return anthropic.NewImageBlockBase64(mime, data), true
+		if img.MIMEType != "" && img.MIMEType != string(mime) {
+			return anthropic.ContentBlockParamUnion{}, fmt.Errorf("anthropic: %w: image media type contradicts its data URI", llm.ErrModelNotSupported)
+		}
+		decoded, err := base64.StdEncoding.Strict().DecodeString(data)
+		if err != nil || len(decoded) == 0 {
+			return anthropic.ContentBlockParamUnion{}, fmt.Errorf("anthropic: %w: image input requires nonempty base64 data", llm.ErrModelNotSupported)
+		}
+		return anthropic.NewImageBlockBase64(string(mime), data), nil
 	}
-	if img.URL != "" {
-		return anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: img.URL}), true
+	remote, err := url.Parse(img.URL)
+	if err != nil || (remote.Scheme != "http" && remote.Scheme != "https") || remote.Hostname() == "" {
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("anthropic: %w: image input requires an HTTP(S) URL or base64 data URI", llm.ErrModelNotSupported)
 	}
-	return anthropic.ContentBlockParamUnion{}, false
-}
-
-func splitDataURI(uri string) (string, string, bool) {
-	const sep = ";base64,"
-	prefix, data, ok := strings.Cut(uri, sep)
-	if !ok || !strings.HasPrefix(prefix, "data:") || data == "" {
-		return "", "", false
-	}
-	return strings.TrimPrefix(prefix, "data:"), data, true
+	return anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: img.URL}), nil
 }
 
 // applyResponseFormat maps the provider-neutral ResponseFormat onto
@@ -733,11 +687,6 @@ func convertToolsToSDK(tools []llm.Tool) []anthropic.ToolUnionParam {
 		// Set up the input schema from the typed parameters.
 		if !tool.Function.Parameters.IsZero() {
 			toolParam.InputSchema = param.Override[anthropic.ToolInputSchemaParam](tool.Function.Parameters)
-		}
-
-		// Keep tool definitions cached independently of changing system prompts.
-		if i == len(tools)-1 {
-			toolParam.CacheControl = staticCacheControl()
 		}
 
 		// Wrap in the union type

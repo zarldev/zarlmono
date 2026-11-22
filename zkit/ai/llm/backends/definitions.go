@@ -9,6 +9,7 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm/claudecode"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/deepseek"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/google"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/litellm"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/llamacpp"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/ollama"
 	"github.com/zarldev/zarlmono/zkit/ai/llm/openai"
@@ -49,10 +50,10 @@ type ProviderDefinition struct {
 	Enabled           bool
 }
 
-// RequiresKey reports whether a hosted built-in requires an API key rather than
+// RequiresKey reports whether a provider requires an API key rather than
 // the keyless placeholder used by local adapters. UsesAPIKey controls UI fields.
 func (d ProviderDefinition) RequiresKey() bool {
-	return d.APIKeyRequired
+	return d.APIKeyRequired || d.AdapterType == AdapterTypes.LITELLM
 }
 
 // UsesAPIKey reports whether the UI should offer a key field. Hosted built-ins
@@ -217,6 +218,15 @@ func BuiltinDefinitions() []ProviderDefinition {
 			Builtin:    true,
 			Enabled:    true,
 		},
+		{
+			Name:           llm.LLMProviders.LITELLM.String(),
+			DisplayName:    "LiteLLM",
+			AdapterType:    AdapterTypes.LITELLM,
+			BaseURL:        "http://localhost:4000",
+			APIKeyRequired: true,
+			Builtin:        true,
+			Enabled:        true,
+		},
 	}
 }
 
@@ -235,6 +245,24 @@ func openAICodexSeedModelIDs() []string {
 // --- Adapter registration (called at init) ---
 
 func init() {
+	registerAdapter(liteLLM, adapterDef{
+		build: func(_ context.Context, p buildParams) (llm.Provider, error) {
+			opts := []options.Option[litellm.Provider]{
+				litellm.WithModel(p.model),
+				litellm.WithProtocol(p.protocol),
+				litellm.WithAnthropicPromptCache(chatCachePolicy(p.cachePolicy)),
+			}
+			if p.protocol == llm.ModelProtocols.PROTOCOLMESSAGES {
+				strategy, static, rolling := messagesCachePolicy(p.cachePolicy)
+				opts = append(opts, litellm.WithMessagesCachePolicy(strategy, static, rolling))
+			}
+			if p.baseURL != "" {
+				opts = append(opts, litellm.WithBaseURL(p.baseURL))
+			}
+			return litellm.NewProvider(p.apiKey, opts...), nil
+		},
+	})
+
 	// OpenAI-compatible adapters (static API key)
 	registerAdapter(openAICompatible, adapterDef{
 		build: func(_ context.Context, p buildParams) (llm.Provider, error) {
@@ -277,7 +305,8 @@ func init() {
 	// Anthropic-compatible
 	registerAdapter(anthropicCompatible, adapterDef{
 		build: func(_ context.Context, p buildParams) (llm.Provider, error) {
-			opts := []options.Option[anthropic.Provider]{}
+			strategy, static, rolling := messagesCachePolicy(p.cachePolicy)
+			opts := []options.Option[anthropic.Provider]{anthropic.WithCacheStrategy(strategy), anthropic.WithCacheTTLs(static, rolling)}
 			if p.baseURL != "" {
 				opts = append(opts, anthropic.WithBaseURL(p.baseURL))
 			}

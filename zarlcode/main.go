@@ -25,6 +25,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/tui"
 	"github.com/zarldev/zarlmono/zarlcode/version"
 	"github.com/zarldev/zarlmono/zkit/agent/sandbox"
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	"github.com/zarldev/zarlmono/zkit/zapp"
 )
 
@@ -106,12 +107,40 @@ func Main() {
 		"",
 		"write a Go execution trace to this file until zarlcode exits",
 	)
+	rateCardFile := flag.String("rate-card", "", "explicit local rate-card JSON for the initial target only (not persisted; relative to cwd; no ~ or environment expansion)")
+	var protocol llm.ModelProtocol
+	flag.Func("protocol", "runtime LiteLLM protocol: chat_completions, responses, anthropic_messages, or generate_content", func(raw string) error {
+		// The CLI names the Anthropic protocol explicitly; the shared enum
+		// calls it messages. Do not accept unknown or the internal spelling.
+		switch raw {
+		case "anthropic_messages":
+			protocol = llm.ModelProtocols.PROTOCOLMESSAGES
+			return nil
+		case llm.ModelProtocols.PROTOCOLUNKNOWN.String(), llm.ModelProtocols.PROTOCOLMESSAGES.String():
+			return fmt.Errorf("%w: %q", llm.ErrParseModelProtocol, raw)
+		}
+		parsed, err := llm.ParseModelProtocol(raw)
+		if err != nil {
+			return fmt.Errorf("protocol: %w", err)
+		}
+		protocol = parsed
+		return nil
+	})
 	flag.Parse()
 	promptProfile, err := engine.ParsePromptProfile(*promptProfileFlag)
 	if err != nil || !promptProfile.IsValid() {
 		fmt.Fprintf(os.Stderr, "prompt-profile: invalid %q (want standard or compact)\n", *promptProfileFlag)
 		os.Exit(4)
 	}
+
+	// An explicitly empty path is a usage error, not an omitted policy.
+	// Validation performs no I/O, including when --version is requested.
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "rate-card" && *rateCardFile == "" {
+			fmt.Fprintln(os.Stderr, "rate-card: explicit path must not be empty")
+			os.Exit(4)
+		}
+	})
 
 	if *versionFlag {
 		fmt.Fprintln(os.Stdout, version.String())
@@ -140,6 +169,8 @@ func Main() {
 		Headless:      *headlessFlag,
 		Prompt:        prompt,
 		PromptProfile: promptProfile,
+		Protocol:      protocol,
+		RateCardFile:  *rateCardFile,
 		ReportFile:    *reportFile,
 		MaxIter:       *maxIterFlag,
 		PprofAddr:     *pprofAddr,

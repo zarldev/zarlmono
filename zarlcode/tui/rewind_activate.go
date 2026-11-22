@@ -17,6 +17,7 @@ import (
 	"github.com/zarldev/zarlmono/zarlcode/rewind"
 	"github.com/zarldev/zarlmono/zarlcode/transcript"
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
+	"github.com/zarldev/zarlmono/zkit/ai/llm/backends"
 	"github.com/zarldev/zarlmono/zkit/db"
 )
 
@@ -24,10 +25,7 @@ type actionApplyRewind struct{ selection rewindSelection }
 
 func (actionApplyRewind) isAction() {}
 
-func rewindTarget(target engine.RunTarget) rewind.Target {
-	return rewind.Target{Provider: target.Spec.Name, Model: target.Model, Window: target.Window,
-		Reserve: target.Reserve, PlanMode: target.Plan, CodexEffort: target.Spec.CodexEffort}
-}
+func rewindTarget(target engine.RunTarget) rewind.Target { return engine.CheckpointTarget(target) }
 
 // A bounded synchronous transition keeps the Update loop the sole owner. No
 // goroutine, queued command, or shutdown flush can publish half a branch.
@@ -111,19 +109,35 @@ func runtimeFingerprint(reservation *engine.RuntimeReservation) (string, error) 
 func (m *UI) buildRewindTarget(ctx context.Context, saved rewind.Target) (engine.RunTarget, error) {
 	target := m.live.RunTarget() // retain today's tool/security/iteration policy
 	spec := engine.ProviderSpec{Name: saved.Provider, Model: saved.Model, CodexEffort: saved.CodexEffort}
-	// Embedders may supply their provider directly without a registry. Such a
-	// provider can only restore its own already-built route, never another target.
 	if m.settings.Registry == nil {
 		if target.Spec.Name != spec.Name || target.Spec.Model != spec.Model || target.Spec.BaseURL != "" || target.Spec.CodexEffort != spec.CodexEffort {
 			return engine.RunTarget{}, rewind.ErrTarget
 		}
+		// Reusing an existing provider cannot invent a new cache construction.
+		if (target.Facts == nil && saved.CachePin != (rewind.CachePolicy{})) || (target.Facts != nil && engine.CheckpointTarget(target).CachePin != saved.CachePin) {
+			return engine.RunTarget{}, rewind.ErrTarget
+		}
+		intent, err := saved.CacheIntent.RoutePolicy()
+		if err != nil {
+			return engine.RunTarget{}, rewind.ErrTarget
+		}
+		spec.CachePolicy = intent
+		var cacheFacts *engine.TargetFacts
+		if target.Facts != nil && saved.Provider == "anthropic" && target.Facts.CachePolicy != (backends.RouteCachePolicy{}) {
+			cacheFacts = &engine.TargetFacts{CachePolicy: target.Facts.CachePolicy}
+		}
+		target.Facts = cacheFacts
 	} else {
-		provider, err := engine.BuildProvider(ctx, m.settings.Registry, m.settings.Svc, spec)
+		built, err := m.settings.PrepareRewindProvider(ctx, saved)
 		if err != nil {
 			return engine.RunTarget{}, errors.New("saved provider/model unavailable with current credentials")
 		}
-		target.Provider = provider
+		target.Provider, target.Facts = built.Provider, built.Facts
+		spec = built.Spec
 	}
+	// Saved window and plan replace today's budget. Keep only freshly proven
+	// cache facts, never stale budget, resolution, or pricing.
+	target.RateCard = nil
 	target.Spec, target.Model = spec, saved.Model
 	target.Window, target.Reserve, target.Plan = saved.Window, saved.Reserve, saved.PlanMode
 	return target, nil

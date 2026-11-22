@@ -22,15 +22,29 @@ func WithHTTPClient(client *http.Client) options.Option[Provider] {
 // messageParams owns request shaping for both transport modes. It is invoked
 // only during stream iteration, including validation of external native items.
 func (p *Provider) messageParams(req llm.CompletionRequest) (anthropic.MessageNewParams, error) {
-	for _, message := range req.Messages {
+	for messageIndex, message := range req.Messages {
 		for _, part := range message.Parts {
 			if part.Type != llm.ContentTypeText && part.Type != llm.ContentTypeImage {
 				return anthropic.MessageNewParams{}, fmt.Errorf("anthropic: %w: unsupported %s input", llm.ErrModelNotSupported, part.Type)
 			}
+			if part.Type == llm.ContentTypeImage && message.Role != llm.RoleUser && message.Role != llm.RoleTool {
+				return anthropic.MessageNewParams{}, fmt.Errorf("anthropic: %w: image input requires a user message or tool result", llm.ErrModelNotSupported)
+			}
 		}
-		for _, item := range message.ContinuationItems {
+		for itemIndex, item := range message.ContinuationItems {
 			if item.Provider != continuationProvider || item.Format != continuationFormat {
 				continue
+			}
+			// Reject duplicate and case-folded structural keys before any Go
+			// struct decode can disagree with canonical wire-field inspection.
+			path := fmt.Sprintf("messages[%d].continuation[%d]", messageIndex, itemIndex)
+			if message.Role == llm.RoleAssistant {
+				site := cacheSite{tool: -1, system: -1, message: messageIndex, path: path, raw: item.Data}
+				if err := inspectCacheSite(&site); err != nil {
+					return anthropic.MessageNewParams{}, err
+				}
+			} else if _, err := cacheObjectFields(item.Data, path, false); err != nil {
+				return anthropic.MessageNewParams{}, err
 			}
 			var block nativeThinkingBlock
 			if err := json.Unmarshal(item.Data, &block); err != nil {
@@ -42,15 +56,17 @@ func (p *Provider) messageParams(req llm.CompletionRequest) (anthropic.MessageNe
 			}
 		}
 	}
-	messages := convertMessagesToSDK(req.Messages)
-	setLastMessageCacheBreakpoint(messages)
+	messages, err := convertMessagesToSDK(req.Messages)
+	if err != nil {
+		return anthropic.MessageNewParams{}, err
+	}
 	model := wireModelID(p.model)
 	params := anthropic.MessageNewParams{Model: model, Messages: messages, MaxTokens: int64(getMaxTokens(req.MaxTokens))}
 	if req.Temperature > 0 && !req.Thinking.Enabled && customTemperatureModel(model) {
 		params.Temperature = anthropic.Float(float64(req.Temperature))
 	}
 	if system := extractSystemPrompt(req.Messages); system != "" {
-		params.System = []anthropic.TextBlockParam{{Text: system, CacheControl: staticCacheControl()}}
+		params.System = []anthropic.TextBlockParam{{Text: system}}
 	}
 	params.Tools = convertToolsToSDK(req.Tools)
 	applyResponseFormat(&params, req.ResponseFormat)
@@ -66,6 +82,9 @@ func (p *Provider) messageParams(req llm.CompletionRequest) (anthropic.MessageNe
 			return anthropic.MessageNewParams{}, fmt.Errorf("anthropic: unsupported service tier %q", tier)
 		}
 		params.ServiceTier = anthropic.MessageNewParamsServiceTier(tier)
+	}
+	if err := p.applyCachePolicy(&params, req.Options); err != nil {
+		return anthropic.MessageNewParams{}, err
 	}
 	return params, nil
 }

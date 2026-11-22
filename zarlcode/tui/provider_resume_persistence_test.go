@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -36,7 +37,7 @@ func TestOrdinaryProviderReasoningSurvivesUIStoreRestart(t *testing.T) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				response := `{"choices":[{"index":0,"delta":{"reasoning_content":"retained private thinking","content":"endpoint answer"},"finish_reason":"stop"}]}`
 				if route == "gemini" {
-					response = `{"candidates":[{"content":{"role":"model","parts":[{"text":"retained private thinking","thought":true},{"text":"endpoint answer"}]},"finishReason":"STOP"}]}`
+					response = `{"candidates":[{"content":{"role":"model","parts":[{"text":"retained private thinking","thought":true,"thoughtSignature":"dGhvdWdodA=="},{"text":"endpoint answer","thoughtSignature":"YW5zd2Vy"}]},"finishReason":"STOP"}]}`
 				}
 				_, _ = io.WriteString(w, "data: "+response+"\n\n")
 				if route != "gemini" {
@@ -127,6 +128,13 @@ func TestOrdinaryProviderReasoningSurvivesUIStoreRestart(t *testing.T) {
 						if err := f.ui.ResumeSavedSession(t.Context(), sessionID); err != nil {
 							t.Fatal(err)
 						}
+						var saved []llm.Message
+						if err := json.Unmarshal(record.ContextJSON, &saved); err != nil {
+							t.Fatal(err)
+						}
+						if !reflect.DeepEqual(saved, f.live.ContextSnapshot()) {
+							t.Fatal("resume changed stored reasoning/native projections or output indices")
+						}
 						foundReasoning := false
 						for _, entry := range f.ui.CanonicalThread().Entries() {
 							if entry.Kind == transcript.EntryKinds.ENTRYREASONING && entry.Payload.Text == "retained private thinking" {
@@ -166,7 +174,31 @@ func TestOrdinaryProviderReasoningSurvivesUIStoreRestart(t *testing.T) {
 					t.Fatalf("lost or duplicated %q in continued request", text)
 				}
 			}
-			if (route == "gemini" || route == "claude-code") && strings.Contains(outbound, "retained private thinking") {
+			if route == "gemini" {
+				var wire struct {
+					Contents []struct {
+						Role  string `json:"role"`
+						Parts []struct {
+							Text      string `json:"text"`
+							Thought   bool   `json:"thought"`
+							Signature string `json:"thoughtSignature"`
+						} `json:"parts"`
+					} `json:"contents"`
+				}
+				if err := json.Unmarshal([]byte(outbound), &wire); err != nil {
+					t.Fatal(err)
+				}
+				if len(wire.Contents) != 3 || wire.Contents[1].Role != "model" || len(wire.Contents[1].Parts) != 2 {
+					t.Fatal("resumed Google native output order changed")
+				}
+				parts := wire.Contents[1].Parts
+				if parts[0].Text != "retained private thinking" || !parts[0].Thought || parts[0].Signature != "dGhvdWdodA==" ||
+					parts[1].Text != "endpoint answer" || parts[1].Thought || parts[1].Signature != "YW5zd2Vy" ||
+					strings.Count(outbound, "retained private thinking") != 1 {
+					t.Fatal("resumed Google native thoughts/text/signatures changed or duplicated")
+				}
+			}
+			if route == "claude-code" && strings.Contains(outbound, "retained private thinking") {
 				t.Fatal("display-only reasoning sent outbound")
 			}
 		})

@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,19 +22,25 @@ var errLiveTerminalMissing = errors.New("turn execution returned without a termi
 // liveTurnOperation is owned by Update. Command closures copy its identity;
 // runner task identity is filled only when its start event is applied.
 type liveTurnOperation struct {
-	sessionID      string
-	generation     uint64
-	turnID         string
-	promptID       string
-	queuedID       int
-	ended          bool
-	failed         bool
-	cancelled      bool
-	completed      bool
-	saving         bool
-	promotingExact bool
-	source         *sourceObservation // trusted BEFORE receipt retained through model execution
-	swarmSettle    chan error
+	sessionID          string
+	generation         uint64
+	turnID             string
+	promptID           string
+	queuedID           int
+	ended              bool
+	failed             bool
+	cancelled          bool
+	completed          bool
+	saving             bool
+	promotingExact     bool
+	source             *sourceObservation // trusted BEFORE receipt retained through model execution
+	swarmSettle        chan error
+	runtimeDone        chan tea.Msg
+	runtimeClaimed     *atomic.Bool
+	runtimeReservation *engine.RuntimeReservation // owned only by non-BEFORE queued dispatch
+	runtimeJoined      bool
+	runtimePrompt      string
+	runtimeAttachments []llm.ContentPart
 }
 
 type settledLiveTurnMsg struct {
@@ -52,7 +59,10 @@ func (m *UI) runLiveTurn(prompt string, attachments []llm.ContentPart) tea.Cmd {
 }
 
 func (m *UI) runLiveTurnInput(prompt string, attachments []llm.ContentPart, queuedID int) tea.Cmd {
-	if m.liveOperation != nil {
+	if m.persistenceClosing {
+		return nil
+	}
+	if m.liveOperation != nil || m.manualCompaction != nil {
 		return m.blockUnsettledSubmit()
 	}
 	if err := m.modeTargetSubmitBlocked(); err != nil {
@@ -90,6 +100,7 @@ func (m *UI) runLiveTurnInput(prompt string, attachments []llm.ContentPart, queu
 		// running. Admission still atomically owns/removes the queued prompt.
 		ctx := engine.WithToolOutputSession(m.appContext(), op.sessionID)
 		reservation, reserveErr := m.modeTargetReservation(prompt, queuedID)
+		m.liveOperation.runtimeReservation = reservation
 		run = func() tea.Msg {
 			if reserveErr != nil {
 				return beforeTurnFailedMsg{prompt: prompt, err: reserveErr}
@@ -107,15 +118,27 @@ func (m *UI) runLiveTurnInput(prompt string, attachments []llm.ContentPart, queu
 			return liveTurnFinishedMsg{}
 		}
 	}
+	m.liveOperation.runtimeDone = make(chan tea.Msg, 1)
+	m.liveOperation.runtimeClaimed = new(atomic.Bool)
+	m.liveOperation.runtimePrompt = prompt
+	m.liveOperation.runtimeAttachments = llm.CloneContentParts(attachments)
+	runtime := m.liveOperation
 	sink := m.liveSink
 	return func() tea.Msg {
+		if !runtime.runtimeClaimed.CompareAndSwap(false, true) {
+			return nil
+		}
 		marker := settledLiveTurnMsg{sessionID: op.sessionID, generation: op.generation, result: run()}
 		if sink != nil {
 			sink.AfterEvents(marker)
+			runtime.runtimeDone <- marker
+			close(runtime.runtimeDone)
 			return nil
 		}
 		// Standalone embedders without a sink retain command completion. They
 		// cannot establish rewind eligibility from this fallback.
+		runtime.runtimeDone <- marker
+		close(runtime.runtimeDone)
 		return marker
 	}
 }
@@ -148,6 +171,9 @@ func (m *UI) handleSettledLiveTurn(msg settledLiveTurnMsg) tea.Cmd {
 	// failure; executed turns still require the normal durable settlement.
 	if failed, ok := msg.result.(beforeTurnFailedMsg); ok && (op.swarmSettle == nil || op.turnID == "") {
 		isSwarm := op.swarmSettle != nil
+		if m.persistenceClosing && op.turnID == "" && failed.checkpointSaved {
+			m.shutdownProtected = true
+		}
 		if errors.Is(failed.err, db.ErrCheckpointConflict) {
 			m.sourceConflict = true
 		}
@@ -235,6 +261,9 @@ func (m *UI) finishSettledLiveTurn(msg sessionPersistedMsg) tea.Cmd {
 	m.settledTurnID = op.turnID
 	m.settledWatermark = msg.revision
 	m.initialContinuation = rewind.InitialContinuation{}
+	if m.persistenceClosing {
+		return nil
+	}
 	if cmd := m.deferModeTargetQueueLaunch(!recoveredSave && !op.cancelled && !op.failed); cmd != nil {
 		return cmd
 	}

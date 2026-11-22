@@ -59,6 +59,7 @@ func assertInjectedClientWorks(t *testing.T, construct func(*genai.Client) (*goo
 		t.Fatalf("construct provider: %v", err)
 	}
 	for _, err := range p.Complete(t.Context(), llm.CompletionRequest{
+		Stream:   true,
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
 	}) {
 		if err != nil {

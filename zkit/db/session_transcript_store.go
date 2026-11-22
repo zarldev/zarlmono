@@ -125,26 +125,38 @@ func (s *Store) getSessionTranscript(ctx context.Context, sessionID string) (Ses
 // UpdateActiveTranscript atomically applies changed entries when the durable
 // revision equals ExpectedRevision.
 func (s *Store) UpdateActiveTranscript(ctx context.Context, update TranscriptUpdate) error {
-	return s.updateActiveTranscript(ctx, update, nil, nil, nil)
+	return s.updateActiveTranscript(ctx, update, nil, nil, nil, nil)
 }
 
 // CommitCompletedTurn atomically saves terminal working context, advances the
 // transcript revision, and commits retained replay/request batches. Retrying the
 // batches does not duplicate occurrences even after an ambiguous commit.
 func (s *Store) CommitCompletedTurn(ctx context.Context, record SessionRecord, update TranscriptUpdate, history ...SessionHistoryBatch) error {
-	return s.updateActiveTranscript(ctx, update, &record, nil, history)
+	return s.updateActiveTranscript(ctx, update, &record, nil, history, nil)
 }
 
 // CommitCheckpointTurn saves a prepared checkpoint source only if its complete
 // content and canonical revision still match the caller's observations.
 func (s *Store) CommitCheckpointTurn(ctx context.Context, record SessionRecord, update TranscriptUpdate, expected SessionContentVersion, history ...SessionHistoryBatch) error {
-	return s.updateActiveTranscript(ctx, update, &record, &expected, history)
+	return s.updateActiveTranscript(ctx, update, &record, &expected, history, nil)
 }
 
-func (s *Store) updateActiveTranscript(ctx context.Context, update TranscriptUpdate, record *SessionRecord, expected *SessionContentVersion, history []SessionHistoryBatch) error {
-	return s.WithTx(ctx, func(tx *Store) error {
-		return tx.updateActiveTranscriptTx(ctx, update, record, expected, history)
-	})
+func (s *Store) updateActiveTranscript(ctx context.Context, update TranscriptUpdate, record *SessionRecord, expected *SessionContentVersion, history []SessionHistoryBatch, accounting []SessionProviderAccounting) error {
+	commit := func(tx *Store) error {
+		if len(accounting) != 0 {
+			if err := tx.q.AcquireCheckpointWrite(ctx); err != nil {
+				return fmt.Errorf("acquire accounting turn write: %w", err)
+			}
+		}
+		if err := tx.updateActiveTranscriptTx(ctx, update, record, expected, history); err != nil {
+			return err
+		}
+		return tx.saveSessionProviderAccounting(ctx, update.SessionID, accounting)
+	}
+	if s.inTx {
+		return commit(s)
+	}
+	return s.WithTx(ctx, commit)
 }
 
 // updateActiveTranscriptTx requires a transaction-bound store.

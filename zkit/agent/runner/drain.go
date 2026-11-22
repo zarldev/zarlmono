@@ -20,6 +20,9 @@ type streamResult struct {
 	toolCalls          map[string]*llm.ToolCall
 	toolCallOrder      []string
 	usage              *llm.Usage
+	pricingUsage       *llm.PricingUsage
+	execution          *llm.ExecutionObservation
+	rateCard           *llm.RateCard
 	err                error
 	accepted           bool
 	streamTiming
@@ -42,6 +45,8 @@ func (r *Runner) drainStream(
 	var continuationItems []llm.ContinuationItem
 	var streamErr error
 	var iterUsage *llm.Usage
+	var pricingUsage *llm.PricingUsage
+	var execution *llm.ExecutionObservation
 	accepted := false
 	timing := streamTiming{started: time.Now()}
 
@@ -52,16 +57,19 @@ func (r *Runner) drainStream(
 			streamErr = err
 			return false
 		}
-		// Usage-only snapshots report consumption, not accepted model output.
-		// They must not suppress an otherwise safe pre-output retry. Content,
-		// reasoning, calls, native items and finish metadata still do.
-		accepted = accepted || !chunk.UsageReported || chunk.Content != "" || chunk.Thinking != "" ||
-			chunk.ContentOutputIndex != nil || len(chunk.ToolCalls) != 0 || len(chunk.CompletedItems) != 0 ||
-			chunk.FinishReason != llm.FinishReasons.UNKNOWN
+		accepted = accepted || acceptsStreamChunk(chunk)
 		timing.observe(chunk, accepted, callbackStart)
 		if chunk.UsageReported {
 			usage := chunk.Usage
 			iterUsage = &usage
+		}
+		if chunk.PricingUsage != nil {
+			usage := chunk.PricingUsage.Clone()
+			pricingUsage = &usage
+		}
+		if chunk.Execution != nil {
+			observation := chunk.Execution.Clone()
+			execution = &observation
 		}
 		if chunk.Content != "" {
 			contentBuilder.WriteString(chunk.Content)
@@ -194,6 +202,8 @@ func (r *Runner) drainStream(
 		toolCalls:          toolCalls,
 		toolCallOrder:      toolCallOrder,
 		usage:              iterUsage,
+		pricingUsage:       pricingUsage,
+		execution:          execution,
 		err:                streamErr,
 		accepted:           accepted,
 		streamTiming:       timing,
@@ -214,4 +224,14 @@ func containsMultipleJSONValues(arguments string) bool {
 		return false
 	}
 	return decoder.Decode(&value) == nil
+}
+
+// acceptsStreamChunk preserves the historical acceptance of an ordinary zero
+// chunk, but usage/sidecar-only evidence must not suppress pre-output recovery.
+// Content, reasoning, calls, native items and finish metadata still qualify.
+func acceptsStreamChunk(chunk llm.CompletionChunk) bool {
+	return (!chunk.UsageReported && chunk.PricingUsage == nil && chunk.Execution == nil) ||
+		chunk.Content != "" || chunk.Thinking != "" || chunk.ContentOutputIndex != nil ||
+		len(chunk.ToolCalls) != 0 || len(chunk.CompletedItems) != 0 ||
+		chunk.FinishReason != llm.FinishReasons.UNKNOWN
 }

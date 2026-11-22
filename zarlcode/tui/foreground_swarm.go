@@ -18,11 +18,13 @@ import (
 // current LiveRunner, loaned exclusively while the goal is open. It is lifecycle
 // state only: activation execution is driven through the shared settlement FIFO.
 type foregroundSwarm struct {
-	goal       *engine.Swarm
-	done       chan struct{}
-	stopped    chan struct{}
-	generation uint64
-	stopping   bool
+	goal         *engine.Swarm
+	done         chan struct{}
+	stopped      chan struct{}
+	generation   uint64
+	stopping     bool
+	cancel       context.CancelFunc
+	closingAsync bool
 }
 
 // errSwarmShutdown reports a recorded swarm activation whose receipt was not
@@ -39,6 +41,7 @@ type foregroundSwarmActivationMsg struct {
 	generation uint64
 	handle     *engine.RecordedSwarmActivation
 	settle     chan error
+	claimed    *atomic.Bool // UI borrows the capability, or cancellation revokes it
 }
 
 // foregroundSwarmStoppedMsg reports that a foreground goal has drained.
@@ -52,6 +55,8 @@ func (m *UI) isSwarmOpen() bool {
 
 func (m *UI) foregroundSwarmAdmissionError() error {
 	switch {
+	case m.persistenceClosing:
+		return errSwarmShutdown
 	case m.live == nil:
 		return errors.New("session not ready — run a turn first")
 	case !m.durableDispatch():
@@ -112,6 +117,7 @@ func (m *UI) startForegroundSwarm(assignment string) tea.Cmd {
 	}
 
 	runCtx, cancel := context.WithCancel(m.appContext())
+	owner.cancel = cancel
 	m.foreground = owner
 
 	go func() {
@@ -129,12 +135,19 @@ func (o *foregroundSwarm) execute(ctx context.Context, a *engine.RecordedSwarmAc
 		return errors.New("swarm activation requires a live event sink")
 	}
 	settle := make(chan error, 1)
-	m.liveSink.AfterEvents(foregroundSwarmActivationMsg{generation: o.generation, handle: a, settle: settle})
+	claimed := new(atomic.Bool)
+	m.liveSink.AfterEvents(foregroundSwarmActivationMsg{generation: o.generation, handle: a, settle: settle, claimed: claimed})
 	select {
 	case err := <-settle:
 		return err
 	case <-ctx.Done():
-		return ctx.Err()
+		// An unapplied marker can be revoked without a consumer (legacy plain
+		// sinks included). Once UI borrows the callback-scoped reservation,
+		// cancellation cannot release it before recovery/settlement finishes.
+		if claimed.CompareAndSwap(false, true) {
+			return ctx.Err()
+		}
+		return <-settle
 	}
 }
 
@@ -144,6 +157,9 @@ func (m *UI) stopForegroundSwarm() tea.Cmd {
 		return nil
 	}
 	owner.stopping = true
+	owner.closingAsync = true
+	// Ordinary Stop keeps its context until the existing goal join completes.
+	// Shutdown cancels synchronously through stopShutdownProducers instead.
 	go func() {
 		_ = owner.goal.Close(context.WithoutCancel(m.appContext()))
 		<-owner.done
@@ -176,6 +192,17 @@ func (m *UI) resolveSwarmSettle(op *liveTurnOperation, err error) {
 // live-turn operation and enqueues its BEFORE/full-save through the FIFO. The
 // engine already holds handle.Reservation; this path must not reserve again.
 func (m *UI) handleForegroundSwarmActivation(msg foregroundSwarmActivationMsg) tea.Cmd {
+	if !msg.claimed.CompareAndSwap(false, true) {
+		return nil // cancellation revoked this still-unapplied marker
+	}
+	if m.persistenceClosing {
+		msg.settle <- errSwarmShutdown
+		return nil
+	}
+	if m.foreground != nil && m.foreground.stopping {
+		msg.settle <- errSwarmShutdown
+		return nil
+	}
 	if m.foreground == nil || m.foreground.generation != msg.generation {
 		msg.settle <- errors.New("stale swarm activation")
 		return nil
@@ -249,8 +276,9 @@ func (m *UI) enqueueSwarmBeforeTurn(op liveTurnOperation, handle *engine.Recorde
 }
 
 func (m *UI) rejectSwarmBeforeTurn(op liveTurnOperation, handle *engine.RecordedSwarmActivation, err error) tea.Cmd {
-	return func() tea.Msg {
-		return settledLiveTurnMsg{sessionID: op.sessionID, generation: op.generation,
-			result: beforeTurnFailedMsg{prompt: handle.Spec.Prompt, err: err}}
-	}
+	// Preparation never transferred the capability to a persistence command.
+	// Apply its rejection now, so a never-started toast command cannot retain
+	// the callback's reservation through Stop or shutdown.
+	return m.handleSettledLiveTurn(settledLiveTurnMsg{sessionID: op.sessionID, generation: op.generation,
+		result: beforeTurnFailedMsg{prompt: handle.Spec.Prompt, err: err}})
 }

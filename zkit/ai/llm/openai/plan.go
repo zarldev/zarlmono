@@ -1,14 +1,13 @@
 package openai
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
 const (
-	promptCacheRetentionMemory = "in-memory"
+	promptCacheRetentionMemory = "in_memory"
 	promptCacheRetention24h    = "24h"
 )
 
@@ -21,6 +20,7 @@ type requestPlan interface {
 // chatCompletionPlan carries the decisions specific to
 // POST /v1/chat/completions.
 type chatCompletionPlan struct {
+	nativeCache  *nativeCachePolicy
 	tokenLimit   TokenLimitField
 	includeUsage bool
 }
@@ -29,6 +29,7 @@ func (chatCompletionPlan) requestPlan() {}
 
 // responsesPlan carries the decisions specific to POST /v1/responses.
 type responsesPlan struct {
+	nativeCache               *nativeCachePolicy
 	reasoning                 *ReasoningEffort
 	includeEncryptedReasoning bool
 	parallelToolCalls         bool
@@ -38,23 +39,6 @@ type responsesPlan struct {
 }
 
 func (responsesPlan) requestPlan() {}
-
-// unsupportedRequestError is returned when the planner identifies a request
-// combination that cannot be served by any supported endpoint.
-type unsupportedRequestError struct {
-	Model    string
-	Feature  string
-	Endpoint EndpointKind
-	Hint     string
-}
-
-func (e *unsupportedRequestError) Error() string {
-	endpoint := EndpointKinds.ENDPOINTCHATCOMPLETIONS.String()
-	if e.Endpoint == EndpointKinds.ENDPOINTRESPONSES {
-		endpoint = EndpointKinds.ENDPOINTRESPONSES.String()
-	}
-	return fmt.Sprintf("%s does not support %q on %s endpoint: %s", e.Model, e.Feature, endpoint, e.Hint)
-}
 
 // knownReasoningModel reports whether the model ID belongs to a family
 // known to require Responses for tool support and max_completion_tokens /
@@ -113,13 +97,12 @@ func requestServiceTier(options llm.ModelOptions) string {
 // planRequest selects the endpoint and parameter plan for a given model
 // and request. It is a pure function — no I/O, no provider state.
 //
-// Initial rules:
-//
-//	known reasoning/GPT-5 + tools          → responsesPlan
-//	known reasoning/GPT-5, no tools        → chatCompletionPlan with max_completion_tokens
-//	everything else                        → chatCompletionPlan with max_tokens
-func planRequest(model string, req llm.CompletionRequest, responsesAPI bool, defaults responsesPlan) (requestPlan, error) {
-	if supportsCoreResponses(model) && responsesAPI && req.Stream {
+// Explicit Responses selection overrides model-name heuristics. Otherwise only
+// known core Responses models select that endpoint. The selected route applies
+// to both streaming and non-streaming requests.
+func planRequest(model string, req llm.CompletionRequest, responsesAPI, responsesAPIExplicit bool, defaults responsesPlan) requestPlan {
+	useResponses := responsesAPI && (responsesAPIExplicit || supportsCoreResponses(model))
+	if useResponses {
 		plan := defaults
 		if plan.reasoning != nil && *plan.reasoning == ReasoningEfforts.REASONINGEFFORTNONE && !supportsReasoningEffort(model, *plan.reasoning) {
 			plan.reasoning = nil
@@ -145,19 +128,11 @@ func planRequest(model string, req llm.CompletionRequest, responsesAPI bool, def
 			plan.promptCacheRetention = retention
 		}
 		plan.includeEncryptedReasoning = plan.reasoning != nil || hasOpenAIContinuationItems(req.Messages)
-		return plan, nil
+		return plan
 	}
 
-	if supportsCoreResponses(model) && len(req.Tools) > 0 && !req.Stream {
-		return nil, &unsupportedRequestError{
-			Model:    model,
-			Feature:  "non-stream tool request",
-			Endpoint: EndpointKinds.ENDPOINTRESPONSES,
-			Hint:     "tools on this model family require streaming Responses; set Stream: true or use a model that supports Chat Completions with tools",
-		}
-	}
 	if !knownReasoningModel(model) {
-		return chatCompletionPlan{tokenLimit: TokenLimitFields.TOKENLIMITMAXTOKENS, includeUsage: true}, nil
+		return chatCompletionPlan{tokenLimit: TokenLimitFields.TOKENLIMITMAXTOKENS, includeUsage: true}
 	}
-	return chatCompletionPlan{tokenLimit: TokenLimitFields.TOKENLIMITMAXCOMPLETIONTOKENS, includeUsage: true}, nil
+	return chatCompletionPlan{tokenLimit: TokenLimitFields.TOKENLIMITMAXCOMPLETIONTOKENS, includeUsage: true}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zarldev/zarlmono/zkit/ai/llm"
 	. "github.com/zarldev/zarlmono/zkit/ai/llm/modelsdev"
 	"github.com/zarldev/zarlmono/zkit/cache"
 )
@@ -209,11 +210,11 @@ func TestSource_Lookup(t *testing.T) {
 func TestSource_LookupIntrinsic_NormalizedUniqueMatch(t *testing.T) {
 	store := cache.NewMemoryCache[string, Snapshot]()
 	snapshot := Snapshot{
-		Schema:    2,
+		Schema:    4,
 		FetchedAt: time.Now(),
 		Entries: map[string]map[string]Entry{
 			"openai": {
-				"GPT-4O": {Intrinsic: Intrinsic{ContextWindow: 128000, SupportsTools: true, SupportsVision: true}, Pricing: Pricing{InputCostPerMTok: 5}},
+				"GPT-4O": {Evidence: Evidence{Limits: llm.ModelLimits{ContextTokens: 128000}, Tools: llm.Supports.SUPPORTSUPPORTED, Modalities: DirectionalModalities{Input: ModalityEvidence{Image: llm.Supports.SUPPORTSUPPORTED}}, Pricing: PriceEvidence{InputKnown: true, InputCostPerMTok: 5}}},
 			},
 		},
 	}
@@ -234,11 +235,11 @@ func TestSource_LookupIntrinsic_NormalizedUniqueMatch(t *testing.T) {
 func TestSource_LookupIntrinsic_AmbiguousMetadataDoesNotMatch(t *testing.T) {
 	store := cache.NewMemoryCache[string, Snapshot]()
 	snapshot := Snapshot{
-		Schema:    2,
+		Schema:    4,
 		FetchedAt: time.Now(),
 		Entries: map[string]map[string]Entry{
-			"one": {"model": {Intrinsic: Intrinsic{ContextWindow: 100000}}},
-			"two": {"model": {Intrinsic: Intrinsic{ContextWindow: 200000}}},
+			"one": {"model": {Evidence: Evidence{Limits: llm.ModelLimits{ContextTokens: 100000}}}},
+			"two": {"model": {Evidence: Evidence{Limits: llm.ModelLimits{ContextTokens: 200000}}}},
 		},
 	}
 	if err := store.Set(t.Context(), "models.dev", snapshot); err != nil {

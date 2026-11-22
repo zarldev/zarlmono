@@ -41,12 +41,14 @@ const FilesUnchangedNotice = "Conversation-only rewind: files were not restored 
 // endpoints, approval grants and tool/process handles are deliberately absent.
 // Resolve credentials through the current vault and retain current security policy.
 type Target struct {
-	Provider    string `json:"provider"`
-	Model       string `json:"model"`
-	Window      int    `json:"window"`
-	Reserve     int    `json:"reserve"`
-	PlanMode    bool   `json:"plan_mode"`
-	CodexEffort string `json:"codex_effort"`
+	Provider    string      `json:"provider"`
+	Model       string      `json:"model"`
+	Window      int         `json:"window"`
+	Reserve     int         `json:"reserve"`
+	PlanMode    bool        `json:"plan_mode"`
+	CodexEffort string      `json:"codex_effort"`
+	CachePin    CachePolicy `json:"cache_pin,omitzero"`
+	CacheIntent CachePolicy `json:"cache_intent,omitzero"`
 }
 
 // InitialContinuation identifies the durable branch creation that established
@@ -294,7 +296,7 @@ func validatePayload(state payload) error {
 	if state.Version != FormatVersion || state.ID == "" || state.SourceID == "" || state.Workspace == "" ||
 		state.Boundary.PromptID == "" || len(state.Boundary.PromptText) > draft.MaxTextBytes ||
 		state.Context == nil || state.Records == nil || state.Target.Provider == "" || state.Target.Model == "" ||
-		state.Target.Window < 0 || state.Target.Reserve < 0 || !validStrings(reflect.ValueOf(metadata)) {
+		state.Target.Window < 0 || state.Target.Reserve < 0 || !validStrings(reflect.ValueOf(metadata)) || !validTargetCache(state.Target) {
 		return ErrInvalid
 	}
 	if !validBoundary(state.Revision, len(state.Records) == 0 && len(state.Context) == 0,

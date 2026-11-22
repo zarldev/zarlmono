@@ -10,6 +10,14 @@ func (c CompletionChunk) Clone() CompletionChunk {
 	clone.Content = strings.Clone(c.Content)
 	clone.Thinking = strings.Clone(c.Thinking)
 	clone.ContentOutputIndex = cloneInt(c.ContentOutputIndex)
+	if c.PricingUsage != nil {
+		usage := c.PricingUsage.Clone()
+		clone.PricingUsage = &usage
+	}
+	if c.Execution != nil {
+		execution := c.Execution.Clone()
+		clone.Execution = &execution
+	}
 	if c.ToolCalls != nil {
 		clone.ToolCalls = make([]ToolCall, len(c.ToolCalls))
 		for i, call := range c.ToolCalls {

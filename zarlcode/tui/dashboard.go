@@ -219,7 +219,7 @@ func (m *UI) ctxColumn(width int) []string {
 	return out
 }
 
-// flowColumn is the last-turn flow plus the cost breakdown.
+// flowColumn is the last-turn flow, cost breakdown, and settled provider evidence.
 func (m *UI) flowColumn(width int) []string {
 	s := &m.session.Run
 	var out []string
@@ -250,6 +250,18 @@ func (m *UI) flowColumn(width int) []string {
 	}
 	if s.hasCacheReporting() {
 		out = append(out, s.cacheUsageLines(width)...)
+	}
+	if lines := s.providerObservationLines(width); len(lines) > 0 {
+		out = append(out, "", sidebarHeading("provider observations"))
+		out = append(out, lines...)
+	}
+	if lines := s.auxiliaryObservationLines(width); len(lines) > 0 {
+		out = append(out, "", sidebarHeading("auxiliary judge/planner · latest only · evidence, not session spend"))
+		out = append(out, lines...)
+	}
+	if lines := s.compactionObservationLines(width); len(lines) > 0 {
+		out = append(out, "", sidebarHeading("auxiliary compaction · evidence, not session spend"))
+		out = append(out, lines...)
 	}
 	return out
 }

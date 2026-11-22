@@ -87,7 +87,7 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	ins.Agents = l.catalogSnapshotAgents()
 	ins.Hooks = l.catalogSnapshotHooks()
 
-	src, reg, err := l.source(ctx, webSearch)
+	src, reg, err := l.source(ctx, webSearch, inference.Scope{}, ignoreAuxiliaryObservation, nil)
 	if err != nil {
 		ins.Errors = append(ins.Errors, "source: "+err.Error())
 		return ins
@@ -99,7 +99,7 @@ func (l *LiveRunner) Inspect(ctx context.Context) Inspection {
 	group := spawn.NewGroup()
 	visible := newModeControlSource(NewModeFilteredSource(src, l.isPlan), &modeTransition{live: l, group: group})
 	dummy := runner.New(inspectorClient{}, runner.WithTools(visible), runner.WithPrompt(runner.StaticPrompt("")), runner.WithSink(runner.NopSink{}))
-	l.registerSpawnTools(ctx, reg, dummy, group, nil, ins.SpawnDepth, ins.SpawnMaxIter, inference.Scope{})
+	l.registerSpawnTools(ctx, reg, dummy, group, nil, ins.SpawnDepth, ins.SpawnMaxIter, inference.Scope{}, ignoreAuxiliaryObservation, nil, nil)
 
 	for t := range visible.Tools(ctx) {
 		ins.Tools = append(ins.Tools, t.Definition())

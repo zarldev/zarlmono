@@ -613,8 +613,9 @@ type sessionSnapshot struct {
 	transcript     db.TranscriptUpdate
 	allEntries     []db.TranscriptEntry
 	exact          bool
-	history        *engine.LiveRunner       // borrowed until the full-save FIFO drains
-	historyBatches []db.SessionHistoryBatch // owned immutable retry snapshot
+	history        *engine.LiveRunner        // borrowed until the full-save FIFO drains
+	historyBatches []db.SessionHistoryBatch  // owned immutable retry snapshot
+	accounting     db.SessionAccountingBatch // owned immutable full-save retry snapshot
 }
 
 func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
@@ -622,6 +623,9 @@ func (m *UI) sessionSnapshot() (*sessionSnapshot, error) {
 		return nil, m.unsavedTurnError // only a newly settled turn may advance the exact head
 	}
 	if m.settings == nil || m.settings.Store == nil || m.live == nil {
+		return nil, errSessionSnapshotEmpty
+	}
+	if m.manualCompaction != nil {
 		return nil, errSessionSnapshotEmpty
 	}
 	contextCache := m.live.ContextSnapshot()
@@ -705,6 +709,10 @@ func (m *UI) sessionSnapshotForBoundary(contextCache []llm.Message, turnID strin
 	if err != nil {
 		return nil, err
 	}
+	history, accounting, err := m.live.RecordedHistoryWithAccountingBatch(m.session.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &sessionSnapshot{record: db.SessionRecord{
 		ID:                 m.session.ID,
 		Workspace:          m.settings.WorkspaceRoot(),
@@ -724,17 +732,17 @@ func (m *UI) sessionSnapshotForBoundary(contextCache []llm.Message, turnID strin
 		MessageCount:       messageCount,
 		CreatedAt:          m.session.CreatedAt,
 	}, transcript: transcriptUpdate, allEntries: allEntries, exact: m.exactResume, history: m.live,
-		historyBatches: m.live.RecordedHistory(m.session.ID)}, nil
+		historyBatches: history, accounting: accounting}, nil
 }
 
 func (s *sessionSnapshot) acknowledgeHistory() {
 	if s.history != nil {
-		s.history.AcknowledgeRecordedHistory(s.record.ID, s.historyBatches)
+		s.history.AcknowledgeRecordedHistoryWithAccountingBatch(s.record.ID, s.historyBatches, s.accounting)
 	}
 }
 
 func (s *sessionSnapshot) commitGuarded(ctx context.Context, store *db.Store, expected db.SessionContentVersion) error {
-	if err := store.CommitCheckpointTurn(ctx, s.record, s.transcript, expected, s.historyBatches...); err != nil {
+	if err := store.CommitCheckpointTurnWithAccountingBatch(ctx, s.record, s.transcript, expected, s.accounting, s.historyBatches...); err != nil {
 		return err
 	}
 	s.acknowledgeHistory()
@@ -745,7 +753,7 @@ func saveSessionSnapshot(ctx context.Context, settings *engine.Settings, snapsho
 	if settings == nil || settings.Store == nil || snapshot == nil {
 		return nil
 	}
-	if err := settings.Store.CommitCompletedTurn(ctx, snapshot.record, snapshot.transcript, snapshot.historyBatches...); err != nil {
+	if err := settings.Store.CommitCompletedTurnWithAccountingBatch(ctx, snapshot.record, snapshot.transcript, snapshot.accounting, snapshot.historyBatches...); err != nil {
 		return fmt.Errorf("save session snapshot: %w", err)
 	}
 	snapshot.acknowledgeHistory()
@@ -804,143 +812,33 @@ func (m *UI) sessionDeletionPending() bool {
 // the final resumable snapshot. It is called after the Bubble Tea loop stops,
 // when no command can concurrently mutate the queue.
 func (m *UI) FlushSessionPersistence(ctx context.Context) (result error) {
-	// Cancel inspection immediately, but spend the shutdown budget on durable
-	// writes before joining advisory UI work. Retain join ownership on timeout.
+	if op := m.manualCompaction; op != nil {
+		op.shutdownRetried = false // each caller may retry retained storage once
+	}
+	m.persistenceClosing = true
 	m.inspectionClosed = true
 	if op := m.inspectionOperation; op != nil {
 		op.stop()
 	}
 	defer func() { result = errors.Join(result, m.closeInspection(ctx)) }()
-	var firstErr error
-	// A recorded swarm activation must not block its worker past shutdown.
-	m.resolveSwarmSettle(m.liveOperation, errSwarmShutdown)
-	protectedInput := m.sessionPersistCurrent != nil && m.sessionPersistCurrent.before != nil
-	deletingSession := m.sessionDeletionPending()
-	for _, op := range m.sessionPersistQueue {
-		protectedInput = protectedInput || op.before != nil
-	}
-	// Capture a final edit whose debounce was never delivered. Use the same
-	// versioned FIFO as normal draft saves, after any older captured writes.
-	// A delete barrier retires this identity; never append a final save behind it.
-	if !deletingSession && !protectedInput && !m.sourceConflict && m.rewindRecovery == "" &&
-		m.settings != nil && m.settings.Store != nil && m.intro == nil &&
-		(m.liveOperation == nil || (!m.exactResume && !m.durableDispatch())) &&
-		(m.composer.text() != "" || len(m.pendingAttachments) != 0 || len(m.rejectedDraftJSON) == 0) {
-		if _, err := m.sessionSnapshot(); errors.Is(err, errSessionSnapshotEmpty) {
-			// Flush below claims returned-but-unstarted commands itself.
-			_ = m.enqueueDraftPersist(m.draftGeneration)
-		}
-	}
-	// A timed-out flush retains queued reservation ownership for the lifecycle
-	// closer's subsequent join; dependencies must remain open until then.
-	for _, op := range m.sessionPersistQueue {
-		if op.before != nil {
-			op.before.stop()
-		}
-	}
-	if m.sessionPersistRunning && m.sessionPersistCurrent != nil {
-		if m.sessionPersistCurrent.cancel != nil {
-			m.sessionPersistCurrent.cancel()
-		}
-		current := m.sessionPersistCurrent
-		if current.before != nil {
-			protectedInput = true
-		}
-		if current.claimed.CompareAndSwap(false, true) {
-			// Bubble Tea may never start a returned command after it stops. Take
-			// ownership synchronously; its late closure becomes a no-op.
-			err := m.flushUnstartedSessionPersist(ctx, current)
-			current.done <- sessionPersistedMsg{sessionID: current.sessionID(), revision: current.transcriptRevision(), err: err}
-			close(current.done)
-		}
-		select {
-		case result := <-m.sessionPersistCurrent.done:
-			if result.err != nil {
-				if result.sessionID == m.session.ID && errors.Is(result.err, db.ErrCheckpointConflict) {
-					m.sourceConflict = true
-				}
-				firstErr = fmt.Errorf("flush in-flight persistence: %w", result.err)
-			} else if result.sessionID == m.session.ID {
-				m.acknowledgeSource(current)
-				m.acknowledgeDurableDraft(current)
-				m.transcriptPersistedSessionID = result.sessionID
-				if result.revision > m.transcriptPersisted {
-					m.transcriptPersisted = result.revision
-				}
-			}
-			if current.retry != nil {
-				m.finishSessionRetry(current, result)
-			}
-			m.sessionPersistRunning = false
-			m.sessionPersistCurrent = nil
-		case <-ctx.Done():
-			return fmt.Errorf("flush in-flight persistence: %w", ctx.Err())
-		}
-	}
-	for len(m.sessionPersistQueue) != 0 {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(firstErr, err)
-		}
-		op := m.sessionPersistQueue[0]
-		m.sessionPersistQueue = m.sessionPersistQueue[1:]
-		if (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) && op.sessionID() == m.transcriptPersistedSessionID {
-			op.rebaseTranscript(m.transcriptPersisted)
-			if op.kind == sessionPersistTranscript && op.transcriptRevision() <= m.transcriptPersisted {
-				continue
-			}
-		}
-		if op.before != nil {
-			protectedInput = true
-		}
-		err := m.flushUnstartedSessionPersist(ctx, &op)
-		if err != nil {
-			if op.sessionID() == m.session.ID && errors.Is(err, db.ErrCheckpointConflict) {
-				m.sourceConflict = true
-			}
-			if firstErr == nil {
-				firstErr = fmt.Errorf("flush queued persistence: %w", err)
-			}
-		} else if revision := op.transcriptRevision(); op.sessionID() == m.session.ID {
-			m.acknowledgeSource(&op)
-			m.acknowledgeDurableDraft(&op)
-			m.transcriptPersistedSessionID = op.sessionID()
-			if revision > m.transcriptPersisted {
-				m.transcriptPersisted = revision
-			}
-		}
-		if op.retry != nil {
-			m.finishSessionRetry(&op, sessionPersistedMsg{err: err})
-		}
-	}
-	m.sessionPersistQueue = nil
-	if protectedInput || deletingSession {
-		return firstErr // preserve recovery input and deletion barriers
-	}
-	// A successful retry advanced the trusted receipt and completed boundary.
-	// Save any composer edits made after its capture; a failed retry still
-	// blocks sessionSnapshot through unsavedTurnError.
-	finalErr := m.SaveSession(ctx)
-	if firstErr != nil && finalErr != nil {
-		return errors.Join(firstErr, finalErr)
-	}
-	if finalErr != nil {
-		return finalErr
-	}
-	return firstErr
+	return m.settleSessionShutdown(ctx)
 }
 
 // flushUnstartedSessionPersist runs only after shutdown has sole ownership of
 // an unstarted operation. BEFORE work saves recovery state but never dispatches.
 func (m *UI) flushUnstartedSessionPersist(ctx context.Context, op *sessionPersistOp) error {
 	if m.sourceConflict && op.sessionID() == m.session.ID {
-		if op.before != nil {
+		if op.before != nil && op.before.swarm == nil {
 			op.before.reservation.Release()
 		}
 		return db.ErrCheckpointConflict
 	}
 	if op.before != nil {
-		defer op.before.reservation.Release()
-		return op.before.save(ctx, m.settings.Store, op.snapshot)
+		err := op.before.save(ctx, m.settings.Store, op.snapshot)
+		if op.before.swarm == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			op.before.reservation.Release()
+		}
+		return err
 	}
 	err := executeSessionPersist(ctx, m.settings, op)
 	if err != nil && (op.kind == sessionPersistTranscript || op.kind == sessionPersistFull) {
@@ -950,7 +848,7 @@ func (m *UI) flushUnstartedSessionPersist(ctx context.Context, op *sessionPersis
 }
 
 func (m *UI) saveSessionCmd() tea.Cmd {
-	if m.unsavedTurnError != nil || (m.liveOperation != nil && (m.exactResume || m.durableDispatch())) {
+	if m.manualCompaction != nil || m.unsavedTurnError != nil || (m.liveOperation != nil && (m.exactResume || m.durableDispatch())) {
 		return nil
 	}
 	snapshot, err := m.sessionSnapshot()

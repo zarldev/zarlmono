@@ -1,6 +1,7 @@
 package google_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -48,6 +49,7 @@ func TestProviderRejectsUnsupportedMediaOutput(t *testing.T) {
 					var streamErr error
 					var errorsSeen int
 					for chunk, err := range provider.Complete(t.Context(), llm.CompletionRequest{
+						Stream:   true,
 						Messages: []llm.Message{{Role: llm.RoleUser, Content: "respond"}},
 					}) {
 						content.WriteString(chunk.Content)
@@ -89,6 +91,7 @@ func TestProviderPreservesControlOnlyPartsAndUsage(t *testing.T) {
 			provider := newGoogleRouteProvider(t, route, server.URL)
 			var chunks []llm.CompletionChunk
 			for chunk, err := range provider.Complete(t.Context(), llm.CompletionRequest{
+				Stream:   true,
 				Messages: []llm.Message{{Role: llm.RoleUser, Content: "respond"}},
 			}) {
 				if err != nil {
@@ -96,11 +99,32 @@ func TestProviderPreservesControlOnlyPartsAndUsage(t *testing.T) {
 				}
 				chunks = append(chunks, chunk.Clone())
 			}
-			if len(chunks) != 1 {
-				t.Fatalf("chunks = %#v, want one metadata chunk", chunks)
+			if len(chunks) != 2 {
+				t.Fatalf("chunks = %#v, want native continuation and metadata chunks", chunks)
 			}
-			if chunks[0].FinishReason != llm.FinishReasons.STOP || !chunks[0].UsageReported || chunks[0].Usage.TotalTokens != 2 {
-				t.Fatalf("metadata chunk = %#v", chunks[0])
+			native := chunks[0]
+			if native.Content != "" || native.Thinking != "" || len(native.ToolCalls) != 0 || native.UsageReported || native.FinishReason != llm.FinishReasons.UNKNOWN {
+				t.Fatalf("native continuation chunk contains visible output or metadata: %#v", native)
+			}
+			if len(native.CompletedItems) != 1 {
+				t.Fatalf("native continuation items = %#v, want one", native.CompletedItems)
+			}
+			item := native.CompletedItems[0]
+			if item.Provider != "google" || item.Format != "generate_content.part.v2" {
+				t.Fatalf("native continuation routing = %#v", item)
+			}
+			var part struct {
+				ThoughtSignature string `json:"thoughtSignature"`
+			}
+			if err := json.Unmarshal(item.Data, &part); err != nil {
+				t.Fatalf("decode native continuation part: %v", err)
+			}
+			if part.ThoughtSignature != "c2lnbmF0dXJl" {
+				t.Fatalf("native thought signature = %q, want c2lnbmF0dXJl", part.ThoughtSignature)
+			}
+			metadata := chunks[1]
+			if len(metadata.CompletedItems) != 0 || metadata.FinishReason != llm.FinishReasons.STOP || !metadata.UsageReported || metadata.Usage.PromptTokens != 2 || metadata.Usage.CompletionTokens != 0 || metadata.Usage.TotalTokens != 2 {
+				t.Fatalf("metadata chunk = %#v", metadata)
 			}
 		})
 	}

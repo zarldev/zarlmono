@@ -49,21 +49,28 @@ import (
 	"github.com/zarldev/zarlmono/zkit/ai/llm"
 )
 
-// collectContent keeps the final reported usage snapshot, including on failure.
+// collectContent retains independent complete evidence snapshots during yield.
 // Provider streams report cumulative usage, not additive per-chunk deltas.
-func collectContent(stream llm.CompletionStream, operation string) (string, *llm.Usage, error) {
+func collectContent(stream llm.CompletionStream, operation string, observation *Inference) (string, error) {
 	var content strings.Builder
-	var usage *llm.Usage
 	for chunk, err := range stream {
-		if err != nil {
-			return "", usage, fmt.Errorf("compact.%s: stream: %w", operation, err)
-		}
 		if chunk.UsageReported {
-			usage = new(chunk.Usage)
+			observation.Usage = new(chunk.Usage)
+		}
+		if chunk.PricingUsage != nil {
+			usage := chunk.PricingUsage.Clone()
+			observation.PricingUsage = &usage
+		}
+		if chunk.Execution != nil {
+			execution := chunk.Execution.Clone()
+			observation.Execution = &execution
+		}
+		if err != nil {
+			return "", fmt.Errorf("compact.%s: stream: %w", operation, err)
 		}
 		content.WriteString(chunk.Content)
 	}
-	return strings.TrimSpace(content.String()), usage, nil
+	return strings.TrimSpace(content.String()), nil
 }
 
 // Engine labels for the built-in compactors, as reported on

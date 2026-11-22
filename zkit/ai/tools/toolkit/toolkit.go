@@ -96,9 +96,11 @@ func (t Tool[Args, Out]) Describe() tools.ToolSpec {
 func (t Tool[Args, Out]) Call(ctx context.Context, raw json.RawMessage) (any, error) {
 	var args Args
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &args); err != nil {
+		decoded, err := tools.DecodeJSONArgs[Args](raw)
+		if err != nil {
 			return nil, fmt.Errorf("decode args: %w", err)
 		}
+		args = decoded
 	}
 	if t.Func == nil {
 		return nil, fmt.Errorf("toolkit: tool %q has nil Func", t.Name)
